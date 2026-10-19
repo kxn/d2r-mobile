@@ -4,6 +4,7 @@
 #include "../nvn/nvn_dirty.h"
 #include "../tex/nvn_bcdec.h"
 #include "../tex/nvn_deswizzle.h"
+#include "../tex/nvn_astc_metadata.h"
 #include "nvn_vk_shader.h"
 #include "nvn_vk_extrap.h"
 #include "nvn_vk_present_shader.h"
@@ -15,6 +16,7 @@ typedef struct image_view {
   VkImageViewCreateInfo description;
   VkImageView handle;
   VkImageUsageFlags usage;
+  int astc_decode8;
 } image_view;
 typedef struct {
   VkPipelineStageFlags readers, writers, visible;
@@ -56,6 +58,7 @@ typedef struct image {
   // A complete CPU upload can rebuild this physical image. Any later GPU
   // writer revokes the proof, even if its result happens to equal guest bytes.
   int cpu_rebuildable, external_access;
+  int astc_ldr_proven;
   uint32_t zero_mips;
   VkImageLayout layout;
   VkPipelineStageFlags layout_scope;
@@ -80,6 +83,24 @@ enum {
 static uint64_t image_recipe_generation=1;
 static void image_recipes_changed(void) {
   if(++image_recipe_generation==0) die("Vulkan image recipe generation overflow");
+}
+// Content proof belongs to actual physical image bytes, not a filename,
+// format hint, current scene, or CPU address. Every physical writer revokes it.
+static void image_astc_proof(image *i,int proven) {
+  proven=!!proven && !i->external_access;
+  if(i->astc_ldr_proven!=proven) {
+    i->astc_ldr_proven=proven;
+    image_recipes_changed();
+  }
+}
+static int astc_unorm_format(VkFormat f) {
+  return f>=VK_FORMAT_ASTC_4x4_UNORM_BLOCK && f<=VK_FORMAT_ASTC_12x12_UNORM_BLOCK &&
+      !((f-VK_FORMAT_ASTC_4x4_UNORM_BLOCK)&1);
+}
+static int image_astc_decode8(const image *i,const VkImageViewCreateInfo *v,VkImageUsageFlags usage) {
+  return V.astc_decode_mode && i->astc_ldr_proven && !i->external_access &&
+      usage==VK_IMAGE_USAGE_SAMPLED_BIT && v->format==i->format &&
+      astc_unorm_format(v->format) && v->viewType==VK_IMAGE_VIEW_TYPE_2D;
 }
 static uint32_t zero_mip_mask(unsigned first,unsigned count) {
   if(first>=16 || !count || count>16-first) return 0;
@@ -451,8 +472,9 @@ static int sampled_target_alias(const tex_t *texture,const view_t *sample_view) 
 static VkImageView cached_view(image *i,
                                const VkImageViewCreateInfo *description,
                                VkImageUsageFlags usage) {
+  int decode8=image_astc_decode8(i,description,usage);
   for (image_view *v = i->views; v; v = v->next)
-    if (v->usage == usage && v->description.viewType == description->viewType &&
+    if (v->astc_decode8==decode8 && v->usage == usage && v->description.viewType == description->viewType &&
         v->description.format == description->format &&
         !memcmp(&v->description.components, &description->components,
                 sizeof description->components) &&
@@ -464,19 +486,38 @@ static VkImageView cached_view(image *i,
   if (!v)
     die("Vulkan cached image-view allocation");
   v->description = *description;
+  // Never persist a stack pNext in the view/descriptor recipes.
+  v->description.pNext=NULL;
   v->usage = usage;
+  v->astc_decode8=decode8;
   VkImageViewUsageCreateInfo use = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
                                    .usage = usage};
   VkImageViewCreateInfo create = *description;
-  create.pNext = &use;
+  VkImageViewASTCDecodeModeEXT decode={
+      .sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_ASTC_DECODE_MODE_EXT,
+      .pNext=&use,.decodeMode=VK_FORMAT_R8G8B8A8_UNORM};
+  create.pNext = decode8?(const void *)&decode:(const void *)&use;
   VK_CHECK(vkCreateImageView(V.device, &create, NULL, &v->handle));
   v->next = i->views;
   i->views = v;
   return v->handle;
 }
+#include "nvn_vk_astc_contract.inc"
 static image *images;
 static image *image_buckets[8192];
 #if defined(DM_VULKAN_TEST_EMBED)
+int vk_texture_test_astc_info(const tex_t *texture,VkImageView view,unsigned state[5]) {
+  for(const image *i=image_buckets[texture->serial%8192];i;i=i->hash_next)
+    if(i->tex.serial==texture->serial) {
+      memset(state,0,5*sizeof *state);state[0]=i->astc_ldr_proven;state[1]=i->external_access;
+      for(const image_view *v=i->views;v;v=v->next) {
+        state[2]++;if(v->astc_decode8)state[3]++;
+        if(v->handle==view)state[4]=v->astc_decode8;
+      }
+      return 1;
+    }
+  return 0;
+}
 // Owned GPU tests inspect logical hazard sequence numbers, not elapsed time.
 // Tools cannot expose this private invariant. Lookup only: no image creation,
 // upload, state transition, resource registration or production hot counter.
@@ -823,6 +864,12 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
     die("Vulkan packaged depth/MS image unsupported");
   image_general_transfer(i);
   uint64_t stamp = nvn_dirty_now();
+  // OFF/unsupported paths never scan. Only whole native 2D, one-layer uploads
+  // can establish this certificate; sRGB already has its own 8-bit decode.
+  int ldr=V.astc_decode_mode && !i->external_access && !i->decoded &&
+      astc_unorm_format(i->format) && i->description.imageType==VK_IMAGE_TYPE_2D &&
+      i->layers==1 && i->extent.depth==1;
+  image_astc_proof(i,0);
   for (uint32_t layer = 0; layer < i->layers; layer++)
     for (uint32_t level = 0; level < i->levels; level++) {
       uint32_t w = mip(i->extent.width, level),
@@ -846,6 +893,9 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
           memcpy(raw_bytes + y * pitch, t->mem + y * stride, pitch);
       } else if (nvn_deswizzle(&t->d, level, layer, t->mem, raw_bytes, pitch))
         die("Vulkan deswizzle failed");
+      // Classify exactly the staging bytes consumed by this upload, never a
+      // second read of mutable guest memory. No RGBA scratch or allocation.
+      if(ldr && !nvn_astc_mip_is_ldr(raw_bytes,pitch*rows*z,bw,bh)) ldr=0;
       vk_buffer *src = raw;
       if (i->decoded) {
         src = vk_temp_buffer((uint64_t)w * h * z * i->bpp);
@@ -875,6 +925,9 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
   // Raw VkImage users can retain a handle and write later without passing
   // through image_record. A later CPU upload cannot revoke that escape.
   i->cpu_rebuildable = !i->external_access;
+  // Publish only after every mip copy was recorded. The existing ordered
+  // image dependencies protect content changes; old views retain lifetimes.
+  image_astc_proof(i,ldr);
 }
 static void image_upload(image *i) {
   // HLE texture initialization is an ordered CPU exposure, including late
@@ -1585,6 +1638,7 @@ typedef struct {
   VkImageViewCreateInfo description;
   VkImageSubresourceRange access_range;
   VkImageView handle;
+  int astc_decode8;
 } texture_binding_recipe;
 struct vk_texture_submission {
   transient_view *views;
@@ -2219,6 +2273,8 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   if(layout) *layout=binding_layout;
   image_request_add_normalized(i,access_range,image_shader_stages(stage),
       VK_ACCESS_SHADER_READ_BIT|(storage?VK_ACCESS_SHADER_WRITE_BIT:0));
+  int decode8=image_astc_decode8(i,&ci,storage?VK_IMAGE_USAGE_STORAGE_BIT:VK_IMAGE_USAGE_SAMPLED_BIT);
+  if(cached && cached->astc_decode8!=decode8) handle=VK_NULL_HANDLE;
   if(!handle || ci.image!=i->handle) {
     ci.image=i->handle;
     handle=cached_view(i,&ci,storage?VK_IMAGE_USAGE_STORAGE_BIT:VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -2237,7 +2293,8 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
         destination->lifetime_generation!=image_recipe_generation ||
         destination->id!=id || destination->storage!=!!storage ||
         destination->owner!=i || destination->description.image!=i->handle ||
-        destination->description.image!=ci.image || destination->handle!=handle)
+        destination->description.image!=ci.image || destination->handle!=handle ||
+        destination->astc_decode8!=decode8)
       *destination=(texture_binding_recipe){
         .epoch=epoch,.lifetime_generation=image_recipe_generation,
         .id=id,.storage=!!storage,.has_view=has_view,
@@ -2247,7 +2304,7 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
           !(v && v->set_format && v->format!=i->tex.d.format) &&
           !(i->tex.d.levels>1 && i->tex.d.levels<=16 &&
             i->tex.d.target==NVN_TEXTURE_TARGET_2D && i->tex.L.layers==1 && i->tex.d.samples<=1),
-        .owner=i,.view=view,.description=ci,.access_range=access_range,.handle=handle};
+        .owner=i,.view=view,.description=ci,.access_range=access_range,.handle=handle,.astc_decode8=decode8};
   }
   return handle;
 }

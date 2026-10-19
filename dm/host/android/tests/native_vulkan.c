@@ -482,6 +482,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_retained_update.inc"
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
+#include "native_vulkan_astc_decode.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
@@ -537,6 +538,14 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_ASTC_DECODE_FIXTURE")) {
+    extern unsigned vk_texture_test_astc_contract(void);
+    mtl_init();checks+=vk_texture_test_astc_contract();
+    int gpu=astc_decode_gpu_test();
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"astc-decode-metadata\",\"checks\":%u,\"astc_supported\":%u,\"gpu_fixture_executed\":%d,\"decode_extension_enabled\":%u,\"result\":\"passed\"}\n",checks,V.features.textureCompressionASTC_LDR,gpu,V.astc_decode_mode);
+    return 0;
+  }
   if(getenv("DM_IMAGE_PRESSURE_TRIM_FIXTURE")) {image_pressure_trim_test();printf("{\"test\":\"image-pressure-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}

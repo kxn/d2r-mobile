@@ -346,6 +346,20 @@ static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int upload_dual_startup;
+static int astc_decode_startup,astc_decode_fixture;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAstcDecode(
+    JNIEnv *env,jclass klass,jboolean enabled,jboolean fixture) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"astc_decode_unorm8 is fixed before native startup");
+    return;
+  }
+  astc_decode_startup=enabled!=0;astc_decode_fixture=fixture!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int pool_copy_accounting_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolCopyAccounting(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -523,6 +537,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
     die("Android pool copy accounting startup environment");
   if(setenv("DM_VULKAN_UPLOAD_DUAL_STORE",upload_dual_startup?"1":"0",1))
     die("Android dual upload startup environment");
+  if(setenv("DM_VULKAN_ASTC_DECODE_UNORM8",astc_decode_startup?"1":"0",1))
+    die("Android ASTC decode startup environment");
   if(setenv("DM_VULKAN_PIXEL_LOCAL_SHARED_DS",pixel_local_shared_ds_startup?"1":"0",1))
     die("Android pixel-local shared DS startup environment");
   extern int vk_pixel_local_shared_ds_enabled(void);
@@ -688,6 +704,9 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only) {
   (void)klass;
+  if(setenv("DM_VULKAN_ASTC_DECODE_UNORM8",astc_decode_startup?"1":"0",1) ||
+      (astc_decode_fixture?setenv("DM_ASTC_DECODE_FIXTURE","1",1):unsetenv("DM_ASTC_DECODE_FIXTURE")))
+    die("Android ASTC fixture startup environment");
   if (async_submit) setenv("DM_VULKAN_ASYNC", "1", 1);
   if (acquire_scope) setenv("DM_VULKAN_ACQUIRE_TEST", "1", 1);
   if (memory_only) setenv("DM_VULKAN_MEMORY_TEST", "1", 1);

@@ -79,7 +79,7 @@ static int image_read_covered(image *i,VkImageSubresourceRange r,VkPipelineStage
 static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,
                           VkAccessFlags access,int visibility_proven) {
   int writing=!!image_writes(access);
-  if(writing)i->cpu_rebuildable=0;
+  if(writing) {i->cpu_rebuildable=0;image_astc_proof(i,0);}
   image_read_proof *read=writing?NULL:image_read_cached(i,r);
   int covered=read && !(stages&~(visibility_proven?read->visible:read->readers));
   // Keep every logical clock increment and whole-image timestamp. Cell use
@@ -158,6 +158,7 @@ static void image_record(image *i,VkImageSubresourceRange r,VkPipelineStageFlags
 }
 static void image_unknown(image *i) {
   i->external_access=1;
+  image_astc_proof(i,0);
   if(!i->access) return;
   image_record(i,(VkImageSubresourceRange){i->aspect,0,i->levels,0,i->layers},
       VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,0);
