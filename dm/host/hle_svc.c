@@ -122,6 +122,15 @@ static void map_add(uint64_t b, uint64_t n, uint64_t src, uint32_t st) {
 }
 static void map_del(int i) { pthread_mutex_lock(&g_map_lock); g_map[i] = g_map[--g_nmap]; pthread_mutex_unlock(&g_map_lock); }
 
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+// Call only for the existing HLE mutation, before touching the mapping/pages.
+// Cold OFF returns immediately; no guest allocator or fixed-AS diagnostic.
+extern void dm_gfx_borrow_before_cpu_change(uint64_t address,uint64_t size);
+#define BORROW_CPU_CHANGE(a,n) dm_gfx_borrow_before_cpu_change((uint64_t)(uintptr_t)(a),(uint64_t)(n))
+#else
+#define BORROW_CPU_CHANGE(a,n) ((void)0)
+#endif
+
 int svc_thread(int num, uint64_t *regs);   // hle_thread.c：线程与同步类 | hle_thread.c: thread and synchronization kind
 
 uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
@@ -135,6 +144,8 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         if (size > g_heap_cap) { LOG("SetHeapSize OOM: req %#zx > cap %#zx", size, g_heap_cap); regs[0] = 0xD401; return 0; }
         if (size + image_bytes() > app_pool()) { g_heap_rejects++; regs[0] = 0x10801; return 0; }   // 超出应用内存池：ResultLimitReached。游戏启动时按 2 MB 递减重试直到放得下（main+0x1b66184） | exceeds the application memory pool: ResultLimitReached. At startup the game retries in 2 MB decrements until it fits (main+0x1b66184)
         int rc = 0;
+        if(size!=g_heap_cur)BORROW_CPU_CHANGE(g_heap+(size<g_heap_cur?size:g_heap_cur),
+            size<g_heap_cur?g_heap_cur-size:size-g_heap_cur);
         if (size > g_heap_cur) rc = mprotect(g_heap + g_heap_cur, size - g_heap_cur, PROT_READ | PROT_WRITE);
         else if (size < g_heap_cur) rc = mprotect(g_heap + size, g_heap_cur - size, PROT_NONE);
         if (g_flag.svc) LOG("SetHeapSize %#zx -> base %p mprotect=%d errno=%d", size, g_heap, rc, errno);
@@ -151,6 +162,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         // 苹果页 16K、Horizon 页 4K：可访问区扩到 16K 边界（多放开的是同区未用页，不影响语义）
         // Apple pages are 16K, Horizon pages 4K: the accessible region is extended to a 16K boundary (the extra pages opened are unused pages of the same region, semantics unaffected)
         uint64_t lo = dst & ~0x3FFFull, hi = (dst + size + 0x3FFF) & ~0x3FFFull;
+        BORROW_CPU_CHANGE(lo,hi-lo);BORROW_CPU_CHANGE(src,size);
         if (mprotect((void *)lo, hi - lo, PROT_READ | PROT_WRITE)) die("MapMemory mprotect errno=%d", errno);
         memcpy((void *)dst, (void *)src, size);   // 搬移语义：映射期间源区不被访问（Horizon 把它设为不可访问） | move semantics: the source region is not accessed while mapped (Horizon makes it inaccessible)
         map_add(dst, size, src, 0x0B /*MappedMemory*/);
@@ -162,6 +174,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         int k = map_find(dst, size);
         if (!k || g_map[k - 1].base != dst || g_map[k - 1].size != size || g_map[k - 1].src != src) {
             LOG("UnmapMemory 与映射不符 %#llx+%#llx", dst, size); regs[0] = 0xD401; return 0; }
+        BORROW_CPU_CHANGE(src,size);BORROW_CPU_CHANGE(dst,size);
         memcpy((void *)src, (void *)dst, size);
         map_del(k - 1);
         regs[0] = 0; return 0;
@@ -209,6 +222,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
     case 0x2C: case 0x2D: {  // MapPhysicalMemory / UnmapPhysicalMemory(addr, size)：只许在 alias 区内（SDK 的 VammManager 用） | MapPhysicalMemory / UnmapPhysicalMemory(addr, size): only allowed inside the alias region (used by the SDK's VammManager)
         uint8_t *a = (uint8_t *)regs[0]; size_t size = regs[1];
         if (a < g_alias || a + size > g_alias + g_alias_cap) { LOG("SVC %#x 越出 alias 区 %p+%#zx", num, a, size); regs[0] = 0xD401; return 0; }
+        BORROW_CPU_CHANGE(a,size);
         int rc = num == 0x2C ? mprotect(a, size, PROT_READ | PROT_WRITE)
                              : (madvise(a, size, MADV_FREE), mprotect(a, size, PROT_NONE));
         if (rc) die("SVC %#x mprotect %p+%#zx errno=%d", num, a, size, errno);

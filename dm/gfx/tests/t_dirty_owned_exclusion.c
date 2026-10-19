@@ -237,6 +237,47 @@ static void scoped_test(void) {
     nvn_dirty_remove_range(p);nvn_dirty_remove_range(p+4*pg);CHECK(!munmap(p,6*pg));
 }
 
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+static void borrowed_lease_test(void) {
+    size_t pg=(size_t)getpagesize();uint8_t *p=mmap(NULL,3*pg,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    CHECK(p!=MAP_FAILED);memset(p,0,3*pg);
+    nvn_dirty_pool_lease lease={0},bad;nvn_dirty_owned_exclusion token={0};
+    CHECK(!nvn_dirty_pool_lease_observe(p,2*pg,&lease));
+    nvn_dirty_add_range(p,2*pg);nvn_dirty_add_range(p+2*pg,pg);
+    CHECK(nvn_dirty_pool_lease_observe(p,2*pg,&lease));CHECK(lease.lifetime);
+    CHECK(!nvn_dirty_pool_lease_observe(p,pg,&bad)); // not the full registered lease
+    CHECK(!nvn_dirty_pool_lease_observe(p+1,pg,&bad));
+    CHECK(!nvn_dirty_pool_lease_observe((void *)(UINTPTR_MAX-pg+1),2*pg,&bad));
+    bad=lease;bad.lifetime++;CHECK(!nvn_dirty_pool_lease_exclude(&bad,&token));
+    bad=lease;bad.slot++;CHECK(!nvn_dirty_pool_lease_exclude(&bad,&token));
+    bad=lease;bad.base+=pg;bad.size-=pg;CHECK(!nvn_dirty_pool_lease_exclude(&bad,&token));
+    bad=lease;bad.reserved=1;CHECK(!nvn_dirty_pool_lease_exclude(&bad,&token));CHECK(!token.identity);
+    // Same real PG_BUSY protector interleaving through the BORROWED wrapper.
+    pthread_mutex_lock(&gate);blocked_page=p+pg;arm=1;entered=resume_protector=0;pthread_mutex_unlock(&gate);
+    pthread_t worker;CHECK(!pthread_create(&worker,NULL,protect_thread,p+pg));
+    pthread_mutex_lock(&gate);while(!entered)pthread_cond_wait(&changed,&gate);pthread_mutex_unlock(&gate);
+    CHECK(!nvn_dirty_pool_lease_exclude(&lease,&token));CHECK(!token.identity);
+    range_t *r=find((uintptr_t)p);CHECK(atomic_load(&r->state[0])==PG_NONE && atomic_load(&r->state[1])==PG_BUSY);
+    CHECK(!atomic_load(&r->owned_identity) && nvn_dirty_change_epoch());
+    pthread_mutex_lock(&gate);resume_protector=1;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&gate);
+    CHECK(!pthread_join(worker,NULL));CHECK(atomic_load(&r->state[1])==PG_PROT);
+    CHECK(!nvn_dirty_pool_lease_exclude(&lease,&token)); // no unprotect for import
+    dm_guest_write_prepare(p+pg,pg);p[pg]=17; // original legal write, not a retry path in NVN
+    CHECK(nvn_dirty_pool_lease_exclude(&lease,&token));
+    nvn_dirty_scope_proof proof,after;uint64_t epoch;
+    CHECK(nvn_dirty_scope_observe(p+2*pg,pg,&proof,&epoch));
+    nvn_dirty_protect(p,2*pg);p[0]=29;CHECK(atomic_load(&r->state[0])==PG_OWNED);
+    CHECK(nvn_dirty_scope_refresh(p+2*pg,pg,&proof,&after,&epoch));
+    CHECK(!nvn_dirty_scope_observe(p,pg,&proof,&epoch));
+    CHECK(nvn_dirty_owned_release(&token));
+    nvn_dirty_pool_lease stale=lease;nvn_dirty_remove_range(p);nvn_dirty_add_range(p,2*pg);
+    CHECK(!nvn_dirty_pool_lease_exclude(&stale,&token));CHECK(!token.identity);
+    CHECK(nvn_dirty_pool_lease_observe(p,2*pg,&lease));CHECK(lease.lifetime!=stale.lifetime);
+    CHECK(nvn_dirty_pool_lease_exclude(&lease,&token));CHECK(nvn_dirty_owned_release(&token));
+    nvn_dirty_remove_range(p);nvn_dirty_remove_range(p+2*pg);CHECK(!munmap(p,3*pg));
+}
+#endif
+
 int main(void) {
 #ifdef __APPLE__
     puts("owned exclusion unsupported on Metal; no production behavior changed");return 0;
@@ -308,6 +349,9 @@ int main(void) {
     CHECK(nvn_dirty_owned_release(&token));CHECK(!nvn_dirty_owned_release(&stale));
     for(size_t n=0;n<4;n++)CHECK(atomic_load(&r->state[n])==PG_NONE);
     nvn_dirty_remove_range(p);CHECK(!munmap(p,4*pg));
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    borrowed_lease_test(); // before scoped_test intentionally exhausts reusable-slot clocks
+#endif
     scoped_test();
     printf("owned dirty exclusion: %u checks passed; no GPU/guest path enabled\n",checks);return 0;
 #endif

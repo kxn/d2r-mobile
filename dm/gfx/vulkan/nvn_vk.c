@@ -33,6 +33,13 @@ static int owned_fixture_requested,owned_fixture_supported;
 static uint64_t owned_fixture_alignment,owned_fixture_imports,owned_fixture_retirements;
 static int owned_fixture_retire(uint64_t address,uint64_t size,uint64_t expected);
 static void owned_fixture_flush(struct pool *p,uint64_t first,uint64_t end);
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+static int borrowed_fixture_requested;
+static int borrowed_missing_admit(struct pool *p,const vk_pool_requirement *ranges,size_t count,
+  uint64_t *address,uint64_t *size,uint64_t *identity);
+static int pool_host_attach(uint64_t address,uint64_t bytes,int borrowed,uint64_t identity);
+static void borrowed_before_import(uint64_t address);
+#endif
 #endif
 typedef struct pool_backing_span {
   struct pool_backing_span *next;
@@ -71,7 +78,12 @@ typedef struct pool {
   int nvn_flags_known;
   pool_cpu_exposure *cpu_exposure; // experiment-only, lazy bounded range exclusions
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
-  pool_owned_readonly *owned_readonly; // only explicit self-owned fixture certificate
+  pool_owned_readonly *owned_readonly; // physical import certificate; owned contract unchanged
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  nvn_dirty_pool_lease borrowed_lease;
+  unsigned borrowed_history;
+  int borrowed_closing,borrowed_attempted;
+#endif
 #endif
   int cpu_exposure_full; // metadata OOM/size fallback, never drops excluded pages
 } pool;
@@ -3525,6 +3537,9 @@ void mtl_finish(void) {
 #include "nvn_vk_pool_policy.inc"
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
 #include "nvn_vk_owned_fixture.inc"
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+#include "nvn_vk_borrowed_fixture.inc"
+#endif
 #endif
 void mtl_drain(void) { mtl_finish(); }
 #ifdef DM_VULKAN_TEST_EMBED

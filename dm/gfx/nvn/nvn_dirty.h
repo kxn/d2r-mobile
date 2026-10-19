@@ -57,6 +57,21 @@ typedef struct {
 } nvn_dirty_owned_exclusion;
 int nvn_dirty_owned_exclude(const void *addr, size_t len, nvn_dirty_owned_exclusion *token);
 int nvn_dirty_owned_release(nvn_dirty_owned_exclusion *token);
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+// Separate borrowed-storage contract. The original NVN pool caller retains
+// the complete, accessible mapping through pool Finalize; the backend closes
+// admission and removes all GPU/import references BEFORE releasing exclusion.
+// This does not acquire ownership of malloc or permit remapping a live lease.
+// Capture after original pool dirty registration. Exact whole pages only.
+typedef struct {
+    uint32_t slot, reserved;
+    uint64_t lifetime;
+    uintptr_t base;
+    size_t size;
+} nvn_dirty_pool_lease;
+int nvn_dirty_pool_lease_observe(const void *addr,size_t len,nvn_dirty_pool_lease *lease);
+int nvn_dirty_pool_lease_exclude(const nvn_dirty_pool_lease *lease,nvn_dirty_owned_exclusion *token);
+#endif
 #ifdef DM_DIRTY_RANGE_TEST_HOOKS
 typedef void (*nvn_dirty_owned_transition_hook)(const void *,int,void *);
 void nvn_dirty_test_owned_transition(nvn_dirty_owned_transition_hook hook,void *context);

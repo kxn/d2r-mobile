@@ -273,3 +273,11 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
 int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,int compute);
 
 int vk_ghost_cpu_draw_ready(vk_shader *const list[6],const vk_state *state,const p_draw *,const p_draw_idx *);
+
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+void vk_test_pool_borrow_enable(void);
+unsigned vk_test_pool_borrow_state(uint64_t address);
+void vk_test_pool_borrow_gate(uint64_t address,int release);
+void vk_test_pool_borrow_gate_wait(void);
+void vk_test_pool_borrow_wait_closing(uint64_t address);
+#endif

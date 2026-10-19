@@ -346,9 +346,10 @@ static void owned_publish(range_t *r,uintptr_t first,uintptr_t count) {
     while(latest<generation && !atomic_compare_exchange_weak(&r->latest,&latest,generation)) {}
     advance(&r->changes);advance(&g_changes);
 }
-int nvn_dirty_owned_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *token) {
+static int dirty_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *token,
+                         uint64_t lease_lifetime,uint32_t lease_slot) {
 #ifdef __APPLE__
-    (void)addr;(void)len;(void)token;return 0;
+    (void)addr;(void)len;(void)token;(void)lease_lifetime;(void)lease_slot;return 0;
 #else
     uintptr_t a=address(addr);
     if(!token || token->identity || token->lifetime || token->slot || token->reserved || token->base || token->size ||
@@ -356,7 +357,8 @@ int nvn_dirty_owned_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusio
         (a&(g_pg-1)) || (len&(g_pg-1)))return 0;
     pthread_mutex_lock(&g_slot_mu);
     range_t *r=find(a);
-    if(!r || len>r->end-a || atomic_load(&r->owned_identity) ||
+    if(!r || len>r->end-a || (lease_lifetime && (r!=g_r+lease_slot ||
+        atomic_load(&r->lifetime)!=lease_lifetime || r->base!=a || r->end-a!=len)) || atomic_load(&r->owned_identity) ||
         !atomic_load(&r->lifetime) || atomic_load(&r->lifetime)==UINT64_MAX ||
         atomic_load(&r->changes)==UINT64_MAX || g_owned_identity==UINT64_MAX ||
         (atomic_load(&r->owned_version)&1) || atomic_load(&r->owned_version)>UINT64_MAX-4) {
@@ -396,6 +398,26 @@ int nvn_dirty_owned_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusio
     pthread_mutex_unlock(&g_slot_mu);return 1;
 #endif
 }
+int nvn_dirty_owned_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *token) {
+    return dirty_exclude(addr,len,token,0,0);
+}
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+int nvn_dirty_pool_lease_observe(const void *addr,size_t len,nvn_dirty_pool_lease *lease) {
+    uintptr_t a=address(addr);
+    if(!lease || !g_pg || !len || len>UINTPTR_MAX-a || a%g_pg || len%g_pg)return 0;
+    int result=0;pthread_mutex_lock(&g_slot_mu);range_t *r=find(a);
+    if(r && r->base==a && r->end-a==len && atomic_load(&r->lifetime) &&
+        atomic_load(&r->lifetime)!=UINT64_MAX) {
+        *lease=(nvn_dirty_pool_lease){.slot=(uint32_t)(r-g_r),
+            .lifetime=atomic_load(&r->lifetime),.base=a,.size=len};result=1;
+    }
+    pthread_mutex_unlock(&g_slot_mu);return result;
+}
+int nvn_dirty_pool_lease_exclude(const nvn_dirty_pool_lease *lease,nvn_dirty_owned_exclusion *token) {
+    if(!lease || !lease->lifetime || lease->slot>=MAX_RANGE || lease->reserved)return 0;
+    return dirty_exclude((void *)lease->base,lease->size,token,lease->lifetime,lease->slot);
+}
+#endif
 int nvn_dirty_owned_release(nvn_dirty_owned_exclusion *token) {
     if(!token || !token->identity || !token->lifetime || token->slot>=MAX_RANGE || token->reserved)return 0;
     pthread_mutex_lock(&g_slot_mu);range_t *r=&g_r[token->slot];

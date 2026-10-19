@@ -57,3 +57,14 @@ option(DM_VULKAN_OWNED_NVN_FIXTURE "Build explicit self-owned readonly NVN impor
 if(DM_VULKAN_OWNED_NVN_FIXTURE)
   target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_OWNED_NVN_FIXTURE=1)
 endif()
+
+# Independent borrowed-lifetime prototype. Absent from default binaries.
+option(DM_VULKAN_BORROWED_NVN_FIXTURE "Build bounded borrowed NVN pool lifetime experiment" OFF)
+if(DM_VULKAN_BORROWED_NVN_FIXTURE)
+  if(NOT DM_VULKAN_OWNED_NVN_FIXTURE)
+    message(FATAL_ERROR "Borrowed experiment requires the isolated owned import implementation")
+  endif()
+  foreach(target vulkan_host_test dirty_owned_exclusion_test)
+    target_compile_definitions(${target} PRIVATE DM_VULKAN_BORROWED_NVN_FIXTURE=1)
+  endforeach()
+endif()

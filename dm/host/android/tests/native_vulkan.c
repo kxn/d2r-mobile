@@ -428,6 +428,9 @@ static void bright_test(NVNtexturePool *pool) {
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
 #include "native_vulkan_owned_nvn.inc"
 #endif
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+#include "native_vulkan_borrowed_nvn.inc"
+#endif
 #include "native_vulkan_store.inc"
 #include "native_vulkan_cover.inc"
 #include "native_vulkan_mip_cover.inc"
@@ -488,6 +491,11 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_astc_decode.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
+    vk_test_pool_borrow_enable();CHECK(!setenv("DM_VULKAN_POOL_WINDOW_BYTES","65536",1));
+  }
+#endif
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
   if(getenv("DM_OWNED_NVN_BUFFER_FIXTURE")) {
     vk_test_pool_owned_enable();CHECK(!setenv("DM_VULKAN_POOL_WINDOW_BYTES","65536",1));
@@ -546,6 +554,12 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
+    borrowed_nvn_buffer_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"borrowed-nvn-buffer\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
+  }
+#endif
   if(getenv("DM_BUFFER_HISTORY_FIXTURE")) {
     // Initialize the active submission policy before the existing partition
     // fixture checks it; neither oracle's byte assertions are changed.

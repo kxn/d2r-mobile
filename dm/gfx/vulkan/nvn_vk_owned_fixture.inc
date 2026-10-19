@@ -6,19 +6,32 @@ void vk_test_pool_owned_enable(void) {
   owned_fixture_requested=1;V.owned_fixture_active=1;vk_test_texture_owned_scopes(1);
 }
 int vk_test_pool_owned_supported(void) {return owned_fixture_supported;}
-int vk_test_pool_owned_attach(uint64_t address,uint64_t bytes) {
+static int pool_host_attach(uint64_t address,uint64_t bytes,int borrowed,uint64_t identity) {
   if(!owned_fixture_requested || !owned_fixture_supported || !owned_fixture_alignment ||
       !bytes || bytes>(16u<<20) || address%owned_fixture_alignment || bytes%owned_fixture_alignment ||
-      address%4096 || bytes%4096 || bytes>UINTPTR_MAX-address || V.cmd || pool_operation_depth)return 0;
+      address%4096 || bytes%4096 || bytes>UINTPTR_MAX-address || (!borrowed && V.cmd) || pool_operation_depth)return 0;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
-  if(!p || (uintptr_t)p->guest!=address || p->size!=bytes || p->references || p->backings || p->shadow ||
+  if(!p || (identity && p->identity!=identity) || (uintptr_t)p->guest!=address || p->size!=bytes || p->references || p->backings || p->shadow ||
       p->owned_readonly || V.options.pool_mirror_reference || !V.options.pool_window_bytes) {
     pthread_mutex_unlock(&V.resources);return 0;
   }
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed && (!p->borrowed_lease.lifetime || p->borrowed_closing || p->borrowed_history)) {
+    pthread_mutex_unlock(&V.resources);return 0;
+  }
+#else
+  if(borrowed) {pthread_mutex_unlock(&V.resources);return 0;}
+#endif
   pool_owned_readonly *certificate=calloc(1,sizeof *certificate);
   if(!certificate){pthread_mutex_unlock(&V.resources);return 0;}
   // Reject protected/busy/untracked pages BEFORE GUP, never unprotect/retry.
-  if(!nvn_dirty_owned_exclude(p->guest,bytes,&certificate->exclusion)) {
+  int excluded=0;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed)excluded=nvn_dirty_pool_lease_exclude(&p->borrowed_lease,&certificate->exclusion);
+  else
+#endif
+    excluded=nvn_dirty_owned_exclude(p->guest,bytes,&certificate->exclusion);
+  if(!excluded) {
     free(certificate);pthread_mutex_unlock(&V.resources);return 0;
   }
   vk_buffer fresh={.size=bytes,.map=p->guest,.owned_host_import=1};
@@ -75,6 +88,12 @@ int vk_test_pool_owned_attach(uint64_t address,uint64_t bytes) {
   LOG("[owned NVN fixture] imported bytes=%llu flags=%#x atom=%llu",(unsigned long long)bytes,
     fresh.properties,(unsigned long long)V.props.limits.nonCoherentAtomSize);
   pthread_mutex_unlock(&V.resources);return 1;
+}
+int vk_test_pool_owned_attach(uint64_t address,uint64_t bytes) {
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_fixture_requested)return 0; // cannot substitute explicit owned provenance
+#endif
+  return pool_host_attach(address,bytes,0,0);
 }
 static void owned_fixture_flush(pool *p,uint64_t first,uint64_t end) {
   vk_buffer *b=&p->whole.buffer;uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;

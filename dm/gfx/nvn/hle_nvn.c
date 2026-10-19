@@ -57,6 +57,9 @@
 
 static void x_cpu_exposure(uint64_t address,uint64_t size);
 static void x_trim_after_suspend(void);
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+static int x_borrow_close(uint64_t address,uint64_t size);
+#endif
 // Low-memory callbacks never initialize GPU, acquire backend locks or wait.
 static _Atomic int g_idle_trim_requested;
 void dm_gfx_trim_memory_request(void) {
@@ -219,12 +222,25 @@ NVN(nvnMemoryPoolBuilderSetFlags, void, NVNmemoryPoolBuilder *b, int f) { ((pool
 NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBuilder *b) {
     const pool_builder_t *s = (const pool_builder_t *)b; pool_t *o = (pool_t *)p;
     o->magic = MAGIC('P', 'O', 'O', 'L'); o->flags = s->flags; o->mem = s->mem; o->size = s->size;
-    if (o->mem) { mtl_pool_add_flags(o->mem, o->size, (int)o->flags); nvn_dirty_add_range(o->mem, o->size); }
+    if (o->mem) { mtl_pool_add_flags(o->mem, o->size, (int)o->flags); nvn_dirty_add_range(o->mem, o->size);
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+        mtl_pool_borrow_registered(o->mem,o->size);
+#endif
+    }
     if (!o->mem && !(o->flags & 0x200)) LOG("【红】MemoryPoolInitialize 非虚拟池没有存储 flags=%#x size=%#llx", o->flags, o->size);
     OLOG("MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, o->size, o->flags);
     return 1;
 }
-NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) { if (((pool_t *)p)->mem) { x_cpu_exposure((uintptr_t)((pool_t *)p)->mem,((pool_t *)p)->size); nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
+NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) {
+    pool_t *o=(pool_t *)p;
+    if(o->mem) {
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+        if(!x_borrow_close((uintptr_t)o->mem,o->size))
+#endif
+        {x_cpu_exposure((uintptr_t)o->mem,o->size);nvn_dirty_remove_range(o->mem);mtl_pool_del(o->mem);}
+    }
+    o->magic=0;
+}
 NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) { (void)p; (void)off; (void)n; }
 NVN(nvnMemoryPoolGetBufferAddress, NVNbufferAddress, const NVNmemoryPool *p) { return (NVNbufferAddress)((const pool_t *)p)->mem; }
 
@@ -362,7 +378,11 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8);
     nvn_tex_layout(&o->d, &o->L);
     o->mem = s->pool && s->pool->mem ? s->pool->mem + s->off : NULL;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    if(o->mem) // buffer/texel images are aliases too; retain cold history
+#else
     if(o->d.target!=NVN_TEXTURE_TARGET_BUFFER && o->mem)
+#endif
         x_cpu_exposure((uintptr_t)o->mem,o->L.size);
     o->serial = nvn_new_serial();
     OLOG("Texture %p %ux%ux%u lv%u fmt=%#x tgt=%d flags=%#x size=%#llx", (void *)t, o->d.width, o->d.height, o->d.depth,
@@ -628,6 +648,9 @@ NVN(nvnCommandBufferAddCommandMemory, void, NVNcommandBuffer *c, const NVNmemory
     const pool_t *pl = (const pool_t *)p;
     if (!pl || n < 64) { if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.hostseg++; pthread_mutex_unlock(&g_cs_mu); } cmd_new_segment(CB(c), hostseg_take(), HOSTSEG_SZ); return; }
     if (!pl->mem) { LOG("【红】AddCommandMemory 池没有 CPU 存储"); return; }
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    dm_gfx_borrow_before_cpu_change((uintptr_t)(pl->mem+off),n);
+#endif
     if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.grants++; g_cs.grant_bytes += n; if (!g_cs.grant_min || n < g_cs.grant_min) g_cs.grant_min = n; if (n > g_cs.grant_max) g_cs.grant_max = n; pthread_mutex_unlock(&g_cs_mu); }
     cmd_new_segment(CB(c), pl->mem + off, n);
 }
@@ -933,7 +956,7 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 // completes, so waiting for fence f means waiting until "f is translated and the GPU is done"; by the time the game reclaims command memory or rewrites objects by fence, the translation thread has long finished reading them.
 // Present tickets become this queue's job numbers: acquire first waits for that job to run, then waits on the present thread ticket it was swapped for. Setting the frame number is queued too: replay resets bloom sampling and other state by frame number,
 // which must not be changed by the game thread in the middle of translation. DM_NVN_SYNC=1: jobs run in place on the calling thread (the same execution function), as the control and measurement baseline.
-enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_CPU_EXPOSURE, XJ_READ_TEXELS, XJ_IDLE_TRIM };
+enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_CPU_EXPOSURE, XJ_READ_TEXELS, XJ_IDLE_TRIM, XJ_BORROW_CLOSE };
 typedef struct {tex_t texture;unsigned level,layer;NVNcopyRegion region;uint8_t *dest;size_t row,image;} x_texels;
 typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; int *cpu_access_result; const x_texels *read_texels; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
 #define XQ 32
@@ -991,6 +1014,12 @@ static void x_run(const xjob *j, uint64_t job) {
         mtl_read_texels(&r->texture,r->level,r->layer,&r->region,r->dest,r->row,r->image);
         g_x_owner=prior_owner;return;
     }
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    if(j->kind==XJ_BORROW_CLOSE) {
+        mtl_pool_borrow_owner_close((uintptr_t)j->h,j->frame,j->host);
+        g_x_owner=prior_owner;return;
+    }
+#endif
     if(j->kind==XJ_CPU_EXPOSURE) {
         *j->cpu_access_result=mtl_pool_cpu_access((uintptr_t)j->h,j->frame,j->host);
         g_x_owner=prior_owner;return;
@@ -1084,6 +1113,9 @@ static void x_trim_after_suspend(void) {
 }
 static void x_cpu_exposure(uint64_t address,uint64_t size) {
     if(!size)return;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    mtl_pool_borrow_mark(address,size,0); // exclude delayed aliases before first import
+#endif
     if(size>UINT64_MAX-address)die("NVN CPU exposure address overflow");
     uint64_t end=address+size,cursor=address;
     while(cursor<end) {
@@ -1102,6 +1134,21 @@ static void x_cpu_exposure(uint64_t address,uint64_t size) {
         cursor=begin+bytes; // progress even if authority metadata OOM remains conservative
     }
 }
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+void dm_gfx_borrow_before_cpu_change(uint64_t address,uint64_t size) {
+    x_cpu_exposure(address,size);
+}
+static int x_borrow_close(uint64_t address,uint64_t size) {
+    uint64_t identity=mtl_pool_borrow_mark(address,size,1);
+    if(!identity)return 0;
+    if(g_x_owner)mtl_pool_borrow_owner_close(address,size,identity);
+    else {
+        gfx_enter();xjob j={.kind=XJ_BORROW_CLOSE,.h=(uint64_t *)(uintptr_t)address,.frame=size,.host=identity};
+        x_wait(x_push(&j));gfx_leave();
+    }
+    return 1;
+}
+#endif
 static void x_read_texels(const tex_t *texture,unsigned level,unsigned layer,
                           const NVNcopyRegion *region,uint8_t *dest,size_t row,size_t image) {
     x_texels request={*texture,level,layer,*region,dest,row,image};

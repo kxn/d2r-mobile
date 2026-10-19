@@ -8,6 +8,9 @@ typedef struct {
   size_t count,pin_count;
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
   uint64_t owned_address,owned_size,owned_identity;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  uint64_t borrowed_address,borrowed_size,borrowed_identity;
+#endif
 #endif
 } pool_operation_plan;
 static pool_operation_plan *pool_operation_plans[POOL_OPERATION_DEPTH];
@@ -95,7 +98,14 @@ static int pool_operation_pin(pool_operation_plan *plan) {
     }
     if(!p)p=pool_find(r->address,r->size);
     pool_span_piece span;
-    if(!p || !pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span)) {good=0;break;}
+    if(!p) {good=0;break;}
+    if(!pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span)) {
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+      borrowed_missing_admit(p,plan->ranges,plan->count,&plan->borrowed_address,
+        &plan->borrowed_size,&plan->borrowed_identity);
+#endif
+      good=0;break;
+    }
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
     if(p->owned_readonly && !p->owned_readonly->retired &&
         (r->writable || (r->binding_kind!=1 && r->binding_kind!=VK_POOL_REQUIRE_VERTEX))) {
@@ -195,6 +205,9 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
     plan->count=0;
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
     plan->owned_identity=0;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    plan->borrowed_identity=0;
+#endif
 #endif
     uint64_t descriptors=vk_texture_descriptor_epoch();
     if(!collect(context,pool_operation_add,plan))pool_operation_whole_plan(plan,"operation enumeration");
@@ -208,6 +221,12 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
       }
       pool_operation_unpin(plan);continue;
     }
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    if(plan->borrowed_identity) {
+      borrowed_before_import(plan->borrowed_address);
+      pool_host_attach(plan->borrowed_address,plan->borrowed_size,1,plan->borrowed_identity);continue;
+    }
+#endif
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
     if(plan->owned_identity) {
       if(owned_fixture_retire(plan->owned_address,plan->owned_size,plan->owned_identity)<0)
@@ -230,6 +249,12 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
     pool_window_added_bytes+=result.added_buffer_bytes;pool_window_added_spans+=result.added_spans;
     if(descriptors!=vk_texture_descriptor_epoch())continue;
     if(!pool_operation_pin(plan)) {
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+      if(plan->borrowed_identity) {
+        borrowed_before_import(plan->borrowed_address);
+        pool_host_attach(plan->borrowed_address,plan->borrowed_size,1,plan->borrowed_identity);continue;
+      }
+#endif
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
       if(plan->owned_identity && owned_fixture_retire(plan->owned_address,plan->owned_size,plan->owned_identity)<0)
         die("Vulkan owned reserved retirement identity changed");
