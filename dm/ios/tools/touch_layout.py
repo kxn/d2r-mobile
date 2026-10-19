@@ -12,7 +12,7 @@ OFF = '"rect": { "x": 99999, "y": 99999, "width": 1, "height": 1 }'
 
 def _read_entry(romfs, f):
     ek = bytes.fromhex(f[6]); raw_len = int(f[7])
-    with open(os.path.join(romfs, 'data', '%02d-%08d.data' % (ek[9], ek[10])), 'rb') as s: s.seek(int.from_bytes(ek[11:16], 'big')); raw = s.read(raw_len)
+    with open(os.path.join(romfs, 'data', '%02d-%08x.data' % (ek[9], ek[10])), 'rb') as s: s.seek(int.from_bytes(ek[11:16], 'big')); raw = s.read(raw_len)
     if f[8] == 'z': data = zlib.decompress(raw)
     elif f[8] == 'n': data = raw
     else:
@@ -58,7 +58,7 @@ def read_layout(romfs, rel, suffix=None):
         f = line.rstrip('\n').split('|')
         if len(f) < 11 or line.startswith('#') or not f[9].lower().endswith(want): continue
         ek = bytes.fromhex(f[6]); raw_len = int(f[7])
-        with open(os.path.join(romfs, 'data', '%02d-%08d.data' % (ek[9], ek[10])), 'rb') as s: s.seek(int.from_bytes(ek[11:16], 'big')); raw = s.read(raw_len)
+        with open(os.path.join(romfs, 'data', '%02d-%08x.data' % (ek[9], ek[10])), 'rb') as s: s.seek(int.from_bytes(ek[11:16], 'big')); raw = s.read(raw_len)
         if f[8] == 'z': data = zlib.decompress(raw)
         elif f[8] == 'n': data = raw
         else:

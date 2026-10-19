@@ -3,7 +3,7 @@
 
 存储布局（实测）：
   build_manifest.psv 每行 = FileId|KeyLayout|Chunk|Archive|CKey|CSize|EKey|ESize|Encoding|Path|Flags
-  数据文件 = <Chunk:02d>-<Archive:08d>.data
+  数据文件 = <Chunk:02d>-<Archive:08x>.data
   偏移   = EKey 末 5 字节（大端 40 位；key-layout-0 = 8 8 40 1 → EKey[9]=Chunk, EKey[10]=Archive, EKey[11:16]=偏移）
   编码   n          → 原样 CSize 字节
          z          → 一整段 zlib（无 BLTE 头）
@@ -15,7 +15,7 @@
   Minimal extractor for Switch D2R RomFS storage (read-only).
   Storage layout (measured):
     build_manifest.psv each line = FileId|KeyLayout|Chunk|Archive|CKey|CSize|EKey|ESize|Encoding|Path|Flags
-    data file = <Chunk:02d>-<Archive:08d>.data
+    data file = <Chunk:02d>-<Archive:08x>.data
     offset   = last 5 bytes of EKey (big-endian 40 bits; key-layout-0 = 8 8 40 1 → EKey[9]=Chunk, EKey[10]=Archive, EKey[11:16]=offset)
     encoding n          → CSize bytes as is
            z          → one whole zlib segment (no BLTE header)
@@ -60,7 +60,7 @@ def lookup(path):
 def _fh(chunk, arch):
     key = (chunk, arch)
     if key not in _FH:
-        _FH[key] = open(os.path.join(ROOT, f"{chunk:02d}-{arch:08d}.data"), "rb")
+        _FH[key] = open(os.path.join(ROOT, f"{chunk:02d}-{arch:08x}.data"), "rb")
     return _FH[key]
 
 

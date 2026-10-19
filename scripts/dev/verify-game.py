@@ -10,8 +10,8 @@ EXPECTED = {
     'sdk': '1c9f198a91c0bcfee5cf8f5b53fb941895e91334dfb766ce79fc68576797f017',
     'subsdk0': '67a38fcf89cd13e040a021eb3d157072f38ebf6680a907874c35c7b231b5d4e2',
 }
-ARCHIVES = ([f'00-{i:08d}' for i in range(1, 7)] +
-            [f'{group:02d}-{i:08d}' for group in [1, 2, 3, 4, 5, 17] for i in [1, 2]])
+ARCHIVES = ([f'00-{i:08x}' for i in range(1, 7)] +
+            [f'{group:02d}-{i:08x}' for group in [1, 2, 3, 4, 5, 17] for i in [1, 2]])
 
 
 def verify(root):
