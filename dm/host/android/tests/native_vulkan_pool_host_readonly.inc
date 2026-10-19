@@ -21,6 +21,20 @@ static void pool_host_fill(uint8_t *destination,unsigned size,uint32_t value) {
   int operation=vk_pool_operation_begin_ranges(&need,1);
   pool_window_fill(destination,size,value);vk_pool_operation_end(operation);
 }
+static void pool_host_rewrite_evidence(const char *phase,const uint8_t *actual,const uint8_t *expected,
+    size_t size,const vk_pool_copy_stats *before,int coherent) {
+  vk_pool_copy_stats after;vk_pool_copy_snapshot(&after);
+  size_t first=0;while(first<size && actual[first]==expected[first])first++;
+  printf("{\"test_details\":\"readonly-publication-bytes\",\"phase\":\"%s\",\"host_coherent\":%s,"
+    "\"flush_calls\":%llu,\"flush_bytes\":%llu,\"first_mismatch\":%lld,\"actual\":%u,\"expected\":%u}\n",
+    phase,coherent?"true":"false",(unsigned long long)(after.host_flush_calls-before->host_flush_calls),
+    (unsigned long long)(after.host_flush_bytes-before->host_flush_bytes),
+    first<size?(long long)first:-1ll,first<size?actual[first]:0,first<size?expected[first]:0);
+  if(before->enabled && !coherent) {
+    CHECK(after.host_flush_calls>before->host_flush_calls);
+    CHECK(after.host_flush_bytes-before->host_flush_bytes>=4096);
+  }
+}
 static void pool_host_readonly_test(void) {
   mtl_init();
   CHECK(V.options.pool_host_readonly && V.options.pool_window_bytes==4096);
@@ -72,7 +86,9 @@ static void pool_host_readonly_test(void) {
   // Overlapping CPU edits are made only AFTER completion, then published by
   // the subsequent ordinary QueueSubmit, exactly as shared NoCopy requires.
   dm_guest_write_prepare(storage+128,32);memset(storage+128,0xa6,32);memcpy(expected,storage+128,256);
+  vk_pool_copy_stats rewrite_before;vk_pool_copy_snapshot(&rewrite_before);
   mtl_sub_begin();pool_host_read(storage+128,256,out);vk_internal_wait(vk_internal_commit());
+  pool_host_rewrite_evidence("dirty-prepare",out,expected,256,&rewrite_before,coherent);
   CHECK(!memcmp(out,expected,256));CHECK(vk_pool_host_pinned_bytes()==4096);
   CHECK(nvn_dirty_since(storage,4096,dirty_stamp));
   CHECK(vk_pool_span_query((uintptr_t)storage+128,256,&pinned_after)==VK_POOL_SPAN_SINGLE);
@@ -84,7 +100,9 @@ static void pool_host_readonly_test(void) {
   dirty_stamp=nvn_dirty_now();nvn_dirty_protect(storage,4096);
   storage[128]^=0x37;storage[159]^=0x6a;memcpy(expected,storage+128,256);
   CHECK(nvn_dirty_since(storage,4096,dirty_stamp));
+  vk_pool_copy_snapshot(&rewrite_before);
   mtl_sub_begin();pool_host_read(storage+128,256,out);vk_internal_wait(vk_internal_commit());
+  pool_host_rewrite_evidence("dirty-fault",out,expected,256,&rewrite_before,coherent);
   CHECK(!memcmp(out,expected,256));
   CHECK(vk_pool_span_query((uintptr_t)storage+128,256,&pinned_after)==VK_POOL_SPAN_SINGLE);
   CHECK(pinned_before.handle==pinned_after.handle &&

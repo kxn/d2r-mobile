@@ -118,3 +118,22 @@ memcmp断言失败（测试原第76行）。未放宽断言、未重试 GUP；�
 额外增加 HOST barrier。标准 QueueSubmit 对已发布的 HOST 写提供依赖；kbase 队列
 源码也已有提交前 GPU 缓存失效。需继续用已有字节 fixture 核对每次实际 Flush、
 修改字节及队列缓存处理，区分漏刷新、驱动隐式依赖和映射问题。原失败产物保留。
+
+
+### 隐式 HOST 发布的独立标准接口对照
+
+标准自有页 oracle 沿用 `07ec8d8` 的真实 memory type 查询、长期映射及非 coherent
+Flush/Invalidate。默认保留原 HOST_WRITE→TRANSFER_READ barrier；单独 cold 环境
+`DM_VULKAN_HOST_IMPORT_IMPLICIT_HOST=1` 或 Android 测试 Intent
+`host_import_test=true, host_import_implicit_host=true` 只省掉这一冗余 barrier，
+其余 transfer hazard、GPU→HOST barrier、timeline gate、Fence、生命周期和所有
+原字节断言保持不变。独立 JNI 配置入口不改 `nativeTests` 的现有参数。
+
+[Khronos 的 HOST write ordering 规范](https://docs.vulkan.org/spec/latest/chapters/synchronization.html#synchronization-submission-host-writes)
+和[同步示例](https://docs.vulkan.org/guide/latest/synchronization_examples.html)说明：
+已 Flush 的 HOST 写通过 QueueSubmit 获得到设备访问的依赖，普通 transfer 不必
+额外补 HOST barrier。这个对照是检验驱动是否满足该合同，不是改变一般 API 语义。
+同一原只读池 fixture 另记录已有逻辑 Flush 计数差值及首个不符字节，保留原 memcmp
+断言；这些是有限页功能证据，不是新计时器或采样器。宿主 Lavapipe 官方 VVL/sync
+两种标准模式各57,747检查、原只读池118检查通过，但实际均为 coherent 内存。
+Mali 上的隐式依赖或 dirty 失败原因仍需另行验收，不能据宿主结果认定修复完成。
