@@ -102,3 +102,19 @@ Android 受限 fixture 追加 cold Intent `pool_host_noncoherent=true`，只允�
 Lavapipe 选到 coherent 内存时不能算非 coherent 路径通过。后续真机验收必须包括
 先成功 pin、原 dirty protect、原 prepare/direct fault 合法 CPU 写、原 GPU 读，以及
 跨 imported backing 迁移读；Mali 测试须另协调租约。
+
+
+### ab9bcd0 的 Mali 首次非 coherent 池验证：失败，继续保持默认关闭
+
+使用固定 PanVK USER_BUFFER 驱动 `bdd9df32` 与 APK `c20b2096`，普通 UID10174
+实际选择 flags0xb、coherent=false、atom64。首次 GPU 读取正确，初始镜像复制为0、
+shadow为4096字节；首轮标准 Flush 的原计数断言通过。在 GPU 完成后经原 dirty
+保护、原 `dm_guest_write_prepare` 和32字节 CPU 改写，第二次 GPU 读取的原256字节
+memcmp断言失败（测试原第76行）。未放宽断言、未重试 GUP；后续 direct-fault、
+迁移与正常退役案例尚未执行，不可称为通过。游戏 APK 与267个原私有文件的哈希
+已恢复，测试进程退出。设备不空跑。
+
+这尚不能证明 mprotect 本身改变了 GPU 映射，也不能认定必须给普通 Vulkan upload
+额外增加 HOST barrier。标准 QueueSubmit 对已发布的 HOST 写提供依赖；kbase 队列
+源码也已有提交前 GPU 缓存失效。需继续用已有字节 fixture 核对每次实际 Flush、
+修改字节及队列缓存处理，区分漏刷新、驱动隐式依赖和映射问题。原失败产物保留。
