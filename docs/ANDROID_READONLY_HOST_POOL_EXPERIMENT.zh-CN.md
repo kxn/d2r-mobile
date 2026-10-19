@@ -50,3 +50,6 @@ Android 普通 app UID 的显式入口：`run_game=false, run_vulkan_tests=true,
 无 validation layer 时，若驱动支持 `VK_EXT_debug_utils`，实验启用官方驱动诊断 callback 以保留原始错误原因；这不是 VUID/同步验证覆盖。若驱动不支持 debug-utils，不影响 Buffer fallback 逻辑，也不得伪造底层 errno。
 
 Android fixture 使用原冷启动 window setter 明确选择4KiB，避免 Activity 普通16MiB默认值优先于环境变量；只改变测试模式，普通游戏默认不变。
+
+
+成功 pin 后另有两条有限页功能路径：先等原 GPU Fence，再原 `nvn_dirty_protect`，分别通过原 `dm_guest_write_prepare` 和原 SIGSEGV dirty hook 合法写入同一字节，然后 GPU 读取原 imported VkBuffer。检查 handle/generation 不变、import attempt 不增加和 GPU 字节等于新 CPU 值。这验证该次实际缓存/映射行为，不读取 PFN，也不把任意 fork/COW/madvise/unmap 的稳定性概括为已经证明。已经受保护导致首次导入失败的页面仍不解保护重试。

@@ -49,11 +49,35 @@ static void pool_host_readonly_test(void) {
   dm_guest_write_prepare(storage+1024,4);memset(storage+1024,0x7b,4);
   if(gate)pool_copy_signal(&gate);
   vk_internal_wait(serial);if(gate)vkDestroySemaphore(V.device,gate,NULL);CHECK(!memcmp(out,expected,256));
+  // Successful writable pin -> original dirty protect -> host write-prepare
+  // is a different path from importing an already protected mapping. The
+  // original imported handle must remain; no GUP retry or replacement allowed.
+  vk_pool_span_info pinned_before,pinned_after;
+  CHECK(vk_pool_span_query((uintptr_t)storage+128,256,&pinned_before)==VK_POOL_SPAN_SINGLE);
+  uint64_t successful_attempts=vk_test_pool_host_attempts(),dirty_stamp=nvn_dirty_now();
+  nvn_dirty_protect(storage,4096);
   // Overlapping CPU edits are made only AFTER completion, then published by
   // the subsequent ordinary QueueSubmit, exactly as shared NoCopy requires.
   dm_guest_write_prepare(storage+128,32);memset(storage+128,0xa6,32);memcpy(expected,storage+128,256);
   mtl_sub_begin();pool_host_read(storage+128,256,out);vk_internal_wait(vk_internal_commit());
   CHECK(!memcmp(out,expected,256));CHECK(vk_pool_host_pinned_bytes()==4096);
+  CHECK(nvn_dirty_since(storage,4096,dirty_stamp));
+  CHECK(vk_pool_span_query((uintptr_t)storage+128,256,&pinned_after)==VK_POOL_SPAN_SINGLE);
+  CHECK(pinned_before.handle==pinned_after.handle &&
+    pinned_before.backing_generation==pinned_after.backing_generation);
+  CHECK(vk_test_pool_host_attempts()==successful_attempts);
+  // Also exercise an ordinary guest-style CPU store through the original
+  // dirty SIGSEGV hook. No custom fault handler, page remap or private copy.
+  dirty_stamp=nvn_dirty_now();nvn_dirty_protect(storage,4096);
+  storage[128]^=0x37;storage[159]^=0x6a;memcpy(expected,storage+128,256);
+  CHECK(nvn_dirty_since(storage,4096,dirty_stamp));
+  mtl_sub_begin();pool_host_read(storage+128,256,out);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(out,expected,256));
+  CHECK(vk_pool_span_query((uintptr_t)storage+128,256,&pinned_after)==VK_POOL_SPAN_SINGLE);
+  CHECK(pinned_before.handle==pinned_after.handle &&
+    pinned_before.backing_generation==pinned_after.backing_generation);
+  CHECK(vk_test_pool_host_attempts()==successful_attempts && vk_pool_host_pinned_bytes()==4096);
+  printf("{\"test\":\"readonly-successful-pin-dirty-cycle\",\"host_prepare_cycles\":1,\"fault_cycles\":1,\"same_backing_handle\":true,\"repeat_imports\":0}\n");
   // A real writable requirement demotes before obtaining its destination
   // handle; subsequent legacy known/readback publication remains unchanged.
   mtl_sub_begin();pool_host_fill(storage+128,64,0x12345678);
