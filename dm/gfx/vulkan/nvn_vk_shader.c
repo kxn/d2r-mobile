@@ -1202,6 +1202,62 @@ void vk_shader_prepare_images(vk_shader *const list[6],int compute) {
       vk_texture_prepare_binding(handle & 0xfffff,b->kind==4,vk_stage(stage));
     }
 }
+// Only immutable-content misses need the Vulkan update arrays. Keep their
+// stack storage and driver calls out of the much more frequent binding/cache
+// path; all resource resolution and dependencies remain in that original path.
+static __attribute__((noinline)) VkDescriptorSet descriptor_create_selected(
+    vk_shader *s,int dynamic,VkDescriptorSetLayout layout,const descriptor_value *values,
+    descriptor_content *last,descriptor_history_entry **history,uint64_t hash,size_t key_bytes) {
+  descriptor_payload payload[128];
+  for(uint32_t n=0;n<s->nb;n++) {
+    int kind=s->bindings[n].kind;
+    const descriptor_value *value=&values[n];
+    if(kind==0 || kind==1 || kind==2 || kind==8 || kind==VK_BINDING_TEXEL_STORAGE)
+      payload[n].buffer=(VkDescriptorBufferInfo){
+        .buffer=(VkBuffer)(uintptr_t)value->object,.offset=value->offset,.range=value->range};
+    else if((kind>=3 && kind<=6) || kind==VK_BINDING_PIXEL_LOCAL)
+      payload[n].image=(VkDescriptorImageInfo){
+        .sampler=(VkSampler)(uintptr_t)value->offset,.imageView=(VkImageView)(uintptr_t)value->object,
+        .imageLayout=(VkImageLayout)value->range};
+    else payload[n].texel=(VkBufferView)(uintptr_t)value->object;
+  }
+  VkDescriptorSet set=vk_descriptor_allocate(layout);
+  VkDescriptorUpdateTemplate update=s->descriptor_templates[dynamic];
+  if(update && !atomic_load(&descriptor_template_reference)) {
+    // Immutable schema/packing is compiled once. This set is fresh/private;
+    // dependencies and full value equality above are identical to reference.
+    vkUpdateDescriptorSetWithTemplate(V.device,set,update,payload);
+  } else {
+    VkWriteDescriptorSet writes[128];
+    for(uint32_t n=0;n<s->nb;n++) {
+      const vk_binding *b=&s->bindings[n];
+      writes[n]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet=set,.dstBinding=b->binding,.descriptorCount=1,
+        .descriptorType=dynamic && s->dynamic_uniform_ordinals[dynamic-1][n]?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:descriptor_type(b)};
+      if(b->kind==0 || b->kind==1 || b->kind==2 || b->kind==8 || b->kind==VK_BINDING_TEXEL_STORAGE)writes[n].pBufferInfo=&payload[n].buffer;
+      else if((b->kind>=3 && b->kind<=6) || b->kind==VK_BINDING_PIXEL_LOCAL)writes[n].pImageInfo=&payload[n].image;
+      else writes[n].pTexelBufferView=&payload[n].texel;
+    }
+    vkUpdateDescriptorSets(V.device,s->nb,writes,0,NULL);
+  }
+  last->shader=s;last->layout=layout;last->set=set;memcpy(last->values,values,key_bytes);
+  if(history) {
+    descriptor_history_entry *entry=*history;
+    if(!entry || entry->capacity<s->nb) {
+      size_t old_bytes=entry?sizeof *entry+(size_t)entry->capacity*sizeof *entry->values:0;
+      size_t bytes=sizeof *entry+key_bytes;
+      descriptor_history_entry *grown=realloc(entry,bytes);
+      if(!grown)die("Vulkan descriptor history allocation");
+      entry=*history=grown;entry->capacity=s->nb;
+      atomic_fetch_add(&descriptor_history_bytes,bytes-old_bytes);
+    }
+    entry->shader=s;entry->layout=layout;entry->set=set;
+    entry->hash=hash;entry->epoch=binding_state->descriptor_history_epoch;
+    memcpy(entry->values,values,key_bytes);
+  }
+  shader_recorded.descriptor_content_misses += 1;
+  return set;
+}
 static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection,const VkImageView *local_views,const VkImageLayout *local_layouts) {
   // The immutable dynamic schema assigns every ordinal 0..count-1 once.
@@ -1437,55 +1493,7 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
   // immutable key above already contains every field, including the aligned
   // dynamic descriptor offset; cache hits must not build an unused second
   // 24-byte representation for each binding. Never defer resource work.
-  descriptor_payload payload[128];
-  for(uint32_t n=0;n<s->nb;n++) {
-    int kind=s->bindings[n].kind;
-    const descriptor_value *value=&values[n];
-    if(kind==0 || kind==1 || kind==2 || kind==8 || kind==VK_BINDING_TEXEL_STORAGE)
-      payload[n].buffer=(VkDescriptorBufferInfo){
-        .buffer=(VkBuffer)(uintptr_t)value->object,.offset=value->offset,.range=value->range};
-    else if((kind>=3 && kind<=6) || kind==VK_BINDING_PIXEL_LOCAL)
-      payload[n].image=(VkDescriptorImageInfo){
-        .sampler=(VkSampler)(uintptr_t)value->offset,.imageView=(VkImageView)(uintptr_t)value->object,
-        .imageLayout=(VkImageLayout)value->range};
-    else payload[n].texel=(VkBufferView)(uintptr_t)value->object;
-  }
-  VkDescriptorSet set=vk_descriptor_allocate(layout);
-  VkDescriptorUpdateTemplate update=s->descriptor_templates[dynamic];
-  if(update && !atomic_load(&descriptor_template_reference)) {
-    // Immutable schema/packing is compiled once. This set is fresh/private;
-    // dependencies and full value equality above are identical to reference.
-    vkUpdateDescriptorSetWithTemplate(V.device,set,update,payload);
-  } else {
-    VkWriteDescriptorSet writes[128];
-    for(uint32_t n=0;n<s->nb;n++) {
-      const vk_binding *b=&s->bindings[n];
-      writes[n]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet=set,.dstBinding=b->binding,.descriptorCount=1,
-        .descriptorType=dynamic && s->dynamic_uniform_ordinals[dynamic-1][n]?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:descriptor_type(b)};
-      if(b->kind==0 || b->kind==1 || b->kind==2 || b->kind==8 || b->kind==VK_BINDING_TEXEL_STORAGE)writes[n].pBufferInfo=&payload[n].buffer;
-      else if((b->kind>=3 && b->kind<=6) || b->kind==VK_BINDING_PIXEL_LOCAL)writes[n].pImageInfo=&payload[n].image;
-      else writes[n].pTexelBufferView=&payload[n].texel;
-    }
-    vkUpdateDescriptorSets(V.device,s->nb,writes,0,NULL);
-  }
-  last->shader=s;last->layout=layout;last->set=set;memcpy(last->values,values,key_bytes);
-  if(history) {
-    descriptor_history_entry *entry=*history;
-    if(!entry || entry->capacity<s->nb) {
-      size_t old_bytes=entry?sizeof *entry+(size_t)entry->capacity*sizeof *entry->values:0;
-      size_t bytes=sizeof *entry+key_bytes;
-      descriptor_history_entry *grown=realloc(entry,bytes);
-      if(!grown)die("Vulkan descriptor history allocation");
-      entry=*history=grown;entry->capacity=s->nb;
-      atomic_fetch_add(&descriptor_history_bytes,bytes-old_bytes);
-    }
-    entry->shader=s;entry->layout=layout;entry->set=set;
-    entry->hash=hash;entry->epoch=binding_state->descriptor_history_epoch;
-    memcpy(entry->values,values,key_bytes);
-  }
-  shader_recorded.descriptor_content_misses += 1;
-  return set;
+  return descriptor_create_selected(s,dynamic,layout,values,last,history,hash,key_bytes);
 }
 VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection) {
