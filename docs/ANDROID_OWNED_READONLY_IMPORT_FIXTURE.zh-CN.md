@@ -11,3 +11,13 @@
 宿主 Lavapipe + 官方 Khronos validation/synchronization validation 的结果仅验证 coherent API 路径与状态机；Android 非 coherent、kbase 物理页寿命必须单独在固定实验 driver 和普通 app UID 验证。任何通过都不证明实际游戏节省内存、带宽、FPS 或发热，也不能把旧 dirty-COW 失败删掉。
 
 生产路径仍未启用：有限只读池要补齐所有 image/GPU writer/CPU effect/alias 的 quiescent demote、历史 submission 引用与失败回退。首层 API 在普通路径新增静态空间和原子读取成本尚无收益闭合，保持独立，不合主线。
+
+## 固定组合的真机结果
+
+2026-10-20，source `2a86557a04e24f83ff6ffb64e7a7a6278a20be24` 的独立 `com.d2rmobile.hostimportfixture` 包（原 Java/JNI 类名保持 `com.d2rmobile.nativeport`）在 Mali-G710 MC10 普通 app UID 10218 通过 98,684 项字节/状态检查。APK SHA256 `c3662c7a65e72eae5008d8e0203e1fd1cd3736baf9d1263b58b3abf6c7ea0628`；实验 PanVK driver SHA256 `bdd9df32c38f7c82fb58d815d6a021e8641a545f9fdb1b401416d6908d265d5d`。
+
+四次独立 8192 字节生命周期均实际选中 type 2、flags `0xb`（HOST_CACHED、非 coherent）、atom 64、导入对齐 4096。每次三轮 CPU 改写，经原 Flush 和每轮两个 pending 提交后，独立 GPU copy 的每个字节均正确；直接写和原 write_prepare 都未触发被排除页的保护。四次退 pin 后 release，原 prepare 与写故障均恢复。初始 PROT 负例在 exclusion 阶段拒绝，未尝试 import、未解保护重试。
+
+此次仅一次安装、一次功能启动。Oplus 的首次安装扫描页需要对同一 pending 安装点击明确 Install；未重新调用安装或重跑功能。测试包已停机并卸载；原游戏 APK `574bddd0…`、28 个模块文件及 shaderchain `cbd8d2da0b0f` 前后只读核验一致，原游戏进程为空。没有加载真实游戏模块、没有执行生产 NVN pool、没有改存档/资源/设置；Android 校验层显式关闭。宿主另有官方 Khronos VVL+sync coherent 路径 98,635 项通过，不能冒充 Android VVL 或非 coherent 校验。
+
+原 dirty-COW 失败和断言仍保留；本结果仅支持该自有页生命周期方案，不证明实际 PFN/COW 根因，也不证明任意 malloc/VMA 可用。生产只读池的别名、image/writer/CPU effect 预先 quiescent demote、历史提交生命周期和失败回退尚未闭合，继续默认关闭。忽略目录下的完整真机报告为 `.local/logs/panvk-owned-readonly-combined-v1-actual-validation.json`（SHA256 `e556ede0b7521b4f6b6d52ecb2a2996154f7782ed0d70f8e4c84273505133821`）。
