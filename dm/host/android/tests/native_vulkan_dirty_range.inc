@@ -54,6 +54,9 @@ static void texture_range_dirty_proof_test(void) {
   dirty_range_fill(a.data,4096,red);dirty_range_fill(a.data+65536,4096,green);
   dirty_range_fill(b.data,4096,blue);
   dirty_range_pixels(&a.tex[0],red);dirty_range_pixels(&a.tex[1],green);dirty_range_pixels(&b.tex[0],blue);
+  // Same-value selection after live GPU image creation MUST remain a no-op,
+  // both for this isolated mode and the original late full-suite invocation.
+  vk_test_texture_owned_scopes(renderer_scoped);
   dirty_range_pixels(&a.tex[0],red); // acquire negative range proof after initial upload
   nvn_dirty_range_proof before,after;CHECK(nvn_dirty_range_observe(a.data,4096,&before));
   uint64_t hits,dirty_checks,hits2,checks2;vk_texture_dirty_stats(&hits,&dirty_checks);
