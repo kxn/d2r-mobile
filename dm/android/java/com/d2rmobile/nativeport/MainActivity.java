@@ -40,6 +40,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeShaderPresent(boolean enabled);
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
+    private static native void nativePixelLocal(boolean enabled);
     private static native void nativePerformanceHintReference(boolean reference);
     private static native void nativeImageLayoutReference(boolean reference);
     private static native void nativeSampledArrayLayoutReference(boolean reference);
@@ -129,6 +130,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // lifetime. Explicit SDK/shadow references remain available; Activity
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
+            nativePixelLocal(getIntent().getBooleanExtra("pixel_local", false));
             // Native pool backing is selected before Vulkan initialization only.
             // No extra leaves the C startup environment/default unchanged.
             if (getIntent().hasExtra("pool_window_bytes")) {
@@ -279,6 +281,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("pool_window_bytes")) {
             android.util.Log.w("D2RPool", "pool_window_bytes is startup-only; cold restart required");
             intent.removeExtra("pool_window_bytes");
+        }
+        if (intent.hasExtra("pixel_local")) {
+            android.util.Log.w("D2RPixelLocal", "pixel_local is startup-only; cold restart required");
+            intent.removeExtra("pixel_local");
         }
         setIntent(intent);
         if (intent.hasExtra("display_refresh_hz")) {

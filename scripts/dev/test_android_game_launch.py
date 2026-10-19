@@ -60,6 +60,18 @@ class PoolWindowLaunchTests(unittest.TestCase):
         self.assertIn('startup-only', stderr.getvalue())
         adb.assert_not_called()
 
+    def test_attach_cannot_change_pixel_local_module_identity(self):
+        for option in ('--pixel-local', '--no-pixel-local'):
+            with self.subTest(option=option), \
+                    patch('sys.argv', [str(LAUNCHER), '--attach', option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr, \
+                    self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER), run_name='__main__')
+            self.assertEqual(caught.exception.code, 2)
+            self.assertIn('startup-only', stderr.getvalue())
+            adb.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

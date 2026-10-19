@@ -3,6 +3,7 @@
 #include "../../gfx/vulkan/nvn_vk_window.h"
 #include "../../gfx/vulkan/nvn_vk_freeze.h"
 #include "../../gfx/vulkan/nvn_vk_extrap.h"
+#include "../../gfx/vulkan/nvn_vk_pixel_local.h"
 #include "dm.h"
 #include "opus_shadow.h"
 #include "dm_guest_player.h"
@@ -461,6 +462,8 @@ static void observe_tick(const uint64_t *registers) {
       (unsigned long long)pool_count,(unsigned long long)pool_materialized,
       (unsigned long long)vk_pool_initialized_bytes());
     void vk_pool_window_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+    // Immutable backend selection, not a draw/GPU timing measurement.
+    fprintf(state_log, ",\"pixel_local\":{\"enabled\":%s}",vk_pixel_local_enabled()?"true":"false");
     uint64_t vk_pool_window_fallbacks(void);
     uint64_t window_bytes,window_admissions,window_added_bytes,window_added_spans,window_promotions;
     vk_pool_window_stats(&window_bytes,&window_admissions,&window_added_bytes,

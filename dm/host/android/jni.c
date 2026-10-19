@@ -339,6 +339,20 @@ static int lifecycle_suspended;
 // Android mode is a startup choice; never send an in-process mode-change event.
 static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
+static int pixel_local_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePixelLocal(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"pixel_local is fixed before native startup");
+    return;
+  }
+  pixel_local_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeOpusMode(
     JNIEnv *env,jclass klass,jint mode) {
   (void)klass;
@@ -454,6 +468,15 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   }
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
+  // Freeze the optional module/descriptor policy before any game or Vulkan
+  // worker exists. The backend samples this environment only once; Activity
+  // recreation and later Intents must never change established PSO identities.
+  if(setenv("DM_VULKAN_PIXEL_LOCAL",pixel_local_startup?"1":"0",1))
+    die("Android pixel-local startup environment");
+  extern int vk_pixel_local_enabled(void);
+  if(vk_pixel_local_enabled()!=pixel_local_startup)
+    die("Android pixel-local policy initialized before startup selection");
+  LOG("Android pixel-local startup enabled=%d",pixel_local_startup);
   const char *path = (*env)->GetStringUTFChars(env, directory, NULL);
   if (!path)
     return;
