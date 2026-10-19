@@ -330,3 +330,40 @@ usage、分配类型、脏页、GPU 依赖、CPU 发布和写回都不读取这�
 尚不能据 flags 或未观察到 CPU read 就删除回读：游戏仍可经普通指针读取，
 完成后的 shadow 也是后续 CPU 修改比较的基线。任何共享分配或可见性省略都
 需另证 NVN 合同、实际读写依赖和在飞生命周期；本改动本身没有内存或帧率收益。
+
+5b6f822 在两台真实游戏中完成原营地路线后，各一次官方 LLDB 挂起读到相同的
+七个原始 flags；全部为 known，未猜测未识别位：
+
+| 注册容量 | NVN flags | 仓库枚举名称 | Mali / Adreno backing 容量 |
+| --- | --- | --- | --- |
+| 40 MiB | 0x22 | CPU_UNCACHED / GPU_CACHED | 0 / 0 MiB |
+| 2 MiB | 0x12 | CPU_UNCACHED / GPU_UNCACHED | 2 / 2 MiB |
+| 710 MiB | 0x21 | CPU_NO_ACCESS / GPU_CACHED | 224 / 256 MiB |
+| 1 MiB | 0x14 | CPU_CACHED / GPU_UNCACHED | 1 / 1 MiB |
+| 400 MiB | 0x22 | CPU_UNCACHED / GPU_CACHED | 176 / 176 MiB |
+| 10 MiB | 0x64 | CPU_CACHED / GPU_CACHED / SHADER_CODE | 0 / 0 MiB |
+| 512 MiB | 0xa1 | CPU_NO_ACCESS / GPU_CACHED / COMPRESSIBLE | 0 / 0 MiB |
+
+这是实际 Pool 意图与分配状态，**不是**各 Pool 的回读量、独占物理驻留或完整
+CPU 访问证明。下一步需将真实 writeback／known-copy 的来源与目的区间连到
+Pool 身份；不能把 710 MiB 注册容量当成每帧复制量。两台存档两次并退出，没有
+native 错误记录。取证记录为本机
+`.local/logs/pool-residency-pool-flags-v2-both-analysis.json`。
+
+## 同页多段 CPU 修改只解析一次 backing
+
+e7b 官方 Simpleperf 在 `sync_page` 及逐 run 的物理 span 查找中仍有样本。
+仅在原非 pending-GPU、非 dual-copy、非 reference 扫描分支，且一页有多个
+changed run、整页能精确落在同一 mapped backing 时，解析一次该页的物理
+映射，再按每个原 run 的相对偏移复制。单 run、跨 node、空洞和无法证明的
+范围走原路径。每次 retry 后重新证明，不留跨页／跨提交的指针缓存。
+
+只省去同页 count−1 次链表解析，不减少脏页比较或复制字节。增加一次完整
+范围证明及 run 边界验证；证明失败多一次查找。原 pool 引用防止 backing
+退休，原 publication mutex 防止 CPU 发布交错；两者职责不同。逐 run 的
+shadow 更新、authority cutoff、pending CPU wait 和 GPU ownership 保持。
+
+真实 GPU 检查包含非零 backing 起点、多段修改之间保留的 GPU-only 新值、
+换 node、193 字节尾段及 reference；测试入口对实际独立 Buffer／空洞拒绝
+整段证明。两个隔离负例（丢失物理偏移、错误整页复制）均触发 GPU 字节断言。
+独立全套异步／同步检查通过；当前没有此项 Android CPU 耗时或帧率净收益。

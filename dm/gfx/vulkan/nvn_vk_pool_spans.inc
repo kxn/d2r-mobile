@@ -126,6 +126,28 @@ static void pool_spans_copy_from_guest(pool *p,uint64_t offset,uint64_t size) {
   }
   if(next<0)die("Vulkan pool copy across unbacked hole");
 }
+// Short-lived physical proof only: the caller already owns a pool reference,
+// holds publication exclusion and ruled out pending GPU access. The retained
+// reference, not the publication mutex, prevents physical retirement. Never combine
+// adjacent nodes or cross a hole, even when their logical ranges are adjacent.
+static int pool_upload_page_span(pool *p,uint64_t offset,uint64_t size,
+    unsigned count,pool_span_piece *out) {
+  return count>1 && size && pool_span_resolve(p,offset,size,out) && out->backing->buffer.map;
+}
+static int pool_spans_copy_changed_page(pool *p,uint64_t offset,uint64_t size,
+    const VkBufferCopy *runs,unsigned count) {
+  pool_span_piece page;
+  if(!pool_upload_page_span(p,offset,size,count,&page))return 0;
+  // Scanner runs are exact subsets of this page. Validate all bounds before
+  // copying so a malformed run can never partly publish through this proof.
+  for(unsigned k=0;k<count;k++)
+    if(runs[k].dstOffset<offset || runs[k].dstOffset-offset>size ||
+       runs[k].size>size-(runs[k].dstOffset-offset))die("Vulkan changed page run bounds");
+  for(unsigned k=0;k<count;k++)
+    memcpy(page.backing->buffer.map+page.offset+(runs[k].dstOffset-offset),
+           p->guest+runs[k].dstOffset,runs[k].size);
+  return 1;
+}
 static uint64_t pool_spans_bytes(const pool *p) {
   uint64_t bytes=0;for(const pool_backing_span *b=p->backings;b;b=b->next)bytes+=b->end-b->begin;
   return bytes;

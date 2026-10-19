@@ -2410,6 +2410,14 @@ static unsigned changed_word_ranges(const uint8_t *guest,const uint8_t *shadow,
 uint32_t vk_test_upload_word_mask(const uint8_t *guest,const uint8_t *shadow,unsigned words) {
   return changed_word_mask(guest,shadow,words);
 }
+// Functional boundary oracle only, with real registered physical backings.
+// It never copies, initializes, allocates, changes history or counts hot work.
+int vk_test_pool_upload_page_span(uint64_t address,uint64_t size,unsigned count) {
+  pthread_mutex_lock(&V.resources);
+  pool *p=pool_find(address,size);pool_span_piece page;
+  int single=p && pool_upload_page_span(p,address-(uintptr_t)p->guest,size,count,&page);
+  pthread_mutex_unlock(&V.resources);return single;
+}
 #endif
 // Capture actual immutable backing/local offsets while holding the original
 // pool reference. Later upload command recording never re-resolves a logical
@@ -2526,10 +2534,15 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       pool_cpu_synced_runs(p,regions,count,recording_resources->cpu_authority_begin);
       pthread_mutex_unlock(&pool_publication_mu);return;
     } else {
-      for(unsigned i=0;i<count;i++) {
-        pool_spans_copy_from_guest(p,regions[i].dstOffset,regions[i].size);
-        if(V.options.pool_copy_accounting)copied_bytes+=regions[i].size;
-      }
+      // Several exact edits in one physical page reuse only its immutable
+      // mapping. Content/dirty/authority proofs remain the original per-run
+      // operations; no unchanged GPU-owned word is copied from stale CPU data.
+      if(count==1 || recording_resources->upload_scan_reference ||
+          !pool_spans_copy_changed_page(p,off,size,regions,count))
+        for(unsigned i=0;i<count;i++)
+          pool_spans_copy_from_guest(p,regions[i].dstOffset,regions[i].size);
+      if(V.options.pool_copy_accounting)
+        for(unsigned i=0;i<count;i++)copied_bytes+=regions[i].size;
       POOL_COPY_ADD(mirror_bytes,copied_bytes);
     }
     copied_bytes=0;
