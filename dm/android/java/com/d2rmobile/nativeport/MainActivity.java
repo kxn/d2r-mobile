@@ -19,6 +19,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOperationMode(int mode);
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
+    private boolean wsiFixtureStarted;
+    private static native void nativeWsiTests(android.view.Surface surface, String directory, float refresh, boolean asyncSubmit, boolean validation);
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -229,7 +231,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeQueryPerDrawReference(getIntent().getBooleanExtra("query_per_draw_reference", false));
         nativePipelinePrepareMode(getIntent().getBooleanExtra("validate", false) ? 2 :
                 getIntent().getBooleanExtra("pipeline_prepare_reference", false) ? 1 : 0);
-        if (getIntent().getBooleanExtra("run_vulkan_tests", false)) {
+        if (getIntent().getBooleanExtra("run_vulkan_tests", false) &&
+                !getIntent().getBooleanExtra("wsi_scope_test", false)) {
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),
                     getIntent().getBooleanExtra("memory_test", false),
@@ -423,6 +426,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override public void surfaceCreated(SurfaceHolder holder) {
         surfaceHolder = holder;
         requestDisplayRefresh(holder.getSurface());
+        if (getIntent().getBooleanExtra("run_vulkan_tests", false) &&
+                getIntent().getBooleanExtra("wsi_scope_test", false)) {
+            if (!wsiFixtureStarted) {
+                wsiFixtureStarted = true;
+                new Thread(() -> nativeWsiTests(holder.getSurface(),
+                        new File(getFilesDir(), "runtime").getAbsolutePath(), refresh(),
+                        getIntent().getBooleanExtra("async_submit", false),
+                        getIntent().getBooleanExtra("vulkan_test_validation", true)),
+                        "native-vulkan-wsi-test").start();
+            }
+            return;
+        }
         if (!getIntent().getBooleanExtra("run_game", true) || getIntent().getBooleanExtra("run_vulkan_tests", false)) return;
         started = true;
         if (!hostStarted) {
