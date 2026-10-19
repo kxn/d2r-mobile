@@ -4,6 +4,8 @@ namespace Ryujinx.Graphics.Shader.Translation
 {
     readonly ref struct TransformContext
     {
+        public readonly bool IsEntryFunction;
+        public readonly bool QuadReadonlyModule;
         public readonly HelperFunctionManager Hfm;
         public readonly BasicBlock[] Blocks;
         public readonly ShaderDefinitions Definitions;
@@ -23,8 +25,12 @@ namespace Ryujinx.Graphics.Shader.Translation
             TargetApi targetApi,
             TargetLanguage targetLanguage,
             ShaderStage stage,
-            ref FeatureFlags usedFeatures)
+            ref FeatureFlags usedFeatures,
+            bool isEntryFunction = false,
+            bool quadReadonlyModule = false)
         {
+            IsEntryFunction = isEntryFunction;
+            QuadReadonlyModule = quadReadonlyModule;
             Hfm = hfm;
             Blocks = blocks;
             Definitions = definitions;

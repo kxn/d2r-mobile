@@ -15,6 +15,8 @@ namespace Ryujinx.Graphics.Shader
         public int GeometryMaxOutputVertices { get; }
         public int ThreadsPerInputPrimitive { get; }
         public bool UsesFragCoord { get; }
+        public bool UsesFragmentQuadTransfer { get; }
+        public bool UsesFragmentQuadReadonlySources { get; }
         public bool UsesInstanceId { get; }
         public bool UsesDrawParameters { get; }
         public bool UsesRtLayer { get; }
@@ -35,7 +37,9 @@ namespace Ryujinx.Graphics.Shader
             bool usesDrawParameters,
             bool usesRtLayer,
             byte clipDistancesWritten,
-            int fragmentOutputMap)
+            int fragmentOutputMap,
+            bool usesFragmentQuadTransfer = false,
+            bool usesFragmentQuadReadonlySources = false)
         {
             CBuffers = Array.AsReadOnly(cBuffers);
             SBuffers = Array.AsReadOnly(sBuffers);
@@ -47,6 +51,8 @@ namespace Ryujinx.Graphics.Shader
             GeometryMaxOutputVertices = geometryMaxOutputVertices;
             ThreadsPerInputPrimitive = threadsPerInputPrimitive;
             UsesFragCoord = usesFragCoord;
+            UsesFragmentQuadTransfer = usesFragmentQuadTransfer;
+            UsesFragmentQuadReadonlySources = usesFragmentQuadReadonlySources;
             UsesInstanceId = usesInstanceId;
             UsesDrawParameters = usesDrawParameters;
             UsesRtLayer = usesRtLayer;

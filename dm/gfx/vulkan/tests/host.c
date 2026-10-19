@@ -35,7 +35,11 @@ void crash_thread_init(void) {
 #include "../../../host/android/tests/native_vulkan.c"
 #ifdef DM_VULKAN_TEST_EMBED
 #include "pixel_local_loader.inc"
+#include "quad_transfer_contract.inc"
+#include "quad_readonly_contract.inc"
 int main(void) {
+  if(getenv("DM_QUAD_READONLY_CONTRACT_FIXTURE"))return quad_readonly_contract_test();
+  if(getenv("DM_QUAD_TRANSFER_CONTRACT_FIXTURE"))return quad_transfer_contract_test();
   if(getenv("DM_PIXEL_LOCAL_LOADER_FIXTURE")) {crash_thread_init();mtl_init();return pixel_local_loader_test();}
   return dm_vulkan_test_main();
 }

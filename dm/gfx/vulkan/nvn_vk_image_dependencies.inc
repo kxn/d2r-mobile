@@ -328,6 +328,27 @@ static void image_binding_replaced(image *previous,image *retired) {
     for(size_t k=0;k<image_batches[b].count;k++)
       if(image_batches[b].requests[k].owner==previous) image_batches[b].requests[k].owner=retired;
 }
+const char *vk_texture_quad_readonly_error(void) {
+  if(!image_binding_active)return "image operation must be collecting";
+  for(size_t n=0;n<image_binding_count;n++) {
+    const image_request *q=&image_bindings[n];
+    if(q->attachment || !(q->stages&VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) ||
+        !(q->access&VK_ACCESS_SHADER_READ_BIT))continue;
+    if(!q->owner || !q->owner->handle)return "sampled physical image missing";
+    if(image_writes(q->access))return "sampled image also writable";
+    for(size_t k=0;k<image_binding_count;k++) {
+      const image_request *w=&image_bindings[k];
+      if(!w->attachment || !image_writes(w->access) || !w->owner ||
+          w->owner->handle!=q->owner->handle)continue;
+      const VkImageSubresourceRange *a=&q->range,*b=&w->range;
+      if((a->aspectMask&b->aspectMask) &&
+          a->baseMipLevel<b->baseMipLevel+b->levelCount && b->baseMipLevel<a->baseMipLevel+a->levelCount &&
+          a->baseArrayLayer<b->baseArrayLayer+b->layerCount && b->baseArrayLayer<a->baseArrayLayer+a->layerCount)
+        return "sampled physical subresource overlaps attachment writer";
+    }
+  }
+  return NULL;
+}
 void vk_texture_shader_barrier(void) {
   image_dependencies(image_bindings,image_binding_count,0,1);
 }

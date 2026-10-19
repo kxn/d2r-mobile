@@ -177,6 +177,8 @@ static int pl_inputs(pl_candidate *plan,const vk_state *state,const vk_pixel_loc
 // in the original descriptor schema and execute normal dynamic dependencies.
 static const vk_pixel_local_proof *pl_local_subset(pl_candidate *p,const vk_state *state,
     vk_shader *shader,VkShaderModule actual,const p_set_rt *producer) {
+  // Entry-hoisted fetches have no proof for subpass input substitution.
+  if(shader && shader->quad_readonly_sources)return NULL;
   const vk_pixel_local_proof *full=vk_shader_pixel_local(shader,actual);
   if(!full || !pl_inputs(p,state,full))return NULL;
   unsigned mask=0;

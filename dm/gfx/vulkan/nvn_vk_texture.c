@@ -2043,7 +2043,7 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
     else image_general(i);
   }
 }
-VkImageView vk_texture_view_binding(int id, int storage,VkShaderStageFlagBits stage,VkImageLayout *layout) {
+static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFlagBits stage,VkImageLayout *layout,int quad_plain2d) {
   uint64_t submit=vk_recording_serial(),epoch;
   texture_binding_recipe *cached=texture_binding_find(id,storage);
   image *i;view_t view;int has_view;VkImageView handle=VK_NULL_HANDLE;
@@ -2120,6 +2120,13 @@ VkImageView vk_texture_view_binding(int id, int storage,VkShaderStageFlagBits st
         effective_format==NVN_FORMAT_BGRX8 || effective_format==NVN_FORMAT_BGRX8_SRGB)
       ci.components.a=VK_COMPONENT_SWIZZLE_ONE;
   }
+  if(quad_plain2d && (storage || stage!=VK_SHADER_STAGE_FRAGMENT_BIT ||
+      ci.viewType!=VK_IMAGE_VIEW_TYPE_2D ||
+      (ci.subresourceRange.aspectMask!=VK_IMAGE_ASPECT_COLOR_BIT &&
+       ci.subresourceRange.aspectMask!=VK_IMAGE_ASPECT_DEPTH_BIT) ||
+      i->description.samples!=VK_SAMPLE_COUNT_1_BIT ||
+      !i->extent.width || !i->extent.height || i->extent.width>INT32_MAX || i->extent.height>INT32_MAX))
+    die("Vulkan readonly quad source requires valid single-sample color/depth 2D view");
   // Owner topology and the view are immutable under the recipe's descriptor,
   // lifetime and physical-handle guards. Normalize once on MISS, not twice
   // per binding. Uploads, current layouts, feedback and hazards still run.
@@ -2174,6 +2181,13 @@ VkImageView vk_texture_view_binding(int id, int storage,VkShaderStageFlagBits st
   }
   return handle;
 }
+VkImageView vk_texture_view_binding(int id,int storage,VkShaderStageFlagBits stage,VkImageLayout *layout) {
+  return texture_view_binding_impl(id,storage,stage,layout,0);
+}
+VkImageView vk_texture_view_binding_quad(int id,int storage,VkShaderStageFlagBits stage,VkImageLayout *layout) {
+  return texture_view_binding_impl(id,storage,stage,layout,1);
+}
+
 VkImageView vk_texture_view(int id,int storage) { return vk_texture_view_binding(id,storage,0,NULL); }
 // All physical attachment replacements must precede shader descriptors, which
 // may sample or write another mip of the same image in this draw.

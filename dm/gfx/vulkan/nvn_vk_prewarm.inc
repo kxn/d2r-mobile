@@ -138,6 +138,10 @@ static int pipeline_recipe_build(const vk_prewarm_recipe *recipe) {
       .stage=vk_stage(i),.module=key.modules[i],.pName="main"};
   }
   if(!list[0])return 0;
+  if(vk_shader_quad_readonly_stages_error(list))return 0;
+  if(list[1] && list[1]->quad_transfer &&
+     vk_shader_quad_transfer_error(list[1],key.multisample.rasterizationSamples,
+       key.topology,key.raster.polygonMode))return 0;
   uint32_t values[2]={key.specialization_word,key.specialization_mask};
   VkSpecializationMapEntry entries[2]={{.constantID=list[1]?list[1]->specialization_id:0,.offset=0,.size=4},
     {.constantID=list[1]&&list[1]->predicate?list[1]->predicate->id:0,.offset=4,.size=4}};

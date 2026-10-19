@@ -33,6 +33,41 @@ def require(value, message):
         raise SystemExit(message)
 
 
+def verify_quad_traits(flags, stage, reflection, options, key):
+    """Bind new wire traits to the explicit source profile and actual reflection.
+
+    Native chains preserve their previous zero-trait contract. A readonly
+    source trait is never authorized without the entry quad-transfer trait.
+    """
+    quad = reflection.get('uses_fragment_quad_transfer', False)
+    readonly = reflection.get('uses_fragment_quad_readonly_sources', False)
+    require(type(quad) is bool and type(readonly) is bool,
+            'invalid quad reflection type: '+key)
+    require((flags & 24) == ((int(quad)<<3) | (int(readonly)<<4)),
+            'quad metadata/reflection mismatch: '+key)
+    mode = options.get('fragment_subgroup_mode', 'native')
+    require(not (flags & ~31) and (not readonly or quad),
+            'invalid quad metadata traits: '+key)
+    require(not quad or (stage == 1 and mode in ('quad_transfer_v1','quad_transfer_readonly_v2')),
+            'quad trait outside fragment target profile: '+key)
+    require(not readonly or mode == 'quad_transfer_readonly_v2',
+            'readonly quad trait outside target profile: '+key)
+
+
+def verify_fragment_profile_module(code, stage, options, key):
+    if stage != 1 or options.get('fragment_subgroup_mode') not in ('quad_transfer_v1','quad_transfer_readonly_v2'):
+        return
+    require(len(code)>=20 and len(code)%4==0, 'malformed quad profile SPIR-V: '+key)
+    words=struct.unpack('<%dI'%(len(code)//4),code)
+    require(words[0]==0x07230203, 'invalid quad profile SPIR-V magic: '+key)
+    at=5
+    while at<len(words):
+        count,opcode=words[at]>>16,words[at]&65535
+        require(count and at+count<=len(words), 'malformed quad profile instruction: '+key)
+        require(not 333<=opcode<=366, 'unsupported fragment subgroup instruction: '+key)
+        at+=count
+
+
 def verify_empty_pixel_local(blobs, reflection, payload, report_data, stage, descriptor_set):
     """An exact empty DPL cannot authorize a shader replacement.
 
@@ -200,7 +235,7 @@ def main():
             header_bytes=64 if h[0]==0x334b5644 else 48
             require(h[0] in (0x324b5644,0x334b5644) and h[1]<6 and h[2]<6 and h[3]<=128 and
                     len(meta)==header_bytes+h[3]*32+h[4] and h[8] in [0xffffffff,*range(16)] and
-                    h[9]<=7 and h[10]<=255 and h[11]==1, 'invalid raster metadata: '+key)
+                    not (h[9]&~31) and h[10]<=255 and h[11]==1, 'invalid raster metadata: '+key)
             if header_bytes==64:
                 mask,offset,slots,version=struct.unpack_from('<4I',meta,48)
                 require(h[1] in (0,1,5) and mask and (h[1]==5 or mask<65536) and
@@ -215,6 +250,8 @@ def main():
                         reflection.get('compiler_options')==dmsh_vulkan.compiler_options() and
                         reflection['spirv_sha256']==artifacts[key+'.spv']['sha256'] and
                         reflection['metadata_sha256']==artifacts[key+'.meta']['sha256'], 'reflection hash mismatch: '+key)
+                verify_quad_traits(h[9],h[1],reflection,dmsh_vulkan.compiler_options(),key)
+                verify_fragment_profile_module((cache/(key+'.spv')).read_bytes(),h[1],dmsh_vulkan.compiler_options(),key)
                 # Recompute the complete proof from the actual shipped modules,
                 # not just its self-reported hash. Optional runtime failures keep
                 # full keys, but declared deployment artifacts must be exact.

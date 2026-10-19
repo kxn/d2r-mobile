@@ -534,6 +534,33 @@ vk_shader *vk_shader_get(const void *control) {
     snprintf(key + n * 2, 3, "%02x", digest[n]);
   return vk_shader_load_key(key);
 }
+const char *vk_shader_quad_transfer_error(const vk_shader *s,VkSampleCountFlagBits samples,
+    VkPrimitiveTopology topology,VkPolygonMode polygon) {
+  if(!s || !s->quad_transfer)return NULL;
+  if(s->stage!=1)return "fragment stage required";
+  if(samples!=VK_SAMPLE_COUNT_1_BIT)return "single-sample rasterization required";
+  if(polygon!=VK_POLYGON_MODE_FILL)return "filled triangles required";
+  if(topology!=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST &&
+     topology!=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP &&
+     topology!=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN)return "triangle topology required";
+  // Raw FragCoord includes helper pixels immediately outside framebuffer edges.
+  // Below 2^23, FP32 represents every pixel-center and its unit displacement;
+  // signed floor-to-int also represents the negative edge helper coordinates.
+  // Use immutable device caps so dynamic viewport/scissor changes need no hot
+  // per-draw checks and cannot bypass this proof through prepared-PSO reuse.
+  if(V.props.limits.maxFramebufferWidth>=(UINT32_C(1)<<23) ||
+     V.props.limits.maxFramebufferHeight>=(UINT32_C(1)<<23))
+    return "framebuffer coordinate precision not proven";
+  return NULL;
+}
+const char *vk_shader_quad_readonly_stages_error(vk_shader *const list[6]) {
+  if(!list[1] || !list[1]->quad_readonly_sources)return NULL;
+  if(!list[1]->quad_transfer || list[1]->stage!=1)return "readonly quad sources require lowered fragment shader";
+  if(!V.features.robustBufferAccess)return "readonly quad sources require enabled robustBufferAccess";
+  for(unsigned i=0;i<6;i++)if(list[i] && list[i]->has_resource_writes)
+    return "readonly quad sources require all graphics stages without resource writes";
+  return NULL;
+}
 vk_shader *vk_shader_load_key(const char *key) {
   if(strlen(key)!=16 || strspn(key,"0123456789abcdef")!=16)die("Vulkan invalid shader key");
   for (vk_shader *s = shaders; s; s = s->next)
@@ -566,10 +593,14 @@ vk_shader *vk_shader_load_key(const char *key) {
   s->nc1 = metadata[4];
   s->pos_attr=-1;s->may_discard=s->writes_smask=1;
   if(header>=12) {
-    if((int32_t)metadata[8]<-1||(int32_t)metadata[8]>=16||(metadata[9]&~7u)||(metadata[10]&~255u)||metadata[11]!=1)
+    if((int32_t)metadata[8]<-1||(int32_t)metadata[8]>=16||(metadata[9]&~(7u|DM_VK_META_QUAD_TRANSFER|DM_VK_META_QUAD_READONLY_SOURCES))||(metadata[10]&~255u)||metadata[11]!=1)
       die("Vulkan raster metadata invalid: %s",key);
     s->pos_attr=(int32_t)metadata[8];s->pos_w1=metadata[9]&1;
     s->may_discard=(metadata[9]>>1)&1;s->writes_smask=(metadata[9]>>2)&1;s->color_mask=metadata[10];
+    s->quad_transfer=metadata[9]&DM_VK_META_QUAD_TRANSFER;
+    s->quad_readonly_sources=metadata[9]&DM_VK_META_QUAD_READONLY_SOURCES;
+    if(s->quad_readonly_sources && !s->quad_transfer)die("Vulkan readonly quad source trait requires quad transfer: %s",key);
+    if(s->quad_transfer && s->stage!=1)die("Vulkan quad transfer requires fragment stage: %s",key);
   }
   if(header==16) {
     if((s->stage!=0&&s->stage!=1&&s->stage!=5)||!metadata[12]||
@@ -1326,9 +1357,15 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
       uint64_t h = b->kind == 4   ? S.img[s->stage][b->reg]
                    : b->kind == 5 ? S.samp[s->stage][b->reg]
                                   : S.tex[s->stage][b->reg];
-      if (b->kind != 5)
-        image.imageView = vk_texture_view_binding(h & 0xfffff, b->kind == 4,
-            vk_stage(s->stage),&image.imageLayout);
+      if (b->kind != 5) {
+        // Only plain 2D resources can belong to the bounded speculative
+        // closure. Other original FS resources retain their existing views.
+        int quad_plain=s->quad_readonly_sources && s->stage==1 &&
+            (b->kind==3 || b->kind==6) && b->type==3;
+        image.imageView = quad_plain ?
+            vk_texture_view_binding_quad(h & 0xfffff,b->kind==4,vk_stage(s->stage),&image.imageLayout):
+            vk_texture_view_binding(h & 0xfffff,b->kind==4,vk_stage(s->stage),&image.imageLayout);
+      }
       if (b->kind == 3 || b->kind == 5) {
         int sid = b->kind == 3 && b->sampler >= 0
                       ? S.samp[s->stage][b->sampler] >> 20

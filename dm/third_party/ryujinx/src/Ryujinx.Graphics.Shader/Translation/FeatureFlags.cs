@@ -26,5 +26,7 @@ namespace Ryujinx.Graphics.Shader.Translation
         SharedMemory = 1 << 11,
         Store = 1 << 12,
         VtgAsCompute = 1 << 13,
+        FragmentQuadTransfer = 1 << 14,
+        FragmentQuadReadonlySources = 1 << 15,
     }
 }

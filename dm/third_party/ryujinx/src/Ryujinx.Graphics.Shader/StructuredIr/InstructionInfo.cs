@@ -77,6 +77,7 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
             Add(Instruction.ConvertU32ToFP32,         AggregateType.FP32,   AggregateType.U32);
             Add(Instruction.ConvertU32ToFP64,         AggregateType.FP64,   AggregateType.U32);
             Add(Instruction.Cosine,                   AggregateType.Scalar, AggregateType.Scalar);
+            Add(Instruction.QuadTransfer,             AggregateType.FP32,   AggregateType.FP32, AggregateType.FP32);
             Add(Instruction.Ddx,                      AggregateType.FP32,   AggregateType.FP32);
             Add(Instruction.Ddy,                      AggregateType.FP32,   AggregateType.FP32);
             Add(Instruction.Divide,                   AggregateType.Scalar, AggregateType.Scalar,  AggregateType.Scalar);

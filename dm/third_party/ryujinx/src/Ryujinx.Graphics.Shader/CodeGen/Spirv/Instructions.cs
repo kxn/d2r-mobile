@@ -12,7 +12,7 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
     using SpvInstruction = Spv.Generator.Instruction;
     using SpvLiteralInteger = Spv.Generator.LiteralInteger;
 
-    static class Instructions
+    static partial class Instructions
     {
         private const MemorySemanticsMask DefaultMemorySemantics =
             MemorySemanticsMask.ImageMemory |
@@ -78,6 +78,7 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             Add(Instruction.ConvertU32ToFP32,         GenerateConvertU32ToFP32);
             Add(Instruction.ConvertU32ToFP64,         GenerateConvertU32ToFP64);
             Add(Instruction.Cosine,                   GenerateCosine);
+            Add(Instruction.QuadTransfer,             GenerateQuadTransfer);
             Add(Instruction.Ddx,                      GenerateDdx);
             Add(Instruction.Ddy,                      GenerateDdy);
             Add(Instruction.Discard,                  GenerateDiscard);

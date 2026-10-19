@@ -126,6 +126,8 @@ namespace Ryujinx.Graphics.Shader.IntermediateRepresentation
         VoteAllEqual,
         VoteAny,
 
+        QuadTransfer,
+
         Count,
 
         FP32 = 1 << 16,

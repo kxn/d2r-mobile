@@ -47,9 +47,12 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
 
             context.SetMemoryModel(AddressingModel.Logical, MemoryModel.GLSL450);
 
-            context.AddCapability(Capability.GroupNonUniformBallot);
-            context.AddCapability(Capability.GroupNonUniformShuffle);
-            context.AddCapability(Capability.GroupNonUniformVote);
+            if (!(parameters.Definitions.Stage == ShaderStage.Fragment && parameters.HostCapabilities.FragmentQuadTransfer))
+            {
+                context.AddCapability(Capability.GroupNonUniformBallot);
+                context.AddCapability(Capability.GroupNonUniformShuffle);
+                context.AddCapability(Capability.GroupNonUniformVote);
+            }
             context.AddCapability(Capability.ImageBuffer);
             context.AddCapability(Capability.ImageGatherExtended);
             context.AddCapability(Capability.ImageQuery);

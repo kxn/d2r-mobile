@@ -32,6 +32,8 @@ typedef struct vk_shader {
   uint32_t stage, set, nb, nc1, local[3], input_mask;
   int pos_attr, pos_w1, may_discard, writes_smask;
   uint32_t color_mask;
+  uint32_t quad_transfer; // immutable offline requirement; inherited by module alternatives
+  uint32_t quad_readonly_sources;
   uint32_t storage_bias_mask;
   vk_binding *bindings;
   uint32_t image_read_count,storage_descriptor_count;
@@ -75,6 +77,11 @@ int vk_shader_fingerprint(const char *key,uint8_t digest[32]);
 int vk_shader_prewarm_stage(vk_shader *shader,VkShaderModule module,vk_prewarm_stage *stage);
 vk_shader *vk_shader_prewarm_load(const vk_prewarm_stage *stage,VkShaderModule *module);
 int vk_compute_prewarm(vk_shader *shader);
+// NULL means admitted; also used before startup recipe compilation.
+// The backend has one viewport, no VRS/density-map state and no sample shading.
+const char *vk_shader_quad_transfer_error(const vk_shader *s,VkSampleCountFlagBits samples,
+    VkPrimitiveTopology topology,VkPolygonMode polygon);
+const char *vk_shader_quad_readonly_stages_error(vk_shader *const list[6]);
 void vk_program_shaders(const prog_t *program, vk_shader *shaders[6]);
 // 仅提交线程：begin 取得已回收的一份，end 交给在途提交；recycle 只在完成后调用。
 // Submit thread only: begin takes a recycled set, end hands it to the in-flight
@@ -212,6 +219,8 @@ typedef struct {
 vk_attachment vk_texture_attachment(const tex_t *t, const view_t *v);
 vk_attachment vk_texture_readonly_attachment(const tex_t *t,const view_t *v);
 VkImageView vk_texture_view_binding(int id,int storage,VkShaderStageFlagBits stage,VkImageLayout *layout);
+VkImageView vk_texture_view_binding_quad(int id,int storage,VkShaderStageFlagBits stage,VkImageLayout *layout);
+const char *vk_texture_quad_readonly_error(void);
 void vk_texture_shader_begin(void);
 void vk_texture_shader_barrier(void);
 void vk_texture_graphics_barrier(void);

@@ -1007,6 +1007,10 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
     list[1]=vk_shader_texel_pick(list[1],storage_budget,&texel_selection);
   }
   else { texel_selection.shader=NULL;texel_selection.count=0; }
+  if(list[1] && list[1]->quad_readonly_sources) {
+    const char *error=vk_shader_quad_readonly_stages_error(list);
+    if(error)die("Vulkan readonly quad source contract: %s (%s)",error,list[1]->key);
+  }
   int dynamic_uniforms=vk_program_dynamic_uniforms(list);
   vk_uniform_offsets uniform_offsets[6]={{0}};
   if (!list[0])
@@ -1031,6 +1035,10 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
     vk_pool_operation_end(pool_operation);return;
   }
   if(bq_before_draw(list,draw,idx)) {vk_pool_operation_end(pool_operation);return;}
+  if(list[1] && list[1]->quad_readonly_sources && fragment_module!=list[1]->module &&
+      fragment_module!=list[1]->specialization_module &&
+      (!list[1]->predicate || fragment_module!=list[1]->predicate->module))
+    die("Vulkan readonly quad sources require a verified original/specialized module");
   int original_specialized=list[1] && (fragment_module==list[1]->specialization_module || hybrid_selected);
   const vk_pixel_local_proof *local_consumer=pl_consumer(list[0],list[1],fragment_module,draw,idx);
   render_job *local_job=local_consumer?active_job:NULL;
@@ -1347,6 +1355,10 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
   VkRect2D area = draw_area(width, height, idx ? idx->prim : draw->prim);
   if (active_job && (!render_targets_equal(&S.targets,&target_match) ||
       !contains(active_job->area,area))) vk_render_end();
+  if(list[1] && list[1]->quad_readonly_sources) {
+    const char *error=vk_texture_quad_readonly_error();
+    if(error)die("Vulkan readonly quad image contract: %s (%s)",error,list[1]->key);
+  }
   int precise_dependencies=vk_graphics_resource_dependencies(writable_buffers);
   if(precise_dependencies) vk_texture_graphics_barrier();
   int pass_before_query=vk_render_active();
@@ -1482,6 +1494,10 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
   VkPolygonMode mode = S.poly.mode == 2   ? VK_POLYGON_MODE_FILL
                        : S.poly.mode == 1 ? VK_POLYGON_MODE_LINE
                                           : VK_POLYGON_MODE_POINT;
+  if(list[1] && list[1]->quad_transfer) {
+    const char *error=vk_shader_quad_transfer_error(list[1],samples,ia.topology,mode);
+    if(error)die("Vulkan quad transfer contract: %s (%s)",error,list[1]->key);
+  }
   if (mode != VK_POLYGON_MODE_FILL && !V.features.fillModeNonSolid)
     die("Vulkan non-solid polygon unsupported");
   VkPipelineRasterizationStateCreateInfo raster = {

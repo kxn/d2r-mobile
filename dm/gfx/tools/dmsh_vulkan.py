@@ -16,6 +16,8 @@ from dmsh_constants import inline_c1
 
 def compiler_options():
     """显式设备编译选项进入缓存指纹。 | Explicit device compilation options enter the cache fingerprint."""
+    quad_mode = os.environ.get('DMSH_VK_FRAGMENT_SUBGROUP_MODE', 'native')
+    if quad_mode not in ('native','quad_transfer_v1','quad_transfer_readonly_v2'): raise ValueError('invalid fragment subgroup mode')
     size = int(os.environ.get('DMSH_VK_SUBGROUP_SIZE', '32'))
     helper = os.environ.get('DMSH_VK_BALLOT_HELPER', '0')
     bias = os.environ.get('DMSH_VK_STORAGE_BIAS', '0')
@@ -33,6 +35,8 @@ def compiler_options():
         raise ValueError('expected subgroup size 16/32/64/128 and boolean compiler switches 0/1')
     if uniform_predicates == '1' and uniform_spec != '1':
         raise ValueError('additional Uniform predicates require old full-word specialization')
+    if quad_mode != 'native' and (color_half == '1' or texels == '1'):
+        raise ValueError('fragment quad transfer requires full-precision sampled and arithmetic results')
     if color_half == '1' and texels == '1':
         raise ValueError('protected color half requires full-precision sampled results')
     from dmsh_texel_ssbo import LOAD_MODELS, IDENTITY_MODEL
@@ -41,6 +45,7 @@ def compiler_options():
     options = {'subgroup_size': size, 'ballot_helper': helper == '1', 'storage_bias': bias == '1', 'inline_c1': c1 == '1',
             'relaxed_sampled_results': texels == '1', 'inline_functions': functions == '1',
             'protected_color_half': color_half == '1','uniform_specialization':uniform_spec=='1','texel_storage_alternatives':texel_storage=='1'}
+    if quad_mode != 'native': options['fragment_subgroup_mode'] = quad_mode
     # Preserve the legacy default dictionary for existing verified phone chains.
     # Non-default models are explicit, fingerprinted compiler inputs.
     if texel_model != IDENTITY_MODEL:
@@ -191,6 +196,10 @@ def version(base, translator):
     cross = subprocess.run(['spirv-cross', '--version'], capture_output=True)
     h.update(cross.stdout + cross.stderr)
     h.update(Path(translator).with_name('Ryujinx.Graphics.Shader.dll').read_bytes())
+    if compiler_options().get('fragment_subgroup_mode'):
+        # Nondefault source profiles fingerprint the entire managed emitter closure.
+        for name in ('dmsh_xlate.dll', 'Ryujinx.Common.dll', 'Spv.Generator.dll'):
+            h.update(name.encode()+b'\0'+Path(translator).with_name(name).read_bytes())
     h.update(json.dumps(compiler_options(), sort_keys=True).encode())
     for command in ('spirv-opt', 'spirv-val', 'spirv-as', 'spirv-dis', 'glslangValidator'):
         h.update(subprocess.check_output([command, '--version']))
@@ -311,6 +320,7 @@ def build(g):
                 raise RuntimeError('shader package control hash mismatch: ' + key)
             jobs[key], constants[key] = g['job_for'](key, name, record, temporary)
             jobs[key]['host_subgroup_size'] = options['subgroup_size']
+            jobs[key]['fragment_subgroup_mode'] = options.get('fragment_subgroup_mode','native')
         workers = int(os.environ.get('J', '4'))
         pending = []
         for key in keys:
@@ -387,6 +397,20 @@ def build(g):
             if validated.returncode:
                 destination.unlink()
                 return {'key': key, 'st': 'failed', 'err': validated.stderr[:400]}
+            if stage == 'ps' and options.get('fragment_subgroup_mode') in ('quad_transfer_v1','quad_transfer_readonly_v2'):
+                # Generic target-profile verification, never a per-shader key rule.
+                words=struct.unpack('<%dI'%(destination.stat().st_size//4),destination.read_bytes())
+                at=5
+                while at<len(words):
+                    count,opcode=words[at]>>16,words[at]&65535
+                    if not count or at+count>len(words): raise ValueError('quad profile malformed SPIR-V')
+                    if reflection.get('uses_fragment_quad_readonly_sources') and ((opcode == 71 and count >= 3 and words[at+2] in (20,21,23)) or (opcode == 72 and count >= 4 and words[at+3] in (20,21,23)) or opcode in (73,74,75) or (opcode == 61 and count > 4 and words[at+4] & 33) or (opcode == 95 and count > 5 and words[at+5] & 0xc00)):
+                        destination.unlink()
+                        return {'key':key,'st':'failed','err':'quad_transfer_readonly_v2: unsupported alias/volatile/coherent/group decorations or memory operands'}
+                    if 333<=opcode<=366:
+                        destination.unlink()
+                        return {'key':key,'st':'failed','err':'quad_transfer_v1: residual unsupported fragment subgroup instruction'}
+                    at+=count
             spec=out/(key+'.spec');spec.unlink(missing_ok=True)
             if options['uniform_specialization'] and stage=='ps':
                 from dmsh_uniform_specialization import transform
@@ -500,6 +524,9 @@ def write_metadata(path, reflection):
     local = reflection.get('local') or [1, 1, 1]
     facts = reflection.get('raster', {})
     flags = int(facts.get('pos_w') == 'one') | (int(facts.get('discard', 1)) << 1) | (int(facts.get('sample_mask', 1)) << 2)
+    # Bit3 is a contract trait from actual transformed IR, not merely profile selection.
+    flags |= int(reflection.get('uses_fragment_quad_transfer', False)) << 3
+    flags |= int(reflection.get('uses_fragment_quad_readonly_sources', False)) << 4
     color_mask = sum(1 << i for i in facts.get('colors', []))
     header = [0x324b5644, stage, reflection['descriptor_set'], len(bindings), len(c1), *local,
               facts.get('pos_attr', -1) & 0xffffffff, flags, color_mask, 1]

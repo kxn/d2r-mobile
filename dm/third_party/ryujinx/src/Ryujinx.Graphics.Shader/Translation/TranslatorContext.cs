@@ -262,6 +262,7 @@ namespace Ryujinx.Graphics.Shader.Translation
                 funcs.Add(null);
             }
 
+            bool quadReadonlyModule = FragmentQuadReadonlySources.IsReadOnlyModule(functions);
             HelperFunctionManager hfm = new(funcs, Definitions.Stage);
 
             for (int i = 0; i < functions.Length; i++)
@@ -297,7 +298,9 @@ namespace Ryujinx.Graphics.Shader.Translation
                         Options.TargetApi,
                         Options.TargetLanguage,
                         Definitions.Stage,
-                        ref usedFeatures);
+                        ref usedFeatures,
+                        i == 0,
+                        quadReadonlyModule);
 
                     Optimizer.RunPass(context);
                     TransformPasses.RunPass(context);
@@ -354,7 +357,9 @@ namespace Ryujinx.Graphics.Shader.Translation
                 usedFeatures.HasFlag(FeatureFlags.DrawParameters),
                 usedFeatures.HasFlag(FeatureFlags.RtLayer),
                 clipDistancesWritten,
-                originalDefinitions.OmapTargets);
+                originalDefinitions.OmapTargets,
+                usedFeatures.HasFlag(FeatureFlags.FragmentQuadTransfer),
+                usedFeatures.HasFlag(FeatureFlags.FragmentQuadReadonlySources));
 
             HostCapabilities hostCapabilities = new HostCapabilities(
                 GpuAccessor.QueryHostReducedPrecision(),
@@ -366,7 +371,8 @@ namespace Ryujinx.Graphics.Shader.Translation
                 GpuAccessor.QueryHostSupportsShaderFloat64(),
                 GpuAccessor.QueryHostSupportsShaderNonUniformIndexing(),
                 GpuAccessor.QueryHostSupportsTextureShadowLod(),
-                GpuAccessor.QueryHostSupportsViewportMask());
+                GpuAccessor.QueryHostSupportsViewportMask(),
+                GpuAccessor.QueryHostFragmentQuadTransfer());
 
             CodeGenParameters parameters = new CodeGenParameters(attributeUsage, definitions, resourceManager.Properties, hostCapabilities, GpuAccessor, Options.TargetApi);
 

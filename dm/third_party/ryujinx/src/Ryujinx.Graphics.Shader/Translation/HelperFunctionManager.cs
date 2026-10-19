@@ -18,6 +18,9 @@ namespace Ryujinx.Graphics.Shader.Translation
             _stage = stage;
         }
 
+        public bool IsGeneratedHelper(int id, HelperFunctionName name)
+            => _functionIds.TryGetValue((int)name, out int actual) && actual == id;
+
         public int AddFunction(Function function)
         {
             int functionId = _functionList.Count;

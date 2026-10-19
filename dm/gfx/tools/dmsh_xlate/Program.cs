@@ -95,6 +95,13 @@ static class SwshXlate
         public bool QueryHostSupportsTextureShadowLod() => true;
         // Vulkan 作业须记录设备实测 subgroup 宽度；原 Metal 作业保持原缺省 32。
         // Vulkan jobs record the measured device subgroup width; original Metal jobs retain their default of 32.
+        public bool QueryHostFragmentQuadTransfer()
+        {
+            string mode = _job["fragment_subgroup_mode"] is JsonNode value ? (string)value : "native";
+            return mode switch { "native" => false, "quad_transfer_v1" => true, "quad_transfer_readonly_v2" => true,
+                _ => throw new InvalidOperationException("unknown fragment subgroup mode") };
+        }
+        public bool QueryHostFragmentQuadReadonlySources() => (string)_job["fragment_subgroup_mode"] == "quad_transfer_readonly_v2";
         public int QueryHostSubgroupSize() => _job["host_subgroup_size"] is JsonNode size ? (int)size : 32;
         // 作业 reduced = true：放宽精度——翻译器只给强制精确的运算打 NoContraction（缺省全部打：保持 Maxwell 分开舍入的逐位结果，代价是 MSL 里大量禁优化的 spvFMul 等）
         // Job reduced = true: relaxed precision - the translator marks NoContraction only on operations that must be exact (the default marks all: keeps the bit-exact results of Maxwell's separate rounding, at the cost of many optimization-disabled spvFMul etc. in the MSL)
@@ -129,7 +136,7 @@ static class SwshXlate
                 {
                     ["key"] = key, ["stage"] = (string)job["stage"], ["notes"] = new JsonArray(acc.Notes.ConvertAll(n => (JsonNode)n).ToArray()),
                     ["cbufs"] = new JsonArray(), ["sbufs"] = new JsonArray(), ["textures"] = new JsonArray(), ["images"] = new JsonArray(),
-                    ["uses_frag_coord"] = p.Info.UsesFragCoord, ["frag_out_map"] = p.Info.FragmentOutputMap,
+                    ["uses_frag_coord"] = p.Info.UsesFragCoord, ["uses_fragment_quad_transfer"] = p.Info.UsesFragmentQuadTransfer, ["uses_fragment_quad_readonly_sources"] = p.Info.UsesFragmentQuadReadonlySources, ["frag_out_map"] = p.Info.FragmentOutputMap,
                 };
                 foreach (var b in p.Info.CBuffers) res["cbufs"].AsArray().Add(new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot });
                 foreach (var b in p.Info.SBuffers) res["sbufs"].AsArray().Add(new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["cb_slot"] = b.SbCbSlot, ["cb_offset"] = b.SbCbOffset, ["flags"] = (int)b.Flags });

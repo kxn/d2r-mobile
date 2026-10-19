@@ -215,6 +215,9 @@ namespace Ryujinx.Graphics.Shader
         /// Queries host shader subgroup size.
         /// </summary>
         /// <returns>Host shader subgroup size in invocations</returns>
+        bool QueryHostFragmentQuadTransfer() => false;
+        bool QueryHostFragmentQuadReadonlySources() => false;
+
         int QueryHostSubgroupSize()
         {
             return 32;

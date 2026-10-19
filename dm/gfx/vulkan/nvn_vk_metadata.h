@@ -6,6 +6,11 @@
 #define VK_META_V1 UINT32_C(0x314b5644)
 #define VK_META_V2 UINT32_C(0x324b5644)
 #define VK_META_V3 UINT32_C(0x334b5644)
+// Only modules actually lowered by the offline quad-transfer pass set this.
+// Native subgroup modules and merely selected compiler profiles do not.
+#define DM_VK_META_QUAD_TRANSFER (UINT32_C(1)<<3)
+// Additional entry-hoisted readonly resources require actual draw admission.
+#define DM_VK_META_QUAD_READONLY_SOURCES (UINT32_C(1)<<4)
 // Runtime-only alternative; never reinterpret its texture slot as an NVN SSBO.
 #define VK_BINDING_TEXEL_STORAGE 10
 typedef struct {
