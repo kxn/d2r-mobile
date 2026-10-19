@@ -1517,6 +1517,9 @@ static void pool_materialize(pool *p) {
 }
 static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, int known) {
   mtl_init();
+  // A nonwrapping interval plus the overlap rejection below makes a retained
+  // pool's nonempty address coverage unambiguous for this registry lifetime.
+  if(size>UINTPTR_MAX-(uintptr_t)mem)die("Vulkan pool address range overflow");
   pool *p = calloc(1, sizeof *p);
   if (!p || !size) die("Vulkan pool allocation");
   p->guest = (uint8_t *)mem;p->size = size;

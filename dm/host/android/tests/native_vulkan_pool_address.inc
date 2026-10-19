@@ -15,6 +15,17 @@ static void pool_address_death_test(const char *kind) {
   enum {W=65536,SIZE=6*W+193};uint8_t *storage;
   CHECK(!posix_memalign((void **)&storage,W,SIZE));dm_guest_write_prepare(storage,SIZE);memset(storage,0x47,SIZE);
   mtl_init();mtl_finish();vk_pool_sync_reference(0);vk_test_pool_window_bytes(W);mtl_pool_add(storage,SIZE);
+  if(!strcmp(kind,"registration-overflow") || !strcmp(kind,"registration-overlap")) {
+    // Exercise the real registration boundary. Neither malformed registry
+    // must initialize CPU pages or become available to operation pin reuse.
+    const _Atomic uint64_t *counter=vk_test_pool_initialized_counter((uintptr_t)storage);
+    CHECK(counter&&atomic_is_lock_free(counter)&&atomic_is_lock_free(&pool_address_death_counter)&&atomic_is_lock_free(&pool_address_death_expected));
+    atomic_store(&pool_address_death_counter,counter);atomic_store(&pool_address_death_expected,atomic_load(counter));
+    struct sigaction action={.sa_handler=pool_address_death};sigemptyset(&action.sa_mask);CHECK(!sigaction(SIGABRT,&action,NULL));
+    if(!strcmp(kind,"registration-overflow"))mtl_pool_add((const void *)(UINTPTR_MAX-4095),8192);
+    else mtl_pool_add(storage+W,W);
+    _exit(88);
+  }
   int unbacked=!strcmp(kind,"unbacked"),fast=!strncmp(kind,"fast-",5);
   CHECK(unbacked || !strcmp(kind,"slow-hole") || !strcmp(kind,"slow-crossing") ||
         !strcmp(kind,"fast-hole") || !strcmp(kind,"fast-crossing"));

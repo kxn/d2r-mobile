@@ -75,10 +75,18 @@ static void pool_operation_bound_nodes(pool_operation_plan *plan) {
 static int pool_operation_pin(pool_operation_plan *plan) {
   int good=1;pthread_mutex_lock(&V.resources);
   for(size_t k=0;k<plan->count;k++) {
-    const vk_pool_requirement *r=&plan->ranges[k];pool *p=pool_find(r->address,r->size);
+    const vk_pool_requirement *r=&plan->ranges[k];pool *p=NULL;size_t j=0;
+    // Registration rejects wrapping/overlapping intervals, and resources
+    // stays locked throughout this attempt. Reuse only an owner already
+    // pinned HERE; another range still needs its exact physical span proof.
+    for(;j<plan->pin_count;j++) {
+      pool *known=plan->pins[j];uint64_t base=(uintptr_t)known->guest;
+      if(r->address>=base && r->address-base<=known->size &&
+          r->size<=known->size-(r->address-base)) {p=known;break;}
+    }
+    if(!p)p=pool_find(r->address,r->size);
     pool_span_piece span;
     if(!p || !pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span)) {good=0;break;}
-    size_t j=0;while(j<plan->pin_count && plan->pins[j]!=p)j++;
     if(j==plan->pin_count) {p->references++;plan->pins[plan->pin_count++]=p;}
   }
   pthread_mutex_unlock(&V.resources);
