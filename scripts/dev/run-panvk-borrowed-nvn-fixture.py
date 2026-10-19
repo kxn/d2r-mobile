@@ -151,8 +151,9 @@ try:
  assert any(r.get('validation_layer')=='disabled_explicitly' for r in rows)
  ubo=[r for r in rows if r.get('test_details')=='borrowed-nvn-ubo-cycle']
  assert len(ubo)==4 and [r['iteration'] for r in ubo]==list(range(4))
- assert all(r['flags']==11 and r['pixels_live_CPU_shadow_verified'] is True for r in ubo)
+ assert all(r['flags']==11 and r['pixels_live_CPU_verified'] is True for r in ubo)
  assert [r['retired'] for r in ubo]==[False,False,False,True]
+ assert [r['shadow_verified'] for r in ubo]==[False,False,False,True]
  assert [r['same_import'] for r in ubo]==[True,True,True,False]
  vbo=[r for r in rows if r.get('test_details')=='borrowed-nvn-vbo-cycle']
  assert len(vbo)==3 and [r['coverage_verified'] for r in vbo]==['full','clipped','full']

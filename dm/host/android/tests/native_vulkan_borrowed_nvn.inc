@@ -109,8 +109,8 @@ static int borrowed_nvn_buffer_test(void) {
     uint64_t now_imports,now_retirements;vk_test_pool_owned_stats(&now_imports,&now_retirements);
     CHECK(now_imports==imports+1 && now_retirements==retirements+(iteration==3));
     printf("{\"test_details\":\"borrowed-nvn-ubo-cycle\",\"iteration\":%u,\"flags\":%d,"
-      "\"same_import\":%s,\"retired\":%s,\"pixels_live_CPU_shadow_verified\":true}\n",
-      iteration,properties,iteration<3?"true":"false",iteration==3?"true":"false");
+      "\"same_import\":%s,\"retired\":%s,\"pixels_live_CPU_verified\":true,\"shadow_verified\":%s}\n",
+      iteration,properties,iteration<3?"true":"false",iteration==3?"true":"false",iteration==3?"true":"false");
   }
   // Original dirty protection/fault is back after writer demotion, not a test
   // mprotect workaround. Retirement remains sticky for this lease.
