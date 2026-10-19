@@ -40,6 +40,7 @@ parser.add_argument('--global-buffer-memory-reference',action='store_true',help=
 parser.add_argument('--writable-depth-attachments-reference',action='store_true',help='startup-only comparison: do not specialize provably readonly depth/stencil attachments')
 parser.add_argument('--clear-attachments-reference',action='store_true',help='comparison: retain untouched sibling attachments in clear-only passes')
 parser.add_argument('--texture-dirty-reference',action='store_true',help='comparison: recheck texture dirty pages on every binding')
+parser.add_argument('--defer-pool-publication',action=argparse.BooleanOptionalAction,default=None,help='startup-only experiment: keep eligible CPU_NO_ACCESS GPU writes resident until a proven CPU demand (default off)')
 parser.add_argument('--zero-draw-reference',action='store_true',help='comparison: retain upstream outline draws whose inputs and destinations are proven zero')
 parser.add_argument('--uniform-specialization',action=argparse.BooleanOptionalAction,default=True,help='exact per-draw Uniform specialization with safe fallback (default on)')
 parser.add_argument('--uniform-predicate',action=argparse.BooleanOptionalAction,default=False,help='optional hybrid exact-word plus integer predicate specialization (default off)')
@@ -114,6 +115,10 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.pool_window_bytes is not None:
     parser.error('--pool-window-bytes is startup-only and cannot be used with --attach')
+if args.attach and args.defer_pool_publication is not None:
+    parser.error('--defer-pool-publication/--no-defer-pool-publication are startup-only and cannot be used with --attach')
+if args.defer_pool_publication and (not args.async_submit or not args.lazy_pool_sync or args.submission_barrier_reference):
+    parser.error('--defer-pool-publication requires async submission, lazy pool sync and no submission-barrier reference')
 if args.pixel_local_shared_ds and args.pixel_local is not True:
     parser.error('--pixel-local-shared-ds requires --pixel-local')
 if args.attach and args.pixel_local_shared_ds is not None:
@@ -194,6 +199,7 @@ if not args.attach:
         launch += ['--ez', 'pixel_local_shared_ds', str(args.pixel_local_shared_ds).lower()]
     launch += ['--ez', 'upload_dual_store', str(bool(args.upload_dual_store)).lower()]
     launch += ['--ez', 'pool_copy_accounting', str(bool(args.pool_copy_accounting)).lower()]
+    launch += ['--ez', 'defer_pool_publication', str(bool(args.defer_pool_publication)).lower()]
     if args.bright_k is not None:
         launch += ['--ef', 'bright_k', str(args.bright_k)]
     if args.game_res is not None:
@@ -318,6 +324,8 @@ while time.monotonic() < deadline:
                     if (not args.attach and args.pixel_local is not None and
                             state.get('pixel_local',{}).get('enabled') != args.pixel_local):
                         raise SystemExit('pixel-local backend startup policy did not apply')
+                    if (not args.attach and state.get('pool_publication',{}).get('deferred',False) != bool(args.defer_pool_publication)):
+                        raise SystemExit('pool deferred publication effective mode differs from requested startup option')
                     if not args.attach and state.get('submission_barriers',{}).get('reference') != args.submission_barrier_reference:
                         raise SystemExit('submission barrier policy did not apply')
                     if args.cache_store_descriptors and state.get('store_descriptors',{}).get('reference',True):
@@ -342,6 +350,8 @@ while time.monotonic() < deadline:
                                                              False if 'color attachment usage: actual attachment only' in log else None),
                               'eager_pool_mirrors_reference':state.get('pool_mirrors',{}).get('reference'),
                               'requested_pool_window_bytes':args.pool_window_bytes,
+                              'requested_defer_pool_publication':args.defer_pool_publication,
+                              'actual_defer_pool_publication':state.get('pool_publication',{}).get('deferred',False),
                               'requested_pool_copy_accounting':args.pool_copy_accounting,
                               'actual_pool_copy_accounting':state.get('pool_copy_accounting',{}).get('enabled',False),
                               'requested_pixel_local':args.pixel_local,

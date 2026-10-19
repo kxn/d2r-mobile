@@ -55,6 +55,8 @@
 #include <mach-o/ldsyms.h>
 #endif
 
+static void x_cpu_exposure(uint64_t address,uint64_t size);
+
 // ---------- 槽表、跳板、未实现桩 ----------
 // ---------- Slot table, thunks, unimplemented stubs ----------
 typedef struct { _Atomic uint64_t cnt; void *fn; } nvn_slot_t;
@@ -203,7 +205,7 @@ NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBu
     OLOG("MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, o->size, o->flags);
     return 1;
 }
-NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) { if (((pool_t *)p)->mem) { nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
+NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) { if (((pool_t *)p)->mem) { x_cpu_exposure((uintptr_t)((pool_t *)p)->mem,((pool_t *)p)->size); nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
 NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) { (void)p; (void)off; (void)n; }
 NVN(nvnMemoryPoolGetBufferAddress, NVNbufferAddress, const NVNmemoryPool *p) { return (NVNbufferAddress)((const pool_t *)p)->mem; }
 
@@ -341,6 +343,8 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8);
     nvn_tex_layout(&o->d, &o->L);
     o->mem = s->pool && s->pool->mem ? s->pool->mem + s->off : NULL;
+    if(o->d.target!=NVN_TEXTURE_TARGET_BUFFER && o->mem)
+        x_cpu_exposure((uintptr_t)o->mem,o->L.size);
     o->serial = nvn_new_serial();
     OLOG("Texture %p %ux%ux%u lv%u fmt=%#x tgt=%d flags=%#x size=%#llx", (void *)t, o->d.width, o->d.height, o->d.depth,
          o->d.levels, o->d.format, o->d.target, o->d.flags, o->L.size);
@@ -377,12 +381,22 @@ NVN(nvnTextureGetViewOffset, ptrdiff_t, const NVNtexture *t, const NVNtextureVie
 }
 // CPU 读贴图（NVN ReadTexels）：预排布贴图以池内存为真值（解排布直读），GPU 写出的贴图从 MTLTexture 读回（nvn_mtl.m）
 // CPU texture read (NVN ReadTexels): for packaged textures the pool memory is the ground truth (de-layout and read directly); GPU-written textures are read back from the MTLTexture (nvn_mtl.m)
+static void x_read_texels(const tex_t *,unsigned,unsigned,const NVNcopyRegion *,uint8_t *,size_t,size_t);
 static void read_texels(const tex_t *o, const view_t *v, const NVNcopyRegion *r, uint8_t *dst, ptrdiff_t row, ptrdiff_t img) {
     int bw, bh, bpb = nvn_fmt_bpb(o->d.format, &bw, &bh);
     uint32_t wb = (uint32_t)((r->width + bw - 1) / bw) * bpb, hb = (uint32_t)(r->height + bh - 1) / bh;
     if (!row) row = wb;
     if (!img) img = row * hb;
     unsigned level = v && v->set_levels ? (unsigned)v->base_level : 0, layer0 = v && v->set_layers ? (unsigned)v->min_layer : 0;
+    if(mtl_pool_defer_publication_mode()) {
+        if(r->depth<0 || !hb || !wb || row<0 || img<0)die("NVN CPU readback exposure footprint");
+        uint64_t slices=r->depth>0?(uint64_t)(r->depth-1):0,a=(uint64_t)img,b=(uint64_t)row;
+        if((slices && a>UINT64_MAX/slices) || b>UINT64_MAX/(hb-1?hb-1:1))die("NVN CPU readback exposure overflow");
+        uint64_t last=slices*a,tail=(uint64_t)(hb-1)*b;
+        if(tail>UINT64_MAX-last || wb>UINT64_MAX-last-tail)die("NVN CPU readback exposure overflow");
+        x_cpu_exposure((uintptr_t)dst,last+tail+wb);
+        x_read_texels(o,level,layer0,r,dst,(size_t)row,(size_t)img);return;
+    }
     x_drain();   // CPU 读贴图：已入队的提交先翻译完 | CPU texture read: submits already enqueued are translated first
     mtl_read_texels(o, level, layer0, r, dst, (size_t)row, (size_t)img);
 }
@@ -490,6 +504,7 @@ NVN(nvnEventBuilderSetStorage, void, NVNeventBuilder *b, const NVNmemoryPool *p,
 NVN(nvnEventInitialize, NVNboolean, NVNevent *e, const NVNeventBuilder *b) {
     const ev_builder_t *s = (const ev_builder_t *)b;
     if (!s->pool || !s->pool->mem) { LOG("【红】EventInitialize 没有存储"); return 0; }
+    x_cpu_exposure((uintptr_t)(s->pool->mem+s->off),sizeof(uint32_t));
     *(ev_t *)e = (ev_t){MAGIC('E', 'V', 'N', 'T'), (volatile uint32_t *)(s->pool->mem + s->off)}; return 1;
 }
 NVN(nvnEventFinalize, void, NVNevent *e) { ((ev_t *)e)->magic = 0; }
@@ -636,6 +651,7 @@ NVN(nvnCommandBufferResetCounter, void, NVNcommandBuffer *c, NVNcounterType t) {
     uint8_t *p = cmd_alloc(CB(c), 16); put_hdr(p, OP_RESET_COUNTER, 16); uint64_t tt = t; memcpy(p + 8, &tt, 8);
 }
 NVN(nvnCommandBufferReportCounter, void, NVNcommandBuffer *c, NVNcounterType t, NVNbufferAddress a) {
+    x_cpu_exposure(a,2*sizeof(uint64_t));
     uint8_t *p = cmd_alloc(CB(c), 24); put_hdr(p, OP_REPORT_COUNTER, 24); uint64_t tt = t; memcpy(p + 8, &tt, 8); memcpy(p + 16, &a, 8);
 }
 NVN(nvnCommandBufferCopyBufferToBuffer, void, NVNcommandBuffer *c, NVNbufferAddress src, NVNbufferAddress dst, size_t n, int flags) {
@@ -647,6 +663,7 @@ NVN(nvnCommandBufferCopyBufferToBuffer, void, NVNcommandBuffer *c, NVNbufferAddr
 // uniform update: the data is copied into command memory at record time (NVN semantics: the caller may modify the original data after recording) and written into the buffer at submit
 NVN(nvnCommandBufferUpdateUniformBuffer, void, NVNcommandBuffer *c, NVNbufferAddress buf, size_t bufsz, ptrdiff_t off, size_t n, const void *data) {
     (void)bufsz;
+    x_cpu_exposure((uintptr_t)data,n);
     uint32_t sz = (uint32_t)(24 + n);
     uint8_t *p = cmd_alloc(CB(c), sz); put_hdr(p, OP_UPDATE_UB, (sz + 7) & ~7u);
     uint64_t dst = buf + off, nn = n; memcpy(p + 8, &dst, 8); memcpy(p + 16, &nn, 8); memcpy(p + 24, data, n);
@@ -897,14 +914,16 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 // completes, so waiting for fence f means waiting until "f is translated and the GPU is done"; by the time the game reclaims command memory or rewrites objects by fence, the translation thread has long finished reading them.
 // Present tickets become this queue's job numbers: acquire first waits for that job to run, then waits on the present thread ticket it was swapped for. Setting the frame number is queued too: replay resets bloom sampling and other state by frame number,
 // which must not be changed by the game thread in the middle of translation. DM_NVN_SYNC=1: jobs run in place on the calling thread (the same execution function), as the control and measurement baseline.
-enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME };
-typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
+enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_CPU_EXPOSURE, XJ_READ_TEXELS };
+typedef struct {tex_t texture;unsigned level,layer;NVNcopyRegion region;uint8_t *dest;size_t row,image;} x_texels;
+typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; int *cpu_access_result; const x_texels *read_texels; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
 #define XQ 32
 #define XTK 1024
 static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done;   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
 static int g_x_sync; static pthread_t g_x_thr;
+static _Thread_local int g_x_owner;
 #ifdef __ANDROID__
 // Optional platform policy, mirroring the original Apple deadline declaration.
 // The renderer still executes the same original NVN stream and synchronization.
@@ -936,6 +955,16 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
 #endif
 }
 static void x_run(const xjob *j, uint64_t job) {
+    int prior_owner=g_x_owner;g_x_owner=1;
+    if(j->kind==XJ_READ_TEXELS) {
+        const x_texels *r=j->read_texels;
+        mtl_read_texels(&r->texture,r->level,r->layer,&r->region,r->dest,r->row,r->image);
+        g_x_owner=prior_owner;return;
+    }
+    if(j->kind==XJ_CPU_EXPOSURE) {
+        *j->cpu_access_result=mtl_pool_cpu_access((uintptr_t)j->h,j->frame,j->host);
+        g_x_owner=prior_owner;return;
+    }
     if (j->kind == XJ_SUBMIT) { x_submit(j->h, j->n, j->sub, j->host); free(j->h); }
     else if (j->kind == XJ_PRESENT) { uint64_t tk = mtl_present(j->tex, j->period, j->crop); pthread_mutex_lock(&g_xmu); g_xtk[job % XTK].job = job; g_xtk[job % XTK].tk = tk; pthread_mutex_unlock(&g_xmu); }
     else {
@@ -948,6 +977,7 @@ static void x_run(const xjob *j, uint64_t job) {
         uint64_t pn = (uint64_t)(j->period * 1e9); static uint64_t rt_p;
         if (!g_x_sync && !dm_detclock_enabled()) { if (pn && rt_p != pn) { rt_p = pn; set_time_constraint(&g_rt_xlat, pn); } rt_comp_tick(&g_rt_xlat, pn); }
     }
+    g_x_owner=prior_owner;
 }
 static void *x_thread(void *a) {
     (void)a;
@@ -975,13 +1005,13 @@ static void *x_thread(void *a) {
 }
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
-    if (g_x_sync) { LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); return; }
+    if (g_x_sync) { mtl_pool_defer_publication_disable(); LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); return; }
     pthread_attr_t at; pthread_attr_init(&at);
 #ifdef __APPLE__
     pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     pthread_attr_setstacksize(&at, 8 << 20);
-    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
+    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { mtl_pool_defer_publication_disable(); LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
 }
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
@@ -1010,6 +1040,33 @@ static void x_wait(uint64_t job) {
 #endif
 }
 static void x_drain(void) { pthread_mutex_lock(&g_xmu); uint64_t job = g_xq_in; pthread_mutex_unlock(&g_xmu); x_wait(job); }
+static void x_cpu_exposure(uint64_t address,uint64_t size) {
+    if(!size)return;
+    if(size>UINT64_MAX-address)die("NVN CPU exposure address overflow");
+    uint64_t end=address+size,cursor=address;
+    while(cursor<end) {
+        uint64_t begin=0,bytes=0,identity=mtl_pool_cpu_access_needed(cursor,end-cursor,&begin,&bytes);
+        if(!identity)return; // fixed OFF, ordinary memory, or already fresh
+        if(begin<cursor || !bytes || begin>end || bytes>end-begin)die("NVN CPU exposure clipping");
+        if(g_x_owner) {
+            if(!mtl_pool_cpu_access(begin,bytes,identity))die("NVN owner CPU exposure identity changed");
+        } else {
+            gfx_enter();int result=0;
+            xjob j={.kind=XJ_CPU_EXPOSURE,.h=(uint64_t *)(uintptr_t)begin,
+                .frame=bytes,.host=identity,.cpu_access_result=&result};
+            x_wait(x_push(&j));gfx_leave();
+            if(!result)die("NVN CPU exposure pool identity changed");
+        }
+        cursor=begin+bytes; // progress even if authority metadata OOM remains conservative
+    }
+}
+static void x_read_texels(const tex_t *texture,unsigned level,unsigned layer,
+                          const NVNcopyRegion *region,uint8_t *dest,size_t row,size_t image) {
+    x_texels request={*texture,level,layer,*region,dest,row,image};
+    if(g_x_owner) {mtl_read_texels(texture,level,layer,region,dest,row,image);return;}
+    gfx_enter();xjob job={.kind=XJ_READ_TEXELS,.read_texels=&request};
+    x_wait(x_push(&job));gfx_leave();
+}
 static uint64_t x_fence(void) { return atomic_load(&g_x_subs); }
 static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后换来的出图线程票号（0 = 那次出图被丢弃，不用等） | Present thread ticket obtained after the present job runs (0 = that present was dropped, nothing to wait for)
     x_wait(job);

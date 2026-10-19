@@ -240,3 +240,9 @@ void vk_uniform_predicate_stats(uint64_t *hits,uint64_t *pending,uint64_t *limit
                                uint64_t *variants,uint64_t *rejected,uint64_t masks[16],int *enabled);
 VkShaderModule vk_uniform_hybrid_pick(vk_shader *shader,uint32_t values[2]);
 VkShaderModule vk_uniform_predicate_rejected(vk_shader *shader,uint32_t values[2]);
+
+void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute);
+
+int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,int compute);
+
+int vk_ghost_cpu_draw_ready(vk_shader *const list[6],const vk_state *state,const p_draw *,const p_draw_idx *);

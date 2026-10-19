@@ -655,6 +655,13 @@ static VkFormat image_binding_format(image *i,const view_t *v,int storage) {
 static VkFormat image_view_format(image *i,const view_t *v) {
   return image_binding_format(i,v,0);
 }
+// Only logical copies of textures are used across a visibility callback.
+// Callers must invoke this before borrowing any image/view/descriptor/temp.
+void vk_texture_cpu_preflight(const tex_t *t) {
+  if(V.options.pool_defer_publication && t && t->d.target!=NVN_TEXTURE_TARGET_BUFFER &&
+      t->mem && t->L.size && vk_pool_cpu_prepare((uintptr_t)t->mem,t->L.size)<0)
+    die("Vulkan texture CPU source lifetime changed during preflight");
+}
 static void image_upload(image *i);
 static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
   if (!V.cmd)
@@ -784,6 +791,12 @@ static void texture_dirty_mode_begin(void) {
   texture_dirty_reference_active=reference;atomic_store(&texture_dirty_active,reference);
 }
 static void image_upload(image *i) {
+  // HLE texture initialization is an ordered CPU exposure, including late
+  // aliases. Its sticky pages keep every later writer on original eager WB.
+  // Check this before dirty/stamp earlyreturn; never commit with i borrowed.
+  if(V.options.pool_defer_publication && i->tex.mem && i->tex.L.size &&
+      !vk_pool_cpu_source_ready((uintptr_t)i->tex.mem,i->tex.L.size))
+    die("Vulkan CPU texture source missing ordered initialization exposure");
   const tex_t *t = &i->tex;
   if(!t->has_layout) return;
   vk_mip_clear_texture_access(t,NULL,0);
@@ -989,6 +1002,7 @@ void vk_target_clear_color(const p_set_rt *rt, const p_scissor *sc,
   if (p->mask != 15)
     die("Vulkan masked color clear pending");
   if(vk_mip_clear_try(rt,sc,p))return;
+  vk_texture_cpu_preflight(rt->color[p->index]);
   vk_mip_clear_texture_access(rt->color[p->index],rt->has_cview[p->index]?&rt->cview[p->index]:NULL,0);
   image *i = image_get_attachment(rt->color[p->index]);
   const view_t *view = rt->has_cview[p->index] ? &rt->cview[p->index] : NULL;
@@ -1029,6 +1043,7 @@ void vk_target_clear_depth(const p_set_rt *rt, const p_scissor *sc,
   vk_mip_clear_drain();
   if (!rt->depth)
     die("Vulkan depth clear without depth target");
+  vk_texture_cpu_preflight(rt->depth);
   image *i = image_get(rt->depth);
   VkImageAspectFlags a = 0;
   if (p->depth_mask)
@@ -1051,7 +1066,7 @@ void vk_target_clear_depth(const p_set_rt *rt, const p_scissor *sc,
     clear_image(i, rt->has_dview ? &rt->dview : NULL, a, &value, sc);
 }
 void vk_texture_clear(const p_clear_tex *p) {
-  vk_mip_clear_drain();
+  vk_mip_clear_drain();vk_texture_cpu_preflight(p->tex);
   image *i = image_get(p->tex);
   int is3d = i->description.imageType == VK_IMAGE_TYPE_3D;
   view_t view = p->has_view ? p->view : (view_t){0};
@@ -1149,8 +1164,7 @@ static uint64_t copy_bytes(image *i, const p_copy_b2t *p, uint64_t row,
 }
 // Pure logical copy footprint, before image_get/upload or any temporary can
 // borrow physical resources. Keep original NVN compressed block geometry.
-static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int write) {
-  if(!V.options.pool_window_bytes)return 0;
+static uint64_t copy_pool_footprint(const p_copy_b2t *p,uint64_t row,uint64_t img) {
   int bw,bh,bpb=p->tex?nvn_fmt_bpb(p->tex->d.format,&bw,&bh):0;
   if(bpb<=0 || bw<=0 || bh<=0 || p->r.width<=0 || p->r.height<=0 || p->r.depth<=0)
     die("Vulkan invalid logical image-copy extent");
@@ -1164,11 +1178,18 @@ static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int
   if((depth-1) && slice>UINT64_MAX/(depth-1))die("Vulkan image copy depth overflow");
   uint64_t n=(depth-1)*slice,tail=(lines-1)*pitch;
   if(tail>UINT64_MAX-n || last>UINT64_MAX-n-tail)die("Vulkan image copy footprint overflow");
-  n+=tail+last;
+  n+=tail+last;return n;
+}
+static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int write) {
+  if(!V.options.pool_window_bytes)return 0;
+  uint64_t n=copy_pool_footprint(p,row,img);
   vk_pool_requirement need={p->src,n,0,VK_PIPELINE_STAGE_TRANSFER_BIT,write,0};
   return vk_pool_operation_begin_ranges(&need,1);
 }
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
+  vk_texture_cpu_preflight(p->tex);
+  if(V.options.pool_defer_publication && p->tex && p->tex->d.format>=0x41 && p->tex->d.format<=0x50)
+    vk_pool_cpu_prepare(p->src,copy_pool_footprint(p,row,img));
   int operation=copy_pool_operation(p,row,img,0);
   vk_mip_clear_drain();
   image *i = image_get(p->tex);
@@ -1214,6 +1235,7 @@ void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   vk_pool_operation_end(operation);
 }
 void vk_texture_copy_t2b(const p_copy_b2t *p, uint64_t row, uint64_t img) {
+  vk_texture_cpu_preflight(p->tex);
   int operation=copy_pool_operation(p,row,img,1);
   vk_mip_clear_drain();
   image *i = image_get(p->tex);
@@ -1250,6 +1272,7 @@ static uint32_t full_zero_copy(image *s,VkImageSubresourceRange sr,image *d,
       zero_mip_mask(dr.baseMipLevel,1):0;
 }
 void vk_texture_copy_t2t(const p_copy_t2t *p) {
+  vk_texture_cpu_preflight(p->src);vk_texture_cpu_preflight(p->dst);
   vk_mip_clear_drain();
   image *s = image_get(p->src), *d = image_get(p->dst);
   image_upload(s);
@@ -1365,6 +1388,7 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer,
   if (V.cmd)
     die("Vulkan synchronous read during recording");
   mtl_sub_begin();
+  vk_texture_cpu_preflight(t);
   image *i = image_get(t);
   image_upload(i);
   p_copy_b2t p = {.tex = t,
@@ -1901,6 +1925,8 @@ int vk_texture_descriptor_view(int id,tex_t *out,view_t *view,int *has_view) {
   pthread_mutex_unlock(&V.resources);return ok;
 }
 static int texture_zero_components(const tex_t *t,const view_t *v,int sampled) {
+  if(V.options.pool_defer_publication && t && t->mem && t->L.size &&
+      !vk_pool_cpu_source_ready((uintptr_t)t->mem,t->L.size))return 0;
   vk_mip_clear_texture_access(t,v,!sampled);
   // RGBX views synthesize alpha=1 even when all stored bytes are zero.
   if(t && (t->d.format==NVN_FORMAT_RGBX8 || t->d.format==NVN_FORMAT_RGBX8_SRGB ||
@@ -2166,6 +2192,8 @@ int vk_texture_storage_volume(int id, vk_storage_image *out) {
   texture_descriptor d = valid ? texture_descriptors[id] : (texture_descriptor){0};
   pthread_mutex_unlock(&V.resources);
   if(valid)vk_mip_clear_texture_access(&d.texture,d.has_view?&d.view:NULL,0);
+  if(valid && V.options.pool_defer_publication && d.texture.mem && d.texture.L.size &&
+      !vk_pool_cpu_source_ready((uintptr_t)d.texture.mem,d.texture.L.size))return 0;
   if (!valid || !(d.texture.d.flags & NVN_TEXTURE_FLAGS_IMAGE) ||
       (d.has_view && d.view.set_target ? d.view.target : d.texture.d.target) != NVN_TEXTURE_TARGET_3D)
     return 0;
@@ -2353,6 +2381,8 @@ int vk_texture_pixel_local_prepare(const tex_t *t,int local,vk_pixel_local_image
       t->d.format==NVN_FORMAT_BGRX8 || t->d.format==NVN_FORMAT_BGRX8_SRGB))return 0;
   if(!t || t->d.target!=NVN_TEXTURE_TARGET_2D || t->L.layers!=1 || t->d.samples>1 ||
       !t->d.levels || t->d.levels>16 || aspect_for(t->d.format)!=VK_IMAGE_ASPECT_COLOR_BIT)return 0;
+  if(V.options.pool_defer_publication && t->mem && t->L.size &&
+      !vk_pool_cpu_source_ready((uintptr_t)t->mem,t->L.size))return 0;
   VkFormatProperties features;vk_format_properties(vk_nvn_format(t->d.format),&features);
   if(!(features.optimalTilingFeatures&VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))return 0;
   vk_mip_clear_texture_access(t,NULL,0);
@@ -2416,6 +2446,8 @@ vk_attachment vk_texture_attachment(const tex_t *t,const view_t *v) { return tex
 vk_attachment vk_texture_readonly_attachment(const tex_t *t,const view_t *v) { return texture_attachment(t,v,1); }
 int vk_texture_pixel_local_depth_preflight(const tex_t *t,const view_t *v,
     const vk_attachment *attachment,int store) {
+  if(V.options.pool_defer_publication && t && t->mem && t->L.size &&
+      !vk_pool_cpu_source_ready((uintptr_t)t->mem,t->L.size))return 0;
   if(!t || !attachment || image_binding_active || vk_render_active() ||
       t->d.target!=NVN_TEXTURE_TARGET_2D || t->d.levels!=1 || t->L.layers!=1 ||
       t->d.samples>1 || attachment->layout!=VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ||
@@ -2557,7 +2589,7 @@ VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlag
 }
 
 VkImage vk_texture_native(const tex_t *t) {
-  vk_mip_clear_drain();
+  vk_mip_clear_drain();vk_texture_cpu_preflight(t);
   image *i = image_get(t);
   image_upload(i);
   image_general(i);
@@ -2565,7 +2597,7 @@ VkImage vk_texture_native(const tex_t *t) {
   return i->handle;
 }
 VkImage vk_texture_present_source(const tex_t *t,VkImageLayout *layout) {
-  vk_mip_clear_drain();
+  vk_mip_clear_drain();vk_texture_cpu_preflight(t);
   image *i=image_get(t);
   image_upload(i);image_use(i,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   image_transfer(i,(VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1},0);
@@ -2577,6 +2609,7 @@ int vk_texture_present_sample(const void *texture,VkFormat destination,
   vk_mip_clear_drain();
   const tex_t *t=texture;
   if(t->d.target!=NVN_TEXTURE_TARGET_2D)return 0;
+  vk_texture_cpu_preflight(t);
   image *i=image_get(t);
   // Test actual physical metadata. In particular, don't infer RGBA from an
   // NVN format that the upload/decoder may have replaced with another format.
@@ -2600,6 +2633,8 @@ int vk_texture_present_sample(const void *texture,VkFormat destination,
 int vk_rt_texture(const tex_t *texture,vk_rt_image *out) {
   vk_mip_clear_drain();
   if (!texture || texture->d.target!=NVN_TEXTURE_TARGET_2D || texture->d.samples>1) return 0;
+  if(V.options.pool_defer_publication && texture->mem && texture->L.size &&
+      !vk_pool_cpu_source_ready((uintptr_t)texture->mem,texture->L.size))return 0;
   image *i=image_get_attachment(texture); image_upload(i);
   image_general(i);
   image_unknown(i);

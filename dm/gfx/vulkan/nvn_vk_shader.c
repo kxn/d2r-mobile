@@ -1577,6 +1577,10 @@ static int dispatch_pool_collect(void *context,vk_pool_requirement_sink sink,voi
   return vk_shader_pool_ranges_state(stages,&S,1,sink,out);
 }
 void vk_dispatch(const p_dispatch *p) {
+  if(V.options.pool_defer_publication) {
+    vk_shader *stages[6]={0};vk_program_shaders(S.program,stages);
+    vk_shader_cpu_sources(stages,&S,1);
+  }
   int token=vk_pool_operation_begin(dispatch_pool_collect,NULL);
   dispatch_record(p);vk_pool_operation_end(token);
 }

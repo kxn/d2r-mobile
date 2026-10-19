@@ -40,6 +40,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeShaderPresent(boolean enabled);
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
+    private static native void nativePoolDeferPublication(boolean enabled);
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
     private static native void nativeUploadDualStore(boolean enabled);
@@ -137,6 +138,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativePixelLocalSharedDs(getIntent().getBooleanExtra("pixel_local_shared_ds", false));
             nativeUploadDualStore(getIntent().getBooleanExtra("upload_dual_store", false));
             nativePoolCopyAccounting(getIntent().getBooleanExtra("pool_copy_accounting", false));
+            nativePoolDeferPublication(getIntent().getBooleanExtra("defer_pool_publication", false));
             // Select backing before Vulkan initialization. Finite maintenance
             // keeps a complete binding contiguous without expanding every pool.
             if (getIntent().hasExtra("pool_window_bytes")) {
@@ -284,6 +286,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent.hasExtra("defer_pool_publication")) {
+            android.util.Log.w("D2RPool", "defer_pool_publication is startup-only; cold restart required");
+            intent.removeExtra("defer_pool_publication");
+        }
         if (intent.hasExtra("pool_copy_accounting")) {
             android.util.Log.w("D2RPool", "pool_copy_accounting is startup-only; cold restart required");
             intent.removeExtra("pool_copy_accounting");

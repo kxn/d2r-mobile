@@ -398,6 +398,9 @@ static void observe_tick(const uint64_t *registers) {
       (unsigned long long)query_pool_reuses,(unsigned long long)query_pool_creates);
     void vk_texel_view_stats(uint64_t *,uint64_t *);
     void vk_texture_dirty_stats(uint64_t *,uint64_t *);
+    int mtl_pool_defer_publication_mode(void);
+    fprintf(state_log, ",\"pool_publication\":{\"deferred\":%s}",
+      mtl_pool_defer_publication_mode()?"true":"false");
     int vk_texture_dirty_reference_mode(void);
     uint64_t texture_dirty_hits,texture_dirty_checks;
     vk_texture_dirty_stats(&texture_dirty_hits,&texture_dirty_checks);

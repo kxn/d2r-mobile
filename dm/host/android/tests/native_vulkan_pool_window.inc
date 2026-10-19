@@ -158,7 +158,15 @@ static void pool_window_reservation_test(void) {
   mtl_sub_begin();pool_window_fill(storage+2*window+128,16,word);
   vk_internal_wait(vk_internal_commit());CHECK(!memcmp(storage+2*window+128,guest_before,16));
   vk_pool_sync_reference(1);
-  CHECK(vk_pool_reserve_ranges(needs,5,window,&result)==VK_POOL_RESERVE_NEED_WHOLE);
+  if(mtl_pool_defer_publication_mode()) {
+    // The experimental visibility contract rejects this debug hot switch;
+    // verify the actual mode and unchanged reservation rather than pretending
+    // the unsupported full-reference request took effect.
+    mtl_sub_begin();uint64_t rf,ru,rp;int effective_reference;
+    vk_pool_sync_policy_stats(&rf,&ru,&rp,&effective_reference);CHECK(effective_reference==0);
+    vk_internal_wait(vk_internal_commit());
+    CHECK(vk_pool_reserve_ranges(needs,5,window,&result)==VK_POOL_RESERVE_OK);
+  } else CHECK(vk_pool_reserve_ranges(needs,5,window,&result)==VK_POOL_RESERVE_NEED_WHOLE);
   initialized=vk_pool_initialized_bytes();CHECK(vk_test_pool_migrate_whole((uintptr_t)storage));
   CHECK(vk_pool_initialized_bytes()==initialized);
   CHECK(vk_pool_reserve_ranges(needs,5,window,&result)==VK_POOL_RESERVE_OK&&!result.added_spans);

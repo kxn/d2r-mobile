@@ -16,6 +16,9 @@ void bf_want_note(const char *key);
 // Legacy callers have unknown intent. Explicit NVN flags are metadata only.
 void mtl_pool_add(const void *mem, uint64_t size);
 void mtl_pool_add_flags(const void *mem, uint64_t size, int flags);
+uint64_t mtl_pool_cpu_access_needed(uint64_t address,uint64_t size,uint64_t *begin,uint64_t *bytes);
+int mtl_pool_cpu_access(uint64_t address,uint64_t size,uint64_t identity);
+void mtl_pool_defer_publication_disable(void);
 void mtl_pool_del(const void *mem);
 int mtl_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off);   // 成功 1；buf 是 (__bridge) id<MTLBuffer> | 1 on success; buf is a (__bridge) id<MTLBuffer>
 
@@ -44,3 +47,7 @@ void mtl_drain(void);                                // 等队列上全部命令
 void mtl_xv_window_tex(uint64_t serial);   // 登记窗口（交换链）贴图：跨提交有效性账本永不收它 | Register a window (swapchain) texture: the cross-submit validity ledger never collects it
 void mtl_ui_ghost(int on, float px, float py, const float grid[4], float cx, float cy);   // 拖货跟手图：on=1 时把盖住屏幕点 (px,py)、压在货架格网 grid（左上角 x,y、一格宽高）上的那件货的图标在界面趟末尾平移到中心 (cx,cy) 再画一遍（归一化，左上原点）；任意线程调 | Drag-follow image for shop items: when on=1, the icon of the item that covers screen point (px,py) and sits on the shop shelf grid `grid` (top-left x,y, width and height of one cell) is translated to center (cx,cy) and drawn once more at the end of the UI pass (normalized, top-left origin); callable from any thread
 int mtl_ui_ghost_rect(float r[4]);   // 上面认到的那件货的屏幕矩形（归一化）；还没认到返回 0 | Screen rectangle (normalized) of the item recognized above; returns 0 if not recognized yet
+
+// Startup-only experiment; mode reports actual effective initialization policy.
+void mtl_pool_defer_publication(int enabled);
+int mtl_pool_defer_publication_mode(void);

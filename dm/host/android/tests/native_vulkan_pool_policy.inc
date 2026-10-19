@@ -237,9 +237,16 @@ static void pool_window_production_test(const void *vertex,const void *uniform,
   pool_authority_regression(source,dest);
   // Full reference must migrate the unrelated partial destination BEFORE
   // begin_submission's eager sync, not discover its holes during a draw.
+  vk_pool_span_info before_reference;
+  CHECK(vk_pool_span_query((uintptr_t)dest+10*window+256,256,&before_reference)==VK_POOL_SPAN_SINGLE);
   vk_pool_sync_reference(1);mtl_sub_begin();
   CHECK(vk_pool_span_query((uintptr_t)dest+10*window+256,256,&b)==VK_POOL_SPAN_SINGLE);
-  CHECK(b.logical_begin==0&&b.logical_end==bytes);
+  if(mtl_pool_defer_publication_mode()) {
+    uint64_t rf,ru,rp;int effective_reference;vk_pool_sync_policy_stats(&rf,&ru,&rp,&effective_reference);
+    CHECK(effective_reference==0);
+    CHECK(b.handle==before_reference.handle && b.pool_identity==before_reference.pool_identity &&
+      b.backing_generation==before_reference.backing_generation && b.logical_begin==before_reference.logical_begin && b.logical_end==before_reference.logical_end);
+  } else CHECK(b.logical_begin==0&&b.logical_end==bytes);
   vk_internal_wait(vk_internal_commit());vk_pool_sync_reference(0);
   mtl_pool_del(source);mtl_pool_del(dest);free(source);free(dest);
 

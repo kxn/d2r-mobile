@@ -25,6 +25,7 @@ vk_context V = {.resources = PTHREAD_MUTEX_INITIALIZER,
                 .present_queue_mu = PTHREAD_MUTEX_INITIALIZER};
 typedef struct pool_gpu_access pool_gpu_access;
 typedef struct pool_cpu_authority pool_cpu_authority;
+typedef struct pool_cpu_exposure pool_cpu_exposure;
 typedef struct pool_backing_span {
   struct pool_backing_span *next;
   uint64_t begin,end,generation;
@@ -60,8 +61,11 @@ typedef struct pool {
   // Known zero flags and unknown legacy callers remain distinguishable.
   uint32_t nvn_flags;
   int nvn_flags_known;
+  pool_cpu_exposure *cpu_exposure; // experiment-only, lazy bounded range exclusions
+  int cpu_exposure_full; // metadata OOM/size fallback, never drops excluded pages
 } pool;
 #include "nvn_vk_cpu_authority.inc"
+#include "nvn_vk_cpu_exposure.inc"
 // 上传按最多 4 KiB 的连续段复制，GPU 使用也按页保守记录；不扫描每次绑定的字节区间链。
 // Uploads copy spans of at most 4 KiB. Conservatively index GPU use by page,
 // rather than walking a growing byte-interval list for every buffer binding.
@@ -239,7 +243,12 @@ void vk_cpu_copy_stats(uint64_t *snapshots,uint64_t *published,uint64_t *fallbac
   *snapshots=atomic_load(&cpu_copy_snapshots);*published=atomic_load(&cpu_copy_published);
   *fallbacks=atomic_load(&cpu_copy_fallbacks);*reference=atomic_load(&cpu_copy_active);
 }
-void vk_pool_sync_reference(int reference) { atomic_store(&pool_sync_requested,!!reference); }
+void vk_pool_sync_reference(int reference) {
+  if(reference && atomic_load_explicit(&pool_defer_publication_enabled,memory_order_acquire)) {
+    LOG("[vulkan] pool sync reference rejected: deferred publication requires cold restart with experiment OFF");return;
+  }
+  atomic_store(&pool_sync_requested,!!reference);
+}
 void vk_pool_sync_policy_stats(uint64_t *full,uint64_t *used,uint64_t *protected_bytes,int *reference) {
   *full=atomic_load(&sync_full_bytes);*used=atomic_load(&sync_used_bytes);
   *protected_bytes=atomic_load(&sync_protected_bytes);*reference=atomic_load(&pool_sync_active);
@@ -416,6 +425,9 @@ static _Atomic int submission_barrier_requested = -1;
 static _Atomic int submission_barrier_active = -1;
 int vk_submission_barrier_mode(void) { return atomic_load(&submission_barrier_active); }
 void vk_submission_barrier_reference(int reference) {
+  if(reference && atomic_load_explicit(&pool_defer_publication_enabled,memory_order_acquire)) {
+    LOG("[vulkan] full submission reference rejected: deferred publication requires cold restart with experiment OFF");return;
+  }
   atomic_store(&submission_barrier_requested, !!reference);
 }
 static _Atomic int stream_requested=-1,stream_active=1;
@@ -1096,6 +1108,17 @@ static void init_options(void) {
   if(account && strcmp(account,"0") && strcmp(account,"1"))
     die("DM_VULKAN_POOL_COPY_ACCOUNTING expects 0 or 1");
   o->pool_copy_accounting=account && !strcmp(account,"1");
+  int defer_requested=atomic_load_explicit(&pool_defer_publication_requested,memory_order_acquire);
+  o->pool_defer_publication=defer_requested>=0?defer_requested:option_one("DM_VULKAN_DEFER_POOL_PUBLICATION");
+  const char *sync_nvn=getenv("DM_NVN_SYNC");
+  if(!async_submissions || (sync_nvn && atoi(sync_nvn)))o->pool_defer_publication=0;
+  if(o->pool_defer_publication) {
+    int pool_ref=atomic_load(&pool_sync_requested),barrier_ref=atomic_load(&submission_barrier_requested);
+    if(pool_ref<0)pool_ref=option_one("DM_VULKAN_POOL_SYNC_REFERENCE");
+    if(barrier_ref<0)barrier_ref=option_one("DM_VULKAN_SUBMISSION_BARRIER_REFERENCE");
+    if(pool_ref || barrier_ref)o->pool_defer_publication=0;
+  }
+  atomic_store_explicit(&pool_defer_publication_enabled,o->pool_defer_publication,memory_order_release);
   atomic_store_explicit(&pool_copy_enabled,o->pool_copy_accounting,memory_order_relaxed);
   const char *dual=getenv("DM_VULKAN_UPLOAD_DUAL_STORE");
   if(dual && strcmp(dual,"0") && strcmp(dual,"1"))die("DM_VULKAN_UPLOAD_DUAL_STORE expects 0 or 1");
@@ -1478,7 +1501,8 @@ static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, in
   if (!p || !size) die("Vulkan pool allocation");
   p->guest = (uint8_t *)mem;p->size = size;
   p->nvn_flags=flags;p->nvn_flags_known=known;
-  p->cpu_authority_tracking=V.options.pool_window_bytes!=0;
+  p->cpu_authority_tracking=V.options.pool_window_bytes!=0 ||
+      (V.options.pool_defer_publication && known && (flags&7u)==NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS);
   pthread_mutex_lock(&V.resources);
   for (pool *v = pools; v; v = v->next)
     if ((uintptr_t)mem < (uintptr_t)v->guest + v->size &&
@@ -1521,6 +1545,7 @@ void mtl_pool_del(const void *mem) {
     die("Vulkan pool registry epoch overflow");
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
   pool_spans_destroy(p);
+  free(p->cpu_exposure);
   free(p->cpu_authority);
   free(p->shadow);
   free(p->page_upload_stamps);
@@ -1708,6 +1733,8 @@ int mtl_addr(uint64_t addr,uint64_t len,void **buf,uint64_t *off) {
   return vk_pool_address_stage(addr,len,buf,off,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 }
 int vk_pool_read(uint64_t address, size_t size, void *out) {
+  if(V.options.pool_defer_publication && V.cmd && size && out &&
+      vk_pool_cpu_prepare(address,size)<0)return -1;
   vk_mip_clear_buffer_access(address,size);
   atomic_fetch_add(&sync_cpu_reads,1);
   if (!V.cmd || !size || !out) return -1;
@@ -1743,9 +1770,10 @@ int vk_pool_try_read(uint64_t address,size_t size,void *out) {
   if(vk_pool_pending_writes(address,size)) return 0;
   pthread_mutex_lock(&V.resources);
   pool *p=pool_find(address,size);
-  if(p) memcpy(out,p->guest+(address-(uintptr_t)p->guest),size);
+  int known=p && (!V.options.pool_defer_publication || pool_cpu_copy_proven(p,address-(uintptr_t)p->guest,size));
+  if(known) memcpy(out,p->guest+(address-(uintptr_t)p->guest),size);
   pthread_mutex_unlock(&V.resources);
-  return p?1:-1;
+  return !p?-1:known?1:0;
 }
 int vk_cover_read(uint64_t address,size_t size,void *out) {
   int reference=atomic_load(&cover_wait_reference);
@@ -1755,6 +1783,10 @@ int vk_cover_read(uint64_t address,size_t size,void *out) {
     reference=v&&!strcmp(v,"1");atomic_store(&cover_wait_reference,reference);
   }
   atomic_fetch_add(&sync_proof_reads,1);
+  // This is an optional rendering proof, including its legacy wait reference.
+  // Never introduce a new demand submission after the caller borrowed state.
+  if(V.options.pool_defer_publication &&
+      (vk_pool_pending_writes(address,size) || vk_pool_cpu_unknown(address,size)))return 0;
   if(reference) return vk_pool_read(address,size,out)>=0;
   int result=vk_pool_try_read(address,size,out);
   if(!result) atomic_fetch_add(&sync_proof_pending,1);
@@ -2812,7 +2844,7 @@ static void begin_submission(int pool_migration) {
   pthread_mutex_lock(&completion_mu);
   recording_resources->queue_serial = queue_submitted + 1;
   recording_resources->pool_migration=pool_migration;
-  recording_resources->cpu_authority_begin=V.options.pool_window_bytes?pool_cpu_cutoff():0;
+  recording_resources->cpu_authority_begin=(V.options.pool_window_bytes || V.options.pool_defer_publication)?pool_cpu_cutoff():0;
   recording_resources->pending_read_size=0;
   pthread_mutex_unlock(&completion_mu);
   int pool_reference=atomic_load(&pool_sync_requested);
@@ -2908,8 +2940,8 @@ static void effect_copy_kind(void *dst,const void *src,size_t size,uint32_t kind
 void vk_effect_copy(void *dst,const void *src,size_t size) {
   effect_copy_kind(dst,src,size,POOL_COPY_GENERIC);
 }
-static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,
-                             VkPipelineStageFlags producers) {
+static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *known,
+                             VkPipelineStageFlags producers,int actual_write) {
   V.buffer_epoch++;
   if (!size) return;
   if (!recording_resources) die("Vulkan writeback outside a submission");
@@ -2920,7 +2952,7 @@ static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,
   pool_materialize(p);
   uint64_t off = dst - (uintptr_t)p->guest;
   pool_initialize_range(p,off,size);
-  pool_cpu_written(p,off,size);
+  if(actual_write)pool_cpu_written(p,off,size);
   uint64_t known_cutoff=known&&(p->cpu_authority_tracking||p->cpu_copy_requires_gpu)?pool_cpu_cutoff():0;
   record_pool_access(p, off, size,producers);
   pool_writeback *w = recording_resources->writebacks;
@@ -2956,6 +2988,10 @@ static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,
   *at = r;
   pthread_mutex_unlock(&V.resources);
 }
+static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,VkPipelineStageFlags stages) {
+  buffer_writeback_intent(dst,size,known,stages,1);
+}
+#include "nvn_vk_cpu_demand.inc"
 void vk_buffer_writeback_stage(uint64_t dst,uint64_t size,VkPipelineStageFlags producers) {
   buffer_writeback(dst,size,NULL,producers);
 }
@@ -3006,13 +3042,18 @@ void vk_buffer_writebacks_flush(void) {
   while (list) {
     pool_writeback *w = list;
     list = w->next;
-    for (writeback_range *r = w->ranges; r;) {
+    writeback_range **range_at=&w->ranges;
+    while(*range_at) {
+      writeback_range *r=*range_at;
       uint64_t size = r->end - r->offset;
+      if(!r->known && pool_publication_can_defer(w->owner,r->offset,size)) {
+        *range_at=r->next;free(r);continue; // no CPU synchronization proof was produced
+      }
       if(r->known) {
         effect_copy_kind(w->owner->guest+r->offset,r->known,size,POOL_COPY_KNOWN_GUEST);
         effect_copy_kind(w->owner->shadow+r->offset,r->known,size,POOL_COPY_KNOWN_SHADOW);
         atomic_fetch_add(&cpu_copy_published,size);
-        r=r->next;continue;
+        range_at=&r->next;continue;
       }
       copied=1;
       recording_resources->readback_bytes+=size;
@@ -3046,7 +3087,7 @@ void vk_buffer_writebacks_flush(void) {
       // Unlike a known CPU value captured at its original copy, a GPU
       // readback snapshots every earlier writer at this physical command.
       r->known_cutoff=(w->owner->cpu_authority_tracking||w->owner->cpu_copy_requires_gpu)?pool_cpu_cutoff():0;
-      r=r->next;
+      range_at=&r->next;
     }
     pool_cpu_publish_ranges(w);
   }
@@ -3104,6 +3145,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
   vk_pool_operation_end(operation);
 }
 void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v) {
+  if(V.options.pool_defer_publication)vk_pool_cpu_prepare((uintptr_t)val,sizeof *val);
   if (mode > 1)
     die("Vulkan unsupported event mode %u", mode);
   vk_effect *e = calloc(1, sizeof *e);

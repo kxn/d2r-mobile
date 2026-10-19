@@ -48,6 +48,7 @@ typedef struct {
   int pool_ownership_reference;
   int pool_mirror_reference;
   int pool_copy_accounting;
+  int pool_defer_publication;
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
@@ -265,6 +266,11 @@ void vk_buffer_writebacks_flush(void);
 int vk_pool_read(uint64_t address, size_t size, void *out);
 // Optional CPU proofs must not force GPU completion: 1=read, 0=pending, -1=invalid.
 int vk_pool_try_read(uint64_t address,size_t size,void *out);
+// Required CPU exposure; owner-direct, before any temporary/descriptor/job borrow.
+int vk_pool_cpu_prepare(uint64_t address,uint64_t size);
+int vk_pool_cpu_unknown(uint64_t address,uint64_t size);
+void vk_texture_cpu_preflight(const tex_t *texture);
+int vk_pool_cpu_source_ready(uint64_t address,uint64_t size);
 void vk_cover_wait_reference(int reference);
 int vk_cover_read(uint64_t address,size_t size,void *out);
 typedef struct {
@@ -360,3 +366,5 @@ void vk_texture_mip_clear_mark(const tex_t *texture,const view_t *view);
 int vk_ghost_idle(void);
 void vk_mip_clear_stats(uint64_t *admitted,uint64_t *materialized,uint64_t *continued,
                         uint64_t *rejected,int *enabled);
+
+int vk_ghost_replaying(void);

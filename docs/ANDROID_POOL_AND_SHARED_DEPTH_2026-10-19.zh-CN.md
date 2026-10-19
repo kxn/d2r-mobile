@@ -414,3 +414,49 @@ host DWARF，尚不是 Android 物理驻留量或运行时间结论。
 字节断言。独立异步／同步全套通过。记录在本机
 `.local/logs/changed-word-scan-v2-source-ready.json`；本项不减少实际比较／上传
 字节，不宣称已降低温度或解决整帧瓶颈。
+
+
+## 实验：CPU_NO_ACCESS 的未知 GPU 结果按需回填
+
+5b6f822 两机官方 LLDB 在一次实际内部提交中，各观察到 710MiB、flags=0x21 的
+Pool 有三个未知 GPU 写回区间，合计 1,320,960B；另有 160B 已知 CPU 拷贝。
+它只是一个真实提交批次，不代表整帧或实际 DRAM。此前未知写入总会安排
+GPU→缓存 staging→guest/shadow 回填，即使后续仅由 GPU 使用。
+
+新增**默认关闭**实验 `--defer-pool-publication`。仅已知且 CPU 位恰为
+CPU_NO_ACCESS、范围对齐的 Pool，在无 CPU 曝光页重叠时延后未知 GPU 结果
+回填。已知 CPU 拷贝继续原发布；所有 GPU writer、资源依赖、NVN fence 与
+事件／查询效果保留。被跳过的范围不产生 CPU 可见性证明，不把旧 guest 或
+shadow 冒充新值。后续 GPU 读取仍通过实际 backing 与原 hazard 链路。
+
+CPU 曝光使用每 Pool 的懒分配 4KiB 页位图；纹理按真实内存大小曝光，不整池
+曝光。曝光控制未来写回，当前来源还须通过持久 authority 判断已新鲜。必要
+CPU 读取通过原翻译队列在安全边界提交并等待真实恢复，随后再借 descriptor、
+image 或临时 buffer。任意源部分重叠／跨 Pool 分解处理，并校验 Pool 身份。
+ReadTexels 实验路径整体进入同一队列，不在 guest 临时录制区另加等待。
+
+纹理入口先检查来源可见性，再走 has_layout 与两级脏缓存早退。可选覆盖证明
+和原 UI 跟随重放在未知或 pending 输入时拒绝增强，不插入新提交。跟随绘制
+的实例扩展按真实 stream/divisor/span 再验证，内部不走强读或 pending 提交；
+原 NVN draw 保留，后续普通 draw 仍真实恢复。不能把少一次可选增强当成提速。
+
+实验目前仅支持异步 GPU 提交及正常 HLE worker。串行、同步 HLE、worker
+创建失败、全池上传参考或全提交屏障参考启动组合实际关闭；生效后拒绝这些
+不兼容参考模式的热开启。Android 选项仅冷启动，已有进程不会热切；现有
+1Hz game_state 只报告实际 mode，未增加采样器、计时器或诊断温度读取。
+
+新增成本包括每 Pool 16B、32 个队列 payload 合计 512B；710MiB Pool 曝光
+位图懒分配约 22.2KiB，whole 模式额外 authority 约 6KiB。ON 增加来源枚举、
+短锁和真正需要时的提交／等待；OFF 也仍有 TLS／条件分支成本，不能声称零
+开销。authority、位图超界或分配失败保守回退，不假造可见性。
+
+v2 的 GPU 字节验证覆盖 late exposure、跨 Pool、compute、known-copy、BC
+CPU 上传和 ghost 捕获后 texture/VBO 改写，supported ON、默认 OFF、串行
+请求 ON 的实际 OFF 全套均通过，零 VUID/SYNC。原参考用例只有在实验实际
+启用时改为验证拒绝热切；OFF 保留原 whole/reference 断言。详见本机
+`.local/logs/pool-publication-defer-v2-source-ready.json` 和独立 review。
+
+原生 ARM 任意指针读取 NO_ACCESS 内存并不可观测；flags 不能独自证明游戏
+永不如此读取。因此保持默认 OFF，需真机 ON/OFF、画面与实际 readback／CPU
+工作量对照；未宣称整帧、发热或内存净收益。工具链与原游戏 binary 未为此
+叠补丁，继续从原始 ExeFS 经同一入口生成并核验部署。

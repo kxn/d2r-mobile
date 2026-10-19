@@ -157,6 +157,7 @@ static int camera(float current[16],float previous[16]) {
   if (!ubo->addr||ubo->size<528 || !vk_pool_range_offset(ubo->addr,ubo->size,&logical)) return 0;
   vk_pool_requirement need={ubo->addr,ubo->size,0,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1};
   int operation=vk_pool_operation_begin_ranges(&need,1);
+  if(V.options.pool_defer_publication)vk_pool_cpu_prepare(ubo->addr+336,192);
   if(!mtl_addr(ubo->addr,ubo->size,(void **)&buffer,&offset)) {vk_pool_operation_end(operation);return 0;}
   // 沿原 CPU 常量读法，仅当所需范围被 GPU 更新时等完成，不因其他池写入停顿。
   // Preserve original CPU reads, waiting only for GPU writes to the required range.

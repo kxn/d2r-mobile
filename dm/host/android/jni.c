@@ -57,6 +57,11 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolLook
 }
 extern void vk_pool_mirror_reference(int reference);
 extern void vk_pool_window_bytes(uint64_t bytes);
+extern void mtl_pool_defer_publication(int enabled);
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolDeferPublication(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)env;(void)klass;mtl_pool_defer_publication(enabled);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolWindowBytes(
     JNIEnv *env,jclass klass,jlong bytes) {
   (void)klass;

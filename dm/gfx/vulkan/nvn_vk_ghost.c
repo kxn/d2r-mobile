@@ -49,6 +49,7 @@ static struct {
   uint64_t textures[128];
   unsigned counts[128];
 } ghost;
+int vk_ghost_replaying(void) {return ghost.busy;}
 int vk_ghost_idle(void) { return !atomic_load(&enabled) && !ghost.n && !ghost.busy; }
 static void clear_candidates(void) {
   for (unsigned i = 0; i < ghost.n; i++) free(ghost.candidate[i].state);
@@ -89,6 +90,10 @@ void vk_ghost_note(const p_draw *draw, vk_shader *fragment) {
   while (k < ghost.nt && ghost.textures[k] != texture) k++;
   if (k == ghost.nt && k < 128) { ghost.textures[k] = texture; ghost.counts[k] = 0; ghost.nt++; }
   if (k < ghost.nt) ghost.counts[k]++;
+  if(V.options.pool_defer_publication) {
+    vk_shader *stages[6]={0};vk_program_shaders(S.program,stages);
+    if(!vk_ghost_cpu_draw_ready(stages,&S,draw,NULL))return;
+  }
   p_bind_buf *uniform = &S.ubo[0][0];
   if (!uniform->addr || uniform->size < 64 || vk_pool_pending_writes(uniform->addr, 64) ||
       vk_pool_pending_writes(S.vertex[0].address, 80)) return;
@@ -145,6 +150,13 @@ void vk_ghost_flush(void) {
       count = ghost.counts[k];
     if (count < least) { least = count; best = i; }
   }
+  if(V.options.pool_defer_publication) {
+    const vk_state *state=ghost.candidate[best].state;
+    vk_shader *stages[6]={0};vk_program_shaders(state->program,stages);
+    if(!vk_ghost_cpu_draw_ready(stages,state,&ghost.candidate[best].draw,NULL)) {
+      atomic_store(&found,0);clear_candidates();return;
+    }
+  }
   vk_state saved = S;
   S = *ghost.candidate[best].state;vk_pipeline_state_changed();
   const tex_t *target = S.targets.n ? S.targets.color[0] : NULL;
@@ -163,7 +175,9 @@ void vk_ghost_flush(void) {
   S.has_scissor = 0;
   atomic_store(&found, pack_rect(ghost.rect));
   ghost.busy = 1;
+  uint64_t before_draws=V.draws;
   vk_draw(&ghost.candidate[best].draw, NULL);
+  if(V.options.pool_defer_publication && V.draws==before_draws)atomic_store(&found,0);
   static int logged;
   if (!logged++) LOG("[vulkan] original shop drag-follow replay pass=%llu candidates=%u texture_uses=%u rect=%.4f,%.4f-%.4f,%.4f",
                     (unsigned long long)V.passes, ghost.n, least,

@@ -249,6 +249,7 @@ void vk_counter_reset(uint32_t type) {
   }
 }
 void mtl_sub_counter(uint64_t address, uint32_t type) {
+  if(V.options.pool_defer_publication)vk_pool_cpu_prepare(address,2*sizeof(uint64_t));
   // TOP 时间戳必须保留此前 NVN 顺序请求；BOTTOM 与采样结果已有命令位置保证。
   // A TOP timestamp must honor preceding NVN ordering. BOTTOM timestamps and
   // sample snapshots already retain their command-position semantics.

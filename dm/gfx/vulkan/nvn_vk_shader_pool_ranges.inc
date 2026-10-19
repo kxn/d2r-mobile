@@ -129,3 +129,48 @@ static int compute_pool_requirement(void *context,const vk_pool_requirement *ran
   out->uses[out->count++]=(vk_buffer_use){range->address,range->size,range->writable};
   return 1;
 }
+
+// Required CPU image sources are prepared at the operation boundary, before
+// physical pool admission and all shader/texture/temporary borrows. NVN state
+// is stable on the owner; registry descriptors are copied under its own lock.
+void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute) {
+  if(!V.options.pool_defer_publication)return;
+  for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
+    const vk_shader *s=list[stage];
+    for(unsigned k=0;k<s->nb;k++) {
+      const vk_binding *b=&s->bindings[k];
+      if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
+      if(b->reg<0 || b->reg>=(b->kind==4?32:128))continue;
+      uint64_t handle=b->kind==4?state->img[stage][b->reg]:state->tex[stage][b->reg];
+      tex_t t;if(vk_texture_descriptor(handle&0xfffff,&t))vk_texture_cpu_preflight(&t);
+    }
+  }
+  if(!compute) {
+    for(int k=0;k<state->targets.n;k++)vk_texture_cpu_preflight(state->targets.color[k]);
+    vk_texture_cpu_preflight(state->targets.depth);
+  }
+}
+
+// Optional host UI replay must never start a CPU demand after an outer draw
+// borrowed resources. Unknown image sources simply reject that extra replay.
+int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,int compute) {
+  if(!V.options.pool_defer_publication)return 1;
+  for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
+    const vk_shader *s=list[stage];
+    for(unsigned k=0;k<s->nb;k++) {
+      const vk_binding *b=&s->bindings[k];
+      if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
+      if(b->reg<0 || b->reg>=(b->kind==4?32:128))return 0;
+      uint64_t handle=b->kind==4?state->img[stage][b->reg]:state->tex[stage][b->reg];
+      tex_t t;if(vk_texture_descriptor(handle&0xfffff,&t) && t.mem && t.L.size &&
+          !vk_pool_cpu_source_ready((uintptr_t)t.mem,t.L.size))return 0;
+    }
+  }
+  if(!compute) {
+    for(int k=-1;k<state->targets.n;k++) {
+      const tex_t *t=k<0?state->targets.depth:state->targets.color[k];
+      if(t && t->mem && t->L.size && !vk_pool_cpu_source_ready((uintptr_t)t->mem,t->L.size))return 0;
+    }
+  }
+  return 1;
+}
