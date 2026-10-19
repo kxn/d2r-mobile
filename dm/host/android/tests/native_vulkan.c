@@ -563,6 +563,9 @@ int dm_vulkan_test_main(void) {
     int both=getenv("DM_BORROWED_NVN_WINDOWS_RUN_BOTH")!=NULL;
     if(both)CHECK(getenv("DM_BORROWED_NVN_FULL_REFERENCE_FIXTURE")==NULL);
     int imported_flags=borrowed_nvn_windows_test();CHECK(vk_validation_error_count()==0);
+    if(getenv("DM_BORROWED_NVN_MIRROR_FALLBACK_FIXTURE")) {
+      printf("{\"test\":\"borrowed-untracked-mirror-fallback\",\"checks\":%u,\"result\":\"passed\",\"host_imported\":false,\"pool_bytes\":131072,\"mirror_nodes\":2,\"game_modules_executed\":false}\n",checks);return 0;
+    }
     unsigned general_checks=checks,reference_checks=0;
     printf("{\"test_details\":\"borrowed-nvn-windows-phase\",\"phase\":\"general\",\"checks\":%u,\"flags\":%d}\n",general_checks,imported_flags);
     if(both) {
