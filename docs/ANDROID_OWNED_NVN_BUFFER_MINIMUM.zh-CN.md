@@ -6,7 +6,7 @@
 
 ## 所有权与同步
 
-1. attach 只接受完整、对齐、有明确自有来源的 fresh Pool，且没有 backing/shadow/初始化历史/在途引用；调用方须保证在登记前没有图像/别名/CPUeffect 暴露，不能按地址猜测来源。先以原 dirty API 预约可写 PG_NONE 页，再调用标准 `VK_EXT_external_memory_host`。PG_PROT/PG_BUSY 不解保护、不触发 GUP；真正 import 失败先销毁/unpin，再 release，逻辑池保持 sticky 拒绝。
+1. attach 只接受完整、对齐、有明确自有来源的 fresh Pool，且没有 backing/shadow/初始化历史/在途引用；调用方须保证在登记前没有图像/别名/CPUeffect 暴露，不能按地址猜测来源。先以原 dirty API 预约可写 PG_NONE 页，再调用标准 `VK_EXT_external_memory_host`。PG_PROT/PG_BUSY 不解保护、不触发 GUP（此预约拒绝不存 certificate；fixture 不在后续 fault 后再次尝试，不能广称所有预约拒绝都永久 sticky）；真正 import 失败先销毁/unpin，再 release，逻辑池保持 sticky 拒绝。
 2. 创建 Buffer 仅声明 Uniform、Vertex 和 TransferSrc（原 UBO 对齐只读复制需要 Src）。HOST_VISIBLE|HOST_CACHED 类型优先 coherent，非 coherent 保持全生命周期 map。map/bind/import 任一步失败不发布物理 backing。
 3. 原 operation 现有 pool 解析中检查访问类型：只读 UBO/VBO可借；writer、SSBO/texel/index/indirect、显式 transfer 与 unknown 在任何物理 borrow 前产生维护请求。精确重复项合并 writable/stages，类型冲突变成 unknown。没有新增每 draw 注册表扫描。
 4. 只读导入不建立 shadow 内容证明，也不运行原比较/上传；原 `sync_used_run` 对本次实际 GPU 读页逐次 atom 对齐 Flush，不用 dirty 代数省掉 Flush。coherent 类型依规范免 Flush；QueueSubmit 原隐式 HOST domain 操作仍在，没有增加全局 barrier 或 GPU wait。

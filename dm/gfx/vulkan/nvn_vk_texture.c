@@ -804,8 +804,12 @@ static int texture_dirty_reference_active;
 static int texture_owned_scopes;
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_texture_owned_scopes(int enabled) {
+  enabled=!!enabled;
+  // The original complete suite invokes the dirty test late, with the same
+  // default selection. A no-op never reinterprets any existing union proof.
+  if(texture_owned_scopes==enabled)return;
   if(images || V.cmd)die("Vulkan owned scope fixture selection after image creation");
-  texture_owned_scopes=!!enabled;
+  texture_owned_scopes=enabled;
 }
 #endif
 void vk_texture_dirty_reference(int reference) { atomic_store(&texture_dirty_requested,!!reference); }
