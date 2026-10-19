@@ -703,6 +703,9 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     setenv("DM_VULKAN_POOL_HOST_READONLY", "1", 1);
     setenv("DM_VULKAN_POOL_COPY_ACCOUNTING", "1", 1);
     setenv("DM_VULKAN_POOL_WINDOW_BYTES", "4096", 1);
+    // MainActivity already selected its ordinary default through the cold
+    // setter; the owned fixture needs the same explicit setter, not getenv.
+    vk_pool_window_bytes(4096);
   }
   if (host_import || pool_host_import) {
     if(host_import)setenv("DM_VULKAN_HOST_IMPORT_TEST", "1", 1);

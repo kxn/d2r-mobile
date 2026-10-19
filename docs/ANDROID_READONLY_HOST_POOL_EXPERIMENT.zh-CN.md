@@ -48,3 +48,5 @@ Android 普通 app UID 的显式入口：`run_game=false, run_vulkan_tests=true,
 额外功能案例仅对测试自行 mmap 的有限页调用原 `nvn_dirty_protect`，在首次 Buffer 使用前形成只读页；实际 writable host import 只尝试一次，失败则镜像，重复使用不重试。该测试既不访问游戏地址空间，也不整体解保护或改用其他 ioctl。驱动可以合法接受或拒绝这种映射；结果必须记录实际 VkResult/驱动诊断，不能把 Lavapipe 的接受推断成 KGSL 的接受。普通 NVN Finalize 保留其原有页保护清理。
 
 无 validation layer 时，若驱动支持 `VK_EXT_debug_utils`，实验启用官方驱动诊断 callback 以保留原始错误原因；这不是 VUID/同步验证覆盖。若驱动不支持 debug-utils，不影响 Buffer fallback 逻辑，也不得伪造底层 errno。
+
+Android fixture 使用原冷启动 window setter 明确选择4KiB，避免 Activity 普通16MiB默认值优先于环境变量；只改变测试模式，普通游戏默认不变。
