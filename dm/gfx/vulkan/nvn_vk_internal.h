@@ -42,6 +42,7 @@ typedef struct vk_effect {
 typedef struct {
   int stats,validate,tbdr,load_probe,freeze,freeze_negative;
   int defer_mip_clears;
+  int astc_decode_unorm8;
   int runtime,runtime_forced,runtime_toggle,vertex_divisor_fallback;
   int store_reference,store_check,ruler,extrap_no_pipeline,extrap_mask;
   int gpu_profile,trace_frame_set;
@@ -72,6 +73,7 @@ typedef struct {
   VkPhysicalDeviceFeatures features;
   VkBool32 shader_draw_parameters;
   VkBool32 shader_float16;
+  int astc_decode_mode;
   int display_timing;
   int sampler_mirror_clamp;
   int stencil_export;

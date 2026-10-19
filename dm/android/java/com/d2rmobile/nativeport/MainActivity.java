@@ -45,6 +45,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
     private static native void nativeUploadDualStore(boolean enabled);
+    private static native void nativeAstcDecode(boolean enabled, boolean fixture);
     private static native void nativePoolCopyAccounting(boolean enabled);
     private static native void nativePerformanceHintReference(boolean reference);
     private static native void nativeImageLayoutReference(boolean reference);
@@ -140,6 +141,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", true));
             nativePixelLocalSharedDs(getIntent().getBooleanExtra("pixel_local_shared_ds", false));
             nativeUploadDualStore(getIntent().getBooleanExtra("upload_dual_store", false));
+            nativeAstcDecode(getIntent().getBooleanExtra("astc_decode_unorm8", false),
+                    getIntent().getBooleanExtra("run_vulkan_tests", false) &&
+                    getIntent().getBooleanExtra("astc_decode_test", false));
             nativePoolCopyAccounting(getIntent().getBooleanExtra("pool_copy_accounting", false));
             nativePoolDeferPublication(getIntent().getBooleanExtra("defer_pool_publication", false));
             // Select backing before Vulkan initialization. Finite maintenance

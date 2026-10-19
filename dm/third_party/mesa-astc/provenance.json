@@ -1,0 +1,64 @@
+{
+  "upstream": "https://archive.mesa3d.org/mesa-26.2.5.tar.xz",
+  "archive_sha256": "794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5",
+  "source": "src/util/texcompress_astc.cpp",
+  "source_sha256": "d12cecd1168e44374bfa39e669734e8500e7b177b230462f4f582c4e51f04dde",
+  "license": "MIT; original copyright/license retained in metadata.inc",
+  "sections": [
+    {
+      "first_line": 47,
+      "lines": 19,
+      "sha256": "c2c134ce3e4b8458947afffc495e93d5621e9ac1968028c994e293ee84dadac9"
+    },
+    {
+      "first_line": 66,
+      "lines": 28,
+      "sha256": "4ecf7577bc5a4e5aade9d54c3677e35532d8b89227c1112b2c286fd0feea4fa0"
+    },
+    {
+      "first_line": 211,
+      "lines": 29,
+      "sha256": "ebb5153ee3e610f0fbc3a88736c926ab22c48aa2cfaf1f91f340334ac9ea2370"
+    },
+    {
+      "first_line": 360,
+      "lines": 87,
+      "sha256": "b1a9dfe391979e6edbd00e6eb0e4246039ec8b7060d725f398e2b044357bb559"
+    },
+    {
+      "first_line": 538,
+      "lines": 104,
+      "sha256": "8ee99ee64c04e2d4ecb42a1f8904cfa9f2ac3a57de10a1025b65d375c4679b11"
+    },
+    {
+      "first_line": 674,
+      "lines": 36,
+      "sha256": "4eb96c40d1835ca7345ce5ead11906869d2a564ef2092a2899bbe517529f08d0"
+    },
+    {
+      "first_line": 711,
+      "lines": 103,
+      "sha256": "9804eb2f08e9d229f7cfc2da664a5c84ed4b8326936b55fa32e604360761662f"
+    },
+    {
+      "first_line": 815,
+      "lines": 123,
+      "sha256": "9d0fb0f9ed7fd030175565bf3c77d5e68d49a074648aa53e3b71ae474102ce04"
+    },
+    {
+      "first_line": 1712,
+      "lines": 42,
+      "sha256": "37337ade28b95b03267695eef3b2cc176a42ef02d859153bb6b664711b5ccef1"
+    },
+    {
+      "first_line": 1755,
+      "lines": 17,
+      "sha256": "6c93822deb900eae0da0b68bd1fb405332f93680fa0fddaaf535d42d8a8cfd2d"
+    },
+    {
+      "first_line": 1773,
+      "lines": 29,
+      "sha256": "4aa2cd6e26ba0ab9b8d9fa4656d1340df5614ad8749c365dcf7340b2b64e418a"
+    }
+  ]
+}

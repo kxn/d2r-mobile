@@ -1195,6 +1195,7 @@ static void init_options(void) {
   if(dual && strcmp(dual,"0") && strcmp(dual,"1"))die("DM_VULKAN_UPLOAD_DUAL_STORE expects 0 or 1");
   upload_dual_enabled=dual && !strcmp(dual,"1"); // startup-only, experimental OFF
   LOG("[vulkan] direct upload dual store experimental=%d",upload_dual_enabled);
+  o->astc_decode_unorm8=option_one("DM_VULKAN_ASTC_DECODE_UNORM8");
   o->defer_mip_clears=option_one("DM_VULKAN_DEFER_MIP_CLEARS");
   o->stats=!external_profile && getenv("DM_VULKAN_STATS")!=NULL;
   o->validate=getenv("DM_VULKAN_VALIDATE")!=NULL;
@@ -1373,7 +1374,7 @@ static void init_device(void) {
                            .queueCreateInfoCount = 1,
                            .pQueueCreateInfos = &q,
                            .pEnabledFeatures = &V.features};
-  const char *device_extensions[8];
+  const char *device_extensions[16];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
@@ -1391,6 +1392,9 @@ static void init_device(void) {
   VK_CHECK(vkEnumerateDeviceExtensionProperties(
       V.physical, NULL, &extension_count_device, available));
   for (uint32_t i = 0; i < extension_count_device; i++) {
+    if (V.options.astc_decode_unorm8 &&
+        !strcmp(available[i].extensionName,VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME))
+      V.astc_decode_mode=1;
     if (!strcmp(available[i].extensionName, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME))
       have_timeline = 1;
     if (!strcmp(available[i].extensionName,VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME))
@@ -1471,6 +1475,10 @@ static void init_device(void) {
     device_extensions[dc.enabledExtensionCount++] = VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME;
   if (V.timeline_semaphore)
     device_extensions[dc.enabledExtensionCount++] = VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME;
+  if(V.astc_decode_mode)
+    device_extensions[dc.enabledExtensionCount++]=VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME;
+  LOG("[vulkan] ASTC UNORM8 decode: %s (LDR-content proof required)",
+      V.astc_decode_mode?"experimental":"disabled or unsupported");
   if(V.shader_float16)
     device_extensions[dc.enabledExtensionCount++]=VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME;
   LOG("[vulkan] shader stencil export: %s",V.stencil_export?"enabled":"unavailable");
