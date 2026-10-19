@@ -2792,8 +2792,12 @@ static void sync_page(const void *memory, size_t length, void *context) {
     // Original upload runs on the single translation owner and retains p.
     // Its physical node cannot be replaced concurrently. Do not read the
     // alias thread's lazy history pointer just to enforce this deep guard.
-    pool_span_piece span=pool_span_require(p,off,length);
-    if(span.backing->buffer.owned_host_import)die("Vulkan borrowed import entered mirror upload");
+    // An untracked visitor can pass one run across adjacent mirror nodes.
+    // This guard rejects only imported overlap; it must not impose the
+    // single-binding contract on the original page-splitting uploader.
+    for(pool_backing_span *b=p->backings;b && b->begin<off+length;b=b->next)
+      if(b->end>off && b->buffer.owned_host_import)
+        die("Vulkan borrowed import entered mirror upload");
   }
 #endif
   while (length) {

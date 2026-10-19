@@ -46,3 +46,17 @@ GDB 读取当前宿主 DWARF 得到：range280B（旧104B，borrowed构建全409
 - `sync_page` 运行在翻译 owner，但原 guard 读取 `p->borrowed_windows`；其他 HLE 线程可在首次不相交 image/CPU-effect 声明时懒分配该历史指针。改为使用 owner 持有的原物理 span/import 标志作深层拒绝检查，不读该 lazy 指针、不增加全局锁或原子。其余 overlap caller 经逐点检查受 `V.resources` 或同一 owner 保护；不能笼统把 retained pool ref 说成 next 链不可变。此项是源代码并发闭包修正，没有声称 TSan 真机动态验收。
 
 这些修订不改变8-slot预算、实际0xf宿主/尚未0xb子窗真机的边界，也不提供全应用的全局 pinned-byte预算；后者仍是生产启用前需要明确的资源策略。
+
+## 第二次独审：未跟踪普通池的多镜像回退
+
+`de96235` 的深层上传保护消除了 lazy history 指针读取，但用单 node
+`pool_span_require()` 约束整个 dirty visitor 回调过于严格。未登记 dirty range
+的普通池（含容量不足时的原有回退）可以有相邻的独立镜像，visitor 会传入
+跨 node 的完整已使用区间；原上传器随后逐页处理，不要求单个 VkBuffer。
+
+测试专用提交保留真实失败：普通 `mtl_pool_add()`、两个相邻 64KiB mirror、
+一个提交读取边界两侧各 4KiB，原断言在 8KiB 回调处报 preflight fatal。
+修正仅在 recording owner 上遍历交叠物理 backing，发现 imported node 才报错；
+不读 history、不要求覆盖或单 node，不改变原 hole/逐页上传语义。相同原 GPU
+copy/readback 逐字节断言覆盖首次上传及后续 CPU 写入。它不是 HOST import
+或真实 Mali 非一致性验证，也不改变默认关闭和全进程 pin 预算未完成的边界。
