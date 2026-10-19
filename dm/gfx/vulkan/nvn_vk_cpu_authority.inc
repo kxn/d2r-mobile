@@ -147,6 +147,9 @@ static int pool_cpu_copy_proven(pool *p,uint64_t offset,uint64_t size) {
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
   // Volatile host bytes have no shadow snapshot/dirty-generation authority.
   if(p->owned_readonly && !p->owned_readonly->retired)return 0;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_windows_overlap(p,offset,size))return 0;
+#endif
 #endif
   if(!p->cpu_authority_tracking&&!p->cpu_copy_requires_gpu)return 1;
   if(!size || offset>p->size || size>p->size-offset)return 0;

@@ -34,8 +34,15 @@ enum { BUSY_WAIT_MS = 2000 };
 // 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
 // Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
 #define MAX_RANGE 4096   // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+#define DIRTY_EXCLUSION_SLOTS 8
+#else
+#define DIRTY_EXCLUSION_SLOTS 1
+#endif
+typedef struct { _Atomic uint64_t identity; _Atomic uintptr_t base,end; } dirty_exclusion_slot;
 typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes;
-    _Atomic uint64_t owned_identity, owned_version; _Atomic uintptr_t owned_base, owned_end;
+    _Atomic unsigned owned_count; _Atomic uint64_t owned_version;
+    dirty_exclusion_slot exclusions[DIRTY_EXCLUSION_SLOTS];
 } range_t;
 static range_t g_r[MAX_RANGE];
 static _Atomic int g_nr;
@@ -159,7 +166,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
     pthread_mutex_lock(&g_slot_mu);
     int n = atomic_load(&g_nr);
     uintptr_t added = address(mem), added_end = added + size;
-    for(int i=0;i<n;i++) if(atomic_load(&g_r[i].live) && atomic_load(&g_r[i].owned_identity) &&
+    for(int i=0;i<n;i++) if(atomic_load(&g_r[i].live) && atomic_load(&g_r[i].owned_count) &&
         (added_end<added || (added<g_r[i].end && g_r[i].base<added_end)))
         die("owned dirty exclusion forbids overlapping range registration");
     int slot = -1;
@@ -203,7 +210,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
 void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_lock(&g_slot_mu);
     range_t *r = find(address(mem));
-    if(r && atomic_load(&r->owned_identity)) die("owned dirty exclusion requires quiescent release before range removal");
+    if(r && atomic_load(&r->owned_count)) die("owned dirty exclusion requires quiescent release before range removal");
     if (r) { advance(&r->lifetime); advance(&r->changes); prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); advance(&g_changes); }
     pthread_mutex_unlock(&g_slot_mu);
 }
@@ -238,14 +245,14 @@ uint64_t nvn_dirty_change_epoch(void) {
 int nvn_dirty_range_refresh(const nvn_dirty_range_proof *old, nvn_dirty_range_proof *proof) {
     if (!old->lifetime || old->lifetime == UINT64_MAX || old->slot >= MAX_RANGE) return 0;
     range_t *r = &g_r[old->slot];
-    if(atomic_load_explicit(&r->owned_identity,memory_order_acquire))return 0;
+    if(atomic_load_explicit(&r->owned_count,memory_order_acquire))return 0;
     uint64_t life = atomic_load_explicit(&r->lifetime, memory_order_acquire);
     uint64_t seq = atomic_load_explicit(&r->changes, memory_order_acquire);
     // No plain envelope/state pointer reads: slot reuse may be concurrent.
     if (life != old->lifetime || !seq || seq == UINT64_MAX ||
         !atomic_load_explicit(&r->live, memory_order_acquire) ||
         atomic_load_explicit(&r->lifetime, memory_order_acquire) != life ||
-        atomic_load_explicit(&r->owned_identity,memory_order_acquire)) return 0;
+        atomic_load_explicit(&r->owned_count,memory_order_acquire)) return 0;
     *proof = (nvn_dirty_range_proof){old->slot, 0, life, seq};
     return 1;
 }
@@ -266,18 +273,21 @@ int nvn_dirty_range_observe(const void *addr, size_t len, nvn_dirty_range_proof 
 // across transitions; the monotonic version closes begin/release/rollback ABA.
 // Sequentially consistent metadata operations keep the two version reads and
 // interval reads in one total order; no page/registry walk on cached refresh.
-typedef struct { uint64_t version;uintptr_t begin,end;int active; } owned_scope;
+typedef struct { uint64_t version;uintptr_t begin[DIRTY_EXCLUSION_SLOTS],end[DIRTY_EXCLUSION_SLOTS];unsigned active; } owned_scope;
 static int owned_scope_read(range_t *r,owned_scope *out) {
     uint64_t version=atomic_load(&r->owned_version);
     if((version&1) || version==UINT64_MAX)return 0;
-    uint64_t identity=atomic_load(&r->owned_identity);
-    uintptr_t begin=0,end=0;
-    if(identity) {begin=atomic_load(&r->owned_base);end=atomic_load(&r->owned_end);}
-    if(atomic_load(&r->owned_version)!=version)return 0;
-    *out=(owned_scope){version,begin,end,identity!=0};return 1;
+    *out=(owned_scope){.version=version};
+    if(atomic_load(&r->owned_count))for(unsigned k=0;k<DIRTY_EXCLUSION_SLOTS;k++)
+        if(atomic_load(&r->exclusions[k].identity)) {
+            unsigned n=out->active++;
+            out->begin[n]=atomic_load(&r->exclusions[k].base);out->end[n]=atomic_load(&r->exclusions[k].end);
+        }
+    return atomic_load(&r->owned_version)==version;
 }
 static int owned_scope_overlap(const owned_scope *scope,uintptr_t begin,uintptr_t end) {
-    return scope->active && begin<scope->end && scope->begin<end;
+    for(unsigned k=0;k<scope->active;k++)if(begin<scope->end[k] && scope->begin[k]<end)return 1;
+    return 0;
 }
 // A proof object must be obtained by observe and remain unmodified. Actual
 // query arguments bind refresh to that exact envelope, not an arbitrary slot.
@@ -295,9 +305,14 @@ int nvn_dirty_scope_refresh(const void *addr,size_t len,const nvn_dirty_scope_pr
     if(!global || global==UINT64_MAX)return 0;
     range_t *r=&g_r[old->slot];
     uint64_t life=atomic_load_explicit(&r->lifetime,memory_order_acquire);
-    owned_scope scope;
-    if(life!=old->lifetime || !owned_scope_read(r,&scope) ||
-       owned_scope_overlap(&scope,begin,begin+len) || old->exclusion_version>scope.version)return 0;
+    owned_scope scope={.version=atomic_load(&r->owned_version)};
+    if(life!=old->lifetime || (scope.version&1) || scope.version==UINT64_MAX ||
+       old->exclusion_version>scope.version)return 0;
+    // The immutable query was already proven disjoint at this exact version.
+    // Stable cached refresh has no slot-array or page walk. A changed version
+    // performs one bounded snapshot, including rollback/release/slot reuse.
+    if(old->exclusion_version!=scope.version &&
+       (!owned_scope_read(r,&scope) || owned_scope_overlap(&scope,begin,begin+len)))return 0;
     uint64_t seq=atomic_load_explicit(&r->changes,memory_order_acquire);
     if(!seq || seq==UINT64_MAX || !atomic_load_explicit(&r->live,memory_order_acquire) ||
        atomic_load(&r->owned_version)!=scope.version ||
@@ -347,9 +362,9 @@ static void owned_publish(range_t *r,uintptr_t first,uintptr_t count) {
     advance(&r->changes);advance(&g_changes);
 }
 static int dirty_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *token,
-                         uint64_t lease_lifetime,uint32_t lease_slot) {
+                         uint64_t lease_lifetime,uint32_t lease_slot,uintptr_t lease_base,size_t lease_size) {
 #ifdef __APPLE__
-    (void)addr;(void)len;(void)token;(void)lease_lifetime;(void)lease_slot;return 0;
+    (void)addr;(void)len;(void)token;(void)lease_lifetime;(void)lease_slot;(void)lease_base;(void)lease_size;return 0;
 #else
     uintptr_t a=address(addr);
     if(!token || token->identity || token->lifetime || token->slot || token->reserved || token->base || token->size ||
@@ -357,11 +372,11 @@ static int dirty_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *
         (a&(g_pg-1)) || (len&(g_pg-1)))return 0;
     pthread_mutex_lock(&g_slot_mu);
     range_t *r=find(a);
-    if(!r || len>r->end-a || (lease_lifetime && (r!=g_r+lease_slot ||
-        atomic_load(&r->lifetime)!=lease_lifetime || r->base!=a || r->end-a!=len)) || atomic_load(&r->owned_identity) ||
+    if(!r || len>r->end-a || (!lease_lifetime && atomic_load(&r->owned_count)) || (lease_lifetime && (r!=g_r+lease_slot ||
+        atomic_load(&r->lifetime)!=lease_lifetime || r->base!=lease_base || r->end-r->base!=lease_size)) ||
         !atomic_load(&r->lifetime) || atomic_load(&r->lifetime)==UINT64_MAX ||
         atomic_load(&r->changes)==UINT64_MAX || g_owned_identity==UINT64_MAX ||
-        (atomic_load(&r->owned_version)&1) || atomic_load(&r->owned_version)>UINT64_MAX-4) {
+        (atomic_load(&r->owned_version)&1) || atomic_load(&r->owned_version)>UINT64_MAX-2*(atomic_load(&r->owned_count)+2u)) {
         pthread_mutex_unlock(&g_slot_mu);return 0;
     }
     // Do not let another tracker protect an alias of any claimed page.
@@ -369,12 +384,22 @@ static int dirty_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *
         if(&g_r[i]!=r && atomic_load(&g_r[i].live) && a<g_r[i].end && g_r[i].base<a+len) {
             pthread_mutex_unlock(&g_slot_mu);return 0;
         }
+    unsigned index=DIRTY_EXCLUSION_SLOTS;
+    for(unsigned k=0;k<DIRTY_EXCLUSION_SLOTS;k++) {
+        dirty_exclusion_slot *entry=&r->exclusions[k];
+        if(!atomic_load(&entry->identity)) {if(index==DIRTY_EXCLUSION_SLOTS)index=k;}
+        else if(a<atomic_load(&entry->end) && atomic_load(&entry->base)<a+len) {
+            pthread_mutex_unlock(&g_slot_mu);return 0;
+        }
+    }
+    if(index==DIRTY_EXCLUSION_SLOTS) {pthread_mutex_unlock(&g_slot_mu);return 0;}
+    dirty_exclusion_slot *entry=&r->exclusions[index];
     uint64_t identity=++g_owned_identity;
     owned_transition_begin(r);
-    atomic_store(&r->owned_base,a);atomic_store(&r->owned_end,a+len);
+    atomic_store(&entry->base,a);atomic_store(&entry->end,a+len);
     // Defeat negative proofs BEFORE any CPU writes can escape protection.
     atomic_fetch_add(&g_owned_active,1);
-    atomic_store(&r->owned_identity,identity);
+    atomic_store(&entry->identity,identity);atomic_fetch_add(&r->owned_count,1);
     advance(&r->changes);advance(&g_changes);
     owned_transition_test(addr,0);
     uintptr_t first=(a-r->base)>>g_shift,count=len>>g_shift,claimed=0;
@@ -387,7 +412,7 @@ static int dirty_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *
         // mprotect, GUP, or retry; only release our own successful prefix.
         owned_publish(r,first,claimed);
         for(uintptr_t p=first;p<first+claimed;p++)atomic_store(&r->state[p],PG_NONE);
-        atomic_store(&r->owned_identity,0);
+        atomic_store(&entry->identity,0);atomic_fetch_sub(&r->owned_count,1);
         atomic_fetch_sub(&g_owned_active,1);
         advance(&r->changes);advance(&g_changes);owned_transition_end(r);
         pthread_mutex_unlock(&g_slot_mu);return 0;
@@ -399,7 +424,7 @@ static int dirty_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *
 #endif
 }
 int nvn_dirty_owned_exclude(const void *addr,size_t len,nvn_dirty_owned_exclusion *token) {
-    return dirty_exclude(addr,len,token,0,0);
+    return dirty_exclude(addr,len,token,0,0,0,0);
 }
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
 int nvn_dirty_pool_lease_observe(const void *addr,size_t len,nvn_dirty_pool_lease *lease) {
@@ -413,26 +438,32 @@ int nvn_dirty_pool_lease_observe(const void *addr,size_t len,nvn_dirty_pool_leas
     }
     pthread_mutex_unlock(&g_slot_mu);return result;
 }
+int nvn_dirty_pool_lease_exclude_window(const nvn_dirty_pool_lease *lease,const void *addr,size_t len,nvn_dirty_owned_exclusion *token) {
+    uintptr_t a=address(addr);
+    if(!lease || !lease->lifetime || lease->slot>=MAX_RANGE || lease->reserved || a<lease->base ||
+       a-lease->base>lease->size || len>lease->size-(a-lease->base))return 0;
+    return dirty_exclude(addr,len,token,lease->lifetime,lease->slot,lease->base,lease->size);
+}
 int nvn_dirty_pool_lease_exclude(const nvn_dirty_pool_lease *lease,nvn_dirty_owned_exclusion *token) {
     if(!lease || !lease->lifetime || lease->slot>=MAX_RANGE || lease->reserved)return 0;
-    return dirty_exclude((void *)lease->base,lease->size,token,lease->lifetime,lease->slot);
+    return dirty_exclude((void *)lease->base,lease->size,token,lease->lifetime,lease->slot,lease->base,lease->size);
 }
 #endif
 int nvn_dirty_owned_release(nvn_dirty_owned_exclusion *token) {
     if(!token || !token->identity || !token->lifetime || token->slot>=MAX_RANGE || token->reserved)return 0;
-    pthread_mutex_lock(&g_slot_mu);range_t *r=&g_r[token->slot];
-    if(!atomic_load(&r->live) || atomic_load(&r->lifetime)!=token->lifetime ||
-        atomic_load(&r->owned_identity)!=token->identity || r->owned_base!=token->base ||
-        token->size!=r->owned_end-r->owned_base) {
+    pthread_mutex_lock(&g_slot_mu);range_t *r=&g_r[token->slot];dirty_exclusion_slot *entry=NULL;
+    for(unsigned k=0;k<DIRTY_EXCLUSION_SLOTS;k++)if(atomic_load(&r->exclusions[k].identity)==token->identity)entry=&r->exclusions[k];
+    if(!atomic_load(&r->live) || atomic_load(&r->lifetime)!=token->lifetime || !entry ||
+        atomic_load(&entry->base)!=token->base || token->size!=atomic_load(&entry->end)-token->base) {
         pthread_mutex_unlock(&g_slot_mu);return 0;
     }
-    uintptr_t first=(r->owned_base-r->base)>>g_shift,count=token->size>>g_shift;
+    uintptr_t first=(token->base-r->base)>>g_shift,count=token->size>>g_shift;
     for(uintptr_t p=first;p<first+count;p++)if(atomic_load(&r->state[p])!=PG_OWNED)
         die("owned dirty exclusion page state changed before quiescent release");
     owned_transition_begin(r);owned_transition_test((const void *)token->base,1);
     owned_publish(r,first,count);
     for(uintptr_t p=first;p<first+count;p++)atomic_store(&r->state[p],PG_NONE);
-    atomic_store(&r->owned_identity,0);
+    atomic_store(&entry->identity,0);atomic_fetch_sub(&r->owned_count,1);
     atomic_fetch_sub(&g_owned_active,1);advance(&r->changes);advance(&g_changes);owned_transition_end(r);
     *token=(nvn_dirty_owned_exclusion){0};pthread_mutex_unlock(&g_slot_mu);return 1;
 }

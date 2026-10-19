@@ -23,8 +23,9 @@ int nvn_dirty_range_observe(const void *addr, size_t len, nvn_dirty_range_proof 
 int nvn_dirty_range_refresh(const nvn_dirty_range_proof *old, nvn_dirty_range_proof *proof);
 // Experimental fixed-envelope negative proof. Returned objects are opaque:
 // observe initializes them; pass unmodified to refresh with the SAME query.
-// Cached refresh uses one known slot, fixed atomic metadata and one interval;
-// it never finds/scans ranges or pages. No upload/fence/content authority proof.
+// Cached refresh uses one known range slot and fixed atomic metadata. A changed
+// exclusion version checks a bounded slot snapshot; stable version has no
+// exclusion-array walk. It never finds/scans registered ranges or pages. No upload/fence/content authority proof.
 // A nonzero returned epoch is usable ONLY with this successful scope refresh,
 // before the caller's ordinary negative dirty test. Compare both epoch/changes
 // as in the original image cache; never advance the original upload stamp.
@@ -44,7 +45,7 @@ int nvn_dirty_scope_refresh(const void *addr,size_t len,const nvn_dirty_scope_pr
 // has no other VMA/remap/protection owner, and keeps it alive. Only writable
 // PG_NONE pages can be claimed: this NEVER unprotects pages to permit import.
 // While held, protect skips these pages. Old unscoped range/global proofs
-// are unavailable; fixed-envelope scopes and dirty visits preserve disjoint pages. One token/range.
+// are unavailable; fixed-envelope scopes and dirty visits preserve disjoint pages. At most eight disjoint tokens/range in the borrowed build (one otherwise).
 // Release only AFTER the caller proved every GPU/import reference quiescent
 // and removed the import. This API neither waits nor performs GPU operations.
 // Failed begin leaves the zero-initialized output unchanged. Repeated release
@@ -70,6 +71,9 @@ typedef struct {
     size_t size;
 } nvn_dirty_pool_lease;
 int nvn_dirty_pool_lease_observe(const void *addr,size_t len,nvn_dirty_pool_lease *lease);
+// Subwindow must be complete pages inside the SAME exact whole-Pool lease.
+// Release each window only after all its imported GPU refs are gone.
+int nvn_dirty_pool_lease_exclude_window(const nvn_dirty_pool_lease *lease,const void *addr,size_t len,nvn_dirty_owned_exclusion *token);
 int nvn_dirty_pool_lease_exclude(const nvn_dirty_pool_lease *lease,nvn_dirty_owned_exclusion *token);
 #endif
 #ifdef DM_DIRTY_RANGE_TEST_HOOKS

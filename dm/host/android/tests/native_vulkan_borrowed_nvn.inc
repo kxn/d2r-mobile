@@ -7,6 +7,7 @@ typedef struct {
   NVNcommandBuffer commands;
   NVNprogram program;
   uint8_t *storage;
+  uint64_t uniform_bytes;
 } borrowed_gpu_fixture;
 static void borrowed_pool_init(NVNmemoryPool *pool,uint8_t *address,size_t size) {
   NVNmemoryPoolBuilder b;CALL(nvnMemoryPoolBuilderSetDefaults,&b);
@@ -15,13 +16,14 @@ static void borrowed_pool_init(NVNmemoryPool *pool,uint8_t *address,size_t size)
   CHECK(CALL(nvnMemoryPoolInitialize,pool,&b));
 }
 static NVNcommandHandle borrowed_record_impl(borrowed_gpu_fixture *f,uint8_t *uniform,int writer,float value,const NVNprogram *vbo_program) {
+  uint64_t uniform_bytes=f->uniform_bytes?f->uniform_bytes:65536;
   NVNdepthStencilState ds;CALL(nvnDepthStencilStateSetDefaults,&ds);CALL(nvnDepthStencilStateSetDepthTestEnable,&ds,0);
   CALL(nvnDepthStencilStateSetDepthWriteEnable,&ds,0);CALL(nvnDepthStencilStateSetStencilTestEnable,&ds,0);
   NVNpolygonState polygon;CALL(nvnPolygonStateSetDefaults,&polygon);CALL(nvnPolygonStateSetCullFace,&polygon,NVN_FACE_NONE);
   NVNcolorState color;CALL(nvnColorStateSetDefaults,&color);NVNchannelMaskState mask;CALL(nvnChannelMaskStateSetDefaults,&mask);
   const NVNtexture *target[]={&f->target};const float viewport[]={0,0,16,16};
   CALL(nvnCommandBufferBeginRecording,&f->commands);
-  if(writer)CALL(nvnCommandBufferUpdateUniformBuffer,&f->commands,(uintptr_t)uniform,65536,0,4,&value);
+  if(writer)CALL(nvnCommandBufferUpdateUniformBuffer,&f->commands,(uintptr_t)uniform,uniform_bytes,0,4,&value);
   CALL(nvnCommandBufferSetRenderTargets,&f->commands,1,target,NULL,NULL,NULL);
   CALL(nvnCommandBufferSetViewports,&f->commands,0,1,viewport);CALL(nvnCommandBufferSetScissor,&f->commands,0,0,16,16);
   CALL(nvnCommandBufferBindDepthStencilState,&f->commands,&ds);CALL(nvnCommandBufferBindPolygonState,&f->commands,&polygon);
@@ -38,7 +40,7 @@ static NVNcommandHandle borrowed_record_impl(borrowed_gpu_fixture *f,uint8_t *un
     CALL(nvnCommandBufferBindVertexAttribState,&f->commands,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&f->commands,0,NULL);
   }
   CALL(nvnCommandBufferBindProgram,&f->commands,vbo_program?vbo_program:&f->program,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
-  if(!vbo_program)CALL(nvnCommandBufferBindUniformBuffer,&f->commands,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)uniform,65536);
+  if(!vbo_program)CALL(nvnCommandBufferBindUniformBuffer,&f->commands,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)uniform,uniform_bytes);
   CALL(nvnCommandBufferDrawArrays,&f->commands,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
   return CALL(nvnCommandBufferEndRecording,&f->commands);
 }

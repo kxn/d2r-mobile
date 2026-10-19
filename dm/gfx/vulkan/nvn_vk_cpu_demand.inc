@@ -20,13 +20,20 @@ uint64_t mtl_pool_cpu_access_needed(uint64_t address,uint64_t size,uint64_t *beg
   for(pool *p=pools;p;p=p->next)if(pool_publication_candidate(p)
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
       || (owned && p->owned_readonly && !p->owned_readonly->retired)
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+      || (owned && borrowed_windows_overlap(p,0,p->size))
+#endif
 #endif
       ) {
     uint64_t base=(uintptr_t)p->guest,lo=address>base?address:base;
     uint64_t hi=end<base+p->size?end:base+p->size;
     if(lo>=hi || lo>=best)continue;
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
-    if(!p->owned_readonly || p->owned_readonly->retired)
+    if((!p->owned_readonly || p->owned_readonly->retired)
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+      && !borrowed_windows_overlap(p,lo-base,hi-lo)
+#endif
+      )
 #endif
     if(pool_cpu_fully_exposed(p,lo-base,hi-lo) && pool_cpu_copy_proven(p,lo-base,hi-lo))continue;
     identity=p->identity;best=lo;length=hi-lo;

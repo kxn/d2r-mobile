@@ -279,6 +279,7 @@ int vk_ghost_cpu_draw_ready(vk_shader *const list[6],const vk_state *state,const
 
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
 void vk_test_pool_borrow_enable(void);
+void vk_test_pool_borrow_subwindows_enable(void);
 unsigned vk_test_pool_borrow_state(uint64_t address);
 void vk_test_pool_borrow_gate(uint64_t address,int release);
 void vk_test_pool_borrow_gate_wait(void);

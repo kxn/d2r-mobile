@@ -14,7 +14,74 @@ void vk_test_pool_import_dedicated_reject(int mode) {
   pthread_mutex_lock(&V.resources);host_import_dedicated_reject_test=mode;pthread_mutex_unlock(&V.resources);
 }
 #endif
+static VkResult pool_host_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer *fresh) {
+  uint64_t address=(uintptr_t)host_pointer;
+  VkExternalMemoryBufferCreateInfo external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+    .handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+  VkBufferCreateInfo create={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.pNext=&external,.size=bytes,
+    .usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT};
+  VkPhysicalDeviceExternalBufferInfo info={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
+    .usage=create.usage,.handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+  VkExternalBufferProperties props={.sType=VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES};
+  vkGetPhysicalDeviceExternalBufferProperties(V.physical,&info,&props);
+  VkExternalMemoryFeatureFlags external_features=props.externalMemoryProperties.externalMemoryFeatures;
+  int forced_dedicated=0;
+#ifdef DM_VULKAN_TEST_EMBED
+  forced_dedicated=host_import_dedicated_reject_test;
+#endif
+  // Supporting imported HOST payloads does not imply support for dedicated
+  // allocations. This bounded prototype declines those and keeps the mirror.
+  VkExternalMemoryFeatureFlags effective_features=external_features;
+  if(forced_dedicated==1)effective_features|=VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT;
+  VkResult result=(effective_features&VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) &&
+    !(effective_features&VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT)?
+    VK_SUCCESS:VK_ERROR_INVALID_EXTERNAL_HANDLE;
+  LOG("[host import capability] usage=%#x externalFeatures=%#x effectiveFeatures=%#x forcedDedicatedReject=%d",create.usage,external_features,effective_features,forced_dedicated);
+  if(result==VK_SUCCESS)result=vkCreateBuffer(V.device,&create,NULL,&fresh->handle);
+  if(result==VK_SUCCESS) {
+    VkMemoryDedicatedRequirements dedicated={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+    VkMemoryRequirements2 requirements={.sType=VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,.pNext=&dedicated};
+    VkBufferMemoryRequirementsInfo2 buffer_info={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,.buffer=fresh->handle};
+    vkGetBufferMemoryRequirements2(V.device,&buffer_info,&requirements);
+    VkMemoryRequirements needs=requirements.memoryRequirements;
+    LOG("[host import capability] requiresDedicated=%u prefersDedicated=%u forcedDedicatedReject=%d",
+      dedicated.requiresDedicatedAllocation,dedicated.prefersDedicatedAllocation,forced_dedicated);
+    VkBool32 effective_requires=dedicated.requiresDedicatedAllocation;
+    if(forced_dedicated==2)effective_requires=VK_TRUE;
+    if(effective_requires)result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    VkMemoryHostPointerPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
+    if(result==VK_SUCCESS)result=vkGetMemoryHostPointerPropertiesEXT(V.device,VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,host_pointer,&host);
+    uint32_t type=UINT32_MAX;uint64_t atom=V.props.limits.nonCoherentAtomSize;
+    for(unsigned pass=0;result==VK_SUCCESS && pass<2 && type==UINT32_MAX;pass++)
+      for(uint32_t k=0;k<V.mem.memoryTypeCount;k++) {
+        VkMemoryPropertyFlags flags=V.mem.memoryTypes[k].propertyFlags;
+        VkMemoryPropertyFlags required=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        if((host.memoryTypeBits&needs.memoryTypeBits&(1u<<k)) && (flags&required)==required &&
+            ((flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || (pass && atom && !(atom&(atom-1)) &&
+              !(address%atom) && !(bytes%atom)))) {type=k;break;}
+      }
+    if(result==VK_SUCCESS && (type==UINT32_MAX || needs.size>bytes))result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    if(result==VK_SUCCESS) {
+      VkImportMemoryHostPointerInfoEXT import={.sType=VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
+        .handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,.pHostPointer=host_pointer};
+      VkMemoryAllocateInfo allocation={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.pNext=&import,
+        .allocationSize=bytes,.memoryTypeIndex=type};
+      owned_fixture_imports++;
+      result=vkAllocateMemory(V.device,&allocation,NULL,&fresh->memory);
+      if(result==VK_SUCCESS)result=vkBindBufferMemory(V.device,fresh->handle,fresh->memory,0);
+      if(result==VK_SUCCESS) {
+        void *mapped=NULL;result=vkMapMemory(V.device,fresh->memory,0,bytes,0,&mapped);
+        if(result==VK_SUCCESS){fresh->owned_host_mapped=1;if(!mapped)result=VK_ERROR_MEMORY_MAP_FAILED;}
+      }
+      fresh->properties=V.mem.memoryTypes[type].propertyFlags;
+    }
+  }
+  return result;
+}
 static int pool_host_attach(uint64_t address,uint64_t bytes,int borrowed,uint64_t identity) {
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed && borrowed_subwindows_requested)return borrowed_windows_attach(address,bytes,identity);
+#endif
   if(!owned_fixture_requested || !owned_fixture_supported || !owned_fixture_alignment ||
       !bytes || bytes>(16u<<20) || address%owned_fixture_alignment || bytes%owned_fixture_alignment ||
       address%4096 || bytes%4096 || bytes>UINTPTR_MAX-address || (!borrowed && V.cmd) || pool_operation_depth)return 0;
@@ -43,66 +110,7 @@ static int pool_host_attach(uint64_t address,uint64_t bytes,int borrowed,uint64_
     free(certificate);pthread_mutex_unlock(&V.resources);return 0;
   }
   vk_buffer fresh={.size=bytes,.map=p->guest,.owned_host_import=1};
-  VkExternalMemoryBufferCreateInfo external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
-    .handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
-  VkBufferCreateInfo create={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.pNext=&external,.size=bytes,
-    .usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT};
-  VkPhysicalDeviceExternalBufferInfo info={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
-    .usage=create.usage,.handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
-  VkExternalBufferProperties props={.sType=VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES};
-  vkGetPhysicalDeviceExternalBufferProperties(V.physical,&info,&props);
-  VkExternalMemoryFeatureFlags external_features=props.externalMemoryProperties.externalMemoryFeatures;
-  int forced_dedicated=0;
-#ifdef DM_VULKAN_TEST_EMBED
-  forced_dedicated=host_import_dedicated_reject_test;
-#endif
-  // Supporting imported HOST payloads does not imply support for dedicated
-  // allocations. This bounded prototype declines those and keeps the mirror.
-  VkExternalMemoryFeatureFlags effective_features=external_features;
-  if(forced_dedicated==1)effective_features|=VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT;
-  VkResult result=(effective_features&VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) &&
-    !(effective_features&VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT)?
-    VK_SUCCESS:VK_ERROR_INVALID_EXTERNAL_HANDLE;
-  LOG("[host import capability] usage=%#x externalFeatures=%#x effectiveFeatures=%#x forcedDedicatedReject=%d",create.usage,external_features,effective_features,forced_dedicated);
-  if(result==VK_SUCCESS)result=vkCreateBuffer(V.device,&create,NULL,&fresh.handle);
-  if(result==VK_SUCCESS) {
-    VkMemoryDedicatedRequirements dedicated={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
-    VkMemoryRequirements2 requirements={.sType=VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,.pNext=&dedicated};
-    VkBufferMemoryRequirementsInfo2 buffer_info={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,.buffer=fresh.handle};
-    vkGetBufferMemoryRequirements2(V.device,&buffer_info,&requirements);
-    VkMemoryRequirements needs=requirements.memoryRequirements;
-    LOG("[host import capability] requiresDedicated=%u prefersDedicated=%u forcedDedicatedReject=%d",
-      dedicated.requiresDedicatedAllocation,dedicated.prefersDedicatedAllocation,forced_dedicated);
-    VkBool32 effective_requires=dedicated.requiresDedicatedAllocation;
-    if(forced_dedicated==2)effective_requires=VK_TRUE;
-    if(effective_requires)result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
-    VkMemoryHostPointerPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
-    if(result==VK_SUCCESS)result=vkGetMemoryHostPointerPropertiesEXT(V.device,VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,p->guest,&host);
-    uint32_t type=UINT32_MAX;uint64_t atom=V.props.limits.nonCoherentAtomSize;
-    for(unsigned pass=0;result==VK_SUCCESS && pass<2 && type==UINT32_MAX;pass++)
-      for(uint32_t k=0;k<V.mem.memoryTypeCount;k++) {
-        VkMemoryPropertyFlags flags=V.mem.memoryTypes[k].propertyFlags;
-        VkMemoryPropertyFlags required=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-        if((host.memoryTypeBits&needs.memoryTypeBits&(1u<<k)) && (flags&required)==required &&
-            ((flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || (pass && atom && !(atom&(atom-1)) &&
-              !(address%atom) && !(bytes%atom)))) {type=k;break;}
-      }
-    if(result==VK_SUCCESS && (type==UINT32_MAX || needs.size>bytes))result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
-    if(result==VK_SUCCESS) {
-      VkImportMemoryHostPointerInfoEXT import={.sType=VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
-        .handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,.pHostPointer=p->guest};
-      VkMemoryAllocateInfo allocation={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.pNext=&import,
-        .allocationSize=bytes,.memoryTypeIndex=type};
-      owned_fixture_imports++;
-      result=vkAllocateMemory(V.device,&allocation,NULL,&fresh.memory);
-      if(result==VK_SUCCESS)result=vkBindBufferMemory(V.device,fresh.handle,fresh.memory,0);
-      if(result==VK_SUCCESS) {
-        void *mapped=NULL;result=vkMapMemory(V.device,fresh.memory,0,bytes,0,&mapped);
-        if(result==VK_SUCCESS){fresh.owned_host_mapped=1;if(!mapped)result=VK_ERROR_MEMORY_MAP_FAILED;}
-      }
-      fresh.properties=V.mem.memoryTypes[type].propertyFlags;
-    }
-  }
+  VkResult result=pool_host_buffer_create(p->guest,bytes,&fresh);
   if(result!=VK_SUCCESS) {
     vk_buffer_destroy(&fresh); // unpin before exclusion release
     if(!nvn_dirty_owned_release(&certificate->exclusion))die("Vulkan owned failed import exclusion release");
@@ -144,6 +152,9 @@ static void owned_fixture_flush(pool *p,uint64_t first,uint64_t end) {
 // use cannot make guest contents stale. Allocate privately first, retire ALL
 // original submissions/effects/refs, rebuild mirror+shadow, free/unpin, release.
 static int owned_fixture_retire(uint64_t address,uint64_t size,uint64_t expected) {
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_subwindows_requested)return borrowed_windows_retire(address,size,expected);
+#endif
   if(!owned_fixture_requested || !size || size>UINT64_MAX-address)return 0;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);
   if(!p && !expected)for(pool *q=pools;q;q=q->next)
@@ -188,6 +199,12 @@ void vk_test_pool_owned_stats(uint64_t *imports,uint64_t *retirements) {
 int vk_test_pool_owned_properties(uint64_t address) {
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
   int result=p && p->owned_readonly && !p->owned_readonly->retired?p->whole.buffer.properties:0;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(p && borrowed_subwindows_requested) {
+    pool_span_piece span;if(pool_span_resolve_locked(p,address-(uintptr_t)p->guest,1,&span) &&
+      span.backing->buffer.owned_host_import)result=span.backing->buffer.properties;
+  }
+#endif
   pthread_mutex_unlock(&V.resources);return result;
 }
 
@@ -198,6 +215,12 @@ void vk_test_pool_owned_destination_check(uint64_t address,uint64_t size) {
   for(pool *p=pools;p;p=p->next)if(p->owned_readonly && !p->owned_readonly->retired &&
       address<(uintptr_t)p->guest+p->size && (uintptr_t)p->guest<address+size)
     die("Vulkan owned CPU effect missed outer retirement");
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  for(pool *p=pools;p;p=p->next) {
+    uint64_t base=(uintptr_t)p->guest,lo=address>base?address:base,hi=address+size<base+p->size?address+size:base+p->size;
+    if(lo<hi && borrowed_windows_overlap(p,lo-base,hi-lo))die("Borrowed CPU effect missed outer retirement");
+  }
+#endif
   pthread_mutex_unlock(&V.resources);
 }
 int vk_test_pool_owned_shadow_matches(uint64_t address,const void *data,size_t bytes) {

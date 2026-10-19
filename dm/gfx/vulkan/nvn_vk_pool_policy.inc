@@ -101,14 +101,26 @@ static int pool_operation_pin(pool_operation_plan *plan) {
     if(!p) {good=0;break;}
     if(!pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span)) {
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+      if(borrowed_subwindows_requested && borrowed_windows_overlap(p,r->address-(uintptr_t)p->guest,r->size)) {
+        plan->owned_address=r->address;plan->owned_size=r->size;plan->owned_identity=p->identity;good=0;break;
+      }
+#endif
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
       borrowed_missing_admit(p,plan->ranges,plan->count,&plan->borrowed_address,
         &plan->borrowed_size,&plan->borrowed_identity);
 #endif
       good=0;break;
     }
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
-    if(p->owned_readonly && !p->owned_readonly->retired &&
-        (r->writable || (r->binding_kind!=1 && r->binding_kind!=VK_POOL_REQUIRE_VERTEX))) {
+    if(((p->owned_readonly && !p->owned_readonly->retired)
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+        || (borrowed_subwindows_requested && span.backing->buffer.owned_host_import)
+#endif
+        ) && (r->writable || (r->binding_kind!=1 && r->binding_kind!=VK_POOL_REQUIRE_VERTEX)
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+        || (borrowed_subwindows_requested && borrowed_windows_blocked(p,span.backing->begin,span.backing->end))
+#endif
+        )) {
       plan->owned_address=r->address;plan->owned_size=r->size;plan->owned_identity=p->identity;good=0;break;
     }
 #endif
@@ -127,6 +139,13 @@ static void pool_policy_promote(uint64_t base,uint64_t identity,int reopen,
   if(pool_operation_depth || pool_maintenance || vk_shader_operation_active() ||
       vk_texture_binding_scope_active() || vk_texture_shader_collecting())
     die("Vulkan pool promotion attempted while physical handles are borrowed");
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_subwindows_requested) {
+    pthread_mutex_lock(&V.resources);pool *source=pool_find(base,1);uint64_t bytes=source && source->identity==identity?source->size:0;
+    pthread_mutex_unlock(&V.resources);
+    if(bytes && borrowed_windows_retire(base,bytes,identity)<0)die("Borrowed promotion lost pool");
+  }
+#endif
   int was_stream=stream_recording;
   pool_maintenance=1;
   if(V.cmd) {
@@ -178,6 +197,10 @@ static void pool_window_before_submission(void) {
     for(pool *p=pools;p;p=p->next)if(p->owned_readonly && !p->owned_readonly->retired) {
       base=(uintptr_t)p->guest;identity=p->identity;owned=1;break;
     }
+#endif
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    if(!identity && borrowed_subwindows_requested)for(pool *p=pools;p;p=p->next)
+      if(borrowed_windows_overlap(p,0,p->size)) {base=(uintptr_t)p->guest;identity=p->identity;owned=1;break;}
 #endif
     if(!identity)for(pool *p=pools;p;p=p->next)if(p->backings && !pool_window_whole(p)) {
       base=(uintptr_t)p->guest;identity=p->identity;break;

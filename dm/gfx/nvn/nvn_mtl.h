@@ -56,6 +56,7 @@ int mtl_pool_defer_publication_mode(void);
 
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
 // Experimental whole-pool borrowed lifetime; returns 0 when cold selector OFF.
+int mtl_pool_borrow_mode(void); // immutable cold experiment selection, not defer-publication mode
 void mtl_pool_borrow_registered(const void *mem,uint64_t size);
 int dm_gfx_borrow_async_ready(void);
 #ifdef DM_VULKAN_TEST_EMBED

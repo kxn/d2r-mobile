@@ -430,6 +430,7 @@ static void bright_test(NVNtexturePool *pool) {
 #endif
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
 #include "native_vulkan_borrowed_nvn.inc"
+#include "native_vulkan_borrowed_windows.inc"
 #endif
 #include "native_vulkan_store.inc"
 #include "native_vulkan_cover.inc"
@@ -492,7 +493,9 @@ static void bright_test(NVNtexturePool *pool) {
 int dm_vulkan_test_main(void) {
   crash_thread_init();
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
-  if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
+  if(getenv("DM_BORROWED_NVN_WINDOWS_FIXTURE")) {
+    vk_test_pool_borrow_subwindows_enable();CHECK(!setenv("DM_VULKAN_POOL_WINDOW_BYTES","65536",1));
+  } else if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
     if(getenv("DM_BORROWED_NVN_WORKER_REJECT_FIXTURE"))nvn_test_borrow_fail_translation_worker(1);
     vk_test_pool_borrow_enable();CHECK(!setenv("DM_VULKAN_POOL_WINDOW_BYTES","65536",1));
   }
@@ -556,6 +559,10 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(getenv("DM_BORROWED_NVN_WINDOWS_FIXTURE")) {
+    int imported_flags=borrowed_nvn_windows_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"borrowed-nvn-subwindows\",\"checks\":%u,\"result\":\"passed\",\"flags\":%d,\"whole_pool_bytes\":2097152,\"window_bytes\":65536,\"game_modules_executed\":false}\n",checks,imported_flags);return 0;
+  }
   if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
     int imported_flags=borrowed_nvn_buffer_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"borrowed-nvn-buffer\",\"checks\":%u,\"result\":\"passed\","

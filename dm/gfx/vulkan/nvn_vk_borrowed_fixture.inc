@@ -8,8 +8,13 @@ void vk_test_pool_borrow_enable(void) {
   borrowed_fixture_requested=1;owned_fixture_requested=1;
   V.owned_fixture_active=1;vk_test_texture_owned_scopes(1);
 }
+void vk_test_pool_borrow_subwindows_enable(void) {
+  vk_test_pool_borrow_enable();borrowed_subwindows_requested=1;
+}
+int mtl_pool_borrow_mode(void) {return borrowed_fixture_requested;}
 void mtl_pool_borrow_registered(const void *mem,uint64_t size) {
-  if(!borrowed_fixture_requested || size!=65536 || (uintptr_t)mem%65536)return;
+  if(!borrowed_fixture_requested || !size || (uintptr_t)mem%65536 || size%4096 ||
+     (!borrowed_subwindows_requested && size!=65536))return;
   // The inline/reference fallback has no exclusive recording owner. Never
   // establish a lease there; keep the original mirror rather than pretending
   // that a TLS g_x_owner flag serialized concurrent callers.
@@ -34,7 +39,10 @@ uint64_t mtl_pool_borrow_mark(uint64_t address,uint64_t size,int closing) {
   uint64_t identity=0;pthread_mutex_lock(&V.resources);
   for(pool *p=pools;p;p=p->next)if(p->borrowed_lease.lifetime &&
       address<(uintptr_t)p->guest+p->size && (uintptr_t)p->guest<address+size) {
-    p->borrowed_history|=1;
+    if(borrowed_subwindows_requested) {
+      uint64_t base=(uintptr_t)p->guest,lo=address>base?address:base,hi=address+size<base+p->size?address+size:base+p->size;
+      borrowed_windows_block(p,lo-base,hi-lo);
+    } else p->borrowed_history|=1;
     if(closing) {
       if(address!=(uintptr_t)p->guest || size!=p->size || p->borrowed_closing)
         die("Vulkan borrowed duplicate/nonexact Finalize");
@@ -102,6 +110,7 @@ static void borrowed_before_import(uint64_t address) {(void)address;}
 // On this cold miss inspect the complete existing bounded operation plan.
 static int borrowed_missing_admit(pool *p,const vk_pool_requirement *ranges,size_t count,
     uint64_t *address,uint64_t *size,uint64_t *identity) {
+  if(borrowed_subwindows_requested)return borrowed_windows_admit(p,ranges,count,address,size,identity);
   if(!borrowed_fixture_requested || !p->borrowed_lease.lifetime || p->borrowed_closing ||
       p->borrowed_history || p->borrowed_attempted || p->backings || p->references || p->shadow)return 0;
   uint64_t base=(uintptr_t)p->guest;

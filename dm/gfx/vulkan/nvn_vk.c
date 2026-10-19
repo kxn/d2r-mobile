@@ -34,7 +34,17 @@ static uint64_t owned_fixture_alignment,owned_fixture_imports,owned_fixture_reti
 static int owned_fixture_retire(uint64_t address,uint64_t size,uint64_t expected);
 static void owned_fixture_flush(struct pool *p,uint64_t first,uint64_t end);
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
-static int borrowed_fixture_requested;
+static int borrowed_fixture_requested,borrowed_subwindows_requested;
+typedef struct pool_borrowed_windows pool_borrowed_windows;
+static int borrowed_windows_overlap(const struct pool *p,uint64_t offset,uint64_t size);
+static int borrowed_windows_attach(uint64_t address,uint64_t bytes,uint64_t identity);
+static int borrowed_windows_retire(uint64_t address,uint64_t bytes,uint64_t identity);
+static int borrowed_windows_admit(struct pool *p,const vk_pool_requirement *ranges,size_t count,uint64_t *address,uint64_t *bytes,uint64_t *identity);
+static void borrowed_windows_block(struct pool *p,uint64_t offset,uint64_t bytes);
+static int borrowed_windows_blocked(const struct pool *p,uint64_t begin,uint64_t end);
+static void borrowed_windows_free(struct pool *p);
+struct pool_backing_span;
+static void borrowed_window_flush(struct pool *,struct pool_backing_span *,uint64_t,uint64_t);
 static int borrowed_missing_admit(struct pool *p,const vk_pool_requirement *ranges,size_t count,
   uint64_t *address,uint64_t *size,uint64_t *identity);
 static int pool_host_attach(uint64_t address,uint64_t bytes,int borrowed,uint64_t identity);
@@ -45,6 +55,9 @@ typedef struct pool_backing_span {
   struct pool_backing_span *next;
   uint64_t begin,end,generation;
   vk_buffer buffer;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  pool_owned_readonly *host_certificate;
+#endif
 } pool_backing_span;
 typedef struct pool {
   struct pool *next;
@@ -80,6 +93,7 @@ typedef struct pool {
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
   pool_owned_readonly *owned_readonly; // physical import certificate; owned contract unchanged
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  pool_borrowed_windows *borrowed_windows;
   nvn_dirty_pool_lease borrowed_lease;
   unsigned borrowed_history;
   int borrowed_closing,borrowed_attempted;
@@ -1571,6 +1585,12 @@ static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
     return;
   }
 #endif
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_subwindows_requested) {
+    pool_span_piece span;
+    if(pool_span_resolve_locked(p,off,size,&span) && span.backing->buffer.owned_host_import)return;
+  }
+#endif
   uint64_t first=off>>GPU_ACCESS_SHIFT,last=(off+size-1)>>GPU_ACCESS_SHIFT;
   uint64_t end_page=last+1;
   // Every completed scan below initialized all requested pages. These bits
@@ -1685,6 +1705,9 @@ void mtl_pool_del(const void *mem) {
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
   if(p->owned_readonly && !p->owned_readonly->retired)die("Vulkan owned pool finalized before owner retirement");
   free(p->owned_readonly);
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  borrowed_windows_free(p);
+#endif
 #endif
   pool_spans_destroy(p);
   free(p->cpu_exposure);
@@ -2764,6 +2787,9 @@ static void sync_page(const void *memory, size_t length, void *context) {
   if(p->owned_readonly && !p->owned_readonly->retired)die("Vulkan owned import entered mirror upload");
 #endif
   uint64_t off = (const uint8_t *)memory - p->guest;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_windows_overlap(p,off,length))die("Vulkan borrowed import entered mirror upload");
+#endif
   while (length) {
     size_t size = length < 4096 ? length : 4096;
     if(recording_resources&&async_submissions&&!recording_resources->pool_sync_reference&&
@@ -2882,6 +2908,23 @@ static void sync_used_changed_pages(const void *memory,size_t length,void *conte
 static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
   if(p->owned_readonly && !p->owned_readonly->retired) {owned_fixture_flush(p,first,end);return;}
+#endif
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_subwindows_requested) {
+    uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;if(limit>p->size)limit=p->size;
+    pool_span_iter it;pool_span_piece piece;int next;
+    if(!pool_span_iter_begin(p,offset,limit-offset,&it))die("Borrowed used run extent");
+    int imported=0;while((next=pool_span_iter_next(&it,&piece))==1)if(piece.backing->buffer.owned_host_import)imported=1;
+    if(next<0)die("Borrowed used run hole");
+    if(imported) {
+      if(!pool_span_iter_begin(p,offset,limit-offset,&it))die("Borrowed used run extent");
+      while((next=pool_span_iter_next(&it,&piece))==1) {
+        if(piece.backing->buffer.owned_host_import)borrowed_window_flush(p,piece.backing,piece.logical,piece.size);
+        else sync_used_run(p,piece.logical>>GPU_ACCESS_SHIFT,(piece.logical+piece.size)>>GPU_ACCESS_SHIFT,tracked);
+      }
+      return;
+    }
+  }
 #endif
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
   if(limit>p->size) limit=p->size;
@@ -3118,6 +3161,9 @@ static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *kn
     die("Vulkan writeback outside a pool");
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
   if(p->owned_readonly && !p->owned_readonly->retired)die("Vulkan owned writeback missed retirement");
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_windows_overlap(p,dst-(uintptr_t)p->guest,size))die("Borrowed writeback missed retirement");
+#endif
 #endif
   pool_materialize(p);
   uint64_t off = dst - (uintptr_t)p->guest;
@@ -3543,6 +3589,7 @@ void mtl_finish(void) {
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
 #include "nvn_vk_owned_fixture.inc"
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+#include "nvn_vk_borrowed_windows.inc"
 #include "nvn_vk_borrowed_fixture.inc"
 #endif
 #endif

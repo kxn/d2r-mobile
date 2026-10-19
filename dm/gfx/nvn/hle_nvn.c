@@ -427,7 +427,11 @@ static void read_texels(const tex_t *o, const view_t *v, const NVNcopyRegion *r,
     if (!row) row = wb;
     if (!img) img = row * hb;
     unsigned level = v && v->set_levels ? (unsigned)v->base_level : 0, layer0 = v && v->set_layers ? (unsigned)v->min_layer : 0;
-    if(mtl_pool_defer_publication_mode()) {
+    if(mtl_pool_defer_publication_mode()
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+       || mtl_pool_borrow_mode()
+#endif
+       ) {
         if(r->depth<0 || !hb || !wb || row<0 || img<0)die("NVN CPU readback exposure footprint");
         uint64_t slices=r->depth>0?(uint64_t)(r->depth-1):0,a=(uint64_t)img,b=(uint64_t)row;
         if((slices && a>UINT64_MAX/slices) || b>UINT64_MAX/(hb-1?hb-1:1))die("NVN CPU readback exposure overflow");

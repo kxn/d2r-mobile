@@ -108,7 +108,7 @@ static void scoped_test(void) {
     size_t pg=(size_t)getpagesize();uint8_t *p=mmap(NULL,6*pg,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     CHECK(p!=MAP_FAILED);memset(p,0,6*pg);nvn_dirty_add_range(p,4*pg);nvn_dirty_add_range(p+4*pg,2*pg);
     nvn_dirty_scope_proof local,overlap,other,current;uint64_t epoch,epoch2;
-    CHECK(sizeof(nvn_dirty_scope_proof)==48);CHECK(sizeof(range_t)==104);
+    CHECK(sizeof(nvn_dirty_scope_proof)==48);CHECK(sizeof(range_t)==88+24*DIRTY_EXCLUSION_SLOTS);
     CHECK(nvn_dirty_scope_observe(p+2*pg,pg,&local,&epoch));CHECK(epoch);
     CHECK(nvn_dirty_scope_observe(p,pg,&overlap,&epoch2));
     CHECK(nvn_dirty_scope_observe(p+4*pg,pg,&other,&epoch2));
@@ -238,6 +238,44 @@ static void scoped_test(void) {
 }
 
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+static void borrowed_multi_window_test(void) {
+    size_t pg=getpagesize();uint8_t *p=mmap(NULL,20*pg,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    CHECK(p!=MAP_FAILED);memset(p,0,20*pg);nvn_dirty_add_range(p,20*pg);
+    nvn_dirty_pool_lease lease={0};CHECK(nvn_dirty_pool_lease_observe(p,20*pg,&lease));
+    nvn_dirty_owned_exclusion tokens[9]={0},bad={0};nvn_dirty_scope_proof gap,updated;uint64_t epoch;
+    CHECK(nvn_dirty_scope_observe(p+pg,pg,&gap,&epoch));
+    for(unsigned k=0;k<8;k++) {
+      CHECK(nvn_dirty_pool_lease_exclude_window(&lease,p+2*k*pg,pg,tokens+k));
+      CHECK(nvn_dirty_scope_refresh(p+pg,pg,&gap,&updated,&epoch));gap=updated;
+      CHECK(!nvn_dirty_scope_observe(p+2*k*pg,pg,&updated,&epoch));
+    }
+    CHECK(!nvn_dirty_pool_lease_exclude_window(&lease,p+16*pg,pg,tokens+8));
+    CHECK(!nvn_dirty_pool_lease_exclude_window(&lease,p,2*pg,&bad));CHECK(!bad.identity);
+    CHECK(!nvn_dirty_pool_lease_exclude_window(&lease,p+1,pg,&bad));
+    CHECK(!nvn_dirty_pool_lease_exclude_window(&lease,p+19*pg,2*pg,&bad));
+    uint64_t stamp=nvn_dirty_now();nvn_dirty_protect(p+pg,pg);dm_guest_write_prepare(p+pg,1);p[pg]=43;
+    CHECK(nvn_dirty_since(p+pg,pg,stamp));CHECK(nvn_dirty_scope_refresh(p+pg,pg,&gap,&updated,&epoch));
+    CHECK(updated.changes!=gap.changes);gap=updated;
+    nvn_dirty_owned_exclusion stale=tokens[2];CHECK(nvn_dirty_owned_release(tokens+2));
+    // A real PG_BUSY late page rolls back only this attempt's successful
+    // PG_NONE prefix, keeping seven existing exclusions and gap proof live.
+    pthread_mutex_lock(&gate);blocked_page=p+19*pg;arm=1;entered=resume_protector=0;pthread_mutex_unlock(&gate);
+    pthread_t worker;CHECK(!pthread_create(&worker,NULL,protect_thread,p+19*pg));
+    pthread_mutex_lock(&gate);while(!entered)pthread_cond_wait(&changed,&gate);pthread_mutex_unlock(&gate);
+    CHECK(!nvn_dirty_pool_lease_exclude_window(&lease,p+18*pg,2*pg,&bad));CHECK(!bad.identity);
+    range_t *r=find((uintptr_t)p);CHECK(atomic_load(&r->owned_count)==7);
+    CHECK(atomic_load(&r->state[18])==PG_NONE && atomic_load(&r->state[19])==PG_BUSY);
+    CHECK(atomic_load(&r->state[0])==PG_OWNED);
+    CHECK(nvn_dirty_scope_refresh(p+pg,pg,&gap,&updated,&epoch));gap=updated;
+    pthread_mutex_lock(&gate);resume_protector=1;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&gate);
+    CHECK(!pthread_join(worker,NULL));CHECK(atomic_load(&r->state[19])==PG_PROT);
+    CHECK(nvn_dirty_pool_lease_exclude_window(&lease,p+16*pg,pg,tokens+8));
+    CHECK(!nvn_dirty_owned_release(&stale));
+    CHECK(nvn_dirty_scope_refresh(p+pg,pg,&gap,&updated,&epoch));
+    for(unsigned k=0;k<9;k++)if(k!=2)CHECK(nvn_dirty_owned_release(tokens+k));
+    CHECK(nvn_dirty_change_epoch());CHECK(!atomic_load(&find((uintptr_t)p)->owned_count));
+    nvn_dirty_remove_range(p);CHECK(!munmap(p,20*pg));
+}
 static void borrowed_lease_test(void) {
     size_t pg=(size_t)getpagesize();uint8_t *p=mmap(NULL,3*pg,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     CHECK(p!=MAP_FAILED);memset(p,0,3*pg);
@@ -258,7 +296,7 @@ static void borrowed_lease_test(void) {
     pthread_mutex_lock(&gate);while(!entered)pthread_cond_wait(&changed,&gate);pthread_mutex_unlock(&gate);
     CHECK(!nvn_dirty_pool_lease_exclude(&lease,&token));CHECK(!token.identity);
     range_t *r=find((uintptr_t)p);CHECK(atomic_load(&r->state[0])==PG_NONE && atomic_load(&r->state[1])==PG_BUSY);
-    CHECK(!atomic_load(&r->owned_identity) && nvn_dirty_change_epoch());
+    CHECK(!atomic_load(&r->owned_count) && nvn_dirty_change_epoch());
     pthread_mutex_lock(&gate);resume_protector=1;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&gate);
     CHECK(!pthread_join(worker,NULL));CHECK(atomic_load(&r->state[1])==PG_PROT);
     CHECK(!nvn_dirty_pool_lease_exclude(&lease,&token)); // no unprotect for import
@@ -340,7 +378,7 @@ int main(void) {
     pthread_mutex_lock(&gate);while(!entered)pthread_cond_wait(&changed,&gate);pthread_mutex_unlock(&gate);
     CHECK(!nvn_dirty_owned_exclude(p,2*pg,&other));CHECK(!other.identity);
     range_t *r=find((uintptr_t)p);CHECK(atomic_load(&r->state[0])==PG_NONE);
-    CHECK(atomic_load(&r->state[1])==PG_BUSY);CHECK(!atomic_load(&r->owned_identity));
+    CHECK(atomic_load(&r->state[1])==PG_BUSY);CHECK(!atomic_load(&r->owned_count));
     CHECK(!atomic_load(&g_owned_active));p[0]=0x62;
     pthread_mutex_lock(&gate);resume_protector=1;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&gate);
     CHECK(!pthread_join(worker,NULL));CHECK(atomic_load(&r->state[1])==PG_PROT);
@@ -350,6 +388,7 @@ int main(void) {
     for(size_t n=0;n<4;n++)CHECK(atomic_load(&r->state[n])==PG_NONE);
     nvn_dirty_remove_range(p);CHECK(!munmap(p,4*pg));
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+    borrowed_multi_window_test();
     borrowed_lease_test(); // before scoped_test intentionally exhausts reusable-slot clocks
 #endif
     scoped_test();
