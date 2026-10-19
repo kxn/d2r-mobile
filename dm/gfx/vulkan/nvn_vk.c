@@ -87,6 +87,7 @@ static int pool_host_try_span(pool *p,pool_backing_span *b,uint64_t begin,uint64
 static int pool_host_prepare_writers(const vk_pool_requirement *ranges,size_t count);
 static int pool_host_overlap(const pool *p,uint64_t begin,uint64_t size);
 static void pool_host_reject_destroy(pool *p);
+static void pool_host_flush_read(const pool_backing_span *b,uint64_t offset,uint64_t size);
 #include "nvn_vk_pool_spans.inc"
 #include "nvn_vk_upload_dual.inc"
 static const VkPipelineStageFlags pool_stages[]={
@@ -953,6 +954,7 @@ void vk_buffer_destroy(vk_buffer *b) {
   if (b->handle)
     vkDestroyBuffer(V.device, b->handle, NULL);
   if(b->imported_host) {
+    if(b->imported_host_mapped)vkUnmapMemory(V.device,b->memory);
     vkFreeMemory(V.device,b->memory,NULL);
     atomic_fetch_sub(&pool_host_pinned,b->size);
   } else vk_memory_free(b->allocation);
@@ -1181,6 +1183,7 @@ static void init_options(void) {
   o->extrap_mask=getenv("DM_RT_TEST_MASK")!=NULL;
   o->gpu_profile=getenv("DM_VULKAN_GPU_PROFILE")!=NULL;
   o->pool_host_readonly=option_one("DM_VULKAN_POOL_HOST_READONLY");
+  o->pool_host_noncoherent=option_one("DM_VULKAN_POOL_HOST_NONCOHERENT");
   o->pool_ownership_reference=option_one("DM_VULKAN_POOL_OWNERSHIP_REFERENCE");
   o->pool_mirror_reference=atomic_load(&pool_mirror_requested);
   if(o->pool_mirror_reference<0) o->pool_mirror_reference=option_one("DM_VULKAN_EAGER_POOL_MIRRORS");
@@ -2811,7 +2814,10 @@ static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
       // These GPU bytes ARE the CPU storage. Retain image dirty generations;
       // only the redundant Buffer mirror/compare/upload is omitted.
       uint64_t boundary=(piece.backing->end+4095)>>12;
-      if(end>boundary) {sync_used_run(p,first,boundary,tracked);sync_used_run(p,boundary,end,tracked);}
+      if(end>boundary) {sync_used_run(p,first,boundary,tracked);sync_used_run(p,boundary,end,tracked);return;}
+      uint64_t bytes=(end<<GPU_ACCESS_SHIFT)-offset;
+      if(bytes>p->size-offset)bytes=p->size-offset;
+      pool_host_flush_read(piece.backing,offset,bytes);
       return;
     }
     // A logical dirty run can cross imported and ordinary physical nodes.

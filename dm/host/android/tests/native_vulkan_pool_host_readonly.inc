@@ -4,6 +4,7 @@
 extern void vk_test_pool_host_limits(uint64_t,uint64_t);
 extern void vk_test_pool_host_fail_once(void);
 extern uint64_t vk_test_pool_host_attempts(void);
+extern VkMemoryPropertyFlags vk_test_pool_host_properties(uint64_t);
 static void pool_host_read(uint8_t *source,unsigned size,uint8_t *result) {
   vk_pool_requirement need={(uintptr_t)source,size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
   int operation=vk_pool_operation_begin_ranges(&need,1);
@@ -37,6 +38,18 @@ static void pool_host_readonly_test(void) {
   mtl_sub_begin();pool_host_read(storage+128,256,out);uint64_t serial=vk_internal_commit();
   CHECK(vk_pool_host_imported_range((uintptr_t)storage,4096));CHECK(vk_pool_host_pinned_bytes()==4096);
   vk_pool_copy_snapshot(&copy_after);
+  VkMemoryPropertyFlags imported_properties=vk_test_pool_host_properties((uintptr_t)storage+128);
+  CHECK((imported_properties&(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT))==
+    (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT));
+  int coherent=(imported_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)!=0;
+  CHECK(coherent || V.options.pool_host_noncoherent);
+  if(copy_before.enabled && !coherent) {
+    CHECK(copy_after.host_flush_calls>copy_before.host_flush_calls);
+    CHECK(copy_after.host_flush_bytes-copy_before.host_flush_bytes>=4096);
+  }
+  printf("{\"test\":\"readonly-import-memory\",\"flags\":%u,\"host_coherent\":%s,\"atom\":%llu,\"noncoherent_opt_in\":%s}\n",
+    imported_properties,coherent?"true":"false",(unsigned long long)V.props.limits.nonCoherentAtomSize,
+    V.options.pool_host_noncoherent?"true":"false");
   if(copy_before.enabled) {
     CHECK(copy_after.initial_mirror_bytes-copy_before.initial_mirror_bytes==0);
     CHECK(copy_after.initial_shadow_bytes-copy_before.initial_shadow_bytes==4096);
@@ -116,6 +129,13 @@ static void pool_host_readonly_test(void) {
   CHECK(vk_pool_host_pinned_bytes()==8192);
   mtl_sub_begin();pool_host_read(storage+16384+32,128,out);vk_internal_wait(vk_internal_commit());
   CHECK(!vk_pool_host_imported_range((uintptr_t)storage+16384,4096));CHECK(vk_pool_host_pinned_bytes()==8192);
+  // Crossing two imported nodes uses the original quiescent migration copy.
+  // CPU edits after their prior fences must be published for that copy too.
+  dm_guest_write_prepare(storage+8192+3968,256);memset(storage+8192+3968,0xc9,256);
+  memcpy(expected,storage+8192+3968,256);
+  mtl_sub_begin();pool_host_read(storage+8192+3968,256,out);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(out,expected,256));CHECK(vk_pool_host_pinned_bytes()==0);
+  printf("{\"test\":\"readonly-imported-migration\",\"cpu_edit_after_prior_fence\":true,\"result\":\"passed\"}\n");
   CALL(nvnMemoryPoolFinalize,&pool);CHECK(vk_pool_host_pinned_bytes()==0);
   // Import failure followed by mirror OOM leaves no backing and returns the
   // pin reservation. A retry must be sticky mirror, not a second GUP attempt.

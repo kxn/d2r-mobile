@@ -16,7 +16,9 @@
   X(readback_shadow_completed_bytes) \
   X(known_guest_completed_bytes) \
   X(known_shadow_completed_bytes) \
-  X(migration_gpu_recorded_bytes)
+  X(migration_gpu_recorded_bytes) \
+  X(host_flush_bytes) \
+  X(host_flush_calls)
 typedef struct {
   int enabled;
 #define VK_POOL_COPY_MEMBER(name) uint64_t name;

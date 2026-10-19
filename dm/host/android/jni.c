@@ -695,9 +695,13 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only, jboolean validation,
-    jboolean host_import, jboolean host_import_opt_in, jboolean pool_host_import) {
+    jboolean host_import, jboolean host_import_opt_in, jboolean pool_host_import,
+    jboolean pool_host_noncoherent) {
   (void)klass;
   if(host_import && pool_host_import)die("Vulkan host import fixture modes are mutually exclusive");
+  if(pool_host_noncoherent && !pool_host_import)die("Noncoherent pool fixture needs explicit pool mode");
+  if(pool_host_noncoherent)setenv("DM_VULKAN_POOL_HOST_NONCOHERENT","1",1);
+  else unsetenv("DM_VULKAN_POOL_HOST_NONCOHERENT");
   if(pool_host_import) {
     setenv("DM_POOL_HOST_READONLY_FIXTURE", "1", 1);
     setenv("DM_VULKAN_POOL_HOST_READONLY", "1", 1);

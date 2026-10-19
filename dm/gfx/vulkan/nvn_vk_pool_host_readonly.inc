@@ -91,10 +91,17 @@ static int pool_host_try_span(pool *p,pool_backing_span *b,uint64_t begin,uint64
       fresh.map,&host);
     VkPhysicalDeviceMemoryProperties types;vkGetPhysicalDeviceMemoryProperties(V.physical,&types);
     uint32_t type=UINT32_MAX;VkMemoryPropertyFlags required=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|
-      VK_MEMORY_PROPERTY_HOST_CACHED_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if(result==VK_SUCCESS)for(uint32_t k=0;k<types.memoryTypeCount;k++)
-      if((host.memoryTypeBits&needs.memoryTypeBits&(1u<<k)) &&
-          (types.memoryTypes[k].propertyFlags&required)==required) {type=k;break;}
+      VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    uint64_t atom=V.props.limits.nonCoherentAtomSize;
+    int allow_noncoherent=V.options.pool_host_noncoherent && atom && !(atom&(atom-1)) &&
+      !((uintptr_t)fresh.map%atom) && !(bytes%atom);
+    if(result==VK_SUCCESS)for(unsigned pass=0;pass<(allow_noncoherent?2u:1u)&&type==UINT32_MAX;pass++)
+      for(uint32_t k=0;k<types.memoryTypeCount;k++)
+        if((host.memoryTypeBits&needs.memoryTypeBits&(1u<<k)) &&
+            (types.memoryTypes[k].propertyFlags&required)==required &&
+            (pass || (types.memoryTypes[k].propertyFlags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))) {
+          type=k;break;
+        }
     if(result==VK_SUCCESS && (type==UINT32_MAX || needs.size>bytes))result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
     if(result==VK_SUCCESS) {
       VkImportMemoryHostPointerInfoEXT import={.sType=VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
@@ -108,16 +115,45 @@ static int pool_host_try_span(pool *p,pool_backing_span *b,uint64_t begin,uint64
       result=vkAllocateMemory(V.device,&allocation,NULL,&fresh.memory);
       if(result==VK_SUCCESS)result=vkBindBufferMemory(V.device,fresh.handle,fresh.memory,0);
       fresh.properties=types.memoryTypes[type].propertyFlags;
+      if(result==VK_SUCCESS && !(fresh.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+        void *mapped=NULL;result=vkMapMemory(V.device,fresh.memory,0,bytes,0,&mapped);
+        if(result==VK_SUCCESS) {
+          fresh.imported_host_mapped=1;
+          if(!mapped)result=VK_ERROR_MEMORY_MAP_FAILED;
+        }
+      }
     }
   }
   if(result!=VK_SUCCESS) {
     if(fresh.handle)vkDestroyBuffer(V.device,fresh.handle,NULL);
+    if(fresh.imported_host_mapped)vkUnmapMemory(V.device,fresh.memory);
     if(fresh.memory)vkFreeMemory(V.device,fresh.memory,NULL);
     atomic_fetch_sub(&pool_host_pinned,bytes);pool_host_reject_add(p,begin,end);
     LOG("[vulkan readonly host] rejected window identity=%llu bytes=%llu VkResult=%d; sticky mirror",
       (unsigned long long)p->identity,(unsigned long long)bytes,result);return 0;
   }
   b->begin=begin;b->end=end;b->buffer=fresh;return 1;
+}
+// Publish before the original QueueSubmit, while its resource reference owns
+// this immutable backing. A shared readonly range needs no CPU read/invalidate.
+// Every used page is flushed: dirty generations do not prove a prior flush.
+static void pool_host_flush_read(const pool_backing_span *b,uint64_t offset,uint64_t size) {
+  const vk_buffer *buffer=&b->buffer;
+  if(buffer->properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)return;
+  uint64_t atom=V.props.limits.nonCoherentAtomSize;
+  if(!V.options.pool_host_noncoherent || !buffer->imported_host || !buffer->imported_host_mapped ||
+      !size || offset<b->begin || offset>=b->end || size>b->end-offset ||
+      !atom || (atom&(atom-1)) || buffer->size%atom)
+    die("Vulkan readonly host noncoherent publication bounds");
+  uint64_t first=(offset-b->begin)&~(atom-1),end=offset-b->begin+size;
+  if(end>UINT64_MAX-(atom-1))die("Vulkan readonly host noncoherent range overflow");
+  end=(end+atom-1)&~(atom-1);
+  if(end>buffer->size)die("Vulkan readonly host noncoherent mapped range");
+  VkMappedMemoryRange range={.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+    .memory=buffer->memory,.offset=first,.size=end-first};
+  // Failure cannot replace an already borrowed handle or submit stale bytes.
+  VK_CHECK(vkFlushMappedMemoryRanges(V.device,1,&range));
+  POOL_COPY_ADD(host_flush_bytes,end-first);POOL_COPY_ADD(host_flush_calls,1);
 }
 // All producer and CPU-completion destinations pass this before any physical
 // handle borrow. Demotion is cold and sticky, never in the dirty fault handler.
@@ -199,4 +235,11 @@ void vk_test_pool_host_limits(uint64_t single,uint64_t total) {
 }
 void vk_test_pool_host_fail_once(void) {pool_host_test_fail_import=pool_host_test_fail_mirror=1;}
 uint64_t vk_test_pool_host_attempts(void) {return pool_host_test_attempts;}
+VkMemoryPropertyFlags vk_test_pool_host_properties(uint64_t address) {
+  VkMemoryPropertyFlags flags=0;pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
+  pool_span_piece span;
+  if(p && pool_span_resolve_locked(p,address-(uintptr_t)p->guest,1,&span) && span.backing->buffer.imported_host)
+    flags=span.backing->buffer.properties;
+  pthread_mutex_unlock(&V.resources);return flags;
+}
 #endif

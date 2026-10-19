@@ -53,3 +53,52 @@ Android fixture 使用原冷启动 window setter 明确选择4KiB，避免 Activ
 
 
 成功 pin 后另有两条有限页功能路径：先等原 GPU Fence，再原 `nvn_dirty_protect`，分别通过原 `dm_guest_write_prepare` 和原 SIGSEGV dirty hook 合法写入同一字节，然后 GPU 读取原 imported VkBuffer。检查 handle/generation 不变、import attempt 不增加和 GPU 字节等于新 CPU 值。这验证该次实际缓存/映射行为，不读取 PFN，也不把任意 fork/COW/madvise/unmap 的稳定性概括为已经证明。已经受保护导致首次导入失败的页面仍不解保护重试。
+
+
+## 非一致性 HOST_CACHED 受限接入（独立实验，默认关闭）
+
+`DM_VULKAN_POOL_HOST_NONCOHERENT=1` 只扩展已显式启用的只读窗口实验；
+原默认路径及仅启用 `DM_VULKAN_POOL_HOST_READONLY` 时的 coherent 要求不变。
+仍优先选择 HOST_CACHED|HOST_COHERENT；额外选项才允许标准导入查询返回的
+HOST_VISIBLE|HOST_CACHED 非 coherent 类型。不是修改属性或强行声明一致性。
+独立 PanVK 驱动包及标准自有页字节验证不等于这一 NVN 池路径已在真机通过。
+
+导入和长期映射都在发布 backing 前完成。非 coherent 的 allocation 全生命周期
+保持 Vulkan mapped，释放前先 unmap；guest 映射仍归原调用方。只接受导入窗口
+起址和长度都符合 host pointer alignment 与 `nonCoherentAtomSize` 的情况。
+每次原提交边界的 `sync_used_run`，对该提交真正读取的 imported 页执行标准
+`vkFlushMappedMemoryRanges`。范围按现有4KiB使用位图收集，再以独立 allocation
+起点计算偏移并向 atom 边界取整；不能跨 backing、扩大到另一个 allocation 或
+把 pool 的逻辑偏移当作 VkDeviceMemory 偏移。迁移提交跳过普通 upload sync，
+因此其初始化页 GPU copy 来源也显式 flush；仅补普通提交会漏掉这条读取路径。
+
+第一版每次刷新实际使用的页，不做 memcmp、mirror 上传，也不使用 dirty 代数
+跳过刷新。原 `page_upload_stamps` 是镜像上传的证明，并非缓存清理完成证明；
+直接重用会遗漏尚未保护时的普通 CPU 写。未来减少 flush 必须另建 per-host-page
+证明，先保护再取用并与脏页发布的顺序配合，不能提前推进代数后漏掉并发写入。
+现有图像 dirty 跟踪、原宿主写前准备与原缺页处理保持原行为。
+
+GPU 仍只读，无 CPU invalidate 或共享 GPU 写入。CPU 覆盖 GPU 在读的字节前必须
+等原 GPU 完成；非 coherent 时独立并发字节还必须落在不同 atom 内，因为
+[标准 Flush 规范](https://docs.vulkan.org/refpages/latest/refpages/source/vkFlushMappedMemoryRanges.html)
+将发生写入的整个 atom 纳入同步访问。此路径沿用上游 Shared NoCopy 合同，不能
+提供旧镜像对非法同字节并发覆盖的逐提交快照。已知 CopyBuffer 快照捷径仍按
+imported 来源回退原 GPU copy/readback。需要 GPU 写或 CPU 完成回写的操作仍在
+借用物理 handle 前执行原 quiescent demote；共享 GPU 写入不在本实验范围。
+
+不符合类型、对齐、预算、首次 GUP、bind 或 map 的窗口都在发布前 sticky 回退
+普通镜像；不会解除已有 dirty 保护重试。提交边界 Flush 失败时原录制已借用了
+handle，不能偷偷替换 backing 或继续提交旧数据，按原 Vulkan 错误路径停止。
+同样不在 fault handler 中导入、分配、做 Vulkan 调用或等 GPU。
+
+现有 copy accounting 新增 `host_flush_calls` / `host_flush_bytes`，只计实际标准
+调用和逻辑范围，不是 DRAM 计数器、计时器或涨帧证据。额外成本包括一次导入
+pin/map、存活期 pinned 页与每次所用页的缓存清理；初始 shadow 仍保留，并未声称
+整池所有副本都已消除。没有实际 profile 之前不推断游戏收益。
+
+Android 受限 fixture 追加 cold Intent `pool_host_noncoherent=true`，只允许同时
+显式 `pool_host_import_test=true`；普通启动默认 false。它不加载真实游戏。
+宿主同一原 fixture 可配合环境变量运行，输出实际 memory flags、coherent 与 atom；
+Lavapipe 选到 coherent 内存时不能算非 coherent 路径通过。后续真机验收必须包括
+先成功 pin、原 dirty protect、原 prepare/direct fault 合法 CPU 写、原 GPU 读，以及
+跨 imported backing 迁移读；Mali 测试须另协调租约。

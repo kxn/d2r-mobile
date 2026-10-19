@@ -35,6 +35,7 @@ static void pool_migration_copy_initialized(const pool *p,const pool_backing_spa
       uint64_t lo=(word*64+bit)<<GPU_ACCESS_SHIFT,hi=(word*64+end+1)<<GPU_ACCESS_SHIFT;
       if(lo<b->begin)lo=b->begin;
       if(hi>b->end)hi=b->end; // includes the final non-page-sized pool tail
+      if(b->buffer.imported_host)pool_host_flush_read(b,lo,hi-lo);
       if(V.options.pool_copy_accounting)copy_bytes+=hi-lo;
       VkBufferCopy copy={.srcOffset=lo-b->begin,.dstOffset=lo-destination_begin,.size=hi-lo};
       if(count && copies[count-1].srcOffset+copies[count-1].size==copy.srcOffset)

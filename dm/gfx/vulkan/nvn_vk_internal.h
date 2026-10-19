@@ -26,7 +26,7 @@ typedef struct vk_buffer {
   uint8_t *map;
   VkDeviceSize size;
   VkMemoryPropertyFlags properties;
-  int readback, imported_host; // raw imported VkDeviceMemory; never owned by VMA
+  int readback, imported_host, imported_host_mapped; // raw imported VkDeviceMemory; never owned by VMA
 } vk_buffer;
 typedef struct vk_effect {
   struct vk_effect *next;
@@ -49,7 +49,7 @@ typedef struct {
   int pool_mirror_reference;
   int pool_copy_accounting;
   int pool_defer_publication;
-  int pool_host_readonly;
+  int pool_host_readonly, pool_host_noncoherent;
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
