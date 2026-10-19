@@ -29,6 +29,22 @@ static int borrowed_nvn_windows_test(void) {
   // Partial read/prefix uses original VkBuffer-relative offset, not guest base.
   CHECK(first_b.local_offset==4096);
   CHECK(!vk_test_pool_owned_properties((uintptr_t)storage));
+  if(getenv("DM_BORROWED_NVN_FULL_REFERENCE_FIXTURE")) {
+    // Original reference switch must retire every imported nonzero window,
+    // not repeatedly request the unimported first byte of this large pool.
+    CHECK(first_a.logical_begin>0 && first_b.logical_begin>0);
+    uint64_t imports,retired,after_imports,after_retired;vk_test_pool_owned_stats(&imports,&retired);
+    vk_pool_sync_reference(1);submit(borrowed_record(&f,a,0,0));borrowed_pixels(&f,.25f);
+    CHECK(!vk_test_pool_owned_properties((uintptr_t)a) && !vk_test_pool_owned_properties((uintptr_t)b));
+    vk_test_pool_owned_stats(&after_imports,&after_retired);CHECK(after_imports==imports && after_retired==retired+2);
+    CHECK(vk_pool_span_query((uintptr_t)a,4096,&current)==VK_POOL_SPAN_SINGLE);
+    CHECK(current.logical_begin==0 && current.logical_end==(2u<<20));
+    vk_pool_sync_reference(0);CALL(nvnMemoryPoolFinalize,&source);
+    vk_uniform_specialization_enabled(specialized);S=saved;vk_pipeline_state_changed();
+    CALL(nvnCommandBufferFinalize,&f.commands);CALL(nvnTextureFinalize,&f.target);CALL(nvnProgramFinalize,&f.program);
+    CALL(nvnMemoryPoolFinalize,&f.backing);free(f.storage);free(storage);
+    LOG("[borrowed subwindows full reference] two nonzero imports retired, original whole sync preserves GPU pixels");return flags;
+  }
   // Historical image declaration, even finalized before first buffer use,
   // blocks only its exact canonical node rather than this whole logical pool.
   CALL(nvnTextureBuilderSetStorage,&tb,&source,12*65536);
