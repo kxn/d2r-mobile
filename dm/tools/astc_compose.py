@@ -378,15 +378,23 @@ def compose(options):
                 require(hashes.file(deploy / name) == value, 'inherited overlay changed: ' + name)
         # Reverify recorded inputs after production; the shared batch lock is still held.
         verify_map(options.baseline_overlay, overlay_hashes, hashes)
+        python_paths = [Path(sys.executable).resolve()]
+        if getattr(casc.zlib, '__file__', None):
+            python_paths.append(Path(casc.zlib.__file__))
+        dependencies = subprocess.run(['ldd', sys.executable], capture_output=True, text=True, check=True)
+        for token in dependencies.stdout.replace('=>', ' ').split():
+            if token.startswith('/') and Path(token).is_file():
+                python_paths.append(Path(token).resolve())
         inputs = {str(p.resolve()): hashes.file(p) for p in [batch / 'job.json', batch / 'batch-report.json',
                   batch / 'repl.tsv', options.baseline_cache, options.baseline_index, options.baseline_pack_manifest,
                   options.baseline_overlay_record, raw / 'data/build_manifest.psv',
                   raw / 'data/.build.config',
-                  Path(__file__), Path(casc.__file__), Path(touch_layout.__file__),
-                  Path(sys.executable).resolve(), Path(casc.zlib.__file__)]}
+                  Path(__file__), Path(casc.__file__), Path(touch_layout.__file__), *python_paths]}
         report = {'complete': True, 'not_deployed': True, 'batch_job_key': verified['job']['job_key'],
                   'source_revision': revision, 'source_clean': True,
                   'python_version': sys.version, 'zlib_runtime_version': casc.zlib.ZLIB_RUNTIME_VERSION,
+                  'python_ldd_output': dependencies.stdout,
+                  'zlib_module': getattr(casc.zlib, '__file__', 'built-in; fingerprinted in Python runtime libraries'),
                   'inputs': inputs, 'commands': commands, 'CASC_workers': 2,
                   'selected': sorted(verified['accepted']), 'quality_or_unsupported_fallback': verified['fallback'],
                   'batch_converted': sorted(verified['batch_accepted']),
