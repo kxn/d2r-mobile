@@ -29,7 +29,7 @@ present_modes.add_argument('--reference-present',dest='shader_present',action='s
 parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
-parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental source-proved pixel-local subpasses; requires matching shader sidecars (default off)')
+parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
 parser.add_argument('--pool-copy-accounting',action=argparse.BooleanOptionalAction,default=None,help='startup-only optional logical pool copy bytes, not bandwidth or timing (default off)')
 parser.add_argument('--upload-dual-store',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental direct upload: one guest load feeds map and shadow (default off)')
@@ -194,7 +194,8 @@ if not args.attach:
         launch += ['--es', 'operation_mode', args.operation_mode]
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
-    launch += ['--ez', 'pixel_local', str(bool(args.pixel_local)).lower()]
+    if args.pixel_local is not None:
+        launch += ['--ez', 'pixel_local', str(args.pixel_local).lower()]
     if args.pixel_local_shared_ds is not None:
         launch += ['--ez', 'pixel_local_shared_ds', str(args.pixel_local_shared_ds).lower()]
     launch += ['--ez', 'upload_dual_store', str(bool(args.upload_dual_store)).lower()]

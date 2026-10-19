@@ -90,6 +90,14 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertIn('startup-only', stderr.getvalue())
             adb.assert_not_called()
 
+    def test_pixel_local_default_is_delegated_and_reference_is_explicit(self):
+        self.assertNotIn('pixel_local', self.launch_command([]))
+        for option, value in (('--pixel-local', 'true'), ('--no-pixel-local', 'false')):
+            with self.subTest(option=option):
+                command = self.launch_command([option])
+                index = command.index('pixel_local')
+                self.assertEqual(command[index - 1:index + 2], ['--ez', 'pixel_local', value])
+
     def test_copy_accounting_is_startup_only_and_default_off(self):
         for options, value in (([], 'false'), (['--pool-copy-accounting'], 'true'),
                                (['--no-pool-copy-accounting'], 'false')):

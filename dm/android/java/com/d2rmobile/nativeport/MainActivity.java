@@ -135,7 +135,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // lifetime. Explicit SDK/shadow references remain available; Activity
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
-            nativePixelLocal(getIntent().getBooleanExtra("pixel_local", false));
+            // Source-proved subpasses fall back when recipes, resources or
+            // dependencies do not qualify. Shared-depth remains opt-in.
+            nativePixelLocal(getIntent().getBooleanExtra("pixel_local", true));
             nativePixelLocalSharedDs(getIntent().getBooleanExtra("pixel_local_shared_ds", false));
             nativeUploadDualStore(getIntent().getBooleanExtra("upload_dual_store", false));
             nativePoolCopyAccounting(getIntent().getBooleanExtra("pool_copy_accounting", false));
