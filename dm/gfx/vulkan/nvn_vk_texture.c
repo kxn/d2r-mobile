@@ -2044,13 +2044,20 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
     }
   }
   texture_descriptor desc;view_t view;int has_view;image *known=NULL;
+  const tex_t *t=&desc.texture;
   uint64_t known_generation=image_recipe_generation,known_submit=vk_recording_serial();
   if(cached) {
     known=cached->owner;view=cached->view;has_view=cached->has_view;texture_prepare_hits++;
     // Preparation can itself emit image accesses or re-enter pass-end replay.
     // Retain this owner for the current serial before any such callback.
     known->last_use=vk_recording_serial();
-    desc.texture=known->tex;
+    // The only callback before the final physical operation is deferred-mip
+    // access below. With no pending transaction it is an exact no-op (it does
+    // not inspect V.nvn_barrier); alias classification is also pure. Borrow
+    // immutable topology until i is selected. Retain the original value copy
+    // whenever a drain can retire/promote this owner or re-enter a ghost draw.
+    if(vk_mip_clear_pending())desc.texture=known->tex;
+    else t=&known->tex;
   } else {
     pthread_mutex_lock(&V.resources);
     if(id<0 || id>=texture_capacity || id>=texture_limit || !texture_descriptors[id].valid)
@@ -2063,7 +2070,6 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
     texture_binding_snapshot_save(id,storage,&desc,epoch);
     view=desc.view;has_view=desc.has_view;
   }
-  const tex_t *t=&desc.texture;
   const view_t *v=has_view?&view:NULL;
   vk_mip_clear_texture_access(t,v,0);
   // A deferred drain can finish this serial and begin another recording,
