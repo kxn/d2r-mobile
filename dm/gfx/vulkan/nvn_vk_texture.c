@@ -811,39 +811,11 @@ static void texture_dirty_mode_begin(void) {
   }
   texture_dirty_reference_active=reference;atomic_store(&texture_dirty_active,reference);
 }
-static void image_upload(image *i) {
-  // HLE texture initialization is an ordered CPU exposure, including late
-  // aliases. Its sticky pages keep every later writer on original eager WB.
-  // Check this before dirty/stamp earlyreturn; never commit with i borrowed.
-  if(V.options.pool_defer_publication && i->tex.mem && i->tex.L.size &&
-      !vk_pool_cpu_source_ready((uintptr_t)i->tex.mem,i->tex.L.size))
-    die("Vulkan CPU texture source missing ordered initialization exposure");
-  const tex_t *t = &i->tex;
-  if(!t->has_layout) return;
-  vk_mip_clear_texture_access(t,NULL,0);
-  if(i->initialized) {
-    // Take the publication sequence BEFORE checking pages. A later edit
-    // invalidates this proof on the next use; never advance the upload stamp.
-    uint64_t epoch=nvn_dirty_change_epoch();
-    if(!texture_dirty_reference_active && epoch && i->checked_dirty_epoch==epoch &&
-       i->checked_dirty_stamp==i->stamp) { texture_dirty_hits++;return; }
-    nvn_dirty_range_proof proof = {0};
-    if (!texture_dirty_reference_active && epoch) {
-      // Snapshot BEFORE the original page test. A concurrent/later publication
-      // must invalidate this negative result; latest generation is not a key.
-      if (nvn_dirty_range_refresh(&i->checked_dirty_range, &proof)) {
-        if (i->checked_dirty_stamp == i->stamp &&
-            proof.changes == i->checked_dirty_range.changes) {
-          i->checked_dirty_epoch = epoch; texture_dirty_hits++; return;
-        }
-      } else nvn_dirty_range_observe(t->mem, t->L.size, &proof);
-    }
-    texture_dirty_checks++;
-    if(!nvn_dirty_since(t->mem,t->L.size,i->stamp)) {
-      i->checked_dirty_epoch=epoch;i->checked_dirty_stamp=i->stamp;
-      i->checked_dirty_range=proof;return;
-    }
-  }
+// Keep deswizzle/staging/copy state off the high-frequency readonly proof
+// path. Only image_upload calls this after the original ordered checks; its
+// body, upload/protection stamp and physical dependency ordering are unchanged.
+static __attribute__((noinline)) void image_upload_contents(image *i) {
+  const tex_t *t=&i->tex;
   // Untracked sources are always uploaded; they must not acquire a proof.
   i->checked_dirty_epoch=0;
   i->checked_dirty_range=(nvn_dirty_range_proof){0};
@@ -904,6 +876,42 @@ static void image_upload(image *i) {
   // through image_record. A later CPU upload cannot revoke that escape.
   i->cpu_rebuildable = !i->external_access;
 }
+static void image_upload(image *i) {
+  // HLE texture initialization is an ordered CPU exposure, including late
+  // aliases. Its sticky pages keep every later writer on original eager WB.
+  // Check this before dirty/stamp earlyreturn; never commit with i borrowed.
+  if(V.options.pool_defer_publication && i->tex.mem && i->tex.L.size &&
+      !vk_pool_cpu_source_ready((uintptr_t)i->tex.mem,i->tex.L.size))
+    die("Vulkan CPU texture source missing ordered initialization exposure");
+  const tex_t *t = &i->tex;
+  if(!t->has_layout) return;
+  vk_mip_clear_texture_access(t,NULL,0);
+  if(i->initialized) {
+    // Take the publication sequence BEFORE checking pages. A later edit
+    // invalidates this proof on the next use; never advance the upload stamp.
+    uint64_t epoch=nvn_dirty_change_epoch();
+    if(!texture_dirty_reference_active && epoch && i->checked_dirty_epoch==epoch &&
+       i->checked_dirty_stamp==i->stamp) { texture_dirty_hits++;return; }
+    nvn_dirty_range_proof proof = {0};
+    if (!texture_dirty_reference_active && epoch) {
+      // Snapshot BEFORE the original page test. A concurrent/later publication
+      // must invalidate this negative result; latest generation is not a key.
+      if (nvn_dirty_range_refresh(&i->checked_dirty_range, &proof)) {
+        if (i->checked_dirty_stamp == i->stamp &&
+            proof.changes == i->checked_dirty_range.changes) {
+          i->checked_dirty_epoch = epoch; texture_dirty_hits++; return;
+        }
+      } else nvn_dirty_range_observe(t->mem, t->L.size, &proof);
+    }
+    texture_dirty_checks++;
+    if(!nvn_dirty_since(t->mem,t->L.size,i->stamp)) {
+      i->checked_dirty_epoch=epoch;i->checked_dirty_stamp=i->stamp;
+      i->checked_dirty_range=proof;return;
+    }
+  }
+  image_upload_contents(i);
+}
+
 static VkImageSubresourceRange range(image *i, const view_t *v) {
   VkImageSubresourceRange r = {
       .aspectMask = i->aspect, .levelCount = 1, .layerCount = 1};
