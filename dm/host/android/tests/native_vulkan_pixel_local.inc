@@ -47,6 +47,7 @@ static VKAPI_ATTR void VKAPI_CALL pixel_local_batch_barrier(
   pixel_local_batch_barrier_original(command,source,target,flags,memory_count,memory,
       buffer_count,buffers,image_count,images);
 }
+#include "native_vulkan_pixel_local_mip_alias.inc"
 static int pixel_local_render_test(void) {
   const char *fault=getenv("DM_TEST_PIXEL_LOCAL_PSO_FAILURE");
   int inject=fault && !strcmp(fault,"1");
@@ -251,5 +252,6 @@ static int pixel_local_render_test(void) {
   for(unsigned k=0;k<11;k++)CALL(nvnTextureFinalize,&textures[k]);
   CALL(nvnProgramFinalize,&producer);CALL(nvnProgramFinalize,&consumer);CALL(nvnProgramFinalize,&single);CALL(nvnProgramFinalize,&neighbor);CALL(nvnProgramFinalize,&alpha);CALL(nvnProgramFinalize,&vertex_alias);CALL(nvnProgramFinalize,&vertex_schema);CALL(nvnProgramFinalize,&producer_writer);CALL(nvnProgramFinalize,&consumer_writer);CALL(nvnProgramFinalize,&late_upload);CALL(nvnProgramFinalize,&x_writer);CALL(nvnCommandBufferFinalize,&local);
   CALL(nvnMemoryPoolFinalize,&pool);free(storage);S=saved;vk_pipeline_state_changed();
+  CHECK(pixel_local_mip_alias_test()==0);
   CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pixel-local-render\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
 }

@@ -46,6 +46,15 @@ layout(local_size_x=1,local_size_y=1)in;
 layout(rgba8,set=2,binding=1)writeonly uniform image2D x;
 void main(){imageStore(x,ivec2(gl_GlobalInvocationID.xy),vec4(32./255.,32./255.,32./255.,1));}
 ''',[(4,1,0,-1,4,1,2,3)],-1,0))
+# Producer sampling a real sibling/overlapping mip; consumer module has an
+# independent identity so the owned PSO fault can test this new admission too.
+items.append((193,1,'''#version 450
+layout(location=1)in vec2 uv;
+layout(location=0)out vec4 a;layout(location=1)out vec4 b;layout(location=2)out vec4 c;
+layout(set=1,binding=1)uniform sampler2D source;
+void main(){a=vec4(textureLod(source,uv,0).b*(64./255.),0,0,1);b=vec4(0,64./255.,0,1);c=vec4(0,0,64./255.,1);}
+''',[(3,1,0,0,0,1,0,2)],-1,7))
+items.append((194,1,items[2][2],items[2][3],-1,1))
 for marker,stage,text,bindings,pos,colors in items:
  key=hashlib.sha256(bytes([marker])*0x880).hexdigest()[:16]
  source=root/(key+('.vert'if stage==0 else'.comp'if stage==5 else'.frag'));source.write_text(text)

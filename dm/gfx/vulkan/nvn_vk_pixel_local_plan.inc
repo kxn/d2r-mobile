@@ -105,7 +105,31 @@ static int pl_texture_shape(const tex_t *t,const view_t *view,unsigned width,uns
       (view->set_levels && (view->base_level || view->nlevels<0 || view->nlevels>t->d.levels))))return 0;
   return t->d.width==width && t->d.height==height;
 }
-static int pl_shader_read_alias(const vk_state *s,const tex_t *target) {
+// Refine only the producer read-vs-hoisted-image check. A descriptor's
+// single physical texture can expose a sibling mip without reading the
+// attachment. Unspecified ranges remain opaque (especially external history
+// inputs); no whole-image/guest-memory alias proof is weakened.
+static int pl_sampled_mips_disjoint(const tex_t *target,const view_t *tv,
+                                  const tex_t *sampled,const view_t *sv) {
+  if(!pl_tex_same(target,sampled) || !tv || !sv ||
+      target->d.target!=NVN_TEXTURE_TARGET_2D || target->L.layers!=1 ||
+      target->d.depth!=1 || target->d.width<1 || target->d.height<1 ||
+      target->d.samples>1 || target->d.levels<2 || target->d.levels>16)return 0;
+  const view_t *views[]={tv,sv};
+  for(unsigned k=0;k<2;k++) {
+    const view_t *v=views[k];
+    if(!v->set_levels || v->base_level<0 || v->nlevels<=0 ||
+        v->base_level>=target->d.levels || v->nlevels>target->d.levels-v->base_level ||
+        (v->set_format && v->format!=target->d.format) ||
+        (v->set_target && v->target!=NVN_TEXTURE_TARGET_2D) ||
+        (v->set_layers && (v->min_layer || v->nlayers!=1)))return 0;
+  }
+  // Subtraction follows checked nonnegative bounds; no end-index overflow.
+  return tv->base_level<sv->base_level?
+      sv->base_level-tv->base_level>=tv->nlevels:
+      tv->base_level-sv->base_level>=sv->nlevels;
+}
+static int pl_shader_read_alias(const vk_state *s,const tex_t *target,const view_t *target_view) {
   vk_shader *list[6]={0};if(!s->program)return 1;vk_program_shaders(s->program,list);
   if(list[2]||list[3]||list[4]||!list[0]||!list[1])return 1;
   for(unsigned stage=0;stage<2;stage++) {
@@ -115,8 +139,11 @@ static int pl_shader_read_alias(const vk_state *s,const tex_t *target) {
       if(b->kind<3 || b->kind==5 || b->kind==8)continue;
       if(b->count!=1 || (!image && b->kind!=3 && b->kind!=6 && b->kind!=7))return 1;
       if(b->reg<0 || b->reg>=(image?32:128))return 1;
-      uint64_t h=image?s->img[stage][b->reg]:s->tex[stage][b->reg];tex_t t;
-      if(!vk_texture_descriptor(h&0xfffff,&t) || pl_tex_alias(&t,target))return 1;
+      uint64_t h=image?s->img[stage][b->reg]:s->tex[stage][b->reg];tex_t t;view_t view;int has_view;
+      if(!vk_texture_descriptor_view(h&0xfffff,&t,&view,&has_view))return 1;
+      if((b->kind==3 || b->kind==6) && has_view &&
+          pl_sampled_mips_disjoint(target,target_view,&t,&view))continue;
+      if(pl_tex_alias(&t,target))return 1;
     }
   }return 0;
 }
@@ -248,16 +275,16 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
     if(op==p->set_op)break;
     if(h.op==OP_DRAW || h.op==OP_DRAW_IDX) {
       if(!pl_no_writers(&scan))return NULL;
-      for(int a=0;a<S.targets.n;a++)if(S.targets.color[a] && pl_shader_read_alias(&scan,S.targets.color[a]))return NULL;
+      for(int a=0;a<S.targets.n;a++)if(S.targets.color[a] && pl_shader_read_alias(&scan,S.targets.color[a],S.targets.has_cview[a]?&S.targets.cview[a]:NULL))return NULL;
       for(int a=0;a<p->second.targets.n;a++) {
         const tex_t *t=p->second.targets.color[a];
-        if(!t || !pl_attachment_shape(t,p->second.targets.has_cview[a]?&p->second.targets.cview[a]:NULL,width,height) || pl_shader_read_alias(&scan,t))return NULL;
+        if(!t || !pl_attachment_shape(t,p->second.targets.has_cview[a]?&p->second.targets.cview[a]:NULL,width,height) || pl_shader_read_alias(&scan,t,p->second.targets.has_cview[a]?&p->second.targets.cview[a]:NULL))return NULL;
         for(int b=0;b<S.targets.n;b++)if(pl_tex_alias(t,S.targets.color[b]))return NULL;
       }
-      if(p->second.targets.depth && p->second.targets.depth!=S.targets.depth && pl_shader_read_alias(&scan,p->second.targets.depth))return NULL;
+      if(p->second.targets.depth && p->second.targets.depth!=S.targets.depth && pl_shader_read_alias(&scan,p->second.targets.depth,p->second.targets.has_dview?&p->second.targets.dview:NULL))return NULL;
       for(unsigned k=0;k<p->fragment->count;k++) {
         int source=0;for(int a=0;a<S.targets.n;a++)source|=pl_tex_same(&p->inputs[k],S.targets.color[a]);
-        if(!source && pl_shader_read_alias(&scan,&p->inputs[k]))return NULL;
+        if(!source && pl_shader_read_alias(&scan,&p->inputs[k],p->has_input_view[k]?&p->input_views[k]:NULL))return NULL;
       }
     } else if(!pl_shadow(&scan,op))return NULL;
   }

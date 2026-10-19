@@ -1685,3 +1685,12 @@ Mali ARM64 CLI 的真实 Vulkan memory-pool oracle 400,453 项通过，含非对
 附件合并的四处消费者重试原先使用正常 record/writeback 结束 descriptor batch；如果后面的 Y 上传结束 pass，之前已收集但尚未消费的 X 会被错误记录为已满足 shader-read visibility。新代码取消 prospective image/shader operation，不记录未执行的读写、不复制回尚未写入的 storage；实际执行的 upload/copy/producer/clear 历史保留。PSO 故障等晚回退也保守取消，允许重试重新同步。
 
 实际 GPU 负例在 compute imageStore X 后，通过 Y 首次上传触发 dual abort；旧路径在最终消费者前缺少 COMPUTE→FS write/read 依赖，契约断言失败，而普通 OFF 路径和修复路径有正确依赖、正确像素及后续 STORE/history。Khronos SYNC 验证在旧路径上未报告该缺失，不能把自有 API 契约检查说成原厂错误报告。修复独立 async/serial/window/PSO-fault 用例及完整 async 21,811,196 / sync 21,711,784 检查通过，最终零 VUID/SYNC。没有真机融合或 FPS 收益结论；报告 `pixel-local-batch-abandon-v1-source-ready.json`。
+
+
+### 生产者读取 sibling mip 的范围证明
+
+高通官方 LLDB 的下一处拒绝已确定：真实生产者 FS `8e80084d3c30340a` 的 sampled binding2/reg12/descriptor786 读取同 serial2146 的显式 mip1 单级 view，当前 color0 则是 mip0 单级 view。旧 producer rewalk 丢弃 descriptor view，按整个图像判别名，导致合法 sibling read 被拒绝；这不证明 GPU 上有实际反馈环。
+
+新精化只作用于 producer sampled kind3/6 的检查，要求完整 physical texture 身份/描述/布局相同、受限 2D 单层和双方显式有效不相交 mip 范围。storage/texel、默认/未知/零计数 view、同 mip、不同 serial 的 guest 内存别名仍保守。消费者普通资源别名、实际 token、epoch、geometry、layout 和 hazard 保护不改变。新 9 个实际 GPU 用例覆盖本地来源和 external history 的 sibling mip、重叠与未知负例、后续 STORE/history 和故障回退；原 26 例保留。新正例为 1 pass；用原 a7953b3 planner 加同一新 fixture 的负控则严格失败于 2 pass。独立完整 async 21,813,081 / sync 21,713,669 及窗口、PSO 故障、cover reference 全部通过、零 VUID/SYNC。真实 Android 游戏命中/硬件 tile 合并及收益仍待测，不能把夹具融合当作游戏收益。
+
+CPU 对照已补两厂真机 memory-pool oracle 各 400,453 项；Mali 真实游戏启用 dual upload 完成营地移动和原存档。官方 Perfetto 的 OFF/ON replay 平均 Running 为 20.091/20.104 ms，wall 为 21.128/21.280 ms，运行期加权 CPU 频率 2092.42/2088.98 MHz，未建立净 CPU 改善。OFF 样本解析器最初不接受千位逗号，既有录制已恢复，原失败元数据保留且缺 sample-after；ON scheduler 目标60→30，而其后独立 simpleperf 窗口30→30，不能据此归因 FPS。ON 的新复制循环/短尾仅有5/636个翻译线程 SELF 样本（0.7862%），不能把含旧 iterator/authority 的粗集合当成循环开销。暂保留可选实验，继续核总工作量成本；不将减少逻辑源读取宣称为 DRAM 或温度改善。见 `upload-dual-store-v1-mali-cpu-comparison.json`。
