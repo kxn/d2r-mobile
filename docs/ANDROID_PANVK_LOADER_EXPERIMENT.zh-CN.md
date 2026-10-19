@@ -18,6 +18,13 @@ python scripts/dev/android-game-launch.py --serial SERIAL --vulkan-driver panvk
 原生 Android 命令行可在进程启动前使用 `DM_VULKAN_DRIVER_KIND` 与
 `DM_VULKAN_DRIVER_ROOT`；环境变量只在加载器首次初始化时读取。
 
+仅在首次选择 PanVK、且没有显式 `MESA_SHADER_CACHE_DIR` 时，加载器在该应用私有
+驱动目录下创建 `shader-cache`（0700），并在 `dlopen` 前设置 Mesa 的缓存目录。
+已有显式值（包括空字符串）保持原样；不改 `HOME`，不影响系统或 Adreno 路径。
+缓存目录创建失败会记录原因，仍将该私有路径交给 Mesa，由 Mesa 处理缓存不可用，
+不会为磁盘缓存改用其他驱动。Activity 重建和初始化后的环境改变不会触发重新配置。
+这个修改提供可写的默认缓存位置，不等于已经证明首次卡顿、FPS 或发热有改善。
+
 PanVK 分支直接 `dlopen` ICD，再将 `vk_icdGetInstanceProcAddr`（或项目支持的
 `vkGetInstanceProcAddr` 别名）交给 Volk，不调用 AdrenoTools。
 加载器核对入口确实属于选中的库，持有句柄直到该进程的 Vulkan 生命周期结束。
