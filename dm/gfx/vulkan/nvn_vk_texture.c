@@ -723,7 +723,7 @@ static VkFormat image_view_format(image *i,const view_t *v) {
 // Only logical copies of textures are used across a visibility callback.
 // Callers must invoke this before borrowing any image/view/descriptor/temp.
 void vk_texture_cpu_preflight(const tex_t *t) {
-  if(V.options.pool_defer_publication && t && t->d.target!=NVN_TEXTURE_TARGET_BUFFER &&
+  if((V.options.pool_defer_publication || VK_OWNED_FIXTURE_ACTIVE) && t && t->d.target!=NVN_TEXTURE_TARGET_BUFFER &&
       t->mem && t->L.size && vk_pool_cpu_prepare((uintptr_t)t->mem,t->L.size)<0)
     die("Vulkan texture CPU source lifetime changed during preflight");
 }

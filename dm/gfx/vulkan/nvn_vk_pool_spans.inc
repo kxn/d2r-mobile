@@ -121,6 +121,9 @@ static void pool_spans_copy_from_guest(pool *p,uint64_t offset,uint64_t size) {
   pool_span_iter it;if(!pool_span_iter_begin(p,offset,size,&it))die("Vulkan pool copy range");
   pool_span_piece piece;int next;
   while((next=pool_span_iter_next(&it,&piece))==1) {
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    if(piece.backing->buffer.owned_host_import)die("Vulkan owned import entered mirror copy");
+#endif
     if(!piece.backing->buffer.map)die("Vulkan pool backing not host mapped");
     memcpy(piece.backing->buffer.map+piece.offset,p->guest+piece.logical,piece.size);
   }
