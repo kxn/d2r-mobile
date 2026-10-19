@@ -25,6 +25,7 @@ static void present_shader_initialize(void) {
   VkDescriptorSetLayoutCreateInfo di={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
       .bindingCount=1,.pBindings=&binding};
   VK_CHECK(vkCreateDescriptorSetLayout(V.device,&di,NULL,&present_shader_descriptors));
+    vk_descriptor_schema_register(present_shader_descriptors,&binding,1);
   VkPipelineLayoutCreateInfo li={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
       .setLayoutCount=1,.pSetLayouts=&present_shader_descriptors};
   VK_CHECK(vkCreatePipelineLayout(V.device,&li,NULL,&present_shader_layout));

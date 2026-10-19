@@ -51,6 +51,7 @@ typedef struct {
   int pool_defer_publication;
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
+  int descriptor_pool_adaptive;
   uint64_t trace_frame,frame_dump_at;
   const char *shader_root,*trace_directory,*frame_dump,*pipeline_cache_directory;
 } vk_startup_options;

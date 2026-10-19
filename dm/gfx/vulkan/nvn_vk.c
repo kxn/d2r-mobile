@@ -1211,6 +1211,7 @@ static void init_options(void) {
   unsigned long max_sets=sets?strtoul(sets,NULL,10):2048;
   if(!max_sets||max_sets>2048) die("Vulkan test descriptor capacity");
   o->descriptor_sets=max_sets;
+  o->descriptor_pool_adaptive=option_one("DM_VULKAN_DESCRIPTOR_POOL_ADAPTIVE");
   if(!o->descriptor_sets||o->descriptor_sets>2048) die("Vulkan test descriptor capacity");
   o->shader_root=option_string("DM_VULKAN_SHADERS");
   o->pipeline_cache_directory=option_string("DM_VULKAN_PIPELINE_CACHE_DIR");

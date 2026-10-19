@@ -131,6 +131,7 @@ int vk_extrap_setup(VkFormat color,VkFormat depth) {
     for (unsigned i=0;i<3;i++) bindings[i]=(VkDescriptorSetLayoutBinding){i,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,NULL};
     VkDescriptorSetLayoutCreateInfo di={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=3,.pBindings=bindings};
     VK_CHECK(vkCreateDescriptorSetLayout(V.device,&di,NULL,&descriptors));
+    vk_descriptor_schema_register(descriptors,bindings,3);
     VkPushConstantRange push={VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(rx_constants)};
     VkPipelineLayoutCreateInfo li={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount=1,.pSetLayouts=&descriptors,.pushConstantRangeCount=1,.pPushConstantRanges=&push};

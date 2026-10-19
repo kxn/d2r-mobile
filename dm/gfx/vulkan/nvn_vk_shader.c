@@ -96,6 +96,8 @@ void vk_program_shaders(const prog_t *program, vk_shader *output[6]) {
 typedef struct descriptor_block {
   struct descriptor_block *next;
   VkDescriptorPool pool;
+  uint32_t counts[11],used[11],max_sets,allocated_sets;
+  int legacy;
 } descriptor_block;
 static VkDescriptorSetLayout empty_layout;
 static vk_buffer support_constant;
@@ -177,6 +179,7 @@ static uint64_t descriptor_history_hash(const vk_shader *shader,VkDescriptorSetL
 typedef struct descriptor_batch {
   struct descriptor_batch *next;
   VkDescriptorSetLayout layout;
+  struct descriptor_schema *schema;
   VkDescriptorSet sets[16];
   uint32_t count,issued;
   VkDescriptorSet *retained;
@@ -227,7 +230,7 @@ struct vk_shader_submission {
   descriptor_batch *descriptor_batches[128];
   int storage_bias_reference;
   int driver_reference;
-  uint32_t descriptor_retained;
+  uint32_t descriptor_retained,descriptor_next_sets;
   int descriptor_reuse_reference;
 };
 static void descriptor_history_release(vk_shader_submission *state) {
@@ -391,6 +394,7 @@ static VkDescriptorUpdateTemplate descriptor_template_create(const vk_shader *s,
     .descriptorSetLayout=dynamic?s->dynamic_descriptors[dynamic-1]:s->descriptors};
   VkDescriptorUpdateTemplate result;VK_CHECK(vkCreateDescriptorUpdateTemplate(V.device,&ci,NULL,&result));return result;
 }
+#include "nvn_vk_descriptor_schema.inc"
 #include "nvn_vk_layout_cache.inc"
 // Classify only immutable schema eligibility. Dynamic addresses, sizes, texel
 // descriptors, alignment and access/ownership checks remain operation-local.
@@ -706,7 +710,7 @@ vk_shader *vk_shader_load_key(const char *key) {
   LOG("[vulkan] shader %s stage=%u bindings=%u dynamic_ubos=%u/%u", key, s->stage, s->nb,s->dynamic_uniform_count[0],s->dynamic_uniform_count[1]);
   return s;
 }
-static descriptor_block *descriptor_create(void) {
+static descriptor_block *descriptor_create(vk_shader_submission *owner,const struct descriptor_schema *schema) {
   unsigned max_sets = V.options.descriptor_sets;
   const VkDescriptorPoolSize sizes[] = {
       {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, max_sets * VK_PIXEL_LOCAL_MAX_INPUTS},
@@ -720,15 +724,26 @@ static descriptor_block *descriptor_create(void) {
       {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, max_sets * 4},
       {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, max_sets * 4}};
   unsigned omit_inputs=!vk_pixel_local_enabled();
+  VkDescriptorPoolSize compact[11];unsigned compact_count=0;
+  int adaptive=V.options.descriptor_pool_adaptive && schema;
+  if(adaptive) {
+    max_sets=owner->descriptor_next_sets?owner->descriptor_next_sets:128;
+    if(max_sets>V.options.descriptor_sets)max_sets=V.options.descriptor_sets;
+    for(unsigned i=0;i<11;i++)if(descriptor_census[i])
+      compact[compact_count++]=(VkDescriptorPoolSize){(VkDescriptorType)i,descriptor_census[i]*max_sets};
+  }
   VkDescriptorPoolCreateInfo ci = {
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
       .maxSets = max_sets,
-      .poolSizeCount = sizeof sizes / sizeof *sizes-omit_inputs,
-      .pPoolSizes = sizes+omit_inputs};
+      .poolSizeCount = adaptive?compact_count:sizeof sizes / sizeof *sizes-omit_inputs,
+      .pPoolSizes = adaptive?compact:sizes+omit_inputs};
   descriptor_block *block = calloc(1, sizeof *block);
   if (!block)
     die("Vulkan descriptor block allocation");
   VK_CHECK(vkCreateDescriptorPool(V.device, &ci, NULL, &block->pool));
+  block->max_sets=max_sets;block->legacy=!adaptive;
+  for(unsigned i=0;i<ci.poolSizeCount;i++)block->counts[ci.pPoolSizes[i].type]=ci.pPoolSizes[i].descriptorCount;
+  if(adaptive)owner->descriptor_next_sets=max_sets<V.options.descriptor_sets/2?max_sets*2:V.options.descriptor_sets;
   return block;
 }
 void vk_shader_recycle(vk_shader_submission *state) {
@@ -789,6 +804,9 @@ void vk_shader_recycle(vk_shader_submission *state) {
   if(reset) {
     for (descriptor_block *block = state->descriptor_blocks; block; block = block->next) {
       VK_CHECK(vkResetDescriptorPool(V.device, block->pool, 0));
+      if(V.options.descriptor_pool_adaptive) {
+        block->allocated_sets=0;memset(block->used,0,sizeof block->used);
+      }
       atomic_fetch_add(&descriptor_pool_resets,1);
     }
     state->descriptor_current = NULL;
@@ -851,8 +869,8 @@ vk_shader_submission *vk_shader_begin(vk_shader_submission *state) {
   }
   binding_state->driver_reference=reference;
   atomic_store(&driver_reference_active,reference);
-  if (!binding_state->descriptor_blocks)
-    binding_state->descriptor_blocks = descriptor_create();
+  if (!binding_state->descriptor_blocks && !V.options.descriptor_pool_adaptive)
+    binding_state->descriptor_blocks = descriptor_create(binding_state,NULL);
   if(!binding_state->descriptor_current)
     binding_state->descriptor_current = binding_state->descriptor_blocks;
   binding_state->descriptor_reuse_reference=atomic_load(&descriptor_reuse_reference);
@@ -1138,6 +1156,51 @@ static VkResult descriptor_allocate_many(VkDescriptorSetLayout layout,uint32_t c
   return result;
 }
 static int descriptor_pool_full(VkResult result) { return result==VK_ERROR_OUT_OF_POOL_MEMORY || result==VK_ERROR_FRAGMENTED_POOL; }
+static int descriptor_pool_fits(const descriptor_block *block,const struct descriptor_schema *schema,uint32_t count) {
+  if(count>block->max_sets-block->allocated_sets)return 0;
+  // Unknown layouts have no trustworthy type vector, so isolate their
+  // original-budget fallback pools from exact known-schema accounting.
+  if(!schema)return block->legacy;
+  if(block->legacy)return 0;
+  for(unsigned i=0;i<11;i++)if((uint64_t)schema->counts[i]*count>block->counts[i]-block->used[i])return 0;
+  return 1;
+}
+static void descriptor_pool_record(descriptor_block *block,const struct descriptor_schema *schema,uint32_t count) {
+  block->allocated_sets+=count;
+  if(schema)for(unsigned i=0;i<11;i++)block->used[i]+=schema->counts[i]*count;
+}
+// Keep the experimental cold pool walk out of the established retained-set
+// fast path's register/stack frame, including when the experiment is OFF.
+__attribute__((noinline)) static VkResult descriptor_allocate_adaptive(const struct descriptor_schema *schema,VkDescriptorSetLayout layout,
+                                            uint32_t *count,VkDescriptorSet *sets) {
+  descriptor_block **at=binding_state->descriptor_current?&binding_state->descriptor_current:&binding_state->descriptor_blocks;
+  // Only walk already-owned pools. The immutable capacity check avoids
+  // repeatedly submitting an impossible layout to old-census pools.
+  while(*at) {
+    descriptor_block *block=*at;
+    if(!descriptor_pool_fits(block,schema,*count)) {
+      if(*count>1 && descriptor_pool_fits(block,schema,1))*count=1;
+      else {at=&block->next;continue;}
+    }
+    binding_state->descriptor_current=block;
+    VkResult result=descriptor_allocate_many(layout,*count,sets);
+    if(descriptor_pool_full(result) && *count>1) {
+      *count=1;result=descriptor_allocate_many(layout,1,sets);
+    }
+    if(result==VK_SUCCESS)descriptor_pool_record(block,schema,*count);
+    if(!descriptor_pool_full(result))return result;
+    at=&block->next;
+  }
+  // New schema was registered before its use, so this snapshot contains it.
+  // Unknown layouts get the original all-type configured budget instead.
+  *at=descriptor_create(binding_state,schema);binding_state->descriptor_current=*at;
+  VkResult result=descriptor_allocate_many(layout,*count,sets);
+  if(descriptor_pool_full(result) && *count>1) {
+    *count=1;result=descriptor_allocate_many(layout,1,sets);
+  }
+  if(result==VK_SUCCESS)descriptor_pool_record(*at,schema,*count);
+  return result; // No unbounded fresh-pool retry on an unsupported layout.
+}
 VkDescriptorSet vk_descriptor_allocate(VkDescriptorSetLayout layout) {
   // Unwritten sets remain private to this submission/context. Shader/compute
   // layout changes use separate bins; no in-flight descriptor is ever updated.
@@ -1149,7 +1212,9 @@ VkDescriptorSet vk_descriptor_allocate(VkDescriptorSetLayout layout) {
     for(batch=binding_state->descriptor_batches[bucket];batch && batch->layout!=layout;batch=batch->next){}
     if(!batch) {
       batch=calloc(1,sizeof *batch);if(!batch)die("Vulkan descriptor batch allocation");
-      batch->layout=layout;batch->next=binding_state->descriptor_batches[bucket];binding_state->descriptor_batches[bucket]=batch;
+      batch->layout=layout;
+      if(V.options.descriptor_pool_adaptive)batch->schema=descriptor_schema_find(layout);
+      batch->next=binding_state->descriptor_batches[bucket];binding_state->descriptor_batches[bucket]=batch;
     }
     if(reuse && batch->retained_used<batch->retained_count) {
       shader_recorded.descriptor_reuses += 1;
@@ -1163,16 +1228,21 @@ VkDescriptorSet vk_descriptor_allocate(VkDescriptorSetLayout layout) {
     if(count>V.options.descriptor_sets)count=V.options.descriptor_sets;
   }
   VkDescriptorSet *sets=batch?batch->sets:&one;
-  VkResult allocated=descriptor_allocate_many(layout,count,sets);
+  VkResult allocated;
+  if(V.options.descriptor_pool_adaptive)
+    allocated=descriptor_allocate_adaptive(batch?batch->schema:descriptor_schema_find(layout),layout,&count,sets);
+  else {
+  allocated=descriptor_allocate_many(layout,count,sets);
   if(descriptor_pool_full(allocated) && count>1) {
     // A failed batch is all-or-nothing. Try one in the same pool to consume
     // remaining capacity instead of wasting it or allocating another pool.
     count=1;allocated=descriptor_allocate_many(layout,1,sets);
   }
   if(descriptor_pool_full(allocated)) {
-    if(!binding_state->descriptor_current->next)binding_state->descriptor_current->next=descriptor_create();
+    if(!binding_state->descriptor_current->next)binding_state->descriptor_current->next=descriptor_create(binding_state,NULL);
     binding_state->descriptor_current=binding_state->descriptor_current->next;
     allocated=descriptor_allocate_many(layout,count,sets);
+  }
   }
   if(allocated!=VK_SUCCESS)die("Vulkan descriptor allocation: %d",allocated);
   if(reuse) {

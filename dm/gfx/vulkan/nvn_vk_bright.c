@@ -30,6 +30,7 @@ static void pipeline_create(void) {
   VkDescriptorSetLayoutCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
       .bindingCount = 2, .pBindings = bindings};
   VK_CHECK(vkCreateDescriptorSetLayout(V.device, &di, NULL, &descriptors));
+    vk_descriptor_schema_register(descriptors,bindings,2);
   // Push constants preserve each dispatch's exposure without rotating mutable uniforms.
   // Push 常量逐派发保留曝光，不复用仍在 GPU 上读取的可变 uniform。
   VkPushConstantRange push = {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float)};

@@ -157,6 +157,9 @@ void vk_driver_arena_stats(uint64_t *slots,uint64_t *zeroes,uint64_t *chunks,
                           uint64_t *live,uint64_t *reuses);
 void vk_descriptor_content_stats(uint64_t *hits,uint64_t *misses);
 void vk_storage_bias_stats(uint64_t *direct,uint64_t *copies,uint64_t *bytes,int *reference);
+// Cold registration of device-lifetime backend layouts only. Unknown external
+// layouts retain the original pool budget; no resource semantics are inferred.
+void vk_descriptor_schema_register(VkDescriptorSetLayout layout,const VkDescriptorSetLayoutBinding *bindings,uint32_t count);
 VkDescriptorSet vk_descriptor_allocate(VkDescriptorSetLayout layout);
 VkShaderStageFlagBits vk_stage(uint32_t stage);
 void vk_ghost_note(const p_draw *draw, vk_shader *fragment);

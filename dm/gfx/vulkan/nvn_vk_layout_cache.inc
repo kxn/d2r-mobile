@@ -39,6 +39,7 @@ static VkDescriptorSetLayout descriptor_layout_get(const VkDescriptorSetLayoutBi
   VkDescriptorSetLayoutCreateInfo ci={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
     .bindingCount=count,.pBindings=ordered};
   VK_CHECK(vkCreateDescriptorSetLayout(V.device,&ci,NULL,&e->layout));
+  vk_descriptor_schema_register(e->layout,ordered,count);
   e->count=count;memcpy(e->bindings,key,count*sizeof *key);e->next=descriptor_layout_cache[bucket];descriptor_layout_cache[bucket]=e;return e->layout;
 }
 static VkPipelineLayout pipeline_layout_get(const VkDescriptorSetLayout sets[6],uint32_t count,int biased) {

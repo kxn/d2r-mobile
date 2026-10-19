@@ -307,6 +307,7 @@ static VkPipeline bq_pipeline_get(VkFormat format,VkRenderPass pass) {
     VkDescriptorSetLayoutBinding binding={0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,NULL};
     VkDescriptorSetLayoutCreateInfo descriptor={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=1,.pBindings=&binding};
     VK_CHECK(vkCreateDescriptorSetLayout(V.device,&descriptor,NULL,&bq_descriptors));
+    vk_descriptor_schema_register(bq_descriptors,&binding,1);
     VkPushConstantRange push={VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(bq_parameters)};
     VkPipelineLayoutCreateInfo layout={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.setLayoutCount=1,.pSetLayouts=&bq_descriptors,.pushConstantRangeCount=1,.pPushConstantRanges=&push};
     VK_CHECK(vkCreatePipelineLayout(V.device,&layout,NULL,&bq_layout));
