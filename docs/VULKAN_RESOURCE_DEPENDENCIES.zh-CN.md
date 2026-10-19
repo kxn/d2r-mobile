@@ -1585,6 +1585,10 @@ Apple口径核对：上游`front_ios.m`默认UI原生，`hle_oe.c` iOS默认3D0.
 
 高通已保留subgroup64、ballot helper和必须的函数内联选项，以新规范链`9328e25ef116`重新验证并部署。6,931份SPIR-V及3,739份spec与其旧兼容链逐项一致；不是复制Mali的subgroup32链。原游戏营地短程移动、真实NVN调用和fresh save2通过，结束后已停止；尚不从该功能测试推导帧率或发热收益。完整清单见`qualcomm-canonical-53fbef1-alignment-result.json`。
 
+随后对该已对齐高通进行官方SDP 20秒GPU计数与8秒Perfetto采集，结束fresh save2并停止游戏/本次工具。目标60、公有热API状态0；20秒末段动态比例从0.75变0.70，不能混成固定画质窗口。8.020675秒Perfetto子窗始终0.75：218次replay平均wall28.317ms，调度Running25.875ms，Running频率加权1.863GHz；Running不等于全部是有效翻译运算，仍须区分驱动忙等。Present平均wall6.663ms，其中Running0.484ms；这些范围和其他线程的guest fence等待存在并行，不能随意相加。全进程约2.256核Running，说明CPU侧持续占用仍需单独治理，不能依据旧固定1.0 GPU数据搁置CPU主线。
+
+SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Busy77.818%、Shader ALU Capacity Utilized30.002%、Texture Pipes Busy45.940%、Stalled On System Memory0.280%、Bus Busy18.900%；读4.041GB/s（其中纹理3.436GB/s）、写1.917GB/s。GPU约500MHz；工具GPU Utilization约50%的指标明确因最大频率查询失败而使用默认值归一化，不能据此说GPU有一半空闲。指标分母不同、可重叠，且是包含合成的系统GPU计数；跨工具UTC偏差未独立校准，不做逐事件因果归因。前12秒稳定0.75独立统计与8秒值接近。当前高通数据不支持把外部DRAM带宽饱和作为主要结论；片元/纹理及局部流水线仍有成本，同像素融合优先验证带宽与能效，不预言它解决全部FPS。报告`q735-aligned-sdp-53fbef1-summary.json`与`q735-aligned-sdp-53fbef1-gpu-counters.json`；这些不是Mali的新计数，也不是候选A/B收益。
+
 减少实际计算、复制和外存访问，在相同帧率/画质下有望降低能耗；帧率不受限时，节省可能被新增帧数消耗。持续温度及热降频还需同等工作量的真机长窗验证，当前发热与6GB验收仍未完成。
 
 另新增通用启动期operation-mode诊断，默认docked不变，显式handheld重用原GetOperationMode/GetPerformanceMode/参数槽，不新写游戏规则；actual dm_opmode启动日志核验，禁止热切换。新13f0包两模式在同包720下对照；Handheld固定720高，game-res只影响手持宽高比。该模式可能影响原游戏分支，但尚不能仅由HLE断言阴影／后处理减少。源与独审见 `operation-mode-v1-source-ready.json`、`operation-mode-v1-root-review.json`。
