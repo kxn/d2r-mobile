@@ -493,6 +493,14 @@ static VkImageAspectFlags aspect_for(int format) {
     return VK_IMAGE_ASPECT_DEPTH_BIT;
   return VK_IMAGE_ASPECT_COLOR_BIT;
 }
+#ifdef DM_VULKAN_TEST_EMBED
+static int test_force_bc_decode;
+void vk_texture_test_force_bc_decode(int force) { test_force_bc_decode=!!force; }
+int vk_texture_test_bc_decoded(const tex_t *texture) {
+  for(const image *i=images;i;i=i->next)if(i->tex.serial==texture->serial)return i->decoded;
+  return -1;
+}
+#endif
 static VkFormat decoded_format(int f) {
   if (f == 0x49)
     return VK_FORMAT_R8_UNORM;
@@ -686,8 +694,11 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
   vk_format_properties(i->format, &props);
   int bw, bh;
   i->bpp = nvn_fmt_bpb(t->d.format, &bw, &bh);
-  if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) &&
-      t->d.format >= 0x41 && t->d.format <= 0x50) {
+  int sampled_format=!!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+#ifdef DM_VULKAN_TEST_EMBED
+  if(test_force_bc_decode)sampled_format=0;
+#endif
+  if (!sampled_format && t->d.format >= 0x41 && t->d.format <= 0x50) {
     uint32_t unused;
     int bytes;
     if (!nvn_bc_unpacked(t->d.format, &unused, &bytes))
@@ -800,23 +811,30 @@ static void image_upload(image *i) {
       int bw, bh;
       uint32_t bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
       size_t pitch = (w + bw - 1) / bw * bpb, rows = (h + bh - 1) / bh;
-      vk_buffer *raw = vk_temp_buffer(pitch * rows * z);
+      // CPU BC decoding consumes these compressed bytes synchronously. They
+      // never enter a GPU command/descriptor/effect, so retaining a mapped
+      // VkBuffer through the submission and global staging cache is needless.
+      // Native compressed uploads still require their original GPU staging.
+      vk_buffer *raw = i->decoded ? NULL : vk_temp_buffer(pitch * rows * z);
+      uint8_t *raw_bytes = i->decoded ? malloc(pitch * rows * z) : raw->map;
+      if (!raw_bytes) die("Vulkan BC deswizzle CPU scratch allocation");
       if (t->d.flags & NVN_TEXTURE_FLAGS_LINEAR) {
         if (level || layer || z != 1)
           die("Vulkan linear layered/mipped upload unsupported");
         size_t stride = t->d.stride ? t->d.stride : (pitch + 31) & ~31;
         for (size_t y = 0; y < rows; y++)
-          memcpy(raw->map + y * pitch, t->mem + y * stride, pitch);
-      } else if (nvn_deswizzle(&t->d, level, layer, t->mem, raw->map, pitch))
+          memcpy(raw_bytes + y * pitch, t->mem + y * stride, pitch);
+      } else if (nvn_deswizzle(&t->d, level, layer, t->mem, raw_bytes, pitch))
         die("Vulkan deswizzle failed");
       vk_buffer *src = raw;
       if (i->decoded) {
         src = vk_temp_buffer((uint64_t)w * h * z * i->bpp);
         for (uint32_t slice = 0; slice < z; slice++)
-          if (nvn_bc_decode(t->d.format, raw->map + slice * pitch * rows, pitch,
+          if (nvn_bc_decode(t->d.format, raw_bytes + slice * pitch * rows, pitch,
                             w, h, src->map + (uint64_t)slice * w * h * i->bpp,
                             w * i->bpp))
             die("Vulkan BC decode failed");
+        free(raw_bytes);
       }
       VkBufferImageCopy c = {.imageSubresource = {.aspectMask = i->aspect,
                                                   .mipLevel = level,

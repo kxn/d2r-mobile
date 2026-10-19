@@ -2933,6 +2933,24 @@ void vk_buffer_writeback_known(uint64_t dst,uint64_t size,const void *bytes) {
   }
   buffer_writeback(dst,size,known,VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
+int vk_buffer_writeback_known_temporary(uint64_t dst,uint64_t size,const vk_buffer *source) {
+  // A just-created private upload is the head of this recording's retained
+  // temporaries. Do not accept an arbitrary caller map, an older submission's
+  // buffer, or a copied VkBuffer wrapper as an immutable lifetime proof.
+  submit_resources *r=recording_resources;
+  if(!V.cmd || !r || !size || !source || !r->temporaries ||
+      source!=&r->temporaries->b || source->readback || !source->map ||
+      !source->handle || size>source->size ||
+      (source->properties&(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT))!=
+          (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT))return 0;
+  // Require cached CPU reads too: borrowing an uncached/write-combined upload
+  // could replace cached heap reads with slower completion reads. Such devices
+  // retain the old copying API. Caller promises no further writes. Recycle
+  // occurs only after all copy effects/callbacks complete and the pool resets;
+  // no extra snapshot/free callback or pool-content prediction is required.
+  buffer_writeback(dst,size,r->cpu_copy_reference?NULL:source->map,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  return 1;
+}
 void vk_buffer_writebacks_flush(void) {
   if (!recording_resources || !V.cmd) die("Vulkan writeback flush outside submission");
   if (!recording_resources->writebacks) return;

@@ -242,3 +242,38 @@ extent，每次重算 local offset。whole backing 及未命中保留原 resolve
 隔离负例将 cached local offset 错用 0，真实 GPU 结果比较如期失败。未预留／空洞／
 跨 node 的五种拒绝测试都在 CPU 初始化前拒绝。现阶段只证明少做链表解析的机制
 和功能正确性，尚未取得该候选 Android 真机耗时、整帧或发热净收益。
+
+
+## 复用 Uniform 更新的不可变暂存源
+
+`OP_UPDATE_UB` 已先把录制时数据复制进该提交持有的 upload temporary。若它是
+当前 recording 新建且不可变的私有源，并具 HOST_COHERENT、HOST_CACHED 属性，
+完成发布可直接读取这份已有源，省去第二份 known snapshot 的 payload malloc／
+memcpy／free 和对应 free callback 节点；原 GPU copy、fence、guest/shadow 发布
+与 authority 更新不变。temporary 仍由原提交保留到全部完成副作用和 reset 后。
+分配放在可能结束 Pass／回放 callback 的依赖处理之后，确保属于实际发命令的
+那份 recording。任意 caller bytes、旧提交、复制 wrapper、越界与非 Cached 源
+不借用；普通 copying API 和原 CPU-copy reference 路径保留。
+
+当前 Mali 常见 upload memory 为0x7，缺 HOST_CACHED，继续原快照回退；高通已
+观察到0xf，可适用。此改动不消除主要 deferred B2B 的约1MiB快照，不宣称 Mali
+或整帧已经提速。独立原 NVN UPDATE_UB、延迟真实fence、后续部分GPU写、CPU局部
+修改、任意源修改与跨提交拒借的 GPU 数据检查通过，合入后仍需统一检查与真机验收。
+
+
+## CPU BC 解码的压缩中间数据不再使用 VkBuffer
+
+仅当设备缺少对应 BC 采样格式、原后端已经走 CPU decode 时，deswizzle 输出的压缩
+raw 数据只供同步 CPU decoder 消费。原实现仍为它申请映射 VkBuffer，并保留到
+submission fence、随后可能进入全局 temporary cache；GPU 实际只读取解码后的
+另一个 staging。现把该 CPU-only 中间数据改为精确大小的 CPU heap scratch，沿用
+原 deswizzle／decoder，全部 depth slice 解码完立即 free。最终 GPU source、格式、
+布局、dirty tracking、上传与 fence 完全沿用原路径。
+
+此路径每个 decoded mip/layer 增加 malloc/free，省去原 raw VkBuffer/VMA 操作及
+GPU allocation 的提交／idle 缓存保留；没有增加数据复制或永久 CPU scratch cache。
+释放后 allocator 是否立刻归还 RSS 未证明。ASTC/native BC 路径不变，不能把当前
+ASTC 游戏资源都算成命中。独立 fixture 用 TEST_EMBED 能力屏蔽强制原有 decoded
+分支，并保留 native BC 对照，检查4种BC格式、3 mip、2 layer、首次／不变／一子
+资源脏重传的全部 GPU 输出像素。合入后统一回归与真机验收另行记录，尚无该候选
+在真实游戏减少多少驻留内存或发热的结论。

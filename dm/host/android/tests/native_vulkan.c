@@ -455,6 +455,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_buffer_scope.inc"
 #include "native_vulkan_present.inc"
 #include "native_vulkan_sampled_array.inc"
+#include "native_vulkan_bc_cpu_scratch.inc"
 #include "native_vulkan_clear_group.inc"
 #include "native_vulkan_vertex_binding.inc"
 #include "native_vulkan_vertex_require.inc"
@@ -468,6 +469,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pool_address.inc"
 #include "native_vulkan_pool_authority_batch.inc"
 #include "native_vulkan_pool_copy_accounting.inc"
+#include "native_vulkan_retained_update.inc"
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
 int dm_vulkan_test_main(void) {
@@ -515,6 +517,8 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+  if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   ds_plane_store_test();
   if(getenv("DM_DS_PLANE_STORE_FIXTURE")) {CHECK(vk_validation_error_count()==0);printf("{\"test\":\"ds-plane-store\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
@@ -1903,6 +1907,7 @@ int dm_vulkan_test_main(void) {
   CHECK(resource_count.live_tex == 0);
   CHECK(vk_sampler_count() == sampler_baseline);
   image_retirement_test();
+  bc_cpu_scratch_test();
   command_pool_reset_test();
   buffer_partition_test();
   pipeline_prewarm_test(controls[0],controls[1]);
@@ -1918,6 +1923,7 @@ int dm_vulkan_test_main(void) {
   pool_address_proof_test();
   pool_authority_batch_test();
   pool_copy_accounting_test();
+  retained_update_test();
   pool_finite_consolidation_test();
   pool_window_reservation_test();
   pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);

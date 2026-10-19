@@ -99,17 +99,21 @@ void mtl_exec(const uint8_t *p) {
         die("Vulkan uniform update outside pool");
       // 已录制的数据经暂存缓冲按字节拷贝，不使用有四字节限制的 vkCmdUpdateBuffer。
       // Recorded data is copied bytewise from staging, not vkCmdUpdateBuffer.
-      vk_buffer *src = vk_temp_buffer(bytes);
-      memcpy(src->map, a + 16, bytes);
       // The staging source is private and initialized before submit. Only
       // prior accesses to this destination can conflict with the update.
       const vk_buffer_use destination={address,bytes,1};
       vk_transfer_buffer_dependencies(&destination,1);
+      // Dependency resolution can end a pass and replay callbacks. Allocate
+      // only afterwards, in the recording that emits this copy and owns all
+      // its completion effects. No callback follows before borrowing the map.
+      vk_buffer *src = vk_temp_buffer(bytes);
+      memcpy(src->map, a + 16, bytes);
       VkBufferCopy copy = {.dstOffset = off, .size = bytes};
       vkCmdCopyBuffer(V.cmd, src->handle, dst->handle, 1, &copy);
       vk_buffer_transfer_written_range(address,bytes);
       vk_pool_overwritten(address,bytes);
-      vk_buffer_writeback_known(address,bytes,a+16);
+      if(!vk_buffer_writeback_known_temporary(address,bytes,src))
+        vk_buffer_writeback_known(address,bytes,a+16);
       vk_pool_operation_end(operation);
       break;
     }

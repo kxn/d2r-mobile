@@ -249,6 +249,10 @@ void vk_buffer_writeback(uint64_t dst, uint64_t size);
 void vk_buffer_writeback_stage(uint64_t dst,uint64_t size,VkPipelineStageFlags producers);
 // Immutable CPU producer snapshot; publication still waits for the real fence.
 void vk_buffer_writeback_known(uint64_t dst,uint64_t size,const void *bytes);
+// Only a newly created current-recording private coherent+cached temporary, immutable
+// through completion. Returns0 without side effects if that lifetime is unproved.
+// Arbitrary caller bytes must use the copying API above.
+int vk_buffer_writeback_known_temporary(uint64_t dst,uint64_t size,const vk_buffer *source);
 void vk_cpu_copy_reference(int reference);
 void vk_cpu_copy_stats(uint64_t *snapshots,uint64_t *published,uint64_t *fallbacks,int *reference);
 // 提交边界：将登记范围的最终 GPU 数据截到独占暂存；后续写须重新登记。
