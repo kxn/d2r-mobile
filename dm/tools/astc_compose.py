@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ios/tools'))
 import casc_overlay as casc
 import touch_layout
+import astc_array_groups
 
 CACHE = 'data/hd/texture_desc_cache.json'
 PACK9 = '00-00000009.data'
@@ -199,9 +200,17 @@ def validate_batch(batch, raw, baseline_cache, baseline_index, hashes):
     require(set(declared) == set(expected) and all(declared[n].resolve() == p.resolve() for n, p in expected.items()),
             'batch replacement paths differ from verified checkpoints')
     composed, protected, final_cache = final_selection(before, after_map, accepted)
-    require(composed, 'no non-normal images remain for composition')
+    groups, array_proof = astc_array_groups.discover(
+        manifest, lambda row: touch_layout._read_entry(str(raw), row))
+    reasons = {name: 'quality-or-unsupported-fallback' for name in fallback}
+    reasons.update({name: 'normal-preserved' for name in protected})
+    composed, array_proof = astc_array_groups.close_selection(
+        before_map, after_map, composed, groups, array_proof, reasons)
+    final_cache = [after_map[e['filename'].lower()] if e['filename'].lower() in composed else e for e in before]
+    require(composed, 'no non-normal/array-safe images remain for composition')
     return {'job': job, 'report': report, 'accepted': composed, 'batch_accepted': accepted,
             'extra_normals_preserved': protected, 'final_cache': final_cache, 'fallback': fallback,
+            'array_format_closure': array_proof,
             'manifest': manifest, 'merged_cache': merged_path,
             'normal_count': sum(is_normal(n) for n in before_map)}
 
@@ -389,7 +398,8 @@ def compose(options):
                   batch / 'repl.tsv', options.baseline_cache, options.baseline_index, options.baseline_pack_manifest,
                   options.baseline_overlay_record, raw / 'data/build_manifest.psv',
                   raw / 'data/.build.config',
-                  Path(__file__), Path(casc.__file__), Path(touch_layout.__file__), *python_paths]}
+                  Path(__file__), Path(casc.__file__), Path(touch_layout.__file__),
+                  Path(astc_array_groups.__file__), *python_paths]}
         report = {'complete': True, 'not_deployed': True, 'batch_job_key': verified['job']['job_key'],
                   'source_revision': revision, 'source_clean': True,
                   'python_version': sys.version, 'zlib_runtime_version': casc.zlib.ZLIB_RUNTIME_VERSION,
@@ -399,6 +409,7 @@ def compose(options):
                   'selected': sorted(verified['accepted']), 'quality_or_unsupported_fallback': verified['fallback'],
                   'batch_converted': sorted(verified['batch_accepted']),
                   'extra_normal_aliases_preserved': verified['extra_normals_preserved'],
+                  'array_format_closure': verified['array_format_closure'],
                   'final_cache_sha256': hashes.file(final_cache_path),
                   'normal_entries_preserved': verified['normal_count'], 'unselected_descriptors_and_index_exact': True,
                   'UI_and_full4_archive_exact': True, 'TVFS_proof': proof,

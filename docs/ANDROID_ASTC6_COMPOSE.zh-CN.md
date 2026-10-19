@@ -60,3 +60,23 @@ python3 scripts/dev/test_astc_compose.py -v
 两类别名不进 archive9、cache 和原 CFT 保持不变、原 CASC 实际跨9写入/读取、
 越界的 VFS 改动被拒绝。另以已完成 8 图批次验证真实资源完整组合，不替代运行
 游戏、稳定性或 GPU 带宽/FPS 收益验收。不要将完成一个小批次的组合说成全量结果。
+
+## 原声明纹理数组闭包
+
+逐图质量合格不足以授权组合：游戏会按原 Biome 的 `TerrainData.terrainLayers` 创建数组。全量试验曾将 `act1_outdoors` 的 Terrain_ORM/Grass、`act2_frontend` 的 Terrain_ORM 部分成员换成6×6，其余因质量回退仍4×4，原游戏明确打印 `Texture array mismatch detected` 并拒绝加载，营地地面黑块。原full4没有该错误；这不是编码器PSNR通过就能排除的NVN消费边界。
+
+`astc_array_groups.py` 在normal保护之后、写pack之前执行。每个原Biome的每个质量档、每个texture role独立形成一组；仅完整声明、descriptor齐全、原格式一致且所有成员均进入合格6×6选择时才保留该组。任一成员质量回退、normal保护、缺descriptor或声明不完整，整组保留原full4。成员被其他组保留时继续迭代，直到单调固定点；不按场景/路径名推测成员，也不将不同role绑成一组。
+
+工具通过现有MD5校验CASC读取器扫描原manifest内所有JSON，记录全部内容SHA256及真正组声明的来源。当前3.3.94012为8159份JSON、58份Biome、232个TerrainData、1160组。无独立显式TextureArray schema；含注释/尾逗号的351份无关原JSON列入未解析清单。若未解析内容可能声明terrain/texturearray，或出现未支持的显式TextureArray/嵌套TerrainData schema，组成直接失败，不猜结构或隐藏成员。没有原声明的动态数组仍不在证明范围，不能宣称所有游戏数组已验收。
+
+`composition.json.array_format_closure` 记录census、组的有序/去重成员、缺失项、格式、每轮回退原因及最终清单；新helper自身也进入工具输入指纹。回退项保留原descriptor与原pack/CFT引用，既有TVFS整表字节证明仍执行。需要全新输出目录；批次与旧composition不变，无重新编码。
+
+原冻结全批18748项中，normal保护后11638项进一步回退33项（两轮31+2），剩11605项。牺牲844800字节的NVN tiled逻辑节省；该数字不是物理GPU常驻或DRAM。新资源仍须实际游戏画面/数组日志验收，离线闭包和以下CASC测试不代替它：
+
+```sh
+python3 scripts/dev/test_astc_array_groups.py
+python3 scripts/dev/test_astc_compose.py
+ASTC_ARRAY_ORIGINAL_ROOT=/path/to/evidence/repo python3 scripts/dev/test_astc_array_groups.py
+```
+
+第三条是可选原始资源回归，要求保留原RomFS及冻结全量v1 composition/cache证据；前两条不需要游戏数据。八成员owned测试使用原CASC pack/overlay入口核真实CFT与fallback descriptor未变，不执行游戏、不模拟NVN。
