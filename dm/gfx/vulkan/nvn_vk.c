@@ -1883,7 +1883,9 @@ static VkPipelineStageFlags buffer_transfer_visible;
 // GPU-produced logical pool intervals survive internal submits and CPU
 // completion. Only a dependency reaching all GPU stages can retire this proof.
 static struct {
-  uint64_t address,size;
+  // Canonical half-open endpoints: binary searches consume the end directly.
+  // Producers already compute it with checked addition before publication.
+  uint64_t address,exclusive_end;
   // A guest address can be reused by a later pool with another GPU mirror.
   // Keep the identity of the actual, context-retained physical producer.
   uint64_t pool_identity,backing_generation;
@@ -1891,6 +1893,7 @@ static struct {
   VkPipelineStageFlags producers;
   VkPipelineStageFlags visible;
 } vertex_buffer_writes[256];
+_Static_assert(sizeof vertex_buffer_writes[0]==48,"buffer write history layout");
 static unsigned vertex_buffer_write_count;
 static int vertex_buffer_write_overflow;
 // Exact lower-bound partition, not a cached dependency decision. Until the
@@ -1934,7 +1937,7 @@ static int buffer_history_owner(unsigned index,const pool *p,const pool_backing_
   uint64_t base=(uintptr_t)p->guest,address=vertex_buffer_writes[index].address;
   pool_span_piece span;
   return vertex_buffer_writes[index].pool_identity==p->identity && address>=base &&
-      pool_span_resolve((pool *)p,address-base,vertex_buffer_writes[index].size,&span) &&
+      pool_span_resolve((pool *)p,address-base,vertex_buffer_writes[index].exclusive_end-address,&span) &&
       span.backing==backing && vertex_buffer_writes[index].buffer==backing->buffer.handle &&
       vertex_buffer_writes[index].backing_generation==backing->generation;
 }
@@ -1993,11 +1996,11 @@ static unsigned buffer_write_start(uint64_t address) {
   unsigned lo=0,hi=count;
   while(lo<hi) {
     unsigned middle=lo+(hi-lo)/2;
-    if(vertex_buffer_writes[middle].address+vertex_buffer_writes[middle].size<=address) lo=middle+1;
+    if(vertex_buffer_writes[middle].exclusive_end<=address) lo=middle+1;
     else hi=middle;
   }
-  buffer_write_partition.lower=lo?vertex_buffer_writes[lo-1].address+vertex_buffer_writes[lo-1].size:0;
-  buffer_write_partition.upper=lo<count?vertex_buffer_writes[lo].address+vertex_buffer_writes[lo].size:0;
+  buffer_write_partition.lower=lo?vertex_buffer_writes[lo-1].exclusive_end:0;
+  buffer_write_partition.upper=lo<count?vertex_buffer_writes[lo].exclusive_end:0;
   buffer_write_partition.index=lo;buffer_write_partition.valid=1;
   return lo;
 }
@@ -2118,7 +2121,7 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   // merged range: extra dependencies are safe, dropped writes are not.
   for(unsigned i=0;i<vertex_buffer_write_count;) {
     uint64_t a=vertex_buffer_writes[i].address;
-    uint64_t b=a+vertex_buffer_writes[i].size;
+    uint64_t b=vertex_buffer_writes[i].exclusive_end;
     if((address<b && a<end) ||
         ((address==b || end==a) && vertex_buffer_writes[i].producers==producers &&
           vertex_buffer_writes[i].pool_identity==identity && vertex_buffer_writes[i].buffer==physical &&
@@ -2144,7 +2147,7 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   memmove(vertex_buffer_writes+at+1,vertex_buffer_writes+at,
       (vertex_buffer_write_count-at)*sizeof *vertex_buffer_writes);
   vertex_buffer_writes[at].address=address;
-  vertex_buffer_writes[at].size=end-address;
+  vertex_buffer_writes[at].exclusive_end=end;
   vertex_buffer_writes[at].pool_identity=identity;
   vertex_buffer_writes[at].backing_generation=generation;
   vertex_buffer_writes[at].buffer=physical;

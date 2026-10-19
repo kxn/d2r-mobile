@@ -538,6 +538,15 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_BUFFER_HISTORY_FIXTURE")) {
+    // Initialize the active submission policy before the existing partition
+    // fixture checks it; neither oracle's byte assertions are changed.
+    mtl_sub_begin();vk_internal_wait(vk_internal_commit());
+    buffer_partition_test();buffer_scope_test();
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"buffer-history\",\"checks\":%u,\"result\":\"passed\"}\n",checks);
+    return 0;
+  }
   if(getenv("DM_ASTC_DECODE_FIXTURE")) {
     extern unsigned vk_texture_test_astc_contract(void);
     mtl_init();checks+=vk_texture_test_astc_contract();
