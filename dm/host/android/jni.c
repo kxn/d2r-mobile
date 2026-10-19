@@ -700,6 +700,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   if (host_import) {
     setenv("DM_VULKAN_HOST_IMPORT_TEST", "1", 1);
     setenv("TU_DM_HOST_IMPORT", host_import_opt_in ? "true" : "false", 1);
+    setenv("PANVK_DM_HOST_IMPORT", host_import_opt_in ? "true" : "false", 1);
   } else {
     unsetenv("DM_VULKAN_HOST_IMPORT_TEST");
   }
