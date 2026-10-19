@@ -895,7 +895,7 @@ int mtl_trim_idle_resources(void) {
     reusable_bytes-=t->b.size;vk_buffer_destroy(&t->b);free(t);
   }
   if(reusable_bytes)die("Vulkan idle temporary accounting");
-  vk_shader_trim_idle_arenas();return 1;
+  vk_shader_trim_idle_arenas();vk_texture_trim_idle();return 1;
 }
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_idle_temporaries(uint64_t *bytes,unsigned *count) {

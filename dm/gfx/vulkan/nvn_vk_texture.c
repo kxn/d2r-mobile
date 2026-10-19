@@ -53,6 +53,9 @@ typedef struct image {
   uint64_t last_use;
   uint64_t trace_stamp, trace_levels;
   int initialized, decoded;
+  // A complete CPU upload can rebuild this physical image. Any later GPU
+  // writer revokes the proof, even if its result happens to equal guest bytes.
+  int cpu_rebuildable, external_access;
   uint32_t zero_mips;
   VkImageLayout layout;
   VkPipelineStageFlags layout_scope;
@@ -602,6 +605,7 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
   image *old=malloc(sizeof *old);
   if(!old) die("Vulkan image promotion allocation");
   *old=*i;
+  int cpu_rebuildable=i->cpu_rebuildable;
   image_binding_replaced(i,old);
   i->views=NULL;
   i->description.flags=flags;
@@ -621,6 +625,8 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
       VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT,0);
   image_record(i,(VkImageSubresourceRange){i->aspect,0,i->levels,0,i->layers},
       VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,0);
+  // Promotion preserves every mip/layer/aspect; it does not create new data.
+  i->cpu_rebuildable=cpu_rebuildable;
   vk_barrier();
   vk_completion(image_storage_destroy,old);
   LOG("[vulkan] image promotion serial=%llu flags=%#x->%#x usage=%#x->%#x",
@@ -879,6 +885,9 @@ static void image_upload(image *i) {
   nvn_dirty_protect(t->mem, t->L.size);
   i->stamp = stamp;
   i->initialized = 1;
+  // Raw VkImage users can retain a handle and write later without passing
+  // through image_record. A later CPU upload cannot revoke that escape.
+  i->cpu_rebuildable = !i->external_access;
 }
 static VkImageSubresourceRange range(image *i, const view_t *v) {
   VkImageSubresourceRange r = {
@@ -1817,6 +1826,33 @@ void vk_texture_end_submit(void) {
   }
   pthread_mutex_unlock(&V.resources);
 }
+// Called only by the existing recording-owner low-memory control boundary.
+// Retain logical NVN descriptors: a later use recreates and fully uploads the
+// image through image_get_usage. Never discard a GPU-authored result, wait for
+// the GPU, or scan on ordinary draws/submissions. Age is queue chunks, not FPS.
+unsigned vk_texture_trim_idle(void) {
+  if(V.cmd || image_binding_active || vk_texture_binding_scope_active())return 0;
+  uint64_t done=vk_completed_serial();unsigned removed=0;
+  pthread_mutex_lock(&V.resources);
+  image **at=&images;
+  while(*at) {
+    image *i=*at;
+    if(!i->cpu_rebuildable || !i->initialized || !i->tex.has_layout ||
+        !i->tex.mem || !i->tex.L.size || done<i->last_use || done-i->last_use<256) {
+      at=&i->next;continue;
+    }
+    *at=i->next;image_destroy(i);removed++;
+  }
+  pthread_mutex_unlock(&V.resources);
+  if(removed)LOG("[vulkan] memory pressure retired %u cold CPU-backed images",removed);
+  return removed;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+int vk_test_texture_rebuildable(uint64_t serial) {
+  for(image *i=images;i;i=i->next)if(i->tex.serial==serial)return i->cpu_rebuildable;
+  return -1;
+}
+#endif
 void mtl_set_tex_pool_n(int n) {
   if (n < 0 || n > 1048576)
     die("Vulkan texture pool capacity %d", n);

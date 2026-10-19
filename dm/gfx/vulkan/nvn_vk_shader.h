@@ -188,6 +188,7 @@ void vk_bright_lut(vk_shader *shader);
 VkSampler vk_sampler(int id);
 int vk_sampler_descriptor(int id,samp_par *out);
 void vk_texture_end_submit(void);
+unsigned vk_texture_trim_idle(void);
 typedef struct vk_texture_submission vk_texture_submission;
 vk_texture_submission *vk_texture_begin(vk_texture_submission *recycled);
 void vk_texture_end(vk_texture_submission *submission);
