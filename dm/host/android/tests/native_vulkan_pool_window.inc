@@ -10,11 +10,13 @@ static vk_pool_requirement pool_window_need(uint8_t *address,uint64_t size,int k
   return (vk_pool_requirement){.address=(uintptr_t)address,.size=size,
     .prefix_alignment=alignment,.stages=stage,.binding_kind=kind};
 }
+static const vk_buffer *pool_window_last_readback;
 static void pool_window_read(uint8_t *guest,unsigned size,uint8_t *result) {
   vk_buffer *source;uint64_t offset;
   CHECK(vk_pool_address_stage((uintptr_t)guest,size,(void **)&source,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
   CHECK(offset<=source->size&&size<=source->size-offset);
   vk_buffer *readback=vk_temp_buffer(size);vk_buffer_use use={(uintptr_t)guest,size,0};
+  pool_window_last_readback=readback;
   vk_transfer_buffer_dependencies(&use,1);
   VkBufferCopy copy={.srcOffset=offset,.size=size};
   vkCmdCopyBuffer(V.cmd,source->handle,readback->handle,1,&copy);

@@ -235,6 +235,14 @@ void vk_test_pool_host_limits(uint64_t single,uint64_t total) {
 }
 void vk_test_pool_host_fail_once(void) {pool_host_test_fail_import=pool_host_test_fail_mirror=1;}
 uint64_t vk_test_pool_host_attempts(void) {return pool_host_test_attempts;}
+int vk_test_pool_shadow_byte(uint64_t address) {
+  int value=-1;pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
+  if(p && p->shadow) {
+    pthread_mutex_lock(&pool_publication_mu);value=p->shadow[address-(uintptr_t)p->guest];
+    pthread_mutex_unlock(&pool_publication_mu);
+  }
+  pthread_mutex_unlock(&V.resources);return value;
+}
 VkMemoryPropertyFlags vk_test_pool_host_properties(uint64_t address) {
   VkMemoryPropertyFlags flags=0;pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
   pool_span_piece span;

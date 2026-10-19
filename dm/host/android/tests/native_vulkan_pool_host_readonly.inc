@@ -5,6 +5,12 @@ extern void vk_test_pool_host_limits(uint64_t,uint64_t);
 extern void vk_test_pool_host_fail_once(void);
 extern uint64_t vk_test_pool_host_attempts(void);
 extern VkMemoryPropertyFlags vk_test_pool_host_properties(uint64_t);
+extern int vk_test_pool_shadow_byte(uint64_t);
+typedef struct {const vk_buffer *buffer;uint8_t bytes[256];unsigned size;int valid;} pool_host_gpu_bytes;
+static void pool_host_gpu_bytes_completed(void *context) {
+  pool_host_gpu_bytes *copy=context;
+  memcpy(copy->bytes,copy->buffer->map,copy->size);copy->valid=1;
+}
 static void pool_host_read(uint8_t *source,unsigned size,uint8_t *result) {
   vk_pool_requirement need={(uintptr_t)source,size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
   int operation=vk_pool_operation_begin_ranges(&need,1);
@@ -15,6 +21,12 @@ static void pool_host_read(uint8_t *source,unsigned size,uint8_t *result) {
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
     0,1,&recycled,0,NULL,0,NULL);
   pool_window_read(source,size,result);vk_pool_operation_end(operation);
+}
+static void pool_host_read_observed(uint8_t *source,unsigned size,uint8_t *result,pool_host_gpu_bytes *observed) {
+  CHECK(size<=sizeof observed->bytes);
+  pool_host_read(source,size,result);
+  *observed=(pool_host_gpu_bytes){.buffer=pool_window_last_readback,.size=size};
+  vk_completion(pool_host_gpu_bytes_completed,observed);
 }
 static void pool_host_fill(uint8_t *destination,unsigned size,uint32_t value) {
   vk_pool_requirement need={(uintptr_t)destination,size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0};
@@ -87,7 +99,15 @@ static void pool_host_readonly_test(void) {
   // the subsequent ordinary QueueSubmit, exactly as shared NoCopy requires.
   dm_guest_write_prepare(storage+128,32);memset(storage+128,0xa6,32);memcpy(expected,storage+128,256);
   vk_pool_copy_stats rewrite_before;vk_pool_copy_snapshot(&rewrite_before);
-  mtl_sub_begin();pool_host_read(storage+128,256,out);vk_internal_wait(vk_internal_commit());
+  pool_host_gpu_bytes observed={0};
+  mtl_sub_begin();pool_host_read_observed(storage+128,256,out,&observed);vk_internal_wait(vk_internal_commit());
+  CHECK(observed.valid);CHECK(!memcmp(observed.bytes,out,256));
+  printf("{\"test_details\":\"readonly-return-path\",\"phase\":\"dirty-prepare\",\"CPU_first\":%u,\"shadow_first\":%d,"
+    "\"VkBuffer_copy_readback_first\":%u,\"completion_copy_first\":%u,\"same_bytes\":true}\n",
+    storage[128],vk_test_pool_shadow_byte((uintptr_t)storage+128),observed.bytes[0],out[0]);
+  printf("{\"test_details\":\"readonly-return-edited-tail\",\"CPU_byte31\":%u,\"shadow_byte31\":%d,"
+    "\"VkBuffer_copy_readback_byte31\":%u,\"completion_copy_byte31\":%u}\n",
+    storage[159],vk_test_pool_shadow_byte((uintptr_t)storage+159),observed.bytes[31],out[31]);
   pool_host_rewrite_evidence("dirty-prepare",out,expected,256,&rewrite_before,coherent);
   CHECK(!memcmp(out,expected,256));CHECK(vk_pool_host_pinned_bytes()==4096);
   CHECK(nvn_dirty_since(storage,4096,dirty_stamp));
@@ -101,7 +121,14 @@ static void pool_host_readonly_test(void) {
   storage[128]^=0x37;storage[159]^=0x6a;memcpy(expected,storage+128,256);
   CHECK(nvn_dirty_since(storage,4096,dirty_stamp));
   vk_pool_copy_snapshot(&rewrite_before);
-  mtl_sub_begin();pool_host_read(storage+128,256,out);vk_internal_wait(vk_internal_commit());
+  mtl_sub_begin();pool_host_read_observed(storage+128,256,out,&observed);vk_internal_wait(vk_internal_commit());
+  CHECK(observed.valid);CHECK(!memcmp(observed.bytes,out,256));
+  printf("{\"test_details\":\"readonly-return-path\",\"phase\":\"dirty-fault\",\"CPU_first\":%u,\"shadow_first\":%d,"
+    "\"VkBuffer_copy_readback_first\":%u,\"completion_copy_first\":%u,\"same_bytes\":true}\n",
+    storage[128],vk_test_pool_shadow_byte((uintptr_t)storage+128),observed.bytes[0],out[0]);
+  printf("{\"test_details\":\"readonly-return-edited-tail\",\"CPU_byte31\":%u,\"shadow_byte31\":%d,"
+    "\"VkBuffer_copy_readback_byte31\":%u,\"completion_copy_byte31\":%u}\n",
+    storage[159],vk_test_pool_shadow_byte((uintptr_t)storage+159),observed.bytes[31],out[31]);
   pool_host_rewrite_evidence("dirty-fault",out,expected,256,&rewrite_before,coherent);
   CHECK(!memcmp(out,expected,256));
   CHECK(vk_pool_span_query((uintptr_t)storage+128,256,&pinned_after)==VK_POOL_SPAN_SINGLE);

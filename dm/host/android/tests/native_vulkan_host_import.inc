@@ -16,7 +16,7 @@ typedef struct {
   VkDebugUtilsMessengerEXT messenger;
   unsigned validation_errors;
   VkBool32 imported_host_coherent;
-  VkBool32 implicit_host_dependency;
+  VkBool32 implicit_host_dependency,owned_dirty_cycle;
   VkDeviceSize noncoherent_atom;
 } host_import_context;
 
@@ -173,11 +173,18 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
   uint32_t *received=NULL;
   CHECK(vkMapMemory(context->device,read_memory,0,extent,0,(void **)&received)==VK_SUCCESS);
   const size_t words=(size_t)alignment/sizeof(uint32_t);
+  if(context->owned_dirty_cycle)nvn_dirty_add_range(host,extent);
   for(unsigned pass=0;pass<3;pass++) {
+    uint64_t dirty_stamp=nvn_dirty_now(),faults_before=0,preps_before=0;
+    if(context->owned_dirty_cycle) {
+      nvn_dirty_stats(&faults_before,&preps_before);
+      nvn_dirty_protect(host,extent);
+    }
     // Every CPU edit occurs after import; an import-time flush cannot satisfy
     // repeated publication. Noncoherent memory uses standard range operations.
     // Two submits precede any wait.
     for(unsigned slot=0;slot<2;slot++) {
+      if(context->owned_dirty_cycle && pass!=1)dm_guest_write_prepare(host+slot*words,alignment);
       for(size_t i=0;i<words;i++)host[slot*words+i]=host_import_pattern(round*3+pass,slot,i);
       host_import_cache_range(context,memory,alignment*slot,alignment,VK_FALSE);
       host_import_begin(context,slot);
@@ -193,6 +200,15 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
       host_import_submit(context,slot);
     }
     host_import_wait(context);
+    if(context->owned_dirty_cycle) {
+      uint64_t faults_after,preps_after;nvn_dirty_stats(&faults_after,&preps_after);
+      CHECK(nvn_dirty_since(host,extent,dirty_stamp));
+      CHECK(pass==1?faults_after>faults_before:preps_after>preps_before);
+      printf("{\"test_details\":\"standard-owned-dirty-cycle\",\"round\":%u,\"pass\":%u,\"cpu_write_path\":\"%s\","
+        "\"cpu_first\":%u,\"GPU_copy_readback_first\":%u,\"faults\":%llu,\"prepares\":%llu}\n",
+        round,pass,pass==1?"original-fault":"original-prepare",((uint8_t *)host)[0],((uint8_t *)received)[0],
+        (unsigned long long)(faults_after-faults_before),(unsigned long long)(preps_after-preps_before));
+    }
     for(unsigned slot=0;slot<2;slot++)for(size_t i=0;i<words;i++)
       CHECK(received[slot*words+i]==host_import_pattern(round*3+pass,slot,i));
     for(unsigned slot=0;slot<2;slot++) {
@@ -213,6 +229,7 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
   vkUnmapMemory(context->device,read_memory);
   vkDestroyBuffer(context->device,readback,NULL);vkFreeMemory(context->device,read_memory,NULL);
   for(unsigned slot=0;slot<2;slot++)vkDestroyBuffer(context->device,imported[slot],NULL);
+  if(context->owned_dirty_cycle)nvn_dirty_remove_range(host);
   vkUnmapMemory(context->device,memory);
   vkFreeMemory(context->device,memory,NULL);
   CHECK(vkDeviceWaitIdle(context->device)==VK_SUCCESS);
@@ -225,12 +242,22 @@ void dm_vulkan_test_implicit_host(int enabled) {
   if(enabled)setenv("DM_VULKAN_HOST_IMPORT_IMPLICIT_HOST","1",1);
   else unsetenv("DM_VULKAN_HOST_IMPORT_IMPLICIT_HOST");
 }
+void dm_vulkan_test_owned_dirty(int enabled) {
+  if(V.device || V.instance)die("Owned dirty fixture requires a cold process");
+  if(enabled)setenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY","1",1);
+  else unsetenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY");
+}
 static int host_import_oracle(void) {
   CHECK(!V.device && !V.instance);
   host_import_context context={0};
   const char *implicit=getenv("DM_VULKAN_HOST_IMPORT_IMPLICIT_HOST");
   CHECK(!implicit || !strcmp(implicit,"0") || !strcmp(implicit,"1"));
   context.implicit_host_dependency=implicit && !strcmp(implicit,"1");
+  const char *dirty=getenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY");
+  CHECK(!dirty || !strcmp(dirty,"0") || !strcmp(dirty,"1"));
+  context.owned_dirty_cycle=dirty && !strcmp(dirty,"1");
+  printf("{\"test_configuration\":\"standard-owned-dirty\",\"enabled\":%s}\n",
+    context.owned_dirty_cycle?"true":"false");
   printf("{\"test_configuration\":\"host-import-publication\",\"implicit_host_dependency\":%s}\n",
     context.implicit_host_dependency?"true":"false");
   const int validate=getenv("DM_VULKAN_VALIDATE")!=NULL;

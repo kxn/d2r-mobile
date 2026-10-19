@@ -699,6 +699,13 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeHostImpo
   dm_vulkan_test_implicit_host(enabled);
 }
 
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeHostImportOwnedDirtyFixture(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)env;(void)klass;
+  extern void dm_vulkan_test_owned_dirty(int);
+  dm_vulkan_test_owned_dirty(enabled);
+}
+
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only, jboolean validation,

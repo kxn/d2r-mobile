@@ -20,6 +20,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
     private static native void nativeHostImportImplicitHostFixture(boolean enable);
+    private static native void nativeHostImportOwnedDirtyFixture(boolean enable);
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean hostImport, boolean hostImportOptIn, boolean poolHostImport, boolean poolHostNoncoherent);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -235,6 +236,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (implicitHost && !getIntent().getBooleanExtra("host_import_test", false))
                 throw new IllegalArgumentException("Implicit host fixture requires standard host import mode");
             nativeHostImportImplicitHostFixture(implicitHost);
+            boolean ownedDirty = getIntent().getBooleanExtra("host_import_owned_dirty", false);
+            if (ownedDirty && !getIntent().getBooleanExtra("host_import_test", false))
+                throw new IllegalArgumentException("Owned dirty fixture requires standard host import mode");
+            nativeHostImportOwnedDirtyFixture(ownedDirty);
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),
                     getIntent().getBooleanExtra("memory_test", false),

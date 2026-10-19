@@ -137,3 +137,25 @@ Flush/Invalidate。默认保留原 HOST_WRITE→TRANSFER_READ barrier；单独 c
 断言；这些是有限页功能证据，不是新计时器或采样器。宿主 Lavapipe 官方 VVL/sync
 两种标准模式各57,747检查、原只读池118检查通过，但实际均为 coherent 内存。
 Mali 上的隐式依赖或 dirty 失败原因仍需另行验收，不能据宿主结果认定修复完成。
+
+
+### bba5ef2 有界真机对照与下一项分离
+
+同一个 `bdd9df32` 驱动、实际 type0xb/atom64、UID10174，标准显式和隐式 HOST
+路径各一次均57,820检查通过。原只读池各一次仍在 dirty-prepare 后失败：实际
+Flush1次/4096字节，首个 GPU 返回字节0x91、CPU期望0xa6。原失败不覆盖，不加
+等待或生产 barrier；完成267个原私有文件/当前81e APK恢复并停进程。该结果不
+支持把失败普遍归因于省略冗余 HOST barrier，但还没有确定脏页或读回的根因。
+
+下一项源候选只扩展原功能 fixture，默认关闭：标准自有页 oracle 增加冷选项
+`DM_VULKAN_HOST_IMPORT_OWNED_DIRTY=1`，Android 为 `host_import_test=true,
+host_import_owned_dirty=true`。成功导入之后才原 dirty 登记/保护；原三轮写入分别
+走 prepare、直接 fault、prepare，保留全部原 Flush、GPU Copy/Fill、Fence、字节
+与释放断言。不是把已经受保护导致失败的 GUP 解保护后重试。
+
+NVN 只读池另外在既有提交完成回调中直接观察同一 vkCmdCopyBuffer 读回映射，
+在原临时 Buffer 退役前取得字节，与原 completion copy 的 out、CPU 与 shadow
+分开记录。既有 out 的 memcmp 断言保留，不从新观察值修正 out，不增加 GPU Copy。
+仅在 `DM_VULKAN_TEST_EMBED` 下增加 shadow 字节观察，不改产品返回路径。
+宿主官方VVL/sync新增标准 dirty 模式各57,772检查、只读观察124检查通过，实际
+仍为 coherent LVP；Mali dirty 及真实读回分离尚待另次有限租约，不能称修复通过。
