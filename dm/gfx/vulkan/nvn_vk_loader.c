@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <errno.h>
 #ifdef __ANDROID__
 #include "../../third_party/libadrenotools/include/adrenotools/driver.h"
 #endif
@@ -51,6 +52,21 @@ static void library_path(char *out,const char *directory,const char *name) {
   if(lstat(out,&st) || !S_ISREG(st.st_mode))
     die("Vulkan driver requires regular library: %s",out);
 }
+static void panvk_shader_cache(const char *library) {
+  const char *configured=getenv("MESA_SHADER_CACHE_DIR");
+  if(configured) {
+    LOG("[vulkan loader] PanVK shader cache explicit=%s",configured);
+    return;
+  }
+  const char *name=strrchr(library,'/');
+  char path[PATH_MAX];
+  if(!name || snprintf(path,sizeof path,"%.*s/shader-cache",(int)(name-library),library)>=(int)sizeof path)
+    die("Vulkan PanVK shader cache path too long");
+  if(mkdir(path,0700) && errno!=EEXIST)
+    LOG("[vulkan loader] PanVK shader cache directory creation failed: %s; Mesa will evaluate the private path",strerror(errno));
+  if(setenv("MESA_SHADER_CACHE_DIR",path,0)) die("Vulkan PanVK shader cache environment allocation");
+  LOG("[vulkan loader] PanVK shader cache driver-private default=%s",path);
+}
 void vk_loader_initialize(void) {
   pthread_mutex_lock(&loader_mutex);
   if(initialized) { pthread_mutex_unlock(&loader_mutex);return; }
@@ -67,6 +83,7 @@ void vk_loader_initialize(void) {
       if(getenv("DM_VULKAN_VALIDATE"))
         die("Vulkan direct ICD does not compose loader validation layers");
       library_path(library,driver_directory,"libvulkan_panfrost.so");
+      panvk_shader_cache(library);
       custom_loader=dlopen(library,RTLD_NOW|RTLD_LOCAL);
       if(!custom_loader) die("Vulkan PanVK ICD load: %s",dlerror());
       PFN_vkGetInstanceProcAddr get_proc=(PFN_vkGetInstanceProcAddr)dlsym(custom_loader,"vk_icdGetInstanceProcAddr");
