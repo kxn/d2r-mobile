@@ -692,6 +692,20 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
   vk_android_window(window, refresh);
 }
 
+JNIEXPORT jboolean JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeOwnedNvnFixture(
+    JNIEnv *env, jclass klass) {
+  (void)env;(void)klass;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  // Cold developer entry only. No address/provenance from Java or game heap;
+  // the original native fixture allocates and owns its entire test pool.
+  if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
+      setenv("DM_OWNED_NVN_BUFFER_FIXTURE","1",1))return JNI_FALSE;
+  return JNI_TRUE;
+#else
+  return JNI_FALSE;
+#endif
+}
+
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only, jboolean validation) {

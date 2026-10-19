@@ -1,7 +1,7 @@
 // Fresh, explicitly self-owned whole 64KiB readonly UBO allocation. Original
 // NVN recorder -> translator -> shader -> real pixels; not a guest/game probe.
 static void dirty_range_pixels(NVNtexture *texture,const uint8_t value[4]);
-static void owned_nvn_buffer_test(void) {
+static int owned_nvn_buffer_test(void) {
   mtl_init();
   CHECK(vk_test_pool_owned_supported());
   uint8_t vertex[0x880]={0},fragment[0x880];memset(fragment,39,sizeof fragment);
@@ -68,6 +68,9 @@ static void owned_nvn_buffer_test(void) {
     } else {CHECK(current.handle!=original.handle);CHECK(!vk_test_pool_owned_properties((uintptr_t)uniform));}
     uint64_t now_imports,now_retirements;vk_test_pool_owned_stats(&now_imports,&now_retirements);
     CHECK(now_imports==imports+1);CHECK(now_retirements==retirements+(iteration==3));
+    printf("{\"test_details\":\"owned-nvn-cycle\",\"iteration\":%u,\"flags\":%d,"
+      "\"import_handle_unchanged\":%s,\"retired\":%s,\"pixels_and_live_CPU_verified\":true}\n",
+      iteration,properties,iteration<3?"true":"false",iteration==3?"true":"false");
   }
   CHECK(!vk_test_pool_owned_attach((uintptr_t)uniform,65536)); // sticky retirement
   nvn_dirty_protect(uniform,4096);*(volatile float *)uniform=.5f; // original fault restored
@@ -101,4 +104,5 @@ static void owned_nvn_buffer_test(void) {
   CHECK(!vk_test_pool_owned_attach((uintptr_t)aliased,65536));
   CALL(nvnTextureFinalize,&texture);CALL(nvnMemoryPoolFinalize,&source);free(aliased);
   LOG("[owned NVN fixture] readonly UBO real pixels, same import, legal CPU writes, original GPU writer sticky demotion, restored fault passed; flags=%#x",properties);
+  return properties;
 }
