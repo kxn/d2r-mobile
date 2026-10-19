@@ -6,7 +6,10 @@ typedef struct {
   uint64_t generation,descriptor_epoch;
   const uint8_t *set_op,*draw_op,*ops[PL_MAX_OPS];
   unsigned count;
-  vk_state first,second;
+  vk_state first;
+  // Only the consumer attachment topology outlives the lookahead scan. Keep
+  // the full producer snapshot for callback/state revalidation below.
+  p_set_rt second_targets;
   const vk_pixel_local_proof *fragment,*vertex;
   tex_t inputs[8];view_t input_views[8];int has_input_view[8];
   uint64_t handles[8];
@@ -260,7 +263,7 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
       p->vertex=vk_shader_pixel_local(list[0],list[0]->module);
       if(!p->fragment || !p->vertex ||
           !pl_geometry(&scan,p->vertex,p->fragment->uv_location,d,i,width,height) || !pl_no_ds_writes(&scan))return NULL;
-      p->draw_op=op;p->second=scan;break;
+      p->draw_op=op;p->second_targets=scan.targets;break;
     }
     if(h.op==OP_CLEAR_COLOR && changed) {if(!pl_clear(p,&scan,&h,op))return NULL;continue;}
     if(h.op==OP_BARRIER && changed) {
@@ -282,7 +285,7 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
     }
     if(!pl_shadow(&scan,op))return NULL;
   }
-  if(!p->draw_op || p->second.targets.n<1 || p->second.targets.n>8)return NULL;
+  if(!p->draw_op || p->second_targets.n<1 || p->second_targets.n>8)return NULL;
   unsigned local=0;
   for(unsigned k=0;k<p->fragment->count;k++) {
     const tex_t *input=&p->inputs[k];int found=0;
@@ -292,8 +295,8 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
     }
     local+=found;
     for(unsigned j=0;j<k;j++)if(pl_tex_alias(input,&p->inputs[j]))return NULL;
-    for(int a=0;a<p->second.targets.n;a++)if(pl_tex_alias(input,p->second.targets.color[a]))return NULL;
-    if(pl_tex_alias(input,p->second.targets.depth))return NULL;
+    for(int a=0;a<p->second_targets.n;a++)if(pl_tex_alias(input,p->second_targets.color[a]))return NULL;
+    if(pl_tex_alias(input,p->second_targets.depth))return NULL;
   }
   if(!local)return NULL;
   // The producer must not observe an attachment whose LOAD/CLEAR is hoisted
@@ -309,20 +312,20 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
       // needs an intra-pass writable->readonly layout/store and LOAD-history
       // proof not supplied by this two-subpass path. Keep real split passes;
       // do not hide the dependency by eliding an untouched store plane.
-      if(scan.targets.depth && p->second.targets.depth &&
-          pl_tex_alias(scan.targets.depth,p->second.targets.depth) &&
+      if(scan.targets.depth && p->second_targets.depth &&
+          pl_tex_alias(scan.targets.depth,p->second_targets.depth) &&
           !pl_no_ds_writes(&scan))return NULL;
       // With no logical producer DS, adding a physical format can affect
       // depth bias (including FS-visible z). Do not change original bias.
       if(vk_pixel_local_shared_ds_enabled() && !p->first.targets.depth &&
-          p->second.targets.depth && scan.poly.offset_en)return NULL;
+          p->second_targets.depth && scan.poly.offset_en)return NULL;
       for(int a=0;a<S.targets.n;a++)if(S.targets.color[a] && pl_shader_read_alias(&scan,S.targets.color[a],S.targets.has_cview[a]?&S.targets.cview[a]:NULL))return NULL;
-      for(int a=0;a<p->second.targets.n;a++) {
-        const tex_t *t=p->second.targets.color[a];
-        if(!t || !pl_attachment_shape(t,p->second.targets.has_cview[a]?&p->second.targets.cview[a]:NULL,width,height) || pl_shader_read_alias(&scan,t,p->second.targets.has_cview[a]?&p->second.targets.cview[a]:NULL))return NULL;
+      for(int a=0;a<p->second_targets.n;a++) {
+        const tex_t *t=p->second_targets.color[a];
+        if(!t || !pl_attachment_shape(t,p->second_targets.has_cview[a]?&p->second_targets.cview[a]:NULL,width,height) || pl_shader_read_alias(&scan,t,p->second_targets.has_cview[a]?&p->second_targets.cview[a]:NULL))return NULL;
         for(int b=0;b<S.targets.n;b++)if(pl_tex_alias(t,S.targets.color[b]))return NULL;
       }
-      if(p->second.targets.depth && p->second.targets.depth!=S.targets.depth && pl_shader_read_alias(&scan,p->second.targets.depth,p->second.targets.has_dview?&p->second.targets.dview:NULL))return NULL;
+      if(p->second_targets.depth && p->second_targets.depth!=S.targets.depth && pl_shader_read_alias(&scan,p->second_targets.depth,p->second_targets.has_dview?&p->second_targets.dview:NULL))return NULL;
       for(unsigned k=0;k<p->fragment->count;k++) {
         int source=0;for(int a=0;a<S.targets.n;a++)source|=pl_tex_same(&p->inputs[k],S.targets.color[a]);
         if(!source && pl_shader_read_alias(&scan,&p->inputs[k],p->has_input_view[k]?&p->input_views[k]:NULL))return NULL;
@@ -339,8 +342,8 @@ static int pl_union_alias(const pl_candidate *p,const tex_t *t) {
   if(!t || !t->serial)return 1;
   for(int k=0;k<p->first.targets.n;k++)if(pl_tex_alias(t,p->first.targets.color[k]))return 1;
   if(pl_tex_alias(t,p->first.targets.depth))return 1;
-  for(int k=0;k<p->second.targets.n;k++)if(pl_tex_alias(t,p->second.targets.color[k]))return 1;
-  if(pl_tex_alias(t,p->second.targets.depth))return 1;
+  for(int k=0;k<p->second_targets.n;k++)if(pl_tex_alias(t,p->second_targets.color[k]))return 1;
+  if(pl_tex_alias(t,p->second_targets.depth))return 1;
   for(unsigned k=0;k<p->fragment->count;k++)if(pl_tex_alias(t,&p->inputs[k]))return 1;
   return 0;
 }
