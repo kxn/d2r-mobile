@@ -2056,8 +2056,10 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
     // not inspect V.nvn_barrier); alias classification is also pure. Borrow
     // immutable topology until i is selected. Retain the original value copy
     // whenever a drain can retire/promote this owner or re-enter a ghost draw.
-    if(vk_mip_clear_pending())desc.texture=known->tex;
-    else t=&known->tex;
+    if(vk_mip_clear_pending()) {
+      desc.texture=known->tex;
+      vk_mip_clear_texture_access(t,has_view?&view:NULL,0);
+    } else t=&known->tex;
   } else {
     pthread_mutex_lock(&V.resources);
     if(id<0 || id>=texture_capacity || id>=texture_limit || !texture_descriptors[id].valid)
@@ -2069,9 +2071,9 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
     pthread_mutex_unlock(&V.resources);
     texture_binding_snapshot_save(id,storage,&desc,epoch);
     view=desc.view;has_view=desc.has_view;
+    vk_mip_clear_texture_access(t,has_view?&view:NULL,0);
   }
   const view_t *v=has_view?&view:NULL;
-  vk_mip_clear_texture_access(t,v,0);
   // A deferred drain can finish this serial and begin another recording,
   // including its normal retirement pass. Never borrow the old owner through
   // that callback; use the same copied logical snapshot as the uncached path.
