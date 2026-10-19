@@ -28,7 +28,8 @@ def compiler_options():
     texel_storage = os.environ.get('DMSH_VK_TEXEL_STORAGE_ALTERNATIVES', '0')
     texel_model = os.environ.get('DMSH_VK_TEXEL_LOAD_MODEL', 'identity')
     pixel_local = os.environ.get('DMSH_VK_PIXEL_LOCAL_REFLECTION', '0')
-    if size not in (16, 32, 64, 128) or any(v not in ('0','1') for v in (helper,bias,c1,texels,functions,color_half,uniform_spec,uniform_predicates,texel_storage,pixel_local)):
+    pixel_runtime = os.environ.get('DMSH_VK_PIXEL_LOCAL_RUNTIME', '0')
+    if size not in (16, 32, 64, 128) or any(v not in ('0','1') for v in (helper,bias,c1,texels,functions,color_half,uniform_spec,uniform_predicates,texel_storage,pixel_local,pixel_runtime)):
         raise ValueError('expected subgroup size 16/32/64/128 and boolean compiler switches 0/1')
     if uniform_predicates == '1' and uniform_spec != '1':
         raise ValueError('additional Uniform predicates require old full-word specialization')
@@ -46,8 +47,10 @@ def compiler_options():
         options['texel_storage_load_model'] = texel_model
     if uniform_predicates == '1':
         options['uniform_predicates'] = True
-    if pixel_local == '1':
+    if pixel_local == '1' or pixel_runtime == '1':
         options['pixel_local_reflection'] = True
+    if pixel_runtime == '1':
+        options['pixel_local_runtime'] = True
     return options
 
 
@@ -178,10 +181,11 @@ def version(base, translator):
     h = hashlib.sha256(base.encode())
     h.update(Path(__file__).read_bytes())
     h.update((Path(__file__).resolve().parents[1] / 'vulkan' / 'nvn_vk_metadata.h').read_bytes())
+    h.update((Path(__file__).resolve().parents[1] / 'vulkan' / 'nvn_vk_pixel_local.h').read_bytes())
     h.update(Path(__file__).with_name('dmsh_build.py').read_bytes())
     h.update(Path(__file__).with_name('dmsh_storage_bias.py').read_bytes())
     h.update(Path(__file__).with_name('dmsh_constants.py').read_bytes())
-    for name in ('dmsh_float_transfers.py','dmsh_fragment_precision.py','dmsh_uniform_specialization.py','dmsh_uniform_predicates.py','dmsh_texel_ssbo.py','dmsh_driver_keys.py','dmsh_pixel_local.py'):
+    for name in ('dmsh_float_transfers.py','dmsh_fragment_precision.py','dmsh_uniform_specialization.py','dmsh_uniform_predicates.py','dmsh_texel_ssbo.py','dmsh_driver_keys.py','dmsh_pixel_local.py','dmsh_pixel_local_wire.py'):
         h.update(Path(__file__).with_name(name).read_bytes())
     h.update((Path(__file__).resolve().parents[2] / 'third_party/ryujinx/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs').read_bytes())
     cross = subprocess.run(['spirv-cross', '--version'], capture_output=True)
@@ -197,6 +201,14 @@ def pixel_local_cache_valid(root, key, cached, enabled):
     """Optional proof integrity is part of cache acceptance, never self-hashed."""
     path=Path(root)/(key+'.plocal.json')
     expected=cached.get('pixel_local',{}).get('sha256')
+    if not enabled:
+        return not expected and not path.exists()
+    return bool(expected and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==expected)
+
+
+def pixel_local_runtime_cache_valid(root, key, cached, enabled):
+    path=Path(root)/(key+'.plocal')
+    expected=cached.get('pixel_local_runtime',{}).get('sha256')
     if not enabled:
         return not expected and not path.exists()
     return bool(expected and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==expected)
@@ -317,6 +329,7 @@ def build(g):
                 dkey=out/(key+'.dkey');dkey_hash=cached.get('driver_keys',{}).get('sha256')
                 dkey_valid=dkey.is_file() and hashlib.sha256(dkey.read_bytes()).hexdigest()==dkey_hash
                 plocal_valid=pixel_local_cache_valid(out,key,cached,options.get('pixel_local_reflection',False))
+                plocal_valid = plocal_valid and pixel_local_runtime_cache_valid(out,key,cached,options.get('pixel_local_runtime',False))
                 if plocal_valid and dkey_valid and pred_valid and alt_valid and spec_valid and cache_inputs_match(cached,g['CHAIN'],code_hash,constants[key]) and cached.get('spirv_sha256') == hashlib.sha256(blob.read_bytes()).hexdigest() and cached.get('metadata_sha256') == hashlib.sha256((out / (key + '.meta')).read_bytes()).hexdigest():
                     results.append({'key': key, 'st': 'ok', 'cached': True})
                     continue
@@ -420,6 +433,11 @@ def build(g):
                 reflection['pixel_local']=emit_pixel_local(out,key,reflection)
             else:
                 (out/(key+'.plocal.json')).unlink(missing_ok=True)
+            if options.get('pixel_local_runtime'):
+                from dmsh_pixel_local_wire import emit as emit_pixel_local_runtime
+                reflection['pixel_local_runtime']=emit_pixel_local_runtime(out,key,reflection)
+            else:
+                (out/(key+'.plocal')).unlink(missing_ok=True)
             (out / (key + '.json')).write_text(json.dumps(reflection, ensure_ascii=False, indent=1))
             return {'key': key, 'st': 'ok'}
         with concurrent.futures.ThreadPoolExecutor(workers) as executor:

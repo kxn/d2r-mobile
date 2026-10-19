@@ -346,6 +346,8 @@ static VkDescriptorType descriptor_type(const vk_binding *b) {
     return VK_DESCRIPTOR_TYPE_SAMPLER;
   case 6:
     return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  case VK_BINDING_PIXEL_LOCAL:
+    return VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
   case 7:
     return VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
   case 9:
@@ -449,6 +451,7 @@ static void shader_descriptor_layouts(vk_shader *s) {
 }
 #include "nvn_vk_driver_keys.inc"
 #include "nvn_vk_texel_storage.inc"
+#include "nvn_vk_pixel_local.inc"
 
 int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
   if(strlen(key)!=16 || strspn(key,"0123456789abcdef")!=16 || !V.options.shader_root)return 0;
@@ -465,7 +468,14 @@ int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
     fclose(f);if(!ok){free(data);return 0;}
     CC_SHA256(data,st.st_size,hashes[i]);free(data);
   }
-  CC_SHA256(hashes,sizeof hashes,digest);return 1;
+  // Preserve legacy identities when no optional DPL1 artifact exists.
+  CC_SHA256(hashes,sizeof hashes,digest);
+  size_t local_bytes;void *local=pixel_local_read(key,"plocal",&local_bytes);
+  if(local) {
+    uint8_t combined[64];memcpy(combined,digest,32);
+    CC_SHA256(local,local_bytes,combined+32);free(local);CC_SHA256(combined,sizeof combined,digest);
+  }
+  return 1;
 }
 vk_shader *vk_shader_get(const void *control) {
   uint8_t digest[32];
@@ -618,6 +628,7 @@ vk_shader *vk_shader_load_key(const char *key) {
 static descriptor_block *descriptor_create(void) {
   unsigned max_sets = V.options.descriptor_sets;
   const VkDescriptorPoolSize sizes[] = {
+      {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, max_sets * VK_PIXEL_LOCAL_MAX_INPUTS},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, max_sets * 8},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, max_sets * VK_UNIFORM_OFFSET_CAPACITY},
       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, max_sets * 8},
@@ -627,11 +638,12 @@ static descriptor_block *descriptor_create(void) {
       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, max_sets * 4},
       {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, max_sets * 4},
       {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, max_sets * 4}};
+  unsigned omit_inputs=!vk_pixel_local_enabled();
   VkDescriptorPoolCreateInfo ci = {
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
       .maxSets = max_sets,
-      .poolSizeCount = sizeof sizes / sizeof *sizes,
-      .pPoolSizes = sizes};
+      .poolSizeCount = sizeof sizes / sizeof *sizes-omit_inputs,
+      .pPoolSizes = sizes+omit_inputs};
   descriptor_block *block = calloc(1, sizeof *block);
   if (!block)
     die("Vulkan descriptor block allocation");
@@ -1088,8 +1100,8 @@ void vk_shader_prepare_images(vk_shader *const list[6],int compute) {
       vk_texture_prepare_binding(handle & 0xfffff,b->kind==4,vk_stage(stage));
     }
 }
-VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
-                                           const vk_texel_storage_selection *selection) {
+static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
+                                           const vk_texel_storage_selection *selection,const VkImageView *local_views,const VkImageLayout *local_layouts) {
   if(offsets)memset(offsets,0,sizeof *offsets);
   if(dynamic && s->dynamic_uniform_count[dynamic-1] && !offsets)die("Vulkan missing dynamic Uniform offsets");
   VkDescriptorSetLayout layout=dynamic?s->dynamic_descriptors[dynamic-1]:s->descriptors;
@@ -1252,6 +1264,11 @@ VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_
                       : h >> 20;
         image.sampler = vk_sampler(sid);
       }
+    } else if (b->kind==VK_BINDING_PIXEL_LOCAL) {
+      if(!local_views || !local_layouts || b->sampler<0 || b->sampler>=VK_PIXEL_LOCAL_MAX_INPUTS || !local_views[b->sampler] ||
+         (local_layouts[b->sampler]!=VK_IMAGE_LAYOUT_GENERAL && local_layouts[b->sampler]!=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+        die("Vulkan missing proved pixel-local input");
+      image=(VkDescriptorImageInfo){.imageView=local_views[b->sampler],.imageLayout=local_layouts[b->sampler]};
     } else if (b->kind==VK_BINDING_TEXEL_STORAGE) {
       buffer=texel_storage_descriptor(s,b,selection);
     } else if (b->kind == 7 || b->kind == 9) {
@@ -1275,7 +1292,7 @@ VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_
       }
       values[n]=(descriptor_value){(uint64_t)buffer.buffer,buffer.offset,buffer.range};
     }
-    else if (b->kind>=3 && b->kind<=6) {
+    else if ((b->kind>=3 && b->kind<=6) || b->kind==VK_BINDING_PIXEL_LOCAL) {
       values[n]=(descriptor_value){(uint64_t)image.imageView,(uint64_t)image.sampler,image.imageLayout};
     }
     else {
@@ -1317,7 +1334,7 @@ VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_
     if(kind==0 || kind==1 || kind==2 || kind==8 || kind==VK_BINDING_TEXEL_STORAGE)
       payload[n].buffer=(VkDescriptorBufferInfo){
         .buffer=(VkBuffer)(uintptr_t)value->object,.offset=value->offset,.range=value->range};
-    else if(kind>=3 && kind<=6)
+    else if((kind>=3 && kind<=6) || kind==VK_BINDING_PIXEL_LOCAL)
       payload[n].image=(VkDescriptorImageInfo){
         .sampler=(VkSampler)(uintptr_t)value->offset,.imageView=(VkImageView)(uintptr_t)value->object,
         .imageLayout=(VkImageLayout)value->range};
@@ -1337,7 +1354,7 @@ VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_
         .dstSet=set,.dstBinding=b->binding,.descriptorCount=1,
         .descriptorType=dynamic && s->dynamic_uniform_ordinals[dynamic-1][n]?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:descriptor_type(b)};
       if(b->kind==0 || b->kind==1 || b->kind==2 || b->kind==8 || b->kind==VK_BINDING_TEXEL_STORAGE)writes[n].pBufferInfo=&payload[n].buffer;
-      else if(b->kind>=3 && b->kind<=6)writes[n].pImageInfo=&payload[n].image;
+      else if((b->kind>=3 && b->kind<=6) || b->kind==VK_BINDING_PIXEL_LOCAL)writes[n].pImageInfo=&payload[n].image;
       else writes[n].pTexelBufferView=&payload[n].texel;
     }
     vkUpdateDescriptorSets(V.device,s->nb,writes,0,NULL);
@@ -1359,6 +1376,21 @@ VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_
   }
   shader_recorded.descriptor_content_misses += 1;
   return set;
+}
+VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
+                                           const vk_texel_storage_selection *selection) {
+  return shader_bindings_selected_impl(s,dynamic,offsets,selection,NULL,NULL);
+}
+VkDescriptorSet vk_shader_pixel_local_bindings(const vk_pixel_local_proof *proof,int dynamic,
+    vk_uniform_offsets *offsets,const VkImageView views[VK_PIXEL_LOCAL_MAX_INPUTS],
+    const VkImageLayout layouts[VK_PIXEL_LOCAL_MAX_INPUTS],const vk_texel_storage_selection *selection) {
+  if(!proof || !proof->count || !proof->shader)die("Vulkan missing pixel-local descriptor proof");
+  vk_texel_storage_selection local;
+  if(selection) {
+    if(selection->shader!=proof->source_shader)die("Vulkan pixel-local source schema changed");
+    local=*selection;local.shader=proof->shader;selection=&local;
+  }
+  return shader_bindings_selected_impl(proof->shader,dynamic,offsets,selection,views,layouts);
 }
 VkDescriptorSet vk_shader_bindings_mode(vk_shader *s,int dynamic,vk_uniform_offsets *offsets) {
   return vk_shader_bindings_selected(s,dynamic,offsets,NULL);

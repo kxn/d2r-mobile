@@ -34,5 +34,9 @@ void crash_thread_init(void) {
 }
 #include "../../../host/android/tests/native_vulkan.c"
 #ifdef DM_VULKAN_TEST_EMBED
-int main(void) { return dm_vulkan_test_main(); }
+#include "pixel_local_loader.inc"
+int main(void) {
+  if(getenv("DM_PIXEL_LOCAL_LOADER_FIXTURE")) {crash_thread_init();mtl_init();return pixel_local_loader_test();}
+  return dm_vulkan_test_main();
+}
 #endif

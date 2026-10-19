@@ -6,6 +6,7 @@
 #include "nvn_vk_state.h"
 #include "nvn_vk_prewarm.h"
 #include "nvn_vk_pool_ranges.h"
+#include "nvn_vk_pixel_local.h"
 enum { VK_UNIFORM_OFFSET_CAPACITY=16 };
 // Optional immutable second-word predicate recipe. Mutable admitted tuples are
 // owned by the sole recording thread; a paired descriptor alternative never
@@ -52,6 +53,8 @@ typedef struct vk_shader {
   VkPipeline compute;
   int compute_warm;
   int texel_storage_checked;
+  void *pixel_local_data;
+  int pixel_local_checked;
 } vk_shader;
 enum { VK_TEXEL_STORAGE_BINDINGS=16 };
 typedef struct {
@@ -81,6 +84,9 @@ void vk_shader_destroy(vk_shader_submission *submission);
 typedef struct { uint32_t count,offsets[VK_UNIFORM_OFFSET_CAPACITY]; } vk_uniform_offsets;
 VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection);
+VkDescriptorSet vk_shader_pixel_local_bindings(const vk_pixel_local_proof *proof,int dynamic,
+    vk_uniform_offsets *offsets,const VkImageView views[VK_PIXEL_LOCAL_MAX_INPUTS],
+    const VkImageLayout layouts[VK_PIXEL_LOCAL_MAX_INPUTS],const vk_texel_storage_selection *selection);
 void vk_descriptor_template_reference(int reference);
 int vk_descriptor_template_reference_mode(void);
 void vk_descriptor_history_reference(int reference);

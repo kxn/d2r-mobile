@@ -57,7 +57,7 @@ def main():
     require(len(keys) == 6931 and keys == {r['key'] for r in results}, 'shader key set mismatch')
     require(all(re.fullmatch('[0-9a-f]{16}', k) for k in keys), 'invalid shader key')
     require(keys == {p.stem for p in cache.glob('*.meta')}, 'metadata key set mismatch')
-    require(keys-builtin_keys == {p.stem for p in cache.glob('*.json') if not p.name.startswith('_')},
+    require(keys-builtin_keys == {p.stem for p in cache.glob('*.json') if re.fullmatch('[0-9a-f]{16}',p.stem)},
             'reflection key set mismatch')
     expected_files = {'.chain','_vk_manifest.json','_vk_build.json'} | {
         key+suffix for key in keys for suffix in ['.spv','.meta']} | {
@@ -65,6 +65,10 @@ def main():
     specialization_keys=set();texel_alternative_keys=set();predicate_keys=set()
     for key in keys-builtin_keys:
         reflection=json.loads((cache/(key+'.json')).read_text())
+        if reflection.get('pixel_local',{}).get('sha256'):
+            expected_files.add(key+'.plocal.json')
+        if reflection.get('pixel_local_runtime',{}).get('sha256'):
+            expected_files.add(key+'.plocal')
         if reflection.get('uniform_specialization',{}).get('specialization_sha256'):
             specialization_keys.add(key);expected_files.add(key+'.spec')
         if reflection.get('uniform_predicates',{}).get('predicate_sha256'):
@@ -155,6 +159,29 @@ def main():
                         if not payload:continue
                         verify=output/('verify-texel-'+str(n)+'.spv');verify.write_bytes(payload)
                         subprocess.run(['spirv-val','--target-env','vulkan1.1',str(verify)],check=True,capture_output=True)
+                # Rebuild optional proofs/variants from every actual module;
+                # a valid base proof never authorizes a specialization/SSBO pair.
+                if dmsh_vulkan.compiler_options().get('pixel_local_reflection'):
+                    from dmsh_pixel_local import emit as emit_pixel_local
+                    for suffix in ('spv','meta','spec','pred','tssbo'):
+                        target=output/(key+'.'+suffix);target.unlink(missing_ok=True)
+                        source=cache/(key+'.'+suffix)
+                        if source.is_file():target.write_bytes(source.read_bytes())
+                    proof=emit_pixel_local(output,key,reflection)
+                    require(reflection.get('pixel_local')==proof and
+                            (output/(key+'.plocal.json')).read_bytes()==(cache/(key+'.plocal.json')).read_bytes(),
+                            'pixel-local reflection regeneration mismatch: '+key)
+                else:
+                    require(not reflection.get('pixel_local'), 'undeclared pixel-local reflection: '+key)
+                if dmsh_vulkan.compiler_options().get('pixel_local_runtime'):
+                    from dmsh_pixel_local_wire import build as build_pixel_local, SUFFIXES as PIXEL_SUFFIXES
+                    payload,proof=build_pixel_local({suffix:(cache/(key+'.'+suffix)).read_bytes() for suffix in PIXEL_SUFFIXES
+                        if (cache/(key+'.'+suffix)).is_file()},reflection)
+                    require(reflection.get('pixel_local_runtime')==proof and
+                            (cache/(key+'.plocal')).read_bytes()==payload,
+                            'pixel-local runtime module regeneration mismatch: '+key)
+                else:
+                    require(not reflection.get('pixel_local_runtime'), 'undeclared pixel-local runtime module: '+key)
                 dmsh_vulkan.write_metadata(output/'verify.meta', reflection)
                 require((output/'verify.meta').read_bytes()==meta, 'metadata regeneration mismatch: '+key)
                 raster = reflection.get('raster', {})
