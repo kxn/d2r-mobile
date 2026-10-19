@@ -48,6 +48,29 @@ static pool_span_piece pool_span_require(pool *p,uint64_t offset,uint64_t size) 
         (unsigned long long)p->identity,(unsigned long long)offset,(unsigned long long)size);
   return out;
 }
+// V.resources MUST be held. Kept separate from the original retained-owner
+// resolver: completion/recording callers never read or write the hint. A hit
+// proves only the same physical mapping, never content freshness or visibility.
+// Whole/single-node pools keep the original resolver without any hint access.
+static int pool_span_resolve_locked(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
+  if(!size || !p->backings || !p->backings->next)
+    return pool_span_resolve(p,offset,size,out);
+  pool_backing_span *b=p->locked_span_hint;
+  if(b && offset>=b->begin && offset<b->end && size<=b->end-offset &&
+      b->buffer.handle && b->generation && b->begin<b->end && b->end<=p->size &&
+      offset-b->begin<=b->buffer.size && size<=b->buffer.size-(offset-b->begin)) {
+    *out=(pool_span_piece){b,offset,offset-b->begin,size};return 1;
+  }
+  if(!pool_span_resolve(p,offset,size,out))return 0;
+  p->locked_span_hint=out->backing;return 1;
+}
+static pool_span_piece pool_span_require_locked(pool *p,uint64_t offset,uint64_t size) {
+  pool_span_piece out;
+  if(!pool_span_resolve_locked(p,offset,size,&out))
+    die("Vulkan pool range requires operation preflight: identity=%llu offset=%llu bytes=%llu",
+        (unsigned long long)p->identity,(unsigned long long)offset,(unsigned long long)size);
+  return out;
+}
 static VkResult pool_span_try_allocate(pool_backing_span *b,uint64_t begin,uint64_t end) {
   VkResult result=buffer_try_create(&b->buffer,end-begin,
       VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT|
@@ -67,6 +90,8 @@ static void pool_span_create(pool *p,pool_backing_span *b,uint64_t begin,uint64_
   b->generation=++p->backing_generation;
 }
 static void pool_span_chain_destroy(pool *p,pool_backing_span *b) {
+  // Retirement is registry locked, including pool removal after its refs drain.
+  p->locked_span_hint=NULL;
   while(b) {
     pool_backing_span *next=b->next;vk_buffer_destroy(&b->buffer);
     if(b!=&p->whole)free(b);

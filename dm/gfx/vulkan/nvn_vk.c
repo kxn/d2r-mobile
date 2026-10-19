@@ -48,6 +48,8 @@ typedef struct pool {
   // Startup opt-in reserves disjoint windows; explicit quiescent operation
   // maintenance may replace them with a sticky whole backing.
   pool_backing_span whole,*backings;
+  // Only the registry-locked resolver may read/write this non-owning hint.
+  pool_backing_span *locked_span_hint;
   uint64_t backing_generation;
   // Tracking starts with window-mode pool creation, before any buffer writer.
   // The legacy flag is only a fail-closed fallback for untracked migration/OOM.
@@ -1487,7 +1489,7 @@ int vk_pool_span_query(uint64_t addr,uint64_t size,vk_pool_span_info *out) {
     value.logical_begin=addr-value.pool_base;value.logical_end=value.logical_begin+size;value.size=size;
     pool_span_piece span;
     if(!p->backings) status=VK_POOL_SPAN_UNBACKED;
-    else if(!pool_span_resolve(p,value.logical_begin,size,&span)) status=VK_POOL_SPAN_CROSSING;
+    else if(!pool_span_resolve_locked(p,value.logical_begin,size,&span)) status=VK_POOL_SPAN_CROSSING;
     else {
       status=VK_POOL_SPAN_SINGLE;value.logical_begin=span.backing->begin;value.logical_end=span.backing->end;
       value.backing_generation=span.backing->generation;value.local_offset=span.offset;
@@ -1512,6 +1514,11 @@ static int pool_test_split_backings(uint64_t address,uint64_t split,uint64_t tai
     pool_materialize_metadata(p);pool_span_create(p,&p->whole,0,split);
     pool_span_create(p,tail,tail_begin,p->size);p->whole.next=tail;p->backings=&p->whole;result=1;
   }
+  pthread_mutex_unlock(&V.resources);return result;
+}
+VkBuffer vk_test_pool_locked_span_hint(uint64_t address) {
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
+  VkBuffer result=p&&p->locked_span_hint?p->locked_span_hint->buffer.handle:VK_NULL_HANDLE;
   pthread_mutex_unlock(&V.resources);return result;
 }
 int vk_test_pool_split_backings(uint64_t address,uint64_t split) {
@@ -1568,7 +1575,7 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
     pool_materialize(p);
     uint64_t logical=addr-(uintptr_t)p->guest;
     pool_initialize_range(p,logical,len);
-    pool_span_piece span=pool_span_require(p,logical,len);
+    pool_span_piece span=pool_span_require_locked(p,logical,len);
     *buf=&span.backing->buffer;*off=span.offset;
     pool_gpu_access *use=record_pool_use(p,logical,len,stages,initial_contents);
     if(r && use && !r->pool_lookup_reference) {

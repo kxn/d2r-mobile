@@ -92,7 +92,7 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
       continue;
     }
     pool_span_piece existing;
-    if(pool_span_resolve(p,r->address-(uintptr_t)p->guest,r->size,&existing))continue;
+    if(pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&existing))continue;
     if(p->backing_generation>UINT64_MAX-count)goto done;
     uint64_t begin,end;int single=pool_window_bounds(p,r,window_bytes,&begin,&end);
     if(p->backings && (!single || pool_window_overlaps(p,begin,end)))
@@ -110,7 +110,7 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
   for(size_t k=0;k<count;k++) {
     const vk_pool_requirement *r=&requirements[k];pool *p=pool_find(r->address,r->size);
     pool_span_piece existing;
-    if(pool_span_resolve(p,r->address-(uintptr_t)p->guest,r->size,&existing))continue;
+    if(pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&existing))continue;
     uint64_t begin,end;int single=pool_window_bounds(p,r,window_bytes,&begin,&end);
     // One crossing binding in a fresh pool makes this whole pool's plan
     // whole, including requirements appearing earlier in the same batch.

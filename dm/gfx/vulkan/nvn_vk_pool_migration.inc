@@ -158,6 +158,8 @@ static int pool_migrate_quiescent(uint64_t address,uint64_t expected_identity,
     if(!p->references)die("Vulkan migration pool pin underflow");
     p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);return 0;
   }
+  // All hint readers hold this lock; no retired pointer can survive publish.
+  p->locked_span_hint=NULL;
   replacement->next=after;*link=replacement;
   for(size_t k=0;k<selected_count;k++) {
     pool_backing_span *b=selected[k];vk_buffer_destroy(&b->buffer);

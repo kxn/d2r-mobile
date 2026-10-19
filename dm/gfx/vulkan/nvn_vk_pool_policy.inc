@@ -60,7 +60,7 @@ static void pool_operation_bound_nodes(pool_operation_plan *plan) {
       if(q->address<(uintptr_t)p->guest || q->address-(uintptr_t)p->guest>=p->size ||
           q->size>p->size-(q->address-(uintptr_t)p->guest))continue;
       pool_span_piece span;
-      if(!pool_span_resolve(p,q->address-(uintptr_t)p->guest,q->size,&span))missing++;
+      if(!pool_span_resolve_locked(p,q->address-(uintptr_t)p->guest,q->size,&span))missing++;
     }
     // Counting duplicate missing windows conservatively can promote earlier;
     // it never creates overlapping nodes or silently truncates a binding.
@@ -77,7 +77,7 @@ static int pool_operation_pin(pool_operation_plan *plan) {
   for(size_t k=0;k<plan->count;k++) {
     const vk_pool_requirement *r=&plan->ranges[k];pool *p=pool_find(r->address,r->size);
     pool_span_piece span;
-    if(!p || !pool_span_resolve(p,r->address-(uintptr_t)p->guest,r->size,&span)) {good=0;break;}
+    if(!p || !pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span)) {good=0;break;}
     size_t j=0;while(j<plan->pin_count && plan->pins[j]!=p)j++;
     if(j==plan->pin_count) {p->references++;plan->pins[plan->pin_count++]=p;}
   }
