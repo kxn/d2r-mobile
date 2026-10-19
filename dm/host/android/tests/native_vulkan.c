@@ -476,6 +476,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_upload_page_span.inc"
 #include "native_vulkan_scan_pairs.inc"
 #include "native_vulkan_idle_trim.inc"
+#include "native_vulkan_pool_access_cache.inc"
 #include "native_vulkan_temp_age.inc"
 #include "native_vulkan_image_trim.inc"
 #include "native_vulkan_retained_update.inc"
@@ -542,6 +543,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_TEXTURE_RANGE_DIRTY_FIXTURE")) {texture_range_dirty_proof_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"texture-range-dirty\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_UPLOAD_SCAN_PAIRS_FIXTURE")) {pool_upload_pair_boundaries_test();pool_upload_pair_gpu_tails_test();pool_upload_patterns_test();upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-scan-pairs\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_UPLOAD_PAGE_SPAN_FIXTURE")) {upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-page-span\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+  if(getenv("DM_POOL_ACCESS_CACHE_FIXTURE")) {pool_access_cache_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-access-cache\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {idle_cache_trim_test();printf("{\"test\":\"idle-cache-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_TEMP_CACHE_AGE_FIXTURE")) {temporary_cache_age_test();printf("{\"test\":\"temporary-cache-age\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_PUBLICATION_FIXTURE")) {pool_publication_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-publication\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}

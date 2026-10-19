@@ -46,6 +46,7 @@ typedef struct {
   int store_reference,store_check,ruler,extrap_no_pipeline,extrap_mask;
   int gpu_profile,trace_frame_set;
   int pool_ownership_reference;
+  int pool_access_cache_reference;
   int pool_mirror_reference;
   int pool_copy_accounting;
   int pool_defer_publication;
