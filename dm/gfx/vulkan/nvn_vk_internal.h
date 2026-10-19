@@ -50,6 +50,7 @@ typedef struct {
   int pool_copy_accounting;
   int pool_defer_publication;
   int pool_host_readonly;
+  int pool_host_prebind;
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
@@ -113,6 +114,7 @@ static inline int vk_trace_frame_active(void) {
 void vk_pool_host_cpu_write_prepare(uint64_t address,uint64_t size);
 int vk_pool_host_imported_range(uint64_t address,uint64_t size);
 uint64_t vk_pool_host_pinned_bytes(void);
+void vk_pool_host_preregister_binding(uint32_t op,const void *data);
 uint32_t vk_memory_type(uint32_t bits, VkMemoryPropertyFlags flags);
 // Metadata-only proof; never uploads, records hazards, or materializes a pool.
 int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset);

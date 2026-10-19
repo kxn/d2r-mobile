@@ -692,6 +692,13 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
   vk_android_window(window, refresh);
 }
 
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolHostPrebindFixture(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)env;(void)klass;
+  // Called before nativeTests initializes Vulkan; no normal-game UI entry.
+  if(enabled)setenv("DM_VULKAN_POOL_HOST_PREBIND","1",1);
+  else unsetenv("DM_VULKAN_POOL_HOST_PREBIND");
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only, jboolean validation,

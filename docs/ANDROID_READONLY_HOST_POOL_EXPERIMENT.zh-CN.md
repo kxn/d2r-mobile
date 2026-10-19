@@ -53,3 +53,13 @@ Android fixture 使用原冷启动 window setter 明确选择4KiB，避免 Activ
 
 
 成功 pin 后另有两条有限页功能路径：先等原 GPU Fence，再原 `nvn_dirty_protect`，分别通过原 `dm_guest_write_prepare` 和原 SIGSEGV dirty hook 合法写入同一字节，然后 GPU 读取原 imported VkBuffer。检查 handle/generation 不变、import attempt 不增加和 GPU 字节等于新 CPU 值。这验证该次实际缓存/映射行为，不读取 PFN，也不把任意 fork/COW/madvise/unmap 的稳定性概括为已经证明。已经受保护导致首次导入失败的页面仍不解保护重试。
+
+## 翻译回放侧提前注册（独立默认关闭）
+
+`DM_VULKAN_POOL_HOST_PREBIND=1` 还要求上述只读共享实验已启用。只在 Vulkan `mtl_exec` 回放已声明的 `OP_BIND_VBUF` / `OP_BIND_UBO` 后，尝试该确切 Buffer 范围所在的有限 canonical window。它不改 `hle_nvn` 游戏录制线程，不触碰普通分配器，不假造 NVN 的 Buffer-only 池标志；池 flags 本身不能证明整池用途。SSBO、图像绑定和未知用途不触发。
+
+入口只导入新窗口，不创建普通镜像、shadow 或页元数据；原16MiB单项、32MiB累计 live+retiring 预算和最多256节点约束保留。已有 backing/曝光页不被替换，导入失败沿原 sticky 路径，已有只读保护不解除、不重试。资源由原 pool/span 生命周期持有，实际使用时仍走原 writer/CPU-effects 交接和快照处理。仅绑定但没有绘制也会占用预算，直到池销毁；导入/GUP 的冷成本移到翻译回放处。尚无帧率或内存收益结论。
+
+能覆盖的顺序是“回放 Buffer 绑定 → 更早实际发生的图像上传保护同窗口 → 稍后才首次 Buffer GPU 读取”。不能覆盖“图像已经先上传保护 → 之后才出现首次 Buffer 绑定”，这仍会按实际驱动权限检查接受或单次失败后镜像。当前 draw/dispatch 本身已经在 `prepare_images` 前进行 Buffer admission，所以本入口不是修正同一次 draw 的顺序错误。
+
+自有夹具使用原 NVN 命令录制/回放，验证录制时 pin=0、回放两个4KiB窗口、无 Draw 也持有8KiB、无 eager mirror/shadow、重复绑定不重复导入、预算与跨窗口拒绝、失败后无元数据分配、写者转镜像及销毁释放。原 protected-before-first-import 测试仍记录驱动真实结果。Android 专用 `pool_host_prebind_test=true` 仅在 `pool_host_import_test=true` 的正常 appUID 夹具中生效；沿用原 `nativeTests` 签名，另有一个测试前冷设置方法，不影响其他并行夹具参数。

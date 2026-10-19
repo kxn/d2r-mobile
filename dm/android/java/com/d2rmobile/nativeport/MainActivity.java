@@ -20,6 +20,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean hostImport, boolean hostImportOptIn, boolean poolHostImport);
+    private static native void nativePoolHostPrebindFixture(boolean enabled);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
     private static native void nativeThermalLimit(int limit);
@@ -230,6 +231,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativePipelinePrepareMode(getIntent().getBooleanExtra("validate", false) ? 2 :
                 getIntent().getBooleanExtra("pipeline_prepare_reference", false) ? 1 : 0);
         if (getIntent().getBooleanExtra("run_vulkan_tests", false)) {
+            // Cold opt-in is limited to the bounded owned-pool correctness fixture.
+            nativePoolHostPrebindFixture(getIntent().getBooleanExtra("pool_host_import_test", false)
+                    && getIntent().getBooleanExtra("pool_host_prebind_test", false));
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),
                     getIntent().getBooleanExtra("memory_test", false),

@@ -170,6 +170,11 @@ void mtl_exec(const uint8_t *p) {
     case OP_DEPTH_RANGE:
     case OP_BLEND_COLOR:
       vk_state_op(h.op, a);
+      // Translation owner only: an explicit readonly Buffer binding may be
+      // known before a later image upload protects its shared CPU pages.
+      // This optional hint does not allocate mirrors or change game recording.
+      if(V.options.pool_host_prebind && (h.op==OP_BIND_VBUF || h.op==OP_BIND_UBO))
+        vk_pool_host_preregister_binding(h.op,a);
       break;
     case OP_DISPATCH:
       vk_dispatch((const void *)a);

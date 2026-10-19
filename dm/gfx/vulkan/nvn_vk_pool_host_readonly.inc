@@ -119,6 +119,46 @@ static int pool_host_try_span(pool *p,pool_backing_span *b,uint64_t begin,uint64
   }
   b->begin=begin;b->end=end;b->buffer=fresh;return 1;
 }
+// Unlike operation admission this is import-only: an unusable early hint must
+// not eagerly allocate a mirror/shadow for a Buffer which may never be drawn.
+// Called only by the translation owner, never by the guest command recorder.
+static void pool_host_preregister_range(uint64_t address,uint64_t size,uint64_t alignment) {
+  if(!address || !size || size>UINT64_MAX-address || !V.options.pool_window_bytes ||
+      !pool_host_supported || pool_window_full_reference())return;
+  vk_pool_requirement need={address,size,alignment,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0};
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);
+  uint64_t begin,end;
+  if(!p || !p->nvn_flags_known || !pool_window_chain_valid(p) ||
+      !pool_window_bounds(p,&need,V.options.pool_window_bytes,&begin,&end) ||
+      pool_window_overlaps(p,begin,end) || p->backing_generation==UINT64_MAX ||
+      atomic_load_explicit(&pool_registry_epoch,memory_order_relaxed)==UINT64_MAX)
+    goto done;
+  unsigned nodes=0;for(pool_backing_span *b=p->backings;b;b=b->next)nodes++;
+  if(nodes>=256 || pool_host_rejected(p,begin,end))goto done;
+  pool_backing_span *b=calloc(1,sizeof *b);if(!b)goto done;
+  if(!pool_host_try_span(p,b,begin,end,&need,1)) {free(b);goto done;}
+  // No prior node moves, no handle is borrowed and no CPU content is copied.
+  // The registry owns this pin even if the recorded binding is never drawn.
+  b->generation=++p->backing_generation;pool_backing_span **at=&p->backings;
+  while(*at && (*at)->begin<b->begin)at=&(*at)->next;
+  b->next=*at;*at=b;
+  pool_window_added_bytes+=end-begin;pool_window_added_spans++;
+  atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release);
+done:
+  pthread_mutex_unlock(&V.resources);
+}
+void vk_pool_host_preregister_binding(uint32_t op,const void *data) {
+  if(!V.options.pool_host_prebind)return;
+  if(op==OP_BIND_UBO) {
+    const p_bind_buf *b=data;
+    if(b->stage<6 && b->index<16)
+      pool_host_preregister_range(b->addr,b->size,V.props.limits.minUniformBufferOffsetAlignment);
+  } else if(op==OP_BIND_VBUF) {
+    const p_bind_vbuf *b=data;
+    if(b->first<0 || b->n<0 || b->first>16 || b->n>16-b->first)return;
+    for(int k=0;k<b->n;k++)pool_host_preregister_range(b->r[k].address,b->r[k].size,0);
+  }
+}
 // All producer and CPU-completion destinations pass this before any physical
 // handle borrow. Demotion is cold and sticky, never in the dirty fault handler.
 // The readonly node has no GPU writer, so guest is authoritative at handoff.

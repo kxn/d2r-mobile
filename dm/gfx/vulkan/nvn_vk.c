@@ -1181,6 +1181,7 @@ static void init_options(void) {
   o->extrap_mask=getenv("DM_RT_TEST_MASK")!=NULL;
   o->gpu_profile=getenv("DM_VULKAN_GPU_PROFILE")!=NULL;
   o->pool_host_readonly=option_one("DM_VULKAN_POOL_HOST_READONLY");
+  o->pool_host_prebind=o->pool_host_readonly && option_one("DM_VULKAN_POOL_HOST_PREBIND");
   o->pool_ownership_reference=option_one("DM_VULKAN_POOL_OWNERSHIP_REFERENCE");
   o->pool_mirror_reference=atomic_load(&pool_mirror_requested);
   if(o->pool_mirror_reference<0) o->pool_mirror_reference=option_one("DM_VULKAN_EAGER_POOL_MIRRORS");
