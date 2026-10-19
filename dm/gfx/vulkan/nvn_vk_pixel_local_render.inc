@@ -34,6 +34,7 @@ static int pl_add_attachment(pl_job *p,const tex_t *t,const view_t *v,
 }
 static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned width,unsigned height) {
   if(active_job)return NULL;
+  uint64_t recording=vk_recording_serial(),passes=V.passes;
   pl_candidate *candidate=pl_plan(draw,idx,width,height);if(!candidate)return NULL;
   pl_job *p=calloc(1,sizeof *p);if(!p)return NULL;p->plan=*candidate;
   p->second_count=p->plan.second.targets.n;
@@ -56,6 +57,17 @@ static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned widt
     if(!vk_texture_pixel_local_prepare(&p->plan.inputs[k],local,&p->tokens[k]))goto fail;
   }
   for(unsigned k=0;k<p->plan.fragment->count;k++)if(!vk_texture_pixel_local_valid(&p->tokens[k]))goto fail;
+  // A DS attachment absent from subpass0 still LOADs at union-pass entry.
+  // Establish old writers/readers -> real LOAD/STORE before beginning it,
+  // rather than trying to hoist an attachment hazard from inside subpass1.
+  if(!p->plan.first.targets.depth && p->second_has_depth) {
+    const p_set_rt *rt=&p->plan.second.targets;
+    int store=!V.load_store_op_none; // Same condition as pl_job_create below.
+    if(!vk_texture_pixel_local_depth_preflight(rt->depth,rt->has_dview?&rt->dview:NULL,
+        &p->depth_attachment,store))goto fail;
+  }
+  for(unsigned k=0;k<p->plan.fragment->count;k++)if(!vk_texture_pixel_local_valid(&p->tokens[k]))goto fail;
+  if(recording!=vk_recording_serial() || passes!=V.passes)goto fail;
   if(memcmp(&p->plan.first,&S,sizeof S) || p->plan.generation!=vk_pass_generation() ||
       p->plan.descriptor_epoch!=vk_texture_descriptor_epoch())goto fail;
   return p;

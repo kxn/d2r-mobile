@@ -2382,6 +2382,50 @@ int vk_texture_pixel_local_enter(const vk_pixel_local_image *p) {
 }
 vk_attachment vk_texture_attachment(const tex_t *t,const view_t *v) { return texture_attachment(t,v,0); }
 vk_attachment vk_texture_readonly_attachment(const tex_t *t,const view_t *v) { return texture_attachment(t,v,1); }
+int vk_texture_pixel_local_depth_preflight(const tex_t *t,const view_t *v,
+    const vk_attachment *attachment,int store) {
+  if(!t || !attachment || image_binding_active || vk_render_active() ||
+      t->d.target!=NVN_TEXTURE_TARGET_2D || t->d.levels!=1 || t->L.layers!=1 ||
+      t->d.samples>1 || attachment->layout!=VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ||
+      attachment->samples!=VK_SAMPLE_COUNT_1_BIT || (store!=0 && store!=1))return 0;
+  // Ending a pass also drains deferred clears. Do this before borrowing an
+  // owner; callbacks may promote/destroy images or replace command recording.
+  uint64_t generation=image_recipe_generation,recording=vk_recording_serial(),passes=V.passes;
+  vk_render_end();
+  if(generation!=image_recipe_generation || recording!=vk_recording_serial() ||
+      passes!=V.passes || image_binding_active || vk_render_active())return 0;
+  image *i;for(i=image_buckets[t->serial%8192];i;i=i->hash_next)if(i->tex.serial==t->serial)break;
+  if(!i || !t->serial || i->tex.mem!=t->mem || memcmp(&i->tex.d,&t->d,sizeof t->d) ||
+      memcmp(&i->tex.L,&t->L,sizeof t->L) || i->tex.has_layout!=t->has_layout ||
+      memcmp(i->tex.layout,t->layout,sizeof t->layout) || i->decoded ||
+      i->levels!=1 || i->layers!=1 || i->description.imageType!=VK_IMAGE_TYPE_2D ||
+      i->description.samples!=VK_SAMPLE_COUNT_1_BIT || i->extent.depth!=1 ||
+      i->aspect==VK_IMAGE_ASPECT_COLOR_BIT || i->layout!=attachment->layout)return 0;
+  VkImageSubresourceRange r=attachment_range(i,v);
+  image_view *view;for(view=i->views;view;view=view->next)if(view->handle==attachment->view)break;
+  if(!view || view->description.image!=i->handle || view->description.viewType!=VK_IMAGE_VIEW_TYPE_2D ||
+      view->description.format!=attachment->format || memcmp(&view->description.subresourceRange,&r,sizeof r) ||
+      !(view->usage&VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) ||
+      attachment->extent.width!=i->extent.width || attachment->extent.height!=i->extent.height)return 0;
+  VkPipelineStageFlags stages=VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  VkAccessFlags access=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|
+      (store?VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT:0);
+  image_request q=image_request_make(i,r,stages,access);
+  uint64_t access_generation=i->access_generation;VkImage handle=i->handle;
+  image_dependencies(&q,1,0,1);
+  // Never dereference a borrowed owner after a callback without first proving
+  // its lifetime and recording identity. Already emitted barriers stay valid
+  // on fallback; no prospective draw/store was added to access history.
+  if(generation!=image_recipe_generation || recording!=vk_recording_serial() || passes!=V.passes ||
+      image_binding_active || vk_render_active())return 0;
+  if(i->handle!=handle || i->layout!=attachment->layout || i->access_generation!=access_generation)return 0;
+  i->access_generation++; // Invalidate old read-only visibility caches.
+  for(unsigned a=0;a<3;a++)if(q.range.aspectMask&(1u<<a)) {
+    image_access *c=image_cell(i,a,0,0);
+    c->layout_ordered=stages;c->layout_ordered_access=access;
+  }
+  return 1;
+}
 static void attachment_access(const tex_t *t,const view_t *v,VkImageAspectFlags aspect,int writable,int collect) {
   vk_mip_clear_texture_access(t,v,1);
   image *i=image_get(t);

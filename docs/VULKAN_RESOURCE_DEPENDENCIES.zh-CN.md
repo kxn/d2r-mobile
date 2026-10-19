@@ -1701,3 +1701,13 @@ CPU 对照已补两厂真机 memory-pool oracle 各 400,453 项；Mali 真实游
 实际 LLVM 样本落到 vertex attribute require 调用点；已有完整 API 帧的 7,201 次按 attribute 要求可在稳定条件下合并成 2,360 个相邻 exact range，这是机会计数而非当前时间节省。新代码仅在同一 draw 内省略紧邻的完全相同 address/size；不同范围替换 key，A,A,B,A 仍重查最后 A，UBO/IB、实际 buffer resolve/上传/bind 不变。首次 require 前后 command/recording serial/pass/buffer epoch/state epoch 必须不变，任何 pass-end/ghost 新 writer 使下一相同范围保守再查。无跨 draw 缓存、stream bitmask、新原子/锁/分配或运行期开关。
 
 真实 Vulkan GPU 用例覆盖两个 stream 同范围、部分别名、跨 draw retarget、transfer/compute VBO writer、原 UI ghost 导致新 writer、首 A 回调、溢出/全局回退，正确像素及依赖均通过。独立不安全 seen-bitmask 变体在实际 GPU 执行后由官方 SYNC 验证捕获 READ_AFTER_WRITE，不能用仅减少调用数代替正确性。完整 async 21,823,451 / sync 21,724,039 和专用10例、原 abandon+PSO 故障通过，最终零 VUID/SYNC；marker57/58冲突的首次失败已保留，最终换65/66并拒绝重复marker。额外成本是未合并调用前后的四个小 getter、比较与可能的 ARM spill；没有净 CPU cycles、帧率或发热收益结论。见 `vertex-require-dedup-v1-source-ready.json` 及独立审查报告。
+
+### 新增只读深度附件在 union pass 入场前同步
+
+同一 9f6a0ae 包在高通实际完成112次转换、0回退；Mali 则325次计划全部回退。官方 LLDB 已将 Mali 阻断定位为旧 D24S8 STORE → 新只读 DS attachment 的真实 RAW：旧 writer 早于 pass begin，两 aspect 都有 DS_WRITE 历史。不能移除 attachment 保护或清掉 writer 来强行命中。
+
+当首段没有 DS、次段新增受限单层单 mip 2D 只读 DS 时，创建合并 pass 前通过现有资源依赖机制建立 LOAD／实际 STORE 的 scope。支持 STORE_NONE 时只需 DS_READ，否则还含 DS_WRITE，覆盖旧 Shader 读取到 STORE 的 WAR。仅发布已经建立的 barrier destination scope；不伪记未来 draw/STORE，不清除 readers/writers 或推进写入时钟。回调前排空 deferred clear，前后核对 image lifetime、recording、pass、view/layout，最后重验所有输入 token；复杂/shared DS 保留原保守路径。
+
+新增18项真实 GPU 用例覆盖 NONE0/1、旧 STORE、FS reader WAR、前后 clear、shared DS、guest alias、PSO 故障及两 aspect/history 像素；原26+9项保留。旧9f生产代码配同一新增用例严格失败：plans1/draws0/aborts1/passes3；修复为 plans1/draws1/aborts0/passes2，且实际观察到 DS_WRITE scope。独立完整 async 21,813,081／sync 21,713,669 零 VUID/SYNC；专用新增用例由单独 selector 验证，不能把完整套件数量冒称包含这些新增用例。增加一次受限 DS 查询和必要的真实屏障，无新 Shader、游戏补丁或 GPU 回读。真机转换命中及物理 tile／带宽收益待测，报告 `pixel-local-union-ds-preflight-v1-source-ready.json`。
+
+高通已有同包官方 SDP OFF/ON 数据实际转换319次、0回退，但按完成帧归一的读/写/纹理流量变化均不足1%，边界、PSO增长及场景差异仍存在，不能宣称硬件 GMEM 合并或净带宽收益。后续局部转换将对齐原 Metal 的 producer 交集，避免把外部 history 无条件纳入 attachment；这需要离线证明的独立模块，不能在运行时删改已编译输入。

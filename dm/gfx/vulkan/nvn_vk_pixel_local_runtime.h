@@ -14,6 +14,10 @@ int vk_texture_pixel_local_valid(const vk_pixel_local_image *token);
 // Caller has established a COLOR_WRITE -> INPUT_READ subpass dependency.
 // Updates only mip0/layer0 to match that real implicit transition.
 int vk_texture_pixel_local_enter(const vk_pixel_local_image *token);
+// Before constructing a union pass with a newly introduced read-only DS
+// attachment. Orders its real LOAD/(optional STORE) without recording access.
+int vk_texture_pixel_local_depth_preflight(const tex_t *texture,const view_t *view,
+    const vk_attachment *attachment,int store);
 int vk_pixel_local_target_boundary(const void *op);
 int vk_pixel_local_replay(const uint8_t *op);
 
