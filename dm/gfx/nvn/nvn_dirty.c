@@ -305,7 +305,10 @@ int nvn_dirty_scope_refresh(const void *addr,size_t len,const nvn_dirty_scope_pr
     if(!global || global==UINT64_MAX)return 0;
     range_t *r=&g_r[old->slot];
     uint64_t life=atomic_load_explicit(&r->lifetime,memory_order_acquire);
-    owned_scope scope={.version=atomic_load(&r->owned_version)};
+    // Stable-version refresh reads only version; do not zero the cold slot
+    // snapshot array on this hot path. owned_scope_read initializes it before
+    // every changed-version overlap query below.
+    owned_scope scope;scope.version=atomic_load(&r->owned_version);
     if(life!=old->lifetime || (scope.version&1) || scope.version==UINT64_MAX ||
        old->exclusion_version>scope.version)return 0;
     // The immutable query was already proven disjoint at this exact version.
