@@ -16,7 +16,7 @@ typedef struct {
   VkDebugUtilsMessengerEXT messenger;
   unsigned validation_errors;
   VkBool32 imported_host_coherent;
-  VkBool32 implicit_host_dependency,owned_dirty_cycle;
+  VkBool32 implicit_host_dependency,owned_dirty_cycle,owned_readonly_exclusion;
   VkDeviceSize noncoherent_atom;
 } host_import_context;
 
@@ -110,6 +110,7 @@ static void host_import_cache_range(host_import_context *context,VkDeviceMemory 
   CHECK((invalidate?vkInvalidateMappedMemoryRanges(context->device,1,&range):
     vkFlushMappedMemoryRanges(context->device,1,&range))==VK_SUCCESS);
 }
+#include "native_vulkan_host_owned_readonly.inc"
 static void host_import_round(host_import_context *context,VkDeviceSize alignment,unsigned round,
                                PFN_vkGetMemoryHostPointerPropertiesEXT properties) {
   const size_t extent=(size_t)alignment*2,mapping_size=(size_t)alignment*3;
@@ -247,6 +248,11 @@ void dm_vulkan_test_owned_dirty(int enabled) {
   if(enabled)setenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY","1",1);
   else unsetenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY");
 }
+void dm_vulkan_test_owned_readonly_exclusion(int enabled) {
+  if(V.device || V.instance)die("Owned readonly exclusion fixture requires a cold process");
+  if(enabled)setenv("DM_VULKAN_HOST_IMPORT_OWNED_READONLY_EXCLUSION","1",1);
+  else unsetenv("DM_VULKAN_HOST_IMPORT_OWNED_READONLY_EXCLUSION");
+}
 static int host_import_oracle(void) {
   CHECK(!V.device && !V.instance);
   host_import_context context={0};
@@ -256,6 +262,12 @@ static int host_import_oracle(void) {
   const char *dirty=getenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY");
   CHECK(!dirty || !strcmp(dirty,"0") || !strcmp(dirty,"1"));
   context.owned_dirty_cycle=dirty && !strcmp(dirty,"1");
+  const char *readonly=getenv("DM_VULKAN_HOST_IMPORT_OWNED_READONLY_EXCLUSION");
+  CHECK(!readonly || !strcmp(readonly,"0") || !strcmp(readonly,"1"));
+  context.owned_readonly_exclusion=readonly && !strcmp(readonly,"1");
+  CHECK(!context.owned_readonly_exclusion || !context.owned_dirty_cycle);
+  printf("{\"test_configuration\":\"owned-readonly-exclusion\",\"enabled\":%s}\n",
+    context.owned_readonly_exclusion?"true":"false");
   printf("{\"test_configuration\":\"standard-owned-dirty\",\"enabled\":%s}\n",
     context.owned_dirty_cycle?"true":"false");
   printf("{\"test_configuration\":\"host-import-publication\",\"implicit_host_dependency\":%s}\n",
@@ -323,12 +335,14 @@ static int host_import_oracle(void) {
   vkGetPhysicalDeviceProperties2(context.physical,&properties);
   VkDeviceSize alignment=host_properties.minImportedHostPointerAlignment;
   CHECK(alignment>=4 && !(alignment&(alignment-1)));
+  if(context.owned_readonly_exclusion && alignment<(VkDeviceSize)getpagesize())alignment=(VkDeviceSize)getpagesize();
   if(alignment>65536) {
     host_import_context_destroy(&context);
     printf("{\"test\":\"host-import-standard-api\",\"result\":\"unsupported\",\"reason\":\"fixture_alignment_limit\"}\n");return 0;
   }
   VkPhysicalDeviceExternalBufferInfo query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
-    .usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    .usage=context.owned_readonly_exclusion?VK_BUFFER_USAGE_TRANSFER_SRC_BIT:
+      VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     .handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
   VkExternalBufferProperties external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES};
   vkGetPhysicalDeviceExternalBufferProperties(context.physical,&query,&external);
@@ -389,11 +403,16 @@ static int host_import_oracle(void) {
   CHECK(vkAllocateCommandBuffers(context.device,&commands,context.command)==VK_SUCCESS);
   VkFenceCreateInfo fence={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
   for(unsigned i=0;i<2;i++)CHECK(vkCreateFence(context.device,&fence,NULL,&context.fence[i])==VK_SUCCESS);
-  for(unsigned round=0;round<4;round++)host_import_round(&context,alignment,round,get_properties);
+  if(context.owned_readonly_exclusion)host_owned_readonly_protected_negative(alignment);
+  for(unsigned round=0;round<4;round++) {
+    if(context.owned_readonly_exclusion)host_owned_readonly_round(&context,alignment,round,get_properties);
+    else host_import_round(&context,alignment,round,get_properties);
+  }
   printf("{\"test_details\":\"host-import-memory\",\"host_coherent\":%s,\"noncoherent_atom\":%llu}\n",
     context.imported_host_coherent?"true":"false",(unsigned long long)context.noncoherent_atom);
   host_import_context_destroy(&context);CHECK(!V.device && !V.instance);
-  printf("{\"test\":\"host-import-standard-api\",\"result\":\"passed\",\"checks\":%u,\"uid\":%lu,\"rounds\":4,\"submits_before_each_wait\":2,\"timeline_gate\":true,\"alignment\":%llu,\"import_bytes\":%llu,\"validation_requested\":%s}\n",
+  printf("{\"test\":\"%s\",\"result\":\"passed\",\"checks\":%u,\"uid\":%lu,\"rounds\":4,\"submits_before_each_wait\":2,\"timeline_gate\":true,\"alignment\":%llu,\"import_bytes\":%llu,\"validation_requested\":%s}\n",
+    context.owned_readonly_exclusion?"host-import-owned-readonly-exclusion":"host-import-standard-api",
     checks,(unsigned long)getuid(),(unsigned long long)alignment,(unsigned long long)alignment*2,validate?"true":"false");
   return 0;
 }

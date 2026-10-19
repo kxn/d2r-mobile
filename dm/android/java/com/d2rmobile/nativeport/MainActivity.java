@@ -21,6 +21,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeWatch(int type, int unitClass);
     private static native void nativeHostImportImplicitHostFixture(boolean enable);
     private static native void nativeHostImportOwnedDirtyFixture(boolean enable);
+    private static native void nativeHostImportOwnedReadonlyExclusionFixture(boolean enable);
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean hostImport, boolean hostImportOptIn, boolean poolHostImport, boolean poolHostNoncoherent);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -240,6 +241,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (ownedDirty && !getIntent().getBooleanExtra("host_import_test", false))
                 throw new IllegalArgumentException("Owned dirty fixture requires standard host import mode");
             nativeHostImportOwnedDirtyFixture(ownedDirty);
+            boolean ownedReadonly = getIntent().getBooleanExtra("host_import_owned_readonly_exclusion", false);
+            if (ownedReadonly && (!getIntent().getBooleanExtra("host_import_test", false) || ownedDirty))
+                throw new IllegalArgumentException("Owned readonly exclusion needs standard import mode and excludes the original dirty diagnostic");
+            nativeHostImportOwnedReadonlyExclusionFixture(ownedReadonly);
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),
                     getIntent().getBooleanExtra("memory_test", false),
