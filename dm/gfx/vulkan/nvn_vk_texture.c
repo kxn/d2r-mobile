@@ -1567,7 +1567,7 @@ typedef struct transient_view {
   VkDeviceSize offset,range;
 } transient_view;
 typedef struct {
-  uint64_t submit,epoch,lifetime_generation;
+  uint64_t epoch,lifetime_generation;
   int id,storage,has_view;
   // Logical descriptor fact only: no physical image/view pointer is trusted.
   // Occupies the former four-byte alignment gap before owner.
@@ -2222,13 +2222,16 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
     // recipe. Recheck AFTER every upload/layout callback: a nested draw may
     // have replaced a colliding slot or promoted the image since the lookup.
     // Dynamic layouts, data uploads and dependencies above are never skipped.
-    if(destination->submit!=submit || destination->epoch!=epoch ||
+    // Physical recipes already survive submits. A new serial alone changes no
+    // immutable field; last_use was renewed before callbacks and the outer
+    // guard still requires this exact recording to survive every callback.
+    if(destination->epoch!=epoch ||
         destination->lifetime_generation!=image_recipe_generation ||
         destination->id!=id || destination->storage!=!!storage ||
         destination->owner!=i || destination->description.image!=i->handle ||
         destination->description.image!=ci.image || destination->handle!=handle)
       *destination=(texture_binding_recipe){
-        .submit=submit,.epoch=epoch,.lifetime_generation=image_recipe_generation,
+        .epoch=epoch,.lifetime_generation=image_recipe_generation,
         .id=id,.storage=!!storage,.has_view=has_view,
         // Exclude every possible graphics feedback alias, even for a compute
         // consumer. Current attachment state/layout mode is never predicted.
