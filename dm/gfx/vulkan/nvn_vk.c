@@ -11,6 +11,7 @@
 #include "nvn_vk_window.h"
 #include "nvn_vk_freeze.h"
 #include "nvn_vk_system_trace.h"
+#include "nvn_vk_pool_copy_stats.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
@@ -152,6 +153,26 @@ void vk_load_probe_request(int mode) { atomic_store(&load_probe_request,mode); }
 void vk_gpu_profile_enabled(int enabled) { atomic_store(&gpu_profile_request,!!enabled); }
 static int async_submissions;
 static unsigned resource_sets;
+// Optional accounting is latched by init_options before workers start. Copies
+// can originate from more than the recording owner: use relaxed per-page/batch
+// atomics only while ON, never per-word counters or a second memory scan.
+static _Atomic int pool_copy_enabled;
+#define VK_POOL_COPY_COUNTER(name) static _Atomic uint64_t pool_copy_##name;
+VK_POOL_COPY_FIELDS(VK_POOL_COPY_COUNTER)
+#undef VK_POOL_COPY_COUNTER
+#define POOL_COPY_ADD(name, bytes) do { if(V.options.pool_copy_accounting) \
+  atomic_fetch_add_explicit(&pool_copy_##name,(bytes),memory_order_relaxed); } while(0)
+void vk_pool_copy_snapshot(vk_pool_copy_stats *out) {
+  *out=(vk_pool_copy_stats){.enabled=atomic_load_explicit(&pool_copy_enabled,memory_order_relaxed)};
+  if(!out->enabled)return;
+#define VK_POOL_COPY_READ(name) out->name=atomic_load_explicit(&pool_copy_##name,memory_order_relaxed);
+  VK_POOL_COPY_FIELDS(VK_POOL_COPY_READ)
+#undef VK_POOL_COPY_READ
+}
+// src!=NULL effects do not use atomic-event mode. Reuse that existing word;
+// no extra bytes or allocation in the default-OFF effect/submission objects.
+enum {POOL_COPY_GENERIC,POOL_COPY_READBACK_GUEST,POOL_COPY_READBACK_SHADOW,
+      POOL_COPY_KNOWN_GUEST,POOL_COPY_KNOWN_SHADOW};
 static _Atomic uint64_t sync_guest_submits,sync_internal_submits,sync_readback_ranges,sync_readback_bytes;
 static _Atomic uint64_t sync_internal_readback_bytes,sync_cpu_reads,sync_cpu_submit_waits,sync_cpu_pending_waits;
 static _Atomic uint64_t sync_proof_reads,sync_proof_pending;
@@ -931,13 +952,20 @@ static void *completion_thread(void *unused) {
     // 发布 GPU 写回，然后才允许事件、栅栏与等待者观察完成。
     // Publish GPU writes before events, completion counters and waiters observe
     // completion.
+    uint64_t completed_copy_bytes[5]={0};
     pthread_mutex_lock(&pool_publication_mu);
     for (vk_effect *e = s->effects; e; e = e->next)
       if (e->src) {
         dm_guest_write_prepare(e->dst, e->size);
         memcpy(e->dst, e->src, e->size);
+        if(V.options.pool_copy_accounting && e->mode>POOL_COPY_GENERIC && e->mode<=POOL_COPY_KNOWN_SHADOW)
+          completed_copy_bytes[e->mode]+=e->size;
       }
     pthread_mutex_unlock(&pool_publication_mu);
+    POOL_COPY_ADD(readback_guest_completed_bytes,completed_copy_bytes[POOL_COPY_READBACK_GUEST]);
+    POOL_COPY_ADD(readback_shadow_completed_bytes,completed_copy_bytes[POOL_COPY_READBACK_SHADOW]);
+    POOL_COPY_ADD(known_guest_completed_bytes,completed_copy_bytes[POOL_COPY_KNOWN_GUEST]);
+    POOL_COPY_ADD(known_shadow_completed_bytes,completed_copy_bytes[POOL_COPY_KNOWN_SHADOW]);
     atomic_thread_fence(memory_order_release);
     for (vk_effect *e = s->effects; e;) {
       // Query/event callbacks can also write pool bytes. Pure cleanup and
@@ -1058,6 +1086,11 @@ static void init_options(void) {
   if(o->pool_window_bytes && (o->pool_window_bytes<4096 || (o->pool_window_bytes&(o->pool_window_bytes-1))))
     die("Vulkan pool window size must be a power of two >=4096");
   LOG("[vulkan] pool backing policy: %s window_bytes=%llu",o->pool_window_bytes?"canonical windows":"whole",(unsigned long long)o->pool_window_bytes);
+  const char *account=getenv("DM_VULKAN_POOL_COPY_ACCOUNTING");
+  if(account && strcmp(account,"0") && strcmp(account,"1"))
+    die("DM_VULKAN_POOL_COPY_ACCOUNTING expects 0 or 1");
+  o->pool_copy_accounting=account && !strcmp(account,"1");
+  atomic_store_explicit(&pool_copy_enabled,o->pool_copy_accounting,memory_order_relaxed);
   const char *dual=getenv("DM_VULKAN_UPLOAD_DUAL_STORE");
   if(dual && strcmp(dual,"0") && strcmp(dual,"1"))die("DM_VULKAN_UPLOAD_DUAL_STORE expects 0 or 1");
   upload_dual_enabled=dual && !strcmp(dual,"1"); // startup-only, experimental OFF
@@ -1393,6 +1426,8 @@ static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
       if(hi>p->size) hi=p->size;
       pool_spans_copy_from_guest(p,lo,hi-lo);
       memcpy(p->shadow+lo,p->guest+lo,hi-lo);
+      POOL_COPY_ADD(initial_mirror_bytes,hi-lo);
+      POOL_COPY_ADD(initial_shadow_bytes,hi-lo);
       // The unset initialized bit proves this page has never been exposed to
       // a GPU binding, including before a canonical backing migration.
       pool_cpu_synced(p,lo,hi-lo,UINT64_MAX);
@@ -2254,16 +2289,19 @@ static void record_pool_upload_commands(void) {
   VK_CHECK(vkBeginCommandBuffer(r->uploads,&begin));
   for(size_t first=0;first<records;) {
     VkPipelineStageFlags before=order[first]->before,after=order[first]->after;
-    size_t end=first+1,n=0;
+    size_t end=first+1,n=0;uint64_t copy_bytes=0;
     while(end<records&&order[end]->before==before&&order[end]->after==after) end++;
     for(size_t i=first;i<end;i++) {
       queued_pool_upload *u=order[i];
-      for(unsigned k=0;k<u->count;k++) barriers[n++]=(VkBufferMemoryBarrier){
+      for(unsigned k=0;k<u->count;k++) {
+        if(V.options.pool_copy_accounting)copy_bytes+=u->regions[k].size;
+        barriers[n++]=(VkBufferMemoryBarrier){
         .sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         .srcAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,
         .dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
         .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
         .buffer=u->destination,.offset=u->regions[k].dstOffset,.size=u->regions[k].size};
+      }
     }
     vkCmdPipelineBarrier(r->uploads,before,VK_PIPELINE_STAGE_TRANSFER_BIT,
       0,0,NULL,(uint32_t)n,barriers,0,NULL);
@@ -2271,6 +2309,7 @@ static void record_pool_upload_commands(void) {
       queued_pool_upload *u=order[i];
       vkCmdCopyBuffer(r->uploads,u->source,u->destination,u->count,u->regions);free(u);
     }
+    POOL_COPY_ADD(gpu_upload_recorded_bytes,copy_bytes);
     for(size_t k=0;k<n;k++) {
       barriers[k].srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
       barriers[k].dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
@@ -2386,6 +2425,13 @@ static void queue_pool_page_upload(pool *p,uint64_t off,size_t size,const vk_buf
   }
   if(next<0)die("Vulkan queued upload across unbacked hole");
 }
+#ifdef DM_VULKAN_TEST_EMBED
+static void (*pool_copy_wait_hook)(void *);
+static void *pool_copy_wait_context;
+void vk_test_pool_copy_wait(void (*hook)(void *),void *context) {
+  pool_copy_wait_hook=hook;pool_copy_wait_context=context;
+}
+#endif
 static void sync_queued_page(pool *p,uint64_t off,size_t size) {
   // Dirty tracking is page-granular, GPU publication is byte-granular. Upload
   // only changed words; copying unchanged neighbours would overwrite queued
@@ -2397,6 +2443,8 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
     // Keep the original full-page/scalar scan as an independent reference.
     // The default scanner handles equal and changed blocks together: there is
     // no second read of the whole page after an initial memcmp finds a change.
+    if(recording_resources->upload_scan_reference)POOL_COPY_ADD(reference_page_span_bytes,size);
+    else POOL_COPY_ADD(scan_bytes,size);
     if(recording_resources->upload_scan_reference && !memcmp(p->guest+off,p->shadow+off,size)) {
       pthread_mutex_unlock(&pool_publication_mu);return;
     }
@@ -2419,8 +2467,12 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       pthread_mutex_unlock(&pool_publication_mu);
       atomic_fetch_add(&upload_waits,1);
       int trace=vk_system_trace_begin("Vulkan upload waits CPU publication");
+#ifdef DM_VULKAN_TEST_EMBED
+      if(pool_copy_wait_hook)pool_copy_wait_hook(pool_copy_wait_context);
+#endif
       vk_internal_wait(serial);vk_system_trace_end(trace);continue;
     }
+    uint64_t copied_bytes=0;
     if(pending_gpu_access(p,off,size)) {
       // A single sparse edit needs only its immutable changed bytes in the
       // queued upload. Do not copy/allocate a whole CPU page to transfer one
@@ -2440,18 +2492,30 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       }
       vk_buffer *snapshot=vk_temp_buffer(snapshot_capacity);
       memcpy(snapshot->map,p->guest+off+snapshot_offset,snapshot_size);
+      POOL_COPY_ADD(snapshot_bytes,snapshot_size);
       queue_pool_page_upload(p,off,size,snapshot,snapshot_offset,regions,count);
     } else if(upload_dual_enabled && !recording_resources->upload_scan_reference) {
-      for(unsigned i=0;i<count;i++)
+      for(unsigned i=0;i<count;i++) {
         pool_spans_copy_dual(p,regions[i].dstOffset,regions[i].size);
+        if(V.options.pool_copy_accounting)copied_bytes+=regions[i].size;
+      }
+      POOL_COPY_ADD(mirror_bytes,copied_bytes);
+      POOL_COPY_ADD(shadow_bytes,copied_bytes);
       pool_cpu_synced_runs(p,regions,count,recording_resources->cpu_authority_begin);
       pthread_mutex_unlock(&pool_publication_mu);return;
     } else {
-      for(unsigned i=0;i<count;i++)
+      for(unsigned i=0;i<count;i++) {
         pool_spans_copy_from_guest(p,regions[i].dstOffset,regions[i].size);
+        if(V.options.pool_copy_accounting)copied_bytes+=regions[i].size;
+      }
+      POOL_COPY_ADD(mirror_bytes,copied_bytes);
     }
-    for(unsigned i=0;i<count;i++)
+    copied_bytes=0;
+    for(unsigned i=0;i<count;i++) {
       memcpy(p->shadow+regions[i].dstOffset,p->guest+regions[i].dstOffset,regions[i].size);
+      if(V.options.pool_copy_accounting)copied_bytes+=regions[i].size;
+    }
+    POOL_COPY_ADD(shadow_bytes,copied_bytes);
     pool_cpu_synced_runs(p,regions,count,recording_resources->cpu_authority_begin);
     pthread_mutex_unlock(&pool_publication_mu);return;
   }
@@ -2468,6 +2532,7 @@ static void sync_page(const void *memory, size_t length, void *context) {
     }
     for (;;) {
       pthread_mutex_lock(&pool_publication_mu);
+      POOL_COPY_ADD(fallback_compare_span_bytes,size);
       if (!memcmp(p->guest + off, p->shadow + off, size)) {
         pthread_mutex_unlock(&pool_publication_mu);
         break;
@@ -2495,6 +2560,8 @@ static void sync_page(const void *memory, size_t length, void *context) {
       }
       pool_spans_copy_from_guest(p,off,size);
       memcpy(p->shadow + off, p->guest + off, size);
+      POOL_COPY_ADD(mirror_bytes,size);
+      POOL_COPY_ADD(shadow_bytes,size);
       pool_cpu_synced(p,off,size,recording_resources?recording_resources->cpu_authority_begin:0);
       pthread_mutex_unlock(&pool_publication_mu);
       break;
@@ -2779,15 +2846,19 @@ static void begin_submission(int pool_migration) {
 }
 void mtl_sub_begin(void) { begin_submission(0); }
 
-void vk_effect_copy(void *dst, const void *src, size_t size) {
+static void effect_copy_kind(void *dst,const void *src,size_t size,uint32_t kind) {
   vk_effect *e = calloc(1, sizeof *e);
   if (!e)
     die("Vulkan completion allocation");
   e->dst = dst;
   e->src = src;
   e->size = size;
+  if(V.options.pool_copy_accounting)e->mode=kind;
   *V.effect_tail = e;
   V.effect_tail = &e->next;
+}
+void vk_effect_copy(void *dst,const void *src,size_t size) {
+  effect_copy_kind(dst,src,size,POOL_COPY_GENERIC);
 }
 static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,
                              VkPipelineStageFlags producers) {
@@ -2854,6 +2925,7 @@ void vk_buffer_writeback_known(uint64_t dst,uint64_t size,const void *bytes) {
   const uint8_t *known=NULL;
   if(size&&!recording_resources->cpu_copy_reference) {
     uint8_t *snapshot=cpu_copy_allocate(size);memcpy(snapshot,bytes,size);known=snapshot;
+    POOL_COPY_ADD(known_snapshot_bytes,size);
   }
   buffer_writeback(dst,size,known,VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
@@ -2871,8 +2943,8 @@ void vk_buffer_writebacks_flush(void) {
     for (writeback_range *r = w->ranges; r;) {
       uint64_t size = r->end - r->offset;
       if(r->known) {
-        vk_effect_copy(w->owner->guest+r->offset,r->known,size);
-        vk_effect_copy(w->owner->shadow+r->offset,r->known,size);
+        effect_copy_kind(w->owner->guest+r->offset,r->known,size,POOL_COPY_KNOWN_GUEST);
+        effect_copy_kind(w->owner->shadow+r->offset,r->known,size,POOL_COPY_KNOWN_SHADOW);
         atomic_fetch_add(&cpu_copy_published,size);
         r=r->next;continue;
       }
@@ -2901,8 +2973,8 @@ void vk_buffer_writebacks_flush(void) {
         pthread_mutex_unlock(&V.resources);
         vkCmdCopyBuffer(V.cmd,span.backing->buffer.handle,snapshot->handle,1,&copy);
         if(recording_resources->submission_barrier_reference)vk_buffer_transfer_written();
-        vk_effect_copy(w->owner->guest+span.logical,snapshot->map,span.size);
-        vk_effect_copy(w->owner->shadow+span.logical,snapshot->map,span.size);
+        effect_copy_kind(w->owner->guest+span.logical,snapshot->map,span.size,POOL_COPY_READBACK_GUEST);
+        effect_copy_kind(w->owner->shadow+span.logical,snapshot->map,span.size,POOL_COPY_READBACK_SHADOW);
       }
       if(span_status<0)die("Vulkan writeback across unbacked hole");
       // Unlike a known CPU value captured at its original copy, a GPU
@@ -3057,6 +3129,7 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   while(r->cpu_copies) {
     pending_cpu_copy *copy=r->cpu_copies;r->cpu_copies=copy->next;
     memcpy(copy->snapshot,copy->source->shadow+copy->offset,copy->size);
+    POOL_COPY_ADD(known_snapshot_bytes,copy->size);
     free(copy);
   }
   s->system_trace=vk_system_trace_async_begin("Vulkan submit to observed fence",r->queue_serial);

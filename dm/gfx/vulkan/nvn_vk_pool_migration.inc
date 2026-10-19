@@ -24,7 +24,7 @@ void vk_test_pool_migration_publish_hook(void (*fn)(void *),void *context) {
 static void pool_migration_copy_initialized(const pool *p,const pool_backing_span *b,
     VkBuffer destination,uint64_t destination_begin) {
   if(!p->initialized_pages)return;
-  enum {BATCH=64};VkBufferCopy copies[BATCH];unsigned count=0;
+  enum {BATCH=64};VkBufferCopy copies[BATCH];unsigned count=0;uint64_t copy_bytes=0;
   uint64_t first=b->begin>>GPU_ACCESS_SHIFT,last=(b->end-1)>>GPU_ACCESS_SHIFT;
   for(uint64_t word=first/64;word<=last/64;word++) {
     unsigned low=word==first/64?first%64:0,high=word==last/64?last%64:63;
@@ -35,6 +35,7 @@ static void pool_migration_copy_initialized(const pool *p,const pool_backing_spa
       uint64_t lo=(word*64+bit)<<GPU_ACCESS_SHIFT,hi=(word*64+end+1)<<GPU_ACCESS_SHIFT;
       if(lo<b->begin)lo=b->begin;
       if(hi>b->end)hi=b->end; // includes the final non-page-sized pool tail
+      if(V.options.pool_copy_accounting)copy_bytes+=hi-lo;
       VkBufferCopy copy={.srcOffset=lo-b->begin,.dstOffset=lo-destination_begin,.size=hi-lo};
       if(count && copies[count-1].srcOffset+copies[count-1].size==copy.srcOffset)
         copies[count-1].size+=copy.size;
@@ -51,6 +52,7 @@ static void pool_migration_copy_initialized(const pool *p,const pool_backing_spa
     }
   }
   if(count)vkCmdCopyBuffer(V.cmd,b->buffer.handle,destination,count,copies);
+  POOL_COPY_ADD(migration_gpu_recorded_bytes,copy_bytes);
 }
 // Keep the exact declared binding contiguous, including its descriptor prefix.
 // Only intersecting old nodes join this component; adjacent nodes retain their

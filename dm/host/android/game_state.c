@@ -2,6 +2,7 @@
 // Observe original OBS_TICK with shared diag.c player reads, never simulation.
 #include "../../gfx/vulkan/nvn_vk_window.h"
 #include "../../gfx/vulkan/nvn_vk_freeze.h"
+#include "../../gfx/vulkan/nvn_vk_pool_copy_stats.h"
 #include "../../gfx/vulkan/nvn_vk_extrap.h"
 #include "../../gfx/vulkan/nvn_vk_pixel_local_runtime.h"
 #include "dm.h"
@@ -437,6 +438,14 @@ static void observe_tick(const uint64_t *registers) {
     fprintf(state_log, ",\"image_layouts\":{\"reference\":%s,\"transitions\":%llu,\"safe_uses\":%llu,\"fallbacks\":%llu}",
       image_reference?"true":"false",(unsigned long long)image_transitions,
       (unsigned long long)image_safe_uses,(unsigned long long)image_fallbacks);
+    vk_pool_copy_stats copy_work;vk_pool_copy_snapshot(&copy_work);
+    if(copy_work.enabled) {
+      fprintf(state_log,",\"pool_copy_accounting\":{\"enabled\":true");
+#define VK_POOL_COPY_JSON(name) fprintf(state_log,",\"" #name "\":%llu",(unsigned long long)copy_work.name);
+      VK_POOL_COPY_FIELDS(VK_POOL_COPY_JSON)
+#undef VK_POOL_COPY_JSON
+      fputc('}',state_log);
+    }
     uint64_t full_pool_bytes,used_pool_bytes,protected_pool_bytes;int pool_sync_reference;
     vk_pool_sync_policy_stats(&full_pool_bytes,&used_pool_bytes,&protected_pool_bytes,&pool_sync_reference);
     fprintf(state_log, ",\"pool_uploads\":{\"reference\":%s,\"full_bytes\":%llu,\"used_bytes\":%llu,\"protected_bytes\":%llu,\"overwrite_skipped_pages\":%llu}",

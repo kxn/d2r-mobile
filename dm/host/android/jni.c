@@ -341,6 +341,20 @@ static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int upload_dual_startup;
+static int pool_copy_accounting_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolCopyAccounting(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"pool_copy_accounting is fixed before native startup");
+    return;
+  }
+  pool_copy_accounting_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeUploadDualStore(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;
@@ -500,6 +514,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   // recreation and later Intents must never change established PSO identities.
   if(setenv("DM_VULKAN_PIXEL_LOCAL",pixel_local_startup?"1":"0",1))
     die("Android pixel-local startup environment");
+  if(setenv("DM_VULKAN_POOL_COPY_ACCOUNTING",pool_copy_accounting_startup?"1":"0",1))
+    die("Android pool copy accounting startup environment");
   if(setenv("DM_VULKAN_UPLOAD_DUAL_STORE",upload_dual_startup?"1":"0",1))
     die("Android dual upload startup environment");
   if(setenv("DM_VULKAN_PIXEL_LOCAL_SHARED_DS",pixel_local_shared_ds_startup?"1":"0",1))

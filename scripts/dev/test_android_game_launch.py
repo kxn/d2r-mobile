@@ -90,6 +90,20 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertIn('startup-only', stderr.getvalue())
             adb.assert_not_called()
 
+    def test_copy_accounting_is_startup_only_and_default_off(self):
+        for options, value in (([], 'false'), (['--pool-copy-accounting'], 'true'),
+                               (['--no-pool-copy-accounting'], 'false')):
+            command = self.launch_command(options)
+            index = command.index('pool_copy_accounting')
+            self.assertEqual(command[index - 1:index + 2], ['--ez', 'pool_copy_accounting', value])
+        for option in ('--pool-copy-accounting', '--no-pool-copy-accounting'):
+            with patch('sys.argv', [str(LAUNCHER), '--attach', option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER), run_name='__main__')
+            self.assertEqual(caught.exception.code, 2)
+            adb.assert_not_called()
+
     def test_dual_upload_is_an_exact_startup_boolean(self):
         for options, value in (([], 'false'), (['--upload-dual-store'], 'true'),
                                (['--no-upload-dual-store'], 'false')):

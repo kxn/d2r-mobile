@@ -43,6 +43,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
     private static native void nativeUploadDualStore(boolean enabled);
+    private static native void nativePoolCopyAccounting(boolean enabled);
     private static native void nativePerformanceHintReference(boolean reference);
     private static native void nativeImageLayoutReference(boolean reference);
     private static native void nativeSampledArrayLayoutReference(boolean reference);
@@ -135,6 +136,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", false));
             nativePixelLocalSharedDs(getIntent().getBooleanExtra("pixel_local_shared_ds", false));
             nativeUploadDualStore(getIntent().getBooleanExtra("upload_dual_store", false));
+            nativePoolCopyAccounting(getIntent().getBooleanExtra("pool_copy_accounting", false));
             // Select backing before Vulkan initialization. Finite maintenance
             // keeps a complete binding contiguous without expanding every pool.
             if (getIntent().hasExtra("pool_window_bytes")) {
@@ -282,6 +284,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent.hasExtra("pool_copy_accounting")) {
+            android.util.Log.w("D2RPool", "pool_copy_accounting is startup-only; cold restart required");
+            intent.removeExtra("pool_copy_accounting");
+        }
         if (intent.hasExtra("upload_dual_store")) {
             android.util.Log.w("D2RUpload", "upload_dual_store is startup-only; cold restart required");
             intent.removeExtra("upload_dual_store");

@@ -31,6 +31,7 @@ parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='s
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental source-proved pixel-local subpasses; requires matching shader sidecars (default off)')
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
+parser.add_argument('--pool-copy-accounting',action=argparse.BooleanOptionalAction,default=None,help='startup-only optional logical pool copy bytes, not bandwidth or timing (default off)')
 parser.add_argument('--upload-dual-store',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental direct upload: one guest load feeds map and shadow (default off)')
 parser.add_argument('--general-depth-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for depth/stencil, preserving optimized color layouts')
 parser.add_argument('--general-compute-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for readonly compute image sampling')
@@ -119,6 +120,8 @@ if args.attach and args.pixel_local_shared_ds is not None:
     parser.error('--pixel-local-shared-ds is startup-only and cannot be used with --attach')
 if args.attach and args.pixel_local is not None:
     parser.error('--pixel-local/--no-pixel-local are startup-only and cannot be used with --attach')
+if args.attach and args.pool_copy_accounting is not None:
+    parser.error('--pool-copy-accounting/--no-pool-copy-accounting are startup-only and cannot be used with --attach')
 if args.attach and args.upload_dual_store is not None:
     parser.error('--upload-dual-store/--no-upload-dual-store are startup-only and cannot be used with --attach')
 if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
@@ -190,6 +193,7 @@ if not args.attach:
     if args.pixel_local_shared_ds is not None:
         launch += ['--ez', 'pixel_local_shared_ds', str(args.pixel_local_shared_ds).lower()]
     launch += ['--ez', 'upload_dual_store', str(bool(args.upload_dual_store)).lower()]
+    launch += ['--ez', 'pool_copy_accounting', str(bool(args.pool_copy_accounting)).lower()]
     if args.bright_k is not None:
         launch += ['--ef', 'bright_k', str(args.bright_k)]
     if args.game_res is not None:
@@ -318,6 +322,8 @@ while time.monotonic() < deadline:
                         raise SystemExit('submission barrier policy did not apply')
                     if args.cache_store_descriptors and state.get('store_descriptors',{}).get('reference',True):
                         raise SystemExit('store descriptor cache policy is not active')
+                    if not args.attach and state.get('pool_copy_accounting',{}).get('enabled',False) != bool(args.pool_copy_accounting):
+                        raise SystemExit('pool copy accounting startup state differs from requested option')
                     if args.game_res and [output['width'], output['height']] != [int(n) for n in args.game_res.split('x')]:
                         raise SystemExit('actual presented game output does not match --game-res')
                     if args.scale_3d is not None and abs(state['scale_3d'] - args.scale_3d) >= .001:
@@ -336,6 +342,8 @@ while time.monotonic() < deadline:
                                                              False if 'color attachment usage: actual attachment only' in log else None),
                               'eager_pool_mirrors_reference':state.get('pool_mirrors',{}).get('reference'),
                               'requested_pool_window_bytes':args.pool_window_bytes,
+                              'requested_pool_copy_accounting':args.pool_copy_accounting,
+                              'actual_pool_copy_accounting':state.get('pool_copy_accounting',{}).get('enabled',False),
                               'requested_pixel_local':args.pixel_local,
                               'actual_pixel_local':state.get('pixel_local',{}).get('enabled'),
                               'requested_pixel_local_shared_ds':args.pixel_local_shared_ds,

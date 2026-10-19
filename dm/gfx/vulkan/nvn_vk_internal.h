@@ -47,6 +47,7 @@ typedef struct {
   int gpu_profile,trace_frame_set;
   int pool_ownership_reference;
   int pool_mirror_reference;
+  int pool_copy_accounting;
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
