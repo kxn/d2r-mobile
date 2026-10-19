@@ -10,6 +10,7 @@
 #include "hle.h"
 #include "dm_cursor.h"
 #include "dm_custom.h"
+#include "fixture_output.h"
 #include <android/native_window_jni.h>
 #include <jni.h>
 #include <sys/stat.h>
@@ -720,15 +721,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     unsetenv("DM_VULKAN_SYNC_VALIDATE");
   }
   snprintf(file, sizeof file, "%s/vulkan-test.log", path);
-  if (!freopen(file, "w", stderr))
-    _exit(90);
-  if (!freopen(file, "a", stdout))
-    _exit(91);
-  // 两个 FILE 各有偏移；禁用缓存，防 stderr 尾部刷新覆盖 stdout 的 JSON 结果。
-  // The FILE objects have separate offsets. Disable buffering so a final
-  // stderr flush cannot overwrite stdout's appended JSON result.
-  setvbuf(stderr, NULL, _IONBF, 0);
-  setvbuf(stdout, NULL, _IONBF, 0);
+  int output_error=dm_fixture_output_open(file);
+  if(output_error) _exit(output_error);
   printf("{\"test_configuration\":\"vulkan\",\"validation_layer\":\"%s\","
          "\"synchronization_validation\":\"%s\","
          "\"zero_error_counter_does_not_imply_validation\":true}\n",
