@@ -1089,10 +1089,27 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
       buffer=kind==8?&S.ubo[0][reg]:&S.ssbo[0][reg];
     if(buffer) vk_buffer_vertex_require(buffer->addr,buffer->size);
   }
+  // Consecutive attributes often share one complete VBO range. Only reuse
+  // the immediately preceding require in this draw; a different range must
+  // still run, even if an earlier stream already named the same bytes.
+  uint64_t previous_vertex_address=0,previous_vertex_size=0;
+  int previous_vertex_valid=0;
   for(unsigned a=0;a<16;a++)
     if((list[0]->input_mask&(1u<<a))&&S.attr[a].fmt) {
       unsigned stream=S.attr[a].stream;
-      if(stream<16) vk_buffer_vertex_require(S.vertex[stream].address,S.vertex[stream].size);
+      if(stream>=16) {previous_vertex_valid=0;continue;}
+      uint64_t address=S.vertex[stream].address,size=S.vertex[stream].size;
+      if(previous_vertex_valid && address==previous_vertex_address && size==previous_vertex_size)continue;
+      VkCommandBuffer command=V.cmd;
+      uint64_t serial=vk_recording_serial(),pass=V.passes,epoch=V.buffer_epoch;
+      uint64_t state=vk_pipeline_state_epoch();
+      vk_buffer_vertex_require(address,size);
+      previous_vertex_address=address;previous_vertex_size=size;
+      // Require re-queries writers after pass-end/ghost callbacks. Still do
+      // not cache a call that changed its recording or state: let the next
+      // identical attribute conservatively re-enter the ordinary closed loop.
+      previous_vertex_valid=command==V.cmd && serial==vk_recording_serial() && pass==V.passes &&
+          epoch==V.buffer_epoch && state==vk_pipeline_state_epoch();
     }
   if(idx) vk_buffer_vertex_require(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4));
   VkDescriptorSet sets[6] = {0};

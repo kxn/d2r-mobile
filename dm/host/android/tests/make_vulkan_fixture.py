@@ -308,6 +308,7 @@ layout(set=2,binding=2,std140) uniform Handles { uvec4 handles[4096]; };
 layout(set=2,binding=3,std430) writeonly buffer Output { uvec4 result; };
 void main(){result=handles[4095];}
 '''
+generated_markers=set()
 for marker, stage, suffix, code, bindings in (
     (59,5,'comp',driver_sparse_compute,[[1,1,0,0,0,1,0,0],[1,2,2,0,0,1,0,0],[2,3,15,0,1,1,0,0]]),
     (60,5,'comp',driver_sparse_other,[[1,1,0,0,0,1,0,0],[1,2,2,0,0,1,0,0],[2,3,15,0,1,1,0,0]]),
@@ -337,6 +338,15 @@ for marker, stage, suffix, code, bindings in (
     (37,0,'vert',nofxaa_vertex,[]),
     (38,1,'frag',nofxaa_fragment,[[3,1,0,0,0,1,2,3]]),
     (36,1,'frag',zero_fragment,[[3,1,0,0,0,1,2,3],[1,2,7,0,0,1,0,0]]),
+    (65,0,'vert','''#version 450
+layout(location=0)in vec2 p;layout(location=1)in vec4 a;layout(location=2)in vec4 b;layout(location=3)in vec4 c;
+layout(location=0)out vec4 color;
+void main(){gl_Position=vec4(p,0,1);color=a+b+c;}
+''',[]),
+    (66,1,'frag','''#version 450
+layout(location=0)in vec4 color;layout(location=0)out vec4 value;
+void main(){value=color;}
+''',[]),
     (35,5,'comp',float16_compute,[[2,1,0,0,0,1,0,0],[2,2,1,0,1,1,0,0]]),
     (0, 0, 'vert', vertex, []),
     (13, 0, 'vert', vertex, []),
@@ -374,6 +384,8 @@ for marker, stage, suffix, code, bindings in (
     (11, 1, 'frag', instance_fragment, []),
     (12, 0, 'vert', ui_vertex, [[1,1,3,0,0,1,0,0]]),
 ):
+    if marker in generated_markers:raise ValueError(f"Duplicate owned shader marker: {marker}")
+    generated_markers.add(marker)
     key = hashlib.sha256(bytes([marker])*0x880).hexdigest()[:16]
     source = root / (key + '.' + suffix)
     source.write_text(code)

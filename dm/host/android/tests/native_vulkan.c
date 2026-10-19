@@ -457,6 +457,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_sampled_array.inc"
 #include "native_vulkan_clear_group.inc"
 #include "native_vulkan_vertex_binding.inc"
+#include "native_vulkan_vertex_require.inc"
 #include "native_vulkan_logical_preflight.inc"
 #include "native_vulkan_deferred_mip_clear.inc"
 #include "native_vulkan_pending_read.inc"
@@ -509,6 +510,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
+  if(getenv("DM_VERTEX_REQUIRE_FIXTURE")) {vertex_require_dedup_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"vertex-require\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if (getenv("DM_VULKAN_ACQUIRE_TEST")) return acquire_sync_scope_test();
   int old_upload_dual=upload_dual_fixture_begin();
   if (getenv("DM_VULKAN_MEMORY_TEST")) {
@@ -1907,6 +1909,7 @@ int dm_vulkan_test_main(void) {
   uniform_predicate_test(controls[0]);
   clear_group_depth_test(controls[0],controls[1],controls[2]);
   vertex_index_binding_test(controls[12],controls[4]);
+  vertex_require_dedup_test();
   deferred_mip_clear_test(controls[0],controls[1],controls[5],controls[9],controls[2]);
   logical_preflight_test(controls[3],controls[4]);
   pending_cpu_read_test();

@@ -36,5 +36,8 @@ target_compile_definitions(vulkan_host_test PRIVATE _GNU_SOURCE DM_STRICT_HLE=1 
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SUBPASS_TEST_SHADERS=1)
 target_compile_options(vulkan_host_test PRIVATE -g -O1 -Wall -Wno-format -Wno-unused-function)
 target_link_libraries(vulkan_host_test PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+# Owned fixture observes actual require calls, without production counters.
+target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_VERTEX_REQUIRE_WRAP=1)
+target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_buffer_vertex_require")
 add_dependencies(vulkan_host_test dm_vulkan_builtins)
 add_dependencies(vulkan_host_test dm_vulkan_subpass_test_shader)

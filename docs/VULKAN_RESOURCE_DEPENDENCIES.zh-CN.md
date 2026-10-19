@@ -1694,3 +1694,10 @@ Mali ARM64 CLI 的真实 Vulkan memory-pool oracle 400,453 项通过，含非对
 新精化只作用于 producer sampled kind3/6 的检查，要求完整 physical texture 身份/描述/布局相同、受限 2D 单层和双方显式有效不相交 mip 范围。storage/texel、默认/未知/零计数 view、同 mip、不同 serial 的 guest 内存别名仍保守。消费者普通资源别名、实际 token、epoch、geometry、layout 和 hazard 保护不改变。新 9 个实际 GPU 用例覆盖本地来源和 external history 的 sibling mip、重叠与未知负例、后续 STORE/history 和故障回退；原 26 例保留。新正例为 1 pass；用原 a7953b3 planner 加同一新 fixture 的负控则严格失败于 2 pass。独立完整 async 21,813,081 / sync 21,713,669 及窗口、PSO 故障、cover reference 全部通过、零 VUID/SYNC。真实 Android 游戏命中/硬件 tile 合并及收益仍待测，不能把夹具融合当作游戏收益。
 
 CPU 对照已补两厂真机 memory-pool oracle 各 400,453 项；Mali 真实游戏启用 dual upload 完成营地移动和原存档。官方 Perfetto 的 OFF/ON replay 平均 Running 为 20.091/20.104 ms，wall 为 21.128/21.280 ms，运行期加权 CPU 频率 2092.42/2088.98 MHz，未建立净 CPU 改善。OFF 样本解析器最初不接受千位逗号，既有录制已恢复，原失败元数据保留且缺 sample-after；ON scheduler 目标60→30，而其后独立 simpleperf 窗口30→30，不能据此归因 FPS。ON 的新复制循环/短尾仅有5/636个翻译线程 SELF 样本（0.7862%），不能把含旧 iterator/authority 的粗集合当成循环开销。暂保留可选实验，继续核总工作量成本；不将减少逻辑源读取宣称为 DRAM 或温度改善。见 `upload-dual-store-v1-mali-cpu-comparison.json`。
+
+
+### 顶点属性的相邻相同范围不重复查询历史
+
+实际 LLVM 样本落到 vertex attribute require 调用点；已有完整 API 帧的 7,201 次按 attribute 要求可在稳定条件下合并成 2,360 个相邻 exact range，这是机会计数而非当前时间节省。新代码仅在同一 draw 内省略紧邻的完全相同 address/size；不同范围替换 key，A,A,B,A 仍重查最后 A，UBO/IB、实际 buffer resolve/上传/bind 不变。首次 require 前后 command/recording serial/pass/buffer epoch/state epoch 必须不变，任何 pass-end/ghost 新 writer 使下一相同范围保守再查。无跨 draw 缓存、stream bitmask、新原子/锁/分配或运行期开关。
+
+真实 Vulkan GPU 用例覆盖两个 stream 同范围、部分别名、跨 draw retarget、transfer/compute VBO writer、原 UI ghost 导致新 writer、首 A 回调、溢出/全局回退，正确像素及依赖均通过。独立不安全 seen-bitmask 变体在实际 GPU 执行后由官方 SYNC 验证捕获 READ_AFTER_WRITE，不能用仅减少调用数代替正确性。完整 async 21,823,451 / sync 21,724,039 和专用10例、原 abandon+PSO 故障通过，最终零 VUID/SYNC；marker57/58冲突的首次失败已保留，最终换65/66并拒绝重复marker。额外成本是未合并调用前后的四个小 getter、比较与可能的 ARM spill；没有净 CPU cycles、帧率或发热收益结论。见 `vertex-require-dedup-v1-source-ready.json` 及独立审查报告。
