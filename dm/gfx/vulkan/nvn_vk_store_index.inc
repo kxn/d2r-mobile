@@ -2,10 +2,22 @@
 // Upstream sdx-style per-texture buckets and stable scatter. Aliases have their
 // own adjacency lists; unknown reads conservatively require every attachment.
 enum { IX_READ=1,IX_ATT,IX_COLOR,IX_DS };
-typedef struct { uint32_t seq,bucket;int32_t level,layer;uint8_t kind,bits,full; } store_event;
+// Keep full-width sequence and signed view coordinates. Buckets are bounded
+// below, and kind/full need only three/one bits. The two event arrays now copy
+// 16 bytes per event instead of 20 without changing their ordering or proof.
+typedef struct {
+  uint32_t seq;
+  int32_t level,layer;
+  uint16_t bucket;
+  uint8_t kind:3,full:1;
+  uint8_t bits;
+} store_event;
+_Static_assert(sizeof(store_event)==16,"Vulkan store event compact layout");
+_Static_assert(IX_DS<8,"Vulkan store event kind width");
 typedef struct { tex_t texture;uint32_t begin,end,aliases,last_read; } store_bucket;
 typedef struct { uint32_t other,next; } store_alias;
 static store_bucket buckets[4096];
+_Static_assert(sizeof buckets/sizeof *buckets<=UINT16_MAX,"Vulkan store event bucket width");
 static uint16_t bucket_hash[8192];
 static unsigned bucket_count,event_count,event_capacity,global_count,global_capacity,alias_count,alias_capacity;
 static store_event *events,*sorted_events;
@@ -91,7 +103,8 @@ static void bucket_event_add(unsigned seq,int b,const view_t *v,unsigned kind,un
     store_event *p=realloc(events,n*sizeof *p);if(!p) { index_valid=0;return; }events=p;
     p=realloc(sorted_events,n*sizeof *p);if(!p) { index_valid=0;return; }sorted_events=p;event_capacity=n;
   }
-  events[event_count++]=(store_event){seq,b,level(v),layer(v),kind,bits,full};
+  events[event_count++]=(store_event){.seq=seq,.bucket=b,.level=level(v),
+    .layer=layer(v),.kind=kind,.bits=bits,.full=full};
   // During construction end is the bucket count. Only appended events count;
   // duplicate reads and failed growth return before this increment.
   buckets[b].end++;
