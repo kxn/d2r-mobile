@@ -153,6 +153,8 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
     for(unsigned slot=0;slot<2;slot++) {
       for(size_t i=0;i<words;i++)host[slot*words+i]=host_import_pattern(round*3+pass,slot,i);
       host_import_begin(context,slot);
+      host_import_barrier(context->command[slot],VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT);
       host_import_barrier(context->command[slot],VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_ACCESS_HOST_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
       VkBufferCopy copy={.dstOffset=alignment*slot,.size=alignment};
@@ -166,6 +168,8 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
       CHECK(received[slot*words+i]==host_import_pattern(round*3+pass,slot,i));
     for(unsigned slot=0;slot<2;slot++) {
       host_import_begin(context,slot);
+      host_import_barrier(context->command[slot],VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
       vkCmdFillBuffer(context->command[slot],imported[slot],0,alignment,
         UINT32_C(0x75b00000)^round*256u^pass*4u^slot);
       host_import_barrier(context->command[slot],VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
