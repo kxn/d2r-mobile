@@ -140,13 +140,15 @@ bad:
 }
 const vk_pixel_local_proof *vk_shader_pixel_local(vk_shader *shader,VkShaderModule actual) {
   if(!shader || !actual || !vk_pixel_local_enabled())return NULL;
-  vk_shader *base=shaders;while(base && strcmp(base->key,shader->key))base=base->next;
-  if(!base)return NULL;
-  if(!base->pixel_local_checked){base->pixel_local_checked=1;base->pixel_local_data=pixel_local_load(base);}
-  pixel_local_cache *cache=base->pixel_local_data;if(!cache)return NULL;
+  // Lifetime-owned construction association: no global shader-list search on
+  // the candidate-draw path. Alternative representations retain this owner.
+  vk_shader *base=shader->canonical_base;
+  if(!base || base->canonical_base!=base)return NULL;
   unsigned kind=shader==base?(actual==base->module?1:actual==base->specialization_module?2:base->predicate&&actual==base->predicate->module?3:0):
     shader==base->texel_storage_alternative?(actual==shader->module?4:actual==shader->specialization_module?5:0):0;
   if(!kind)return NULL;
+  if(!base->pixel_local_checked){base->pixel_local_checked=1;base->pixel_local_data=pixel_local_load(base);}
+  pixel_local_cache *cache=base->pixel_local_data;if(!cache)return NULL;
   for(unsigned i=0;i<cache->count;i++) {
     pixel_local_record *r=&cache->records[i];if(r->kind!=kind)continue;
     vk_pixel_local_proof *proof=&r->proof;
@@ -155,6 +157,7 @@ const vk_pixel_local_proof *vk_shader_pixel_local(vk_shader *shader,VkShaderModu
     if(proof->count>V.props.limits.maxPerStageDescriptorInputAttachments || proof->count>V.props.limits.maxDescriptorSetInputAttachments)return NULL;
     vk_shader *alt=calloc(1,sizeof *alt);if(!alt)return NULL;*alt=*shader;
     alt->next=NULL;alt->texel_storage_alternative=NULL;alt->predicate=NULL;
+    alt->canonical_base=base;
     alt->pixel_local_data=NULL;alt->pixel_local_checked=1;
     alt->bindings=malloc(shader->nb*sizeof *alt->bindings);if(!alt->bindings){free(alt);return NULL;}
     memcpy(alt->bindings,shader->bindings,shader->nb*sizeof *alt->bindings);

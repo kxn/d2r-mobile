@@ -50,6 +50,7 @@ static void texel_storage_load(vk_shader *base,const uint32_t *original,size_t o
   if(memcmp(digest,data+14,32))die("Vulkan texel alternative specialization mismatch: %s",base->key);
   vk_shader *alt=malloc(sizeof *alt);if(!alt)die("Vulkan texel alternative allocation");
   *alt=*base;alt->next=NULL;alt->texel_storage_alternative=NULL;
+  alt->canonical_base=base->canonical_base;
   // Independent cache identity, even when the proved read-set union is the
   // same. Handles/layout and every dynamic resource check remain separate.
   alt->driver_schema[0]=alt->driver_schema[1]=NULL;

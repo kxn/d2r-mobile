@@ -20,11 +20,17 @@ static int pixel_local_loader_test(void) {
     if(proof)die("pixel-local default must be off");
     LOG("[pixel-local loader fixture] default off, original module retained");return 0;
   }
-  if(!proof || proof->count!=4 || proof->uv_location!=1 || proof->shader==fs || proof->source_shader!=fs || proof->module==fs->module)
+  if(!proof || fs->canonical_base!=fs || proof->shader->canonical_base!=fs ||
+     proof->count!=4 || proof->uv_location!=1 || proof->shader==fs || proof->source_shader!=fs || proof->module==fs->module)
     die("pixel-local four-input module/schema fixture");
   for(unsigned i=0;i<4;i++)if(proof->bindings[i].binding!=i+1 || proof->bindings[i].input_index!=i)
     die("pixel-local full-group fixed mapping");
-  if(vk_shader_pixel_local(fs,fs->module)!=proof)die("pixel-local immutable proof identity");
+  for(unsigned repeat=0;repeat<32;repeat++)
+    if(vk_shader_pixel_local(fs,fs->module)!=proof)die("pixel-local immutable proof identity");
+  vk_shader orphan=*fs;orphan.canonical_base=NULL;
+  if(vk_shader_pixel_local(&orphan,fs->module))die("pixel-local missing owner accepted");
+  vk_shader invalid_owner=*fs;invalid_owner.canonical_base=fs;orphan.canonical_base=&invalid_owner;
+  if(vk_shader_pixel_local(&orphan,fs->module))die("pixel-local invalid owning base accepted");
   vk_shader *vs=vk_shader_load_key("0000000000000002");
   const vk_pixel_local_proof *vertex=vk_shader_pixel_local(vs,vs->module);
   if(!vertex || vertex->count || vertex->uv_count!=1 || vertex->position_attribute || vertex->uv[0].mode!=1 ||
@@ -44,7 +50,8 @@ static int pixel_local_loader_test(void) {
   const vk_pixel_local_proof *records[5];
   for(unsigned i=0;i<5;i++) {
     records[i]=vk_shader_pixel_local(sources[i],modules[i]);
-    if(!records[i] || records[i]->count!=1 || records[i]->bindings[0].binding!=3 || records[i]->source_shader!=sources[i])
+    if(!records[i] || sources[i]->canonical_base!=all || records[i]->shader->canonical_base!=all ||
+       records[i]->count!=1 || records[i]->bindings[0].binding!=3 || records[i]->source_shader!=sources[i])
       die("pixel-local source module independent proof %u",i);
     for(unsigned j=0;j<i;j++)if(records[i]==records[j] || records[i]->module==records[j]->module || records[i]->shader==records[j]->shader)
       die("pixel-local variants inherited another module proof");

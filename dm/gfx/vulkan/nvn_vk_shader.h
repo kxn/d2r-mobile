@@ -25,6 +25,7 @@ typedef struct vk_driver_schema {
 } vk_driver_schema;
 typedef struct vk_shader {
   struct vk_shader *next;
+  struct vk_shader *canonical_base; // immutable lifetime owner; original shaders point to themselves
   struct vk_shader *texel_storage_alternative;
   char key[17];
   uint8_t fingerprint[32];

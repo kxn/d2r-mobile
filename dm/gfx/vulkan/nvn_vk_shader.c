@@ -468,12 +468,17 @@ int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
     fclose(f);if(!ok){free(data);return 0;}
     CC_SHA256(data,st.st_size,hashes[i]);free(data);
   }
-  // Preserve legacy identities when no optional DPL1 artifact exists.
+  // The startup-disabled path uses only the original five-artifact identity:
+  // no DPL1 file probe/read is added. Enabled input variants include the full
+  // optional closure during shader creation/prewarm verification, never draw
+  // lookup. A later prewarm verification may recompute this fingerprint.
   CC_SHA256(hashes,sizeof hashes,digest);
-  size_t local_bytes;void *local=pixel_local_read(key,"plocal",&local_bytes);
-  if(local) {
-    uint8_t combined[64];memcpy(combined,digest,32);
-    CC_SHA256(local,local_bytes,combined+32);free(local);CC_SHA256(combined,sizeof combined,digest);
+  if(vk_pixel_local_enabled()) {
+    size_t local_bytes;void *local=pixel_local_read(key,"plocal",&local_bytes);
+    if(local) {
+      uint8_t combined[64];memcpy(combined,digest,32);
+      CC_SHA256(local,local_bytes,combined+32);free(local);CC_SHA256(combined,sizeof combined,digest);
+    }
   }
   return 1;
 }
@@ -508,6 +513,7 @@ vk_shader *vk_shader_load_key(const char *key) {
   vk_shader *s = calloc(1, sizeof *s);
   if (!s)
     die("Vulkan shader allocation");
+  s->canonical_base=s;
   strcpy(s->key, key);
   if(!vk_shader_fingerprint(key,s->fingerprint))die("Vulkan shader fingerprint: %s",key);
   s->stage = metadata[1];
