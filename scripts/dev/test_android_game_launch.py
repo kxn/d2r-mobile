@@ -29,6 +29,24 @@ class PoolWindowLaunchTests(unittest.TestCase):
             runpy.run_path(str(LAUNCHER), run_name='__main__')
         return caught.exception.command
 
+    def test_existing_user_game_is_never_stopped_or_relaunched(self):
+        for appeared_after_wakeup in (False, True):
+            commands = []; queries = []
+            def adb(command, **kwargs):
+                commands.append(command)
+                if 'pidof ' in ' '.join(command):
+                    queries.append(command)
+                    return '' if appeared_after_wakeup and len(queries) == 1 else '12345\n'
+                return ''
+            with self.subTest(appeared_after_wakeup=appeared_after_wakeup), \
+                    patch('sys.argv', [str(LAUNCHER)]), \
+                    patch('subprocess.check_output', side_effect=adb), \
+                    patch('time.sleep'), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER), run_name='__main__')
+            self.assertIn('left untouched', str(caught.exception))
+            self.assertFalse(any('force-stop' in command or 'start' in command for command in commands))
+            self.assertEqual(len(queries), 2 if appeared_after_wakeup else 1)
+
     def test_default_leaves_native_startup_default_unchanged(self):
         self.assertNotIn('pool_window_bytes', self.launch_command([]))
 

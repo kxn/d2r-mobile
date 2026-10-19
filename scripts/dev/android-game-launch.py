@@ -148,11 +148,21 @@ def read(leaf):
 
 # 抓帧工具负责启动时，只等待原游戏观测，不用重启覆盖工具的注入环境。
 # Capture tools own launch/injection; attach only observes the original game.
+def require_stopped_game():
+    # A cold launcher does not own a pre-existing user game. Lifecycle saving
+    # and stopping belong to the controller that actually launched that PID.
+    current = adb('shell', 'pidof ' + package + ' || true').strip()
+    if current:
+        raise SystemExit('Game is already running (PID ' + current +
+                         '); use --attach to observe it. Existing process left untouched.')
+
+
 if not args.attach:
+    require_stopped_game()
     adb('shell', 'input', 'keyevent', 'WAKEUP')
     adb('shell', 'wm', 'dismiss-keyguard')
     time.sleep(.75)
-    adb('shell', 'am', 'force-stop', package)
+    require_stopped_game()
     launch = ['shell', 'am', 'start', '-W', '-n', package + '/.MainActivity',
               '--ez', 'run_game', 'true', '--ez', 'run_vulkan_tests', 'false',
               '--ez', 'gpu_profile', str(args.gpu_profile).lower(),
