@@ -1625,4 +1625,8 @@ SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Bus
 
 本轮内存短窗只有公有热 API 已报告 status 0，没有同步硬件能耗或持续发热对照；不据此声称过热已解决，也不通过 ADB 轮询温度。
 
+同像素路径的后续基础提交 `3145d43`、`7077819` 已加入可部署的 DPL1 `.plocal`、实际模块内容闭包和独立描述符布局。每个实际 base/spec/pred/tssbo 模块重新证明，选一个完整的同 UV 读取组，不枚举绑定子集；当前生产 P35 的同组四个输入包含外部 history，不能把它算作三个本地源那样的免写回输入。部署器独立重生成证明/变体再逐字节校验。编译选项 `DMSH_VK_PIXEL_LOCAL_RUNTIME` 与运行时 `DM_VULKAN_PIXEL_LOCAL` 均默认关闭；关闭时保持原指纹且不探测 `.plocal` 文件。
+
+运行时 query 使用构造期固定的 canonical owner 和精确实际 VkShaderModule，最多检查五个记录，不在每次候选 draw 遍历全局 Shader 列表。独立 loader 的损坏闭包、错误 owner、五类模块和当前高通四个真实生产模块已通过官方 Vulkan validation；合入主线后 41 项离线测试及包含生产内存窗口的原 NVN 异步 21,809,890 项检查通过。该提交只提供加载/描述符基础，尚不执行原游戏双 subpass；不能把主机 loader 成功当成实际附件融合或带宽收益。完整链仍须在最终集成源冻结后重建、核验并部署。
+
 另新增通用启动期operation-mode诊断，默认docked不变，显式handheld重用原GetOperationMode/GetPerformanceMode/参数槽，不新写游戏规则；actual dm_opmode启动日志核验，禁止热切换。新13f0包两模式在同包720下对照；Handheld固定720高，game-res只影响手持宽高比。该模式可能影响原游戏分支，但尚不能仅由HLE断言阴影／后处理减少。源与独审见 `operation-mode-v1-source-ready.json`、`operation-mode-v1-root-review.json`。
