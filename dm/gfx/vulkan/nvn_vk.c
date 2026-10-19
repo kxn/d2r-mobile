@@ -82,6 +82,8 @@ enum { POOL_STAGE_COUNT=sizeof pool_stages/sizeof *pool_stages };
 struct pool_gpu_access {
   pool_gpu_access *next;
   pool *owner;
+  uint64_t bitmap_words;
+  unsigned allocated_stages;
   uint64_t *pages;
   uint64_t *upload_pages,*overwritten_pages;
   uint64_t *stage_pages[POOL_STAGE_COUNT];
@@ -309,6 +311,9 @@ typedef struct submit_resources {
   pool_writeback *writebacks;
   pending_cpu_copy *cpu_copies;
   pool_gpu_access *gpu_accesses;
+  pool_gpu_access *cached_gpu_accesses;
+  uint64_t cached_gpu_access_bytes;
+  unsigned cached_gpu_access_count;
   cpu_write_range *cpu_writes;
   size_t cpu_write_count;
   uint64_t queue_serial,readback_bytes;
@@ -336,6 +341,7 @@ typedef struct submit_resources {
   gpu_region regions[GPU_REGIONS];
 } submit_resources;
 static submit_resources *recording_resources, *available_resources;
+#include "nvn_vk_pool_access_cache.inc"
 VkCommandBuffer vk_command_buffer(VkCommandBufferLevel level) {
   submit_resources *r = recording_resources;
   if (!r || (level != VK_COMMAND_BUFFER_LEVEL_PRIMARY &&
@@ -757,7 +763,6 @@ void vk_pool_lookup_stats(uint64_t *hits,uint64_t *ranges,uint64_t *slow,int *re
 }
 static void record_pool_range(pool_gpu_access *use,uint64_t offset,uint64_t size,
                               VkPipelineStageFlags stages,int initial_contents) {
-  pool *p=use->owner;
   VkPipelineStageFlags known=0;
   for(unsigned k=0;k<POOL_STAGE_COUNT-1;k++) known|=pool_stages[k];
   if(!stages||(stages&~known)) stages=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -798,9 +803,9 @@ static void record_pool_range(pool_gpu_access *use,uint64_t offset,uint64_t size
   }
   for(unsigned k=0;k<POOL_STAGE_COUNT;k++) if(stages&pool_stages[k]) {
     if(!use->stage_pages[k]) {
-      uint64_t words=((p->size-1)>>(GPU_ACCESS_SHIFT+6))+1;
-      use->stage_pages[k]=calloc(words,sizeof(uint64_t));
+      use->stage_pages[k]=calloc(use->bitmap_words,sizeof(uint64_t));
       if(!use->stage_pages[k]) die("Vulkan stage access bitmap allocation");
+      use->allocated_stages|=1u<<k;
     }
     if(single_word) {
       if((use->stage_pages[k][word]&mask)!=mask) {
@@ -826,14 +831,18 @@ static pool_gpu_access *record_pool_use(pool *p,uint64_t offset,uint64_t size,
   if (p->access_serial == recording_resources->queue_serial) {
     use = p->recording_access;
   } else {
-    use = calloc(1, sizeof *use);
-    if (!use) die("Vulkan GPU-access pool allocation");
     uint64_t words = ((p->size - 1) >> (GPU_ACCESS_SHIFT + 6)) + 1;
     if (words > SIZE_MAX / (3*sizeof(uint64_t))) die("Vulkan GPU-access bitmap size");
-    use->pages = calloc((size_t)words*3, sizeof(uint64_t));
-    if (!use->pages) die("Vulkan GPU-access bitmap allocation");
-    use->upload_pages=use->pages+words;
-    use->overwritten_pages=use->upload_pages+words;
+    use=pool_access_cache_take(recording_resources,words);
+    if(!use) {
+      use = calloc(1, sizeof *use);
+      if (!use) die("Vulkan GPU-access pool allocation");
+      use->bitmap_words=words;
+      use->pages = calloc((size_t)words*3, sizeof(uint64_t));
+      if (!use->pages) die("Vulkan GPU-access bitmap allocation");
+      use->upload_pages=use->pages+words;
+      use->overwritten_pages=use->upload_pages+words;
+    }
     use->owner = p;
     use->next = recording_resources->gpu_accesses;
     recording_resources->gpu_accesses = use;
@@ -891,9 +900,7 @@ static void reclaim_submissions(void) {
     while (r->gpu_accesses) {
       pool_gpu_access *use = r->gpu_accesses;
       r->gpu_accesses = use->next;
-      free(use->pages);
-      for(unsigned k=0;k<POOL_STAGE_COUNT;k++) free(use->stage_pages[k]);
-      free(use);
+      pool_access_cache_retire(r,use);
     }
     while (r->temporaries) {
       temporary *t = r->temporaries;
@@ -924,6 +931,7 @@ int mtl_trim_idle_resources(void) {
   // pool; the next begin lazily rebuilds it. Active/in-flight owners stay put.
   for(submit_resources *r=available_resources;r;r=r->next) {
     vk_shader_destroy(r->shader);r->shader=NULL;
+    pool_access_cache_trim(r);
   }
   while(reusable_temporaries) {
     temporary *t=reusable_temporaries;reusable_temporaries=t->next;
@@ -1205,6 +1213,7 @@ static void init_options(void) {
   o->extrap_mask=getenv("DM_RT_TEST_MASK")!=NULL;
   o->gpu_profile=getenv("DM_VULKAN_GPU_PROFILE")!=NULL;
   o->pool_ownership_reference=option_one("DM_VULKAN_POOL_OWNERSHIP_REFERENCE");
+  o->pool_access_cache_reference=option_one("DM_VULKAN_POOL_ACCESS_CACHE_REFERENCE");
   o->pool_mirror_reference=atomic_load(&pool_mirror_requested);
   if(o->pool_mirror_reference<0) o->pool_mirror_reference=option_one("DM_VULKAN_EAGER_POOL_MIRRORS");
   const char *sets=getenv("DM_TEST_VULKAN_DESCRIPTOR_POOL_SETS");
