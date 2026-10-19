@@ -1334,6 +1334,7 @@ static void init_device(void) {
   ci.ppEnabledExtensionNames = extensions;
   VK_CHECK(vkCreateInstance(&ci, NULL, &V.instance));
   volkLoadInstance(V.instance);
+  vk_loader_check_instance(V.instance,vk_window_attached());
   vk_window_surface_create();
   if (getenv("DM_VULKAN_VALIDATE")) {
     VkDebugUtilsMessengerEXT messenger;
@@ -1405,6 +1406,7 @@ static void init_device(void) {
                            .pEnabledFeatures = &V.features};
   const char *device_extensions[16];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
+  int have_driver_properties=0;
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
   VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {
@@ -1424,6 +1426,8 @@ static void init_device(void) {
     if (V.options.astc_decode_unorm8 &&
         !strcmp(available[i].extensionName,VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME))
       V.astc_decode_mode=1;
+    if (!strcmp(available[i].extensionName,VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME))
+      have_driver_properties=1;
     if (!strcmp(available[i].extensionName, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME))
       have_timeline = 1;
     if (!strcmp(available[i].extensionName,VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME))
@@ -1455,6 +1459,7 @@ static void init_device(void) {
     }
 #endif
   free(available);
+  vk_loader_check_device(V.physical,have_driver_properties);
   if (have_divisor) {
     VkPhysicalDeviceFeatures2 query = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &divisor};

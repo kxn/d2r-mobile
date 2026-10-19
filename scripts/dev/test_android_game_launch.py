@@ -131,6 +131,38 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 2)
             adb.assert_not_called()
 
+    def test_driver_default_legacy_and_explicit_provider(self):
+        self.assertNotIn('vulkan_driver', self.launch_command([]))
+        legacy = self.launch_command(['--custom-vulkan-driver'])
+        index = legacy.index('custom_vulkan_driver')
+        self.assertEqual(legacy[index - 1:index + 2], ['--ez', 'custom_vulkan_driver', 'true'])
+        for provider in ('system', 'adreno', 'panvk'):
+            command = self.launch_command(['--vulkan-driver', provider])
+            index = command.index('vulkan_driver')
+            self.assertEqual(command[index - 1:index + 2], ['--es', 'vulkan_driver', provider])
+
+    def test_driver_selection_requires_cold_start(self):
+        for options in (['--custom-vulkan-driver'], *[
+                ['--vulkan-driver', provider] for provider in ('system', 'adreno', 'panvk')]):
+            with self.subTest(options=options), \
+                    patch('sys.argv', [str(LAUNCHER), '--attach', *options]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER), run_name='__main__')
+            self.assertEqual(caught.exception.code, 2)
+            adb.assert_not_called()
+
+    def test_conflicting_or_unknown_driver_never_contacts_device(self):
+        for options in (['--vulkan-driver', 'unknown'],
+                        ['--custom-vulkan-driver', '--vulkan-driver', 'panvk']):
+            with self.subTest(options=options), \
+                    patch('sys.argv', [str(LAUNCHER), *options]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER), run_name='__main__')
+            self.assertEqual(caught.exception.code, 2)
+            adb.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

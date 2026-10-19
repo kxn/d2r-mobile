@@ -62,7 +62,9 @@ parser.add_argument('--texture-binding-reference', action='store_true', help='re
 parser.add_argument('--sampler-lookup-reference',action='store_true',help='comparison: lock the sampler registry for every binding')
 parser.add_argument('--no-fxaa',action='store_true',help='upstream optional quality tradeoff: retain native resolution but bypass FXAA edge filtering (default off)')
 parser.add_argument('--bloom-quarter',action=argparse.BooleanOptionalAction,default=True,help='upstream bloom A+B1 merge with full-chain proof and original C materialization (default on; --no-bloom-quarter for comparison)')
-parser.add_argument('--custom-vulkan-driver',action='store_true',help='startup-only: load the verified per-app driver from runtime/vulkan-driver')
+vulkan_driver=parser.add_mutually_exclusive_group()
+vulkan_driver.add_argument('--custom-vulkan-driver',action='store_true',help='startup-only legacy Adreno driver from runtime/vulkan-driver')
+vulkan_driver.add_argument('--vulkan-driver',choices=['system','adreno','panvk'],help='cold-start-only developer driver selection; panvk loads runtime/vulkan-panfrost/libvulkan_panfrost.so directly (no GPU compatibility implied)')
 layout_policy=parser.add_mutually_exclusive_group()
 layout_policy.add_argument('--optimal-image-layouts',action='store_true',default=True,help='precise color/read-only image layouts (default); complex accesses retain GENERAL')
 layout_policy.add_argument('--general-image-layouts-reference',dest='optimal_image_layouts',action='store_false',help='reference mode using GENERAL layouts for comparison')
@@ -114,6 +116,8 @@ if args.external_profile is None:
     args.external_profile = not (args.gpu_profile or args.validate)
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
+if args.attach and (args.custom_vulkan_driver or args.vulkan_driver is not None):
+    parser.error('Vulkan driver selection is startup-only and cannot be used with --attach')
 if args.attach and args.pool_window_bytes is not None:
     parser.error('--pool-window-bytes is startup-only and cannot be used with --attach')
 if args.attach and args.defer_pool_publication is not None:
@@ -252,6 +256,8 @@ if not args.attach:
     launch += ['--ez','uniform_predicate',str(args.uniform_predicate).lower()]
     launch += ['--ez','deferred_mip_clears',str(args.deferred_mip_clears).lower()]
     launch += ['--ez', 'custom_vulkan_driver', str(args.custom_vulkan_driver).lower()]
+    if args.vulkan_driver is not None:
+        launch += ['--es', 'vulkan_driver', args.vulkan_driver]
     launch += ['--ez', 'pool_mirror_reference', str(args.eager_pool_mirrors_reference).lower()]
     launch += ['--ez', 'stream_submit_reference', str(not args.stream_submits).lower()]
     launch += ['--ez', 'store_descriptor_reference', str(not args.cache_store_descriptors).lower()]

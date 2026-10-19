@@ -72,7 +72,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeMailboxPresent(boolean enabled);
     private static native void nativePresentWorkerReference(boolean reference, boolean sharedQueue);
     private static native void nativeBloomQuarterEnabled(boolean enabled);
-    private static native void nativeVulkanDriver(String directory, String hooks);
+    private static native void nativeVulkanDriver(String provider, String directory, String hooks);
     private static native void nativeStreamSubmitReference(boolean reference);
     private static native void nativeStoreDescriptorReference(boolean reference);
     private static native void nativeCoverWaitReference(boolean reference);
@@ -209,9 +209,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeUniformSpecializationEnabled(getIntent().getBooleanExtra("uniform_specialization", true));
         nativeUniformPredicateEnabled(getIntent().getBooleanExtra("uniform_predicate", false));
         nativeDeferredMipClearsEnabled(getIntent().getBooleanExtra("deferred_mip_clears", false));
-        nativeVulkanDriver(getIntent().getBooleanExtra("custom_vulkan_driver", false) ?
-                new File(getFilesDir(), "runtime/vulkan-driver").getAbsolutePath() : null,
-                getApplicationInfo().nativeLibraryDir);
+        String driverProvider = getIntent().getStringExtra("vulkan_driver");
+        if (getIntent().hasExtra("vulkan_driver") && driverProvider == null)
+            throw new IllegalArgumentException("Vulkan driver provider must be a string");
+        boolean legacyCustomDriver = getIntent().getBooleanExtra("custom_vulkan_driver", false);
+        if (driverProvider != null && !driverProvider.equals("system") &&
+                !driverProvider.equals("adreno") && !driverProvider.equals("panvk"))
+            throw new IllegalArgumentException("Unknown Vulkan driver provider");
+        if (legacyCustomDriver && driverProvider != null && !driverProvider.equals("adreno"))
+            throw new IllegalArgumentException("Conflicting Vulkan driver selection");
+        if (legacyCustomDriver) driverProvider = "adreno";
+        boolean panvkDriver = "panvk".equals(driverProvider);
+        boolean appDriver = panvkDriver || "adreno".equals(driverProvider);
+        nativeVulkanDriver(driverProvider, appDriver ?
+                new File(getFilesDir(), panvkDriver ? "runtime/vulkan-panfrost" :
+                        "runtime/vulkan-driver").getAbsolutePath() : null,
+                panvkDriver ? null : getApplicationInfo().nativeLibraryDir);
         nativeStreamSubmitReference(getIntent().getBooleanExtra("stream_submit_reference", false));
         nativeStoreDescriptorReference(getIntent().getBooleanExtra("store_descriptor_reference", false));
         nativeCoverWaitReference(getIntent().getBooleanExtra("cover_wait_reference", false));
