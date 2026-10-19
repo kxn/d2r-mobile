@@ -94,6 +94,55 @@ static void pool_cpu_synced(pool *p,uint64_t offset,uint64_t size,uint64_t cutof
   }
   pthread_mutex_unlock(&pool_cpu_authority_mu);
 }
+// One actual sparse CPU publication can contain many disjoint changed runs.
+// They share the page's retained pool and recording cutoff. Subtract their
+// union once, without making unchanged GPU bytes or newer writers CPU-known.
+// The caller has already copied every run to shadow and its physical mirror
+// (or recorded the existing immutable queued upload). No callbacks occur here.
+static void pool_cpu_synced_runs(pool *p,const VkBufferCopy *runs,unsigned n,uint64_t cutoff) {
+  if(!n || (!p->cpu_authority_tracking&&!p->cpu_copy_requires_gpu))return;
+  uint64_t end=0;
+  for(unsigned k=0;k<n;k++) {
+    uint64_t begin=runs[k].dstOffset,size=runs[k].size;
+    if(!size || begin>p->size || size>p->size-begin || (k && begin<end))
+      die("Vulkan CPU authority sparse publication bounds");
+    end=begin+size;
+  }
+  pthread_mutex_lock(&pool_cpu_authority_mu);
+  pool_cpu_authority *state=p->cpu_authority;
+  if(!state && p->cpu_copy_requires_gpu)state=pool_cpu_state(p);
+  if(state && state->count) {
+    pool_cpu_unknown next[POOL_CPU_UNKNOWN_LIMIT+1];unsigned count=0,first=0;
+    for(unsigned k=0;k<state->count;k++) {
+      pool_cpu_unknown r=state->ranges[k];uint64_t at=r.begin;
+      while(first<n && runs[first].dstOffset+runs[first].size<=at)first++;
+      if(r.generation<=cutoff)for(unsigned j=first;j<n && runs[j].dstOffset<r.end;j++) {
+        uint64_t lo=runs[j].dstOffset,hi=lo+runs[j].size;
+        if(lo>at) {
+          next[count++]=(pool_cpu_unknown){at,lo,r.generation};
+          if(count>POOL_CPU_UNKNOWN_LIMIT)goto scalar;
+        }
+        at=hi<r.end?hi:r.end;
+        if(at==r.end)break;
+      }
+      if(at<r.end) {
+        next[count++]=(pool_cpu_unknown){at,r.end,r.generation};
+        if(count>POOL_CPU_UNKNOWN_LIMIT)goto scalar;
+      }
+    }
+    // All remaining bytes and recording generations retain their exact value.
+    // No partial result is published. An overflow below retains exactly the
+    // original ordered scalar clear behavior, including its useful prefix.
+    memcpy(state->ranges,next,count*sizeof *next);state->count=count;
+  }
+  pthread_mutex_unlock(&pool_cpu_authority_mu);return;
+scalar:
+  // Keep the old knowledge/resource behavior at the bounded precision limit.
+  // Caller still holds publication_mu and this exact pool's lifetime. Never
+  // nest this mutex recursively or advance the original recording cutoff.
+  pthread_mutex_unlock(&pool_cpu_authority_mu);
+  for(unsigned k=0;k<n;k++)pool_cpu_synced(p,runs[k].dstOffset,runs[k].size,cutoff);
+}
 static int pool_cpu_copy_proven(pool *p,uint64_t offset,uint64_t size) {
   if(!p->cpu_authority_tracking&&!p->cpu_copy_requires_gpu)return 1;
   if(!size || offset>p->size || size>p->size-offset)return 0;

@@ -465,6 +465,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pool_policy.inc"
 #include "native_vulkan_pool_finite.inc"
 #include "native_vulkan_pool_cache.inc"
+#include "native_vulkan_pool_authority_batch.inc"
 #include "native_vulkan_pixel_local.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
@@ -512,6 +513,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
+  if(getenv("DM_POOL_AUTHORITY_BATCH_FIXTURE")) {pool_authority_batch_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-authority-batch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_SPAN_CACHE_FIXTURE")) {pool_span_cache_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-span-cache\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_FINITE_FIXTURE")) {pool_finite_consolidation_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-finite\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_VERTEX_REQUIRE_FIXTURE")) {vertex_require_dedup_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"vertex-require\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
@@ -1905,6 +1907,7 @@ int dm_vulkan_test_main(void) {
   initialized_span_test();
   pool_backing_span_test();
   pool_span_cache_test();
+  pool_authority_batch_test();
   pool_finite_consolidation_test();
   pool_window_reservation_test();
   pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);

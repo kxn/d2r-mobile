@@ -2418,19 +2418,17 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       memcpy(snapshot->map,p->guest+off+snapshot_offset,snapshot_size);
       queue_pool_page_upload(p,off,size,snapshot,snapshot_offset,regions,count);
     } else if(upload_dual_enabled && !recording_resources->upload_scan_reference) {
-      for(unsigned i=0;i<count;i++) {
+      for(unsigned i=0;i<count;i++)
         pool_spans_copy_dual(p,regions[i].dstOffset,regions[i].size);
-        pool_cpu_synced(p,regions[i].dstOffset,regions[i].size,recording_resources->cpu_authority_begin);
-      }
+      pool_cpu_synced_runs(p,regions,count,recording_resources->cpu_authority_begin);
       pthread_mutex_unlock(&pool_publication_mu);return;
     } else {
       for(unsigned i=0;i<count;i++)
         pool_spans_copy_from_guest(p,regions[i].dstOffset,regions[i].size);
     }
-    for(unsigned i=0;i<count;i++) {
+    for(unsigned i=0;i<count;i++)
       memcpy(p->shadow+regions[i].dstOffset,p->guest+regions[i].dstOffset,regions[i].size);
-      pool_cpu_synced(p,regions[i].dstOffset,regions[i].size,recording_resources->cpu_authority_begin);
-    }
+    pool_cpu_synced_runs(p,regions,count,recording_resources->cpu_authority_begin);
     pthread_mutex_unlock(&pool_publication_mu);return;
   }
 }
