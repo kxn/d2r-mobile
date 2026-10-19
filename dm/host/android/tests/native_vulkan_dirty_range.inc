@@ -84,6 +84,51 @@ static void texture_range_dirty_proof_test(void) {
   CHECK(nvn_dirty_range_refresh(&before,&after));CHECK(after.changes!=before.changes);
   dirty_range_pixels(&a.tex[0],order.value);dirty_range_pixels(&a.tex[1],red);
   nvn_dirty_test_lock_slots(1);CHECK(nvn_dirty_range_refresh(&before,&after));CHECK(!nvn_dirty_range_observe(a.data,4096,&after));nvn_dirty_test_lock_slots(0);
+  // Scoped API only, no import and no renderer cache/admission integration.
+  // Same large tracked pool: a volatile page and two ordinary image pages.
+  dirty_range_fixture scoped;dirty_range_create(&scoped);
+  uint8_t *volatile_page=scoped.data+32768;
+  nvn_dirty_scope_proof scope_before,scope_after;uint64_t scope_epoch,scope_epoch2;
+  CHECK(nvn_dirty_scope_observe(scoped.data,4096,&scope_before,&scope_epoch));
+  nvn_dirty_owned_exclusion excluded={0};CHECK(nvn_dirty_owned_exclude(volatile_page,4096,&excluded));
+  CHECK(!nvn_dirty_change_epoch());
+  CHECK(nvn_dirty_scope_refresh(scoped.data,4096,&scope_before,&scope_after,&scope_epoch2));
+  CHECK(scope_after.changes!=scope_before.changes && scope_epoch2!=scope_epoch);
+  dirty_range_fill(scoped.data,4096,red);dirty_range_fill(scoped.data+65536,4096,green);
+  dirty_range_pixels(&scoped.tex[0],red);dirty_range_pixels(&scoped.tex[1],green);
+  CHECK(nvn_dirty_scope_observe(scoped.data,4096,&scope_before,&scope_epoch));
+  nvn_dirty_test_lock_slots(1);
+  CHECK(nvn_dirty_scope_refresh(scoped.data,4096,&scope_before,&scope_after,&scope_epoch2));
+  CHECK(!nvn_dirty_scope_observe(scoped.data,4096,&scope_after,&scope_epoch2));
+  nvn_dirty_test_lock_slots(0); // cached refresh above never takes the registry mutex
+  nvn_dirty_protect(volatile_page,4096);
+  dirty_range_fill(volatile_page,4096,blue); // original protect skips held page
+  CHECK(nvn_dirty_scope_refresh(scoped.data,4096,&scope_before,&scope_after,&scope_epoch2));
+  CHECK(scope_after.changes==scope_before.changes && scope_epoch2==scope_epoch);
+  CHECK(!nvn_dirty_scope_observe(volatile_page,4096,&scope_after,&scope_epoch2));
+  CHECK(nvn_dirty_since(volatile_page,4096,UINT64_MAX));
+  CHECK(!nvn_dirty_since(scoped.data,4096,UINT64_MAX));
+  dirty_range_pixels(&scoped.tex[0],red); // stable actual image while owned bytes change
+  uint64_t original_stamp=nvn_dirty_now();
+  dirty_range_fill(scoped.data,4096,green); // original real CPU write fault
+  CHECK(nvn_dirty_scope_refresh(scoped.data,4096,&scope_before,&scope_after,&scope_epoch2));
+  CHECK(scope_after.changes!=scope_before.changes && scope_epoch2!=scope_epoch);
+  CHECK(nvn_dirty_since(scoped.data,4096,original_stamp));
+  dirty_range_pixels(&scoped.tex[0],green);dirty_range_pixels(&scoped.tex[1],green);
+  // Before the FIRST image use of excluded bytes, release only after the
+  // preceding original GPU-copy fences completed (there is no import to free).
+  CHECK(nvn_dirty_owned_release(&excluded));
+  CHECK(nvn_dirty_scope_observe(volatile_page,4096,&scope_after,&scope_epoch2));
+  NVNtextureBuilder late_builder;NVNtexture late;
+  CALL(nvnTextureBuilderSetDefaults,&late_builder);CALL(nvnTextureBuilderSetDevice,&late_builder,&device);
+  CALL(nvnTextureBuilderSetTarget,&late_builder,NVN_TEXTURE_TARGET_2D);
+  CALL(nvnTextureBuilderSetWidth,&late_builder,16);CALL(nvnTextureBuilderSetHeight,&late_builder,16);
+  CALL(nvnTextureBuilderSetFormat,&late_builder,NVN_FORMAT_RGBA8);
+  NVNpackagedTextureLayout late_layout={{0}};CALL(nvnTextureBuilderSetPackagedTextureLayout,&late_builder,&late_layout);
+  CALL(nvnTextureBuilderSetStorage,&late_builder,&scoped.pool,32768);
+  CHECK(CALL(nvnTextureInitialize,&late,&late_builder));dirty_range_pixels(&late,blue);
+  dirty_range_fill(volatile_page,4096,red);dirty_range_pixels(&late,red);
+  CALL(nvnTextureFinalize,&late);dirty_range_destroy(&scoped);
   CHECK(!nvn_dirty_range_observe((void *)(UINTPTR_MAX-7),16,&after));
   CHECK(!nvn_dirty_range_observe(a.data+(1<<20)-8,16,&after));
   CHECK(!nvn_dirty_range_observe(a.data,0,&after));
