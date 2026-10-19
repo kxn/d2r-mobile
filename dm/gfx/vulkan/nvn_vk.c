@@ -2396,11 +2396,18 @@ static inline unsigned append_changed_word_runs(uint32_t changed,uint64_t block,
 }
 static unsigned changed_word_ranges(const uint8_t *guest,const uint8_t *shadow,
                                     uint64_t offset,size_t size,VkBufferCopy *runs) {
-  unsigned count=0;size_t block=0,whole=size&~(size_t)63;
-  // Full blocks use a fixed bound/stride, so the all-equal loop does not
-  // repeatedly derive a tail word count. The final bounded tail is separate.
-  for(;block<whole;block+=64)
+  unsigned count=0;size_t block=0,whole=size&~(size_t)63,paired=size&~(size_t)127;
+  // Two proven in-bounds blocks share only loop bookkeeping. Each block keeps
+  // the original mask/append order; equal GPU-owned words are never copied.
+  for(;block<paired;block+=128) {
     count=append_changed_word_runs(changed_word_mask(guest+block,shadow+block,16),block,offset,runs,count);
+    count=append_changed_word_runs(changed_word_mask(guest+block+64,shadow+block+64,16),block+64,offset,runs,count);
+  }
+  // Retain the original single full block and bounded tail operations.
+  if(block<whole) {
+    count=append_changed_word_runs(changed_word_mask(guest+block,shadow+block,16),block,offset,runs,count);
+    block+=64;
+  }
   if(block<size)
     count=append_changed_word_runs(changed_word_mask(guest+block,shadow+block,(size-block)/4),block,offset,runs,count);
   return count;
@@ -2410,6 +2417,12 @@ static unsigned changed_word_ranges(const uint8_t *guest,const uint8_t *shadow,
 uint32_t vk_test_upload_word_mask(const uint8_t *guest,const uint8_t *shadow,unsigned words) {
   return changed_word_mask(guest,shadow,words);
 }
+#ifdef DM_VULKAN_SCAN_PAIR_ORACLE
+unsigned vk_test_upload_word_runs(const uint8_t *guest,const uint8_t *shadow,
+    uint64_t offset,size_t size,VkBufferCopy *runs) {
+  return changed_word_ranges(guest,shadow,offset,size,runs);
+}
+#endif
 // Functional boundary oracle only, with real registered physical backings.
 // It never copies, initializes, allocates, changes history or counts hot work.
 int vk_test_pool_upload_page_span(uint64_t address,uint64_t size,unsigned count) {

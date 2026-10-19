@@ -33,7 +33,7 @@ static void upload_page_span_test(void) {
     uint32_t gpu=0x87654321;mtl_sub_begin();pool_window_fill(storage+P+128,4,gpu);vk_internal_wait(vk_internal_commit());
     CHECK(memcmp(storage+P+128,&gpu,4));memcpy(expected+128,&gpu,4);
   }
-  const unsigned offsets[]={4,64,252,1020,4092};
+  const unsigned offsets[]={4,60,64,124,132,252,256,1020,4092};
   for(unsigned i=0;i<sizeof offsets/sizeof *offsets;i++) {
     uint32_t value=0xabc01200+i;dm_guest_write_prepare(storage+P+offsets[i],4);
     memcpy(storage+P+offsets[i],&value,4);memcpy(expected+offsets[i],&value,4);

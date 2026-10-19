@@ -395,3 +395,22 @@ host DWARF，尚不是 Android 物理驻留量或运行时间结论。
 证据冻结于本机 `.local/logs/texture-range-dirty-proof-v1-source-ready.json`。
 这是底层纹理脏页检查减负，没有改游戏模块、Shader 或玩法；整帧和发热收益
 仍待当前 Android 包验证。
+
+
+## 脏页扫描共用两块循环控制
+
+64498d2 的官方 CPU Profile 在页比较的循环与成对读取位置仍有样本。保留每个
+64B 块原有 NEON 比较、mask 与 append 次序，只将两个已证明在范围内的块
+顺序放进同一轮 128B 循环；剩余 64B 块和有限尾段走原算法。不增加读取范围，
+不包含未改动的 GPU-owned 字，不改变上传、shadow 或 authority。
+
+独立 NDK O3 编译确认，全等核心每 128B 从两轮 40 条静态指令变为 35 条，
+主要省循环判断和基址运算；不含一次性 setup、尾段及不同 mask 分布的成本。
+`sync_page` 代码增 516B，栈帧少 16B，SP/FP 静态地址位置少 4 处。代码增大会
+增加指令缓存压力，这些静态数值不能代替 Android 耗时或帧率对照。
+
+真实 Vulkan 尾页 128/132/192/196/256B、64/128B 跨块合并、GPU-only 未修改
+间隔及不可访问 guard 页均已验证；漏掉第二块的错误负对照触发实际 GPU 读回
+字节断言。独立异步／同步全套通过。记录在本机
+`.local/logs/changed-word-scan-v2-source-ready.json`；本项不减少实际比较／上传
+字节，不宣称已降低温度或解决整帧瓶颈。
