@@ -27,7 +27,8 @@ def compiler_options():
     uniform_predicates = os.environ.get('DMSH_VK_UNIFORM_PREDICATES', '0')
     texel_storage = os.environ.get('DMSH_VK_TEXEL_STORAGE_ALTERNATIVES', '0')
     texel_model = os.environ.get('DMSH_VK_TEXEL_LOAD_MODEL', 'identity')
-    if size not in (16, 32, 64, 128) or any(v not in ('0','1') for v in (helper,bias,c1,texels,functions,color_half,uniform_spec,uniform_predicates,texel_storage)):
+    pixel_local = os.environ.get('DMSH_VK_PIXEL_LOCAL_REFLECTION', '0')
+    if size not in (16, 32, 64, 128) or any(v not in ('0','1') for v in (helper,bias,c1,texels,functions,color_half,uniform_spec,uniform_predicates,texel_storage,pixel_local)):
         raise ValueError('expected subgroup size 16/32/64/128 and boolean compiler switches 0/1')
     if uniform_predicates == '1' and uniform_spec != '1':
         raise ValueError('additional Uniform predicates require old full-word specialization')
@@ -45,6 +46,8 @@ def compiler_options():
         options['texel_storage_load_model'] = texel_model
     if uniform_predicates == '1':
         options['uniform_predicates'] = True
+    if pixel_local == '1':
+        options['pixel_local_reflection'] = True
     return options
 
 
@@ -178,7 +181,7 @@ def version(base, translator):
     h.update(Path(__file__).with_name('dmsh_build.py').read_bytes())
     h.update(Path(__file__).with_name('dmsh_storage_bias.py').read_bytes())
     h.update(Path(__file__).with_name('dmsh_constants.py').read_bytes())
-    for name in ('dmsh_float_transfers.py','dmsh_fragment_precision.py','dmsh_uniform_specialization.py','dmsh_uniform_predicates.py','dmsh_texel_ssbo.py','dmsh_driver_keys.py'):
+    for name in ('dmsh_float_transfers.py','dmsh_fragment_precision.py','dmsh_uniform_specialization.py','dmsh_uniform_predicates.py','dmsh_texel_ssbo.py','dmsh_driver_keys.py','dmsh_pixel_local.py'):
         h.update(Path(__file__).with_name(name).read_bytes())
     h.update((Path(__file__).resolve().parents[2] / 'third_party/ryujinx/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs').read_bytes())
     cross = subprocess.run(['spirv-cross', '--version'], capture_output=True)
@@ -188,6 +191,15 @@ def version(base, translator):
     for command in ('spirv-opt', 'spirv-val', 'spirv-as', 'spirv-dis', 'glslangValidator'):
         h.update(subprocess.check_output([command, '--version']))
     return h.hexdigest()[:12]
+
+
+def pixel_local_cache_valid(root, key, cached, enabled):
+    """Optional proof integrity is part of cache acceptance, never self-hashed."""
+    path=Path(root)/(key+'.plocal.json')
+    expected=cached.get('pixel_local',{}).get('sha256')
+    if not enabled:
+        return not expected and not path.exists()
+    return bool(expected and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==expected)
 
 
 def cache_inputs_match(cached, chain, source_sha256, c1):
@@ -304,7 +316,8 @@ def build(g):
                 pred_valid=(pred.is_file() and hashlib.sha256(pred.read_bytes()).hexdigest()==pred_hash) if pred_hash else not pred.exists()
                 dkey=out/(key+'.dkey');dkey_hash=cached.get('driver_keys',{}).get('sha256')
                 dkey_valid=dkey.is_file() and hashlib.sha256(dkey.read_bytes()).hexdigest()==dkey_hash
-                if dkey_valid and pred_valid and alt_valid and spec_valid and cache_inputs_match(cached,g['CHAIN'],code_hash,constants[key]) and cached.get('spirv_sha256') == hashlib.sha256(blob.read_bytes()).hexdigest() and cached.get('metadata_sha256') == hashlib.sha256((out / (key + '.meta')).read_bytes()).hexdigest():
+                plocal_valid=pixel_local_cache_valid(out,key,cached,options.get('pixel_local_reflection',False))
+                if plocal_valid and dkey_valid and pred_valid and alt_valid and spec_valid and cache_inputs_match(cached,g['CHAIN'],code_hash,constants[key]) and cached.get('spirv_sha256') == hashlib.sha256(blob.read_bytes()).hexdigest() and cached.get('metadata_sha256') == hashlib.sha256((out / (key + '.meta')).read_bytes()).hexdigest():
                     results.append({'key': key, 'st': 'ok', 'cached': True})
                     continue
             pending.append(key)
@@ -402,6 +415,11 @@ def build(g):
             reflection['metadata_sha256'] = hashlib.sha256((out / (key + '.meta')).read_bytes()).hexdigest()
             from dmsh_driver_keys import emit as emit_driver_keys
             reflection['driver_keys']=emit_driver_keys(out,key,reflection)
+            if options.get('pixel_local_reflection'):
+                from dmsh_pixel_local import emit as emit_pixel_local
+                reflection['pixel_local']=emit_pixel_local(out,key,reflection)
+            else:
+                (out/(key+'.plocal.json')).unlink(missing_ok=True)
             (out / (key + '.json')).write_text(json.dumps(reflection, ensure_ascii=False, indent=1))
             return {'key': key, 'st': 'ok'}
         with concurrent.futures.ThreadPoolExecutor(workers) as executor:

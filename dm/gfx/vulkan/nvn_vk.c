@@ -52,6 +52,7 @@ typedef struct pool {
 // Uploads copy spans of at most 4 KiB. Conservatively index GPU use by page,
 // rather than walking a growing byte-interval list for every buffer binding.
 enum { GPU_ACCESS_SHIFT = 12 };
+static VkResult buffer_try_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback);
 #include "nvn_vk_pool_spans.inc"
 static const VkPipelineStageFlags pool_stages[]={
   VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
@@ -794,20 +795,26 @@ uint32_t vk_memory_type(uint32_t bits, VkMemoryPropertyFlags flags) {
       return i;
   die("Vulkan memory type unavailable: bits=%#x flags=%#x", bits, flags);
 }
-static void buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback) {
-  if (!size)
-    die("Vulkan zero-sized buffer");
+static VkResult buffer_try_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback) {
+  if(!size)return VK_ERROR_INITIALIZATION_FAILED;
+  vk_buffer fresh={0};
   VkBufferCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                            .size = size,
                            .usage = usage};
-  VK_CHECK(vkCreateBuffer(V.device, &ci, NULL, &b->handle));
-  VK_CHECK(readback?vk_memory_buffer_readback(b->handle,&b->memory,&b->map,&b->allocation):
-      vk_memory_buffer(b->handle,&b->memory,&b->map,&b->allocation));
-  b->properties=vk_memory_properties(b->allocation);b->readback=readback;
+  VkResult result=vkCreateBuffer(V.device,&ci,NULL,&fresh.handle);
+  if(result!=VK_SUCCESS)return result;
+  result=readback?vk_memory_buffer_readback(fresh.handle,&fresh.memory,&fresh.map,&fresh.allocation):
+      vk_memory_buffer(fresh.handle,&fresh.memory,&fresh.map,&fresh.allocation);
+  if(result!=VK_SUCCESS) { vkDestroyBuffer(V.device,fresh.handle,NULL);return result; }
+  fresh.properties=vk_memory_properties(fresh.allocation);fresh.readback=readback;
+  fresh.size=size;*b=fresh;return VK_SUCCESS;
+}
+static void buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback) {
+  if(!size)die("Vulkan zero-sized buffer");
+  VK_CHECK(buffer_try_create(b,size,usage,readback));
   static int logged;
   if(readback&&!logged++) LOG("[vulkan readback] preferred HOST_CACHED actual_flags=%#x invalidate_after_fence=%d",b->properties,
       !(b->properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-  b->size = size;
 }
 void vk_buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) { buffer_create(b,size,usage,0); }
 void vk_buffer_destroy(vk_buffer *b) {
@@ -1340,8 +1347,10 @@ static void pool_materialize_metadata(pool *p) {
     die("Vulkan pool shadow allocation: %llu", (unsigned long long)size);
 }
 static void pool_materialize(pool *p) {
-  if(p->backings)return;
+  // Explicit range reservation may create physical buffers without exposing
+  // CPU pages. Initialize this metadata only at the first actual lookup.
   pool_materialize_metadata(p);
+  if(p->backings)return;
   pool_span_create(p,&p->whole,0,p->size);p->backings=&p->whole;
   if(V.options.pool_mirror_reference) pool_initialize_range(p,0,p->size);
 }
@@ -1412,6 +1421,7 @@ int vk_pool_span_query(uint64_t addr,uint64_t size,vk_pool_span_info *out) {
   if(out)*out=value;
   return status;
 }
+#include "nvn_vk_pool_windows.inc"
 #ifdef DM_VULKAN_TEST_EMBED
 // Only a fresh unused owned fixture pool may acquire two real immutable
 // backings. This does not migrate, discard initialized bytes or bypass refs.
@@ -2359,6 +2369,9 @@ void vk_pool_sync(void) {
   size_t n = 0;
   for (pool *p = pools; p; p = p->next) {
     if(!p->backings) continue;
+    // A whole reservation may precede its first actual lookup. Preserve the
+    // eager reference's CPU initialization, never manufacture data at reserve.
+    pool_materialize_metadata(p);
     pool_initialize_range(p,0,p->size);
     p->references++;
     snapshot[n++] = p;

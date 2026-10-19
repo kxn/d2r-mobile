@@ -12,6 +12,7 @@
 #endif
 #include "nvn_vk_loader.h"
 #include "nvn_vk_memory.h"
+#include "nvn_vk_pool_ranges.h"
 #define VK_CHECK(call)                                                         \
   do {                                                                         \
     VkResult r_ = (call);                                                      \
@@ -119,6 +120,20 @@ typedef struct vk_pool_span_info {
 enum { VK_POOL_SPAN_NONE=0,VK_POOL_SPAN_SINGLE=1,
        VK_POOL_SPAN_UNBACKED=2,VK_POOL_SPAN_CROSSING=3 };
 int vk_pool_span_query(uint64_t addr,uint64_t size,vk_pool_span_info *out);
+// Explicit recording-owner reservation, not an upload/pin/preflight by itself.
+// No existing span is replaced. Failure leaves the complete batch unchanged;
+// NEED_WHOLE requires the caller's separately quiesced migration and retry.
+enum { VK_POOL_RESERVE_INVALID=0,VK_POOL_RESERVE_OK=1,VK_POOL_RESERVE_NEED_WHOLE=2,
+       VK_POOL_RESERVE_OOM=3,VK_POOL_RESERVE_ALLOCATION_FAILED=4 };
+enum { VK_POOL_RESERVE_MAX_REQUIREMENTS=4096 };
+typedef struct {
+  uint64_t pool_base,pool_identity; // first pool requiring explicit whole fallback
+  uint64_t added_buffer_bytes;
+  uint32_t added_spans;
+  VkResult allocation_error;
+} vk_pool_reserve_result;
+int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
+    uint64_t window_bytes,vk_pool_reserve_result *out);
 // Recording-owner idle proofs; never synchronize or end an active scope.
 int vk_shader_operation_active(void);
 int vk_texture_binding_scope_active(void);

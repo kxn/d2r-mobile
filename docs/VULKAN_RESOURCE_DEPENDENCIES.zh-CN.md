@@ -1549,4 +1549,42 @@ Mali 原游戏 2772×1240、scale1、原链 `3b0e470fc91d`、原世界时钟，�
 
 Apple口径核对：上游`front_ios.m`默认UI原生，`hle_oe.c` iOS默认3D0.75，并可因掉帧动态降0.72/0.70（流畅优先）；我们原诊断固定1.0且关闭动态比例，同输出时3D像素约为默认0.75的1.78倍。上游公开README当前A14仍无60FPS报告，A16有60FPS记录，A15mini的50–58来自自动降画质；不能把A14为最低支持硬件误当为A14原生满比例60实测。对齐Apple的原生UI固定0.75测试另记，不能冒充原生3D1.0目标达成。
 
+## 2026-10-19：外部评估核对与下一轮优先级
+
+用户提供的[共享评估](https://chatgpt.com/share/6ad56e9a-b0e0-83e9-8b06-8315cf2cbc60)作为方向参考，按本地原始工具数据、源码及已安装版本逐项复核。其约500 MB/帧、54 graphics pass、fragment繁忙等主要引用10月17日固定3D比例1.0的历史采集，不能直接视为当前上游iOS默认0.75、动态比例和新音频路径的性能结论。不同阶段计数存在重叠，不把各阶段cycles相加当整帧耗时，也不按TBDR单draw边界时间给Shader排名。
+
+| 优先顺序 | 工作与依据 | 当前边界 |
+| --- | --- | --- |
+| 首先校正对照 | 高通此前仍是旧APK、ABI2和旧Shader链；先与当前Mali宿主版本对齐，再用官方SDP/Perfetto归因 | 已对齐同APK `892dcf51…` / ELF `32506ece…` 和ABI3；Mali与高通须分别保留兼容的Shader编译选项，不能直接共用SPIR-V |
+| 同像素中间附件消费 | 原Metal已有通用融合思路；既有API帧中P34→P35对三张中间颜色附件做同像素采样 | 先做可证明的input attachment/subpass候选；不是合并所有后处理，不改变玩法，也不按游戏Shader标识硬编码 |
+| 主HDR Shader成本 | 已有工具显示片元负载和大量纹理读取；匹配Shader的驱动静态输出仍有较多采样及ALU | 继续以实际采样、驱动结果和整组硬件计数定位；静态指令数量、draw数和单draw回放耗时不能替代动态热点证据 |
+| 实际按需显存镜像 | 整个逻辑Pool的VkBuffer extent明显大于初始化区域，可能有容量浪费 | extent不是RSS；必须接齐生产消费者、生命周期与整池回退后，再测PSS/VMA块容量和真实6GB启动 |
+
+系统驱动/Turnip、Present Shader/Blit、FIFO/MAILBOX及输出尺寸诊断已有对照记录，不作为此前未做的新发现。现有结果没有显示它们单独足以消除全部差距；驱动对照记录见本文件既有Turnip与出图章节。当前低帧仍须同时记录热保护的目标帧率、实际3D尺寸和显示档位，不能把20/30的热保护上限误认成新的GPU吞吐结论。
+
+### 同像素候选：先保存语义，再验证tile收益
+
+旧API帧中P34输出RGBA16F、RGBA8、R11G11B10三附件，P35采样这三张图及另一张history纹理，输出独立R11G11B10；history保留普通采样。旧固定1.0、2772×1240时，三源合计逻辑读取54,996,480 B。这不是硬件DRAM节省量，也不能与其他候选的逻辑上界直接相加。后续帧的读取尚未排除，源附件继续STORE。
+
+三个源及目标的颜色合计160 bit/pixel，P35另有只读深度附件，而P34没有深度。格式容量、深度拓扑和具体驱动会影响能否合并。[Arm官方说明](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/vulkan-subpasses-the-good-the-bad-and-the-ugly)也指出tile读取吞吐和合并的其他成本；不能把旧GPU示例中的128bit当作G710通用硬上限，也不能保证减少外存就一定涨帧。该Mali驱动未提供可用的subpass merge feedback扩展，后续用现有Streamline的physical tiles/jobs与外存计数做候选对照，不自制逐draw计时器。
+
+本轮已实现两项基础能力，尚未启用原游戏融合：
+
+- 离线通用像素坐标证明与实验性SubpassData变体。每个实际base/spec/pred/tssbo模块分别绑定内容哈希；分支中任何未知用途、邻像素读取或非零LOD均保守拒绝。实际draw还须证明几何、插值、viewport、sampler、LOD、mip/layer与图像身份。工具选项默认关闭，原模块不改写；当前部署器仍拒绝未接入验证的`.plocal.json`，不能直接推到手机。
+- 不可变RenderPass缓存支持最多两个subpass，并把input次序、第二段颜色/深度、preserve和dependency完整纳入扩展key。普通单subpass key与哈希保持原样，仅扩展路径增加额外存储。主机真实GPU用例验证三个混合格式input attachment的读取、输入置换、缓存复用与退休；首段使用loadOp clear，因此不能冒充已验证游戏MRT绘制、后加深度或实际tile合并。
+
+当前游戏仍以单subpass记录。完整接入还需在首段secondary录制前规划兼容拓扑，补齐PSO/subpass及持久化配方身份、资源INPUT_ATTACHMENT用途、描述符变体、运行时坐标证明与保守回退；不能把已经按单subpass继承信息录好的secondary直接塞进新双subpass。
+
+### 内存窗口预留：已通过隔离验证，尚不宣称节省内存
+
+新增显式批量预留API：逻辑范围完整校验，固定对齐窗口无重叠，跨窗口单个绑定明确要求整池回退；先完成全部分配，再一次发布，OOM回滚不改变旧代数或旧异步读者。预留本身不上传CPU数据、不初始化shadow/脏页元数据、不迁移已有窗口。计划最大4096项时临时主机内存128 KiB，每个窗口还增加VkBuffer/VMA对象；最终必须把这些成本及整池迁移峰值计入。
+
+现有生产lookup仍整池分配。不能在已借出VkBuffer后隐式迁移；下一阶段要完整预收集draw/compute/传输/texel/延迟绘制范围，在借用句柄前处理回退并重新收集。没有真实生产接入、内存A/B和6GB设备启动证据之前，不记作RSS下降。
+
+统一主机异步21,790,147项、独立同步21,690,743项通过，保留Khronos同步验证，未发现VUID/SYNC错误；实际执行设备为Lavapipe，不使用计算显卡。这些是实现正确性检查，不是Android游戏性能里程碑。Android ARM64 APK另已编译、签名及934项源码输入哈希核验，候选 `9ef435cd…` / ELF `60a8f3a1…`仅归档未安装。证据分别为`pixel-local-proof-v1-source-ready.json`、`pool-window-reserve-v1-host-result.json`、`pixel-local-foundation-v1-android-build-verified.json`。
+
+高通已保留subgroup64、ballot helper和必须的函数内联选项，以新规范链`9328e25ef116`重新验证并部署。6,931份SPIR-V及3,739份spec与其旧兼容链逐项一致；不是复制Mali的subgroup32链。原游戏营地短程移动、真实NVN调用和fresh save2通过，结束后已停止；尚不从该功能测试推导帧率或发热收益。完整清单见`qualcomm-canonical-53fbef1-alignment-result.json`。
+
+减少实际计算、复制和外存访问，在相同帧率/画质下有望降低能耗；帧率不受限时，节省可能被新增帧数消耗。持续温度及热降频还需同等工作量的真机长窗验证，当前发热与6GB验收仍未完成。
+
 另新增通用启动期operation-mode诊断，默认docked不变，显式handheld重用原GetOperationMode/GetPerformanceMode/参数槽，不新写游戏规则；actual dm_opmode启动日志核验，禁止热切换。新13f0包两模式在同包720下对照；Handheld固定720高，game-res只影响手持宽高比。该模式可能影响原游戏分支，但尚不能仅由HLE断言阴影／后处理减少。源与独审见 `operation-mode-v1-source-ready.json`、`operation-mode-v1-root-review.json`。

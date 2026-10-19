@@ -10,6 +10,18 @@ set(GFX "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(HOST "${GFX}/../host")
 set(SHA "${GFX}/../third_party/runtime-codecs")
 include("${CMAKE_CURRENT_SOURCE_DIR}/builtins.cmake")
+set(DM_SUBPASS_TEST_HEADER "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_test_subpass_spv.h")
+add_custom_command(OUTPUT "${DM_SUBPASS_TEST_HEADER}"
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_test_subpass_spv.spv"
+             "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_test_subpass_spv.json"
+  COMMAND "${DM_VK_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/build_builtin.py"
+          --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/subpass-input.frag"
+          --output "${DM_SUBPASS_TEST_HEADER}" --symbol dm_test_subpass_spv
+          --glslang "${DM_VK_GLSLANG}" --validator "${DM_VK_SPIRV_VAL}"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/build_builtin.py"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/subpass-input.frag"
+  VERBATIM)
+add_custom_target(dm_vulkan_subpass_test_shader DEPENDS "${DM_SUBPASS_TEST_HEADER}")
 file(STRINGS "${GFX}/nvn/names.txt" names)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nvn_test_names.inc" "")
 foreach(name ${names})
@@ -21,6 +33,8 @@ add_executable(vulkan_host_test tests/host.c ${BACKEND} "${GFX}/../third_party/v
   "${GFX}/tex/nvn_deswizzle.c" "${GFX}/tex/nvn_bcdec.c" "${SHA}/sha256.c")
 target_include_directories(vulkan_host_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${HOST}" "${SHA}" "${GFX}/nvn/include" ${Vulkan_INCLUDE_DIRS})
 target_compile_definitions(vulkan_host_test PRIVATE _GNU_SOURCE DM_STRICT_HLE=1 DM_HEADLESS=1 DM_VULKAN_TEST_EMBED=1 MBEDTLS_CONFIG_FILE="dm_sha_config.h")
+target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SUBPASS_TEST_SHADERS=1)
 target_compile_options(vulkan_host_test PRIVATE -g -O1 -Wall -Wno-format -Wno-unused-function)
 target_link_libraries(vulkan_host_test PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
 add_dependencies(vulkan_host_test dm_vulkan_builtins)
+add_dependencies(vulkan_host_test dm_vulkan_subpass_test_shader)

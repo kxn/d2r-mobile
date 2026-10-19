@@ -48,18 +48,23 @@ static pool_span_piece pool_span_require(pool *p,uint64_t offset,uint64_t size) 
         (unsigned long long)p->identity,(unsigned long long)offset,(unsigned long long)size);
   return out;
 }
+static VkResult pool_span_try_allocate(pool_backing_span *b,uint64_t begin,uint64_t end) {
+  VkResult result=buffer_try_create(&b->buffer,end-begin,
+      VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT|
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_INDEX_BUFFER_BIT|
+      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|
+      VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT|VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT|
+      VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,0);
+  if(result==VK_SUCCESS) { b->begin=begin;b->end=end; }
+  return result;
+}
 static void pool_span_create(pool *p,pool_backing_span *b,uint64_t begin,uint64_t end) {
   // Keep logical and physical page/alignment origins consistent. The final
   // tail need not be page sized; its real buffer extent remains exact.
   if(begin>=end || end>p->size || (begin&((UINT64_C(1)<<GPU_ACCESS_SHIFT)-1)) ||
      p->backing_generation==UINT64_MAX)die("Vulkan canonical pool backing bounds");
-  b->begin=begin;b->end=end;b->generation=++p->backing_generation;
-  vk_buffer_create(&b->buffer,end-begin,
-      VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT|
-      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_INDEX_BUFFER_BIT|
-      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|
-      VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT|VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT|
-      VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+  VK_CHECK(pool_span_try_allocate(b,begin,end));
+  b->generation=++p->backing_generation;
 }
 static void pool_span_chain_destroy(pool *p,pool_backing_span *b) {
   while(b) {
