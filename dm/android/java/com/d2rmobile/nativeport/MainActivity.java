@@ -20,6 +20,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
     private static native boolean nativeBorrowedNvnFixture();
+    private static native boolean nativeBorrowedNvnWindowsFixture();
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -234,6 +235,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeQueryPerDrawReference(getIntent().getBooleanExtra("query_per_draw_reference", false));
         nativePipelinePrepareMode(getIntent().getBooleanExtra("validate", false) ? 2 :
                 getIntent().getBooleanExtra("pipeline_prepare_reference", false) ? 1 : 0);
+        if (getIntent().getBooleanExtra("borrowed_nvn_windows_test", false)) {
+            if (!getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                    getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().getBooleanExtra("async_submit", false) || !panvkDriver ||
+                    getIntent().getBooleanExtra("borrowed_nvn_buffer_test", false))
+                throw new IllegalArgumentException("Borrowed windows require exclusive tests, PanVK, async_submit and run_game=false");
+            if (!nativeBorrowedNvnWindowsFixture())
+                throw new IllegalStateException("Borrowed windows unavailable or already selected");
+        }
         if (getIntent().getBooleanExtra("borrowed_nvn_buffer_test", false)) {
             if (!getIntent().getBooleanExtra("run_vulkan_tests", false) ||
                     getIntent().getBooleanExtra("run_game", true) ||

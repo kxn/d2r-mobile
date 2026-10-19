@@ -709,16 +709,34 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
   vk_android_window(window, refresh);
 }
 
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+static atomic_int borrowed_nvn_fixture_selected;
+#endif
 JNIEXPORT jboolean JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeBorrowedNvnFixture(
     JNIEnv *env,jclass klass) {
   (void)env;(void)klass;
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
-  static atomic_int selected;
-  if(atomic_exchange(&selected,1))return JNI_FALSE;
+  if(atomic_exchange(&borrowed_nvn_fixture_selected,1))return JNI_FALSE;
   // No pointer/provenance from Java: original native fixture allocates storage,
   // lends it through NVN Initialize, and retains it through original Finalize.
   if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
       setenv("DM_BORROWED_NVN_BUFFER_FIXTURE","1",1))return JNI_FALSE;
+  return JNI_TRUE;
+#else
+  return JNI_FALSE;
+#endif
+}
+
+// Independent fixture-only selector. No address/allocator input from Java;
+// both original test bodies run in one cold ordinary-UID process.
+JNIEXPORT jboolean JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeBorrowedNvnWindowsFixture(
+    JNIEnv *env,jclass klass) {
+  (void)env;(void)klass;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(atomic_exchange(&borrowed_nvn_fixture_selected,1))return JNI_FALSE;
+  if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
+     setenv("DM_BORROWED_NVN_WINDOWS_FIXTURE","1",1) ||
+     setenv("DM_BORROWED_NVN_WINDOWS_RUN_BOTH","1",1))return JNI_FALSE;
   return JNI_TRUE;
 #else
   return JNI_FALSE;

@@ -123,6 +123,13 @@ static void borrowed_window_flush(pool *p,pool_backing_span *b,uint64_t logical,
   if(limit>b->buffer.size)die("Borrowed window flush crosses imported allocation");
   VkMappedMemoryRange range={.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,.memory=b->buffer.memory,.offset=offset,.size=limit-offset};
   VK_CHECK(vkFlushMappedMemoryRanges(V.device,1,&range));
+#ifdef DM_VULKAN_TEST_EMBED
+  printf("{\"test_details\":\"borrowed-nvn-window-flush\",\"pool_identity\":%llu,\"node_begin\":%llu,\"node_end\":%llu,"
+    "\"logical\":%llu,\"read_bytes\":%llu,\"memory_offset\":%llu,\"flush_bytes\":%llu,\"atom\":%llu,\"flags\":%u}\n",
+    (unsigned long long)p->identity,(unsigned long long)b->begin,(unsigned long long)b->end,
+    (unsigned long long)logical,(unsigned long long)bytes,(unsigned long long)offset,(unsigned long long)(limit-offset),
+    (unsigned long long)atom,b->buffer.properties);
+#endif
 }
 // One matching node at a time. No mutation of existing GPU handles until the
 // original queue, completion effects, reset and all pool references are gone.

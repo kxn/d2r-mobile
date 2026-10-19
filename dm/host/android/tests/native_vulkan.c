@@ -560,8 +560,22 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
   if(getenv("DM_BORROWED_NVN_WINDOWS_FIXTURE")) {
+    int both=getenv("DM_BORROWED_NVN_WINDOWS_RUN_BOTH")!=NULL;
+    if(both)CHECK(getenv("DM_BORROWED_NVN_FULL_REFERENCE_FIXTURE")==NULL);
     int imported_flags=borrowed_nvn_windows_test();CHECK(vk_validation_error_count()==0);
-    printf("{\"test\":\"borrowed-nvn-subwindows\",\"checks\":%u,\"result\":\"passed\",\"flags\":%d,\"whole_pool_bytes\":2097152,\"window_bytes\":65536,\"game_modules_executed\":false}\n",checks,imported_flags);return 0;
+    unsigned general_checks=checks,reference_checks=0;
+    printf("{\"test_details\":\"borrowed-nvn-windows-phase\",\"phase\":\"general\",\"checks\":%u,\"flags\":%d}\n",general_checks,imported_flags);
+    if(both) {
+      CHECK(!setenv("DM_BORROWED_NVN_FULL_REFERENCE_FIXTURE","1",1));
+      int second_flags=borrowed_nvn_windows_test();CHECK(second_flags==imported_flags);CHECK(vk_validation_error_count()==0);
+      reference_checks=checks-general_checks;
+      printf("{\"test_details\":\"borrowed-nvn-windows-phase\",\"phase\":\"full-reference\",\"checks\":%u,\"flags\":%d}\n",reference_checks,second_flags);
+    }
+    printf("{\"test\":\"borrowed-nvn-subwindows\",\"checks\":%u,\"result\":\"passed\","
+      "\"uid\":%u,\"flags\":%d,\"host_coherent\":%s,\"atom\":%llu,\"both_phases\":%s,"
+      "\"general_checks\":%u,\"full_reference_checks\":%u,\"whole_pool_bytes\":2097152,\"window_bytes\":65536,\"game_modules_executed\":false}\n",
+      checks,(unsigned)getuid(),imported_flags,imported_flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT?"true":"false",
+      (unsigned long long)V.props.limits.nonCoherentAtomSize,both?"true":"false",general_checks,reference_checks);return 0;
   }
   if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
     int imported_flags=borrowed_nvn_buffer_test();CHECK(vk_validation_error_count()==0);
