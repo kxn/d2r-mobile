@@ -33,6 +33,101 @@ def require(value, message):
         raise SystemExit(message)
 
 
+def verify_empty_pixel_local(blobs, reflection, payload, report_data, stage, descriptor_set):
+    """An exact empty DPL cannot authorize a shader replacement.
+
+    Check its complete artifact/module closure, but do not repeat eligibility
+    analysis merely to prove that an optional optimization was omitted. Nonempty
+    records always use the original independent regeneration below.
+    """
+    from dmsh_pixel_local_wire import actual_modules, MAGIC, VERSION, HEADER_BYTES, SUFFIXES
+    declared = reflection.get('pixel_local_runtime', {})
+    if type(declared.get('records')) is not int or declared['records'] != 0:
+        return False
+    require(len(payload) == HEADER_BYTES, 'empty pixel-local runtime size mismatch')
+    header = struct.unpack_from('<8I', payload)
+    require(header[:3] == (MAGIC, VERSION, HEADER_BYTES) and
+            header[3] in (0, 1, 5) and header[4:] == (descriptor_set, 0, HEADER_BYTES, 0),
+            'empty pixel-local runtime header mismatch')
+    require('spv' in blobs and 'meta' in blobs and 0 <= stage < 6 and 0 <= descriptor_set < 6 and
+            reflection.get('stage') == ('vs', 'ps', 'gs', 'hs', 'ds', 'cs')[stage] and
+            reflection.get('descriptor_set') == descriptor_set,
+            'empty pixel-local metadata stage/set mismatch')
+    closure = b''.join(hashlib.sha256(blobs[s]).digest() if s in blobs else bytes(32) for s in SUFFIXES)
+    require(payload[32:] == closure, 'empty pixel-local artifact closure mismatch')
+    modules = actual_modules(blobs, reflection)
+    module_hashes = {name: hashlib.sha256(code).hexdigest() for name, code in modules.items()}
+    require(declared == {'schema': VERSION, 'sha256': hashlib.sha256(payload).hexdigest(),
+                         'records': 0, 'source_modules': module_hashes},
+            'empty pixel-local source module closure mismatch')
+    require(reflection.get('pixel_local') == {
+                'schema': VERSION, 'sha256': hashlib.sha256(report_data).hexdigest()},
+            'empty pixel-local reflection hash mismatch')
+    report = json.loads(report_data)
+    require(set(report) == {'schema', 'closure_verified', 'consumer_rule', 'artifacts', 'modules'} and
+            report['schema'] == VERSION and report['closure_verified'] is True and
+            report['consumer_rule'] == 'exact module SHA only; do not reuse base proof for alternatives' and
+            report['artifacts'] == {s: hashlib.sha256(code).hexdigest() for s, code in blobs.items()} and
+            isinstance(report['modules'], dict) and set(report['modules']) == set(modules),
+            'empty pixel-local reflection closure mismatch')
+    for name, digest in module_hashes.items():
+        entry = report['modules'][name]
+        require(isinstance(entry, dict) and entry.get('schema') == VERSION and
+                entry.get('source_sha256') == digest,
+                'empty pixel-local reflection source mismatch')
+    base = report['modules']['base']
+    source_stage = base.get('stage')
+    # build() intentionally emits stage5 both for unsupported stages and for
+    # rejected analysis with no stage. Many current VS/FS use that sentinel.
+    # Neither case carries records or grants runtime authority.
+    if source_stage is None:
+        require(isinstance(base.get('rejected'), str) and header[3] == 5,
+                'empty pixel-local rejected-stage sentinel mismatch')
+    else:
+        require(source_stage == ('Vertex', 'Fragment', 'Geometry', 'TessellationControl',
+                                  'TessellationEvaluation', 'GLCompute')[stage] and
+                header[3] == {'Vertex': 0, 'Fragment': 1}.get(source_stage, 5),
+                'empty pixel-local source stage mismatch')
+    return True
+
+
+def verify_pixel_local(cache, output, key, reflection, stage, descriptor_set, options):
+    """Keep nonempty runtime authorization on the full regeneration path."""
+    if options.get('pixel_local_runtime') and options.get('pixel_local_reflection'):
+        from dmsh_pixel_local_wire import SUFFIXES
+        blobs = {s: (cache/(key+'.'+s)).read_bytes() for s in SUFFIXES
+                 if (cache/(key+'.'+s)).is_file()}
+        try:
+            empty = verify_empty_pixel_local(blobs, reflection, (cache/(key+'.plocal')).read_bytes(),
+                                            (cache/(key+'.plocal.json')).read_bytes(), stage, descriptor_set)
+        except (SystemExit, ValueError, KeyError, TypeError, struct.error) as error:
+            raise SystemExit('pixel-local empty closure invalid: '+key+': '+str(error)) from error
+        if empty:
+            return 'empty_fallback'
+    if options.get('pixel_local_reflection'):
+        from dmsh_pixel_local import emit as emit_pixel_local
+        for suffix in ('spv', 'meta', 'spec', 'pred', 'tssbo'):
+            target = output/(key+'.'+suffix); target.unlink(missing_ok=True)
+            source = cache/(key+'.'+suffix)
+            if source.is_file(): target.write_bytes(source.read_bytes())
+        proof = emit_pixel_local(output, key, reflection)
+        require(reflection.get('pixel_local') == proof and
+                (output/(key+'.plocal.json')).read_bytes() == (cache/(key+'.plocal.json')).read_bytes(),
+                'pixel-local reflection regeneration mismatch: '+key)
+    else:
+        require(not reflection.get('pixel_local'), 'undeclared pixel-local reflection: '+key)
+    if options.get('pixel_local_runtime'):
+        from dmsh_pixel_local_wire import build as build_pixel_local, SUFFIXES
+        payload, proof = build_pixel_local({s: (cache/(key+'.'+s)).read_bytes() for s in SUFFIXES
+            if (cache/(key+'.'+s)).is_file()}, reflection)
+        require(reflection.get('pixel_local_runtime') == proof and
+                (cache/(key+'.plocal')).read_bytes() == payload,
+                'pixel-local runtime module regeneration mismatch: '+key)
+    else:
+        require(not reflection.get('pixel_local_runtime'), 'undeclared pixel-local runtime module: '+key)
+    return 'regenerated' if options.get('pixel_local_reflection') else 'disabled'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cache', type=Path, required=True)
@@ -91,6 +186,7 @@ def main():
     require(raster_ast(original) == raster_ast((ROOT/'dm/gfx/tools/dmsh_build.py').read_text()),
             'original raster fact extractor changed')
     facts = {'vertex':0, 'position_proven':0, 'fragment':0, 'raster_errors':0}
+    pixel_local_verification = {'empty_fallback':0, 'regenerated':0, 'disabled':0}
     artifacts = {p.name: {'sha256':sha(p), 'bytes':p.stat().st_size} for p in sorted(cache.iterdir()) if p.is_file()}
     with tempfile.TemporaryDirectory(prefix='d2r-shader-verify-') as temporary:
         output = Path(temporary)
@@ -159,29 +255,11 @@ def main():
                         if not payload:continue
                         verify=output/('verify-texel-'+str(n)+'.spv');verify.write_bytes(payload)
                         subprocess.run(['spirv-val','--target-env','vulkan1.1',str(verify)],check=True,capture_output=True)
-                # Rebuild optional proofs/variants from every actual module;
-                # a valid base proof never authorizes a specialization/SSBO pair.
-                if dmsh_vulkan.compiler_options().get('pixel_local_reflection'):
-                    from dmsh_pixel_local import emit as emit_pixel_local
-                    for suffix in ('spv','meta','spec','pred','tssbo'):
-                        target=output/(key+'.'+suffix);target.unlink(missing_ok=True)
-                        source=cache/(key+'.'+suffix)
-                        if source.is_file():target.write_bytes(source.read_bytes())
-                    proof=emit_pixel_local(output,key,reflection)
-                    require(reflection.get('pixel_local')==proof and
-                            (output/(key+'.plocal.json')).read_bytes()==(cache/(key+'.plocal.json')).read_bytes(),
-                            'pixel-local reflection regeneration mismatch: '+key)
-                else:
-                    require(not reflection.get('pixel_local'), 'undeclared pixel-local reflection: '+key)
-                if dmsh_vulkan.compiler_options().get('pixel_local_runtime'):
-                    from dmsh_pixel_local_wire import build as build_pixel_local, SUFFIXES as PIXEL_SUFFIXES
-                    payload,proof=build_pixel_local({suffix:(cache/(key+'.'+suffix)).read_bytes() for suffix in PIXEL_SUFFIXES
-                        if (cache/(key+'.'+suffix)).is_file()},reflection)
-                    require(reflection.get('pixel_local_runtime')==proof and
-                            (cache/(key+'.plocal')).read_bytes()==payload,
-                            'pixel-local runtime module regeneration mismatch: '+key)
-                else:
-                    require(not reflection.get('pixel_local_runtime'), 'undeclared pixel-local runtime module: '+key)
+                # Verify every actual module closure. Rebuild all authorizing
+                # records; an empty fallback grants no replacement capability.
+                verification = verify_pixel_local(cache, output, key, reflection, h[1], h[2],
+                                                  dmsh_vulkan.compiler_options())
+                pixel_local_verification[verification] += 1
                 dmsh_vulkan.write_metadata(output/'verify.meta', reflection)
                 require((output/'verify.meta').read_bytes()==meta, 'metadata regeneration mismatch: '+key)
                 raster = reflection.get('raster', {})
@@ -202,7 +280,7 @@ def main():
     args.report.parent.mkdir(parents=True, exist_ok=True)
     report = {'chain':chain, 'cache':str(cache), 'upstream':upstream, 'validated_game_and_builtin_shaders':len(keys),
               'raster':facts, 'original_proofs_unchanged':True,'specialization_recipes':len(specialization_keys),'texel_alternative_pairs':len(texel_alternative_keys),'predicate_sidecars':len(predicate_keys), 'baseline_spirv_identical':bool(args.baseline),
-              'artifacts':artifacts, 'deployed':False}
+              'pixel_local_verification':pixel_local_verification, 'artifacts':artifacts, 'deployed':False}
     if args.deploy:
         package = 'com.d2rmobile.nativeport'
         base = ['adb','-s',args.serial]

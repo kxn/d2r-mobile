@@ -1654,3 +1654,10 @@ Mali 同包整池/16 MiB 窗口/整池的 PSS 为 4,015,898 / 4,310,244 / 4,076,
 额外成本是迁移冷路径扫描原位图和最多 1,536 B 局部复制区域数组；碎片页面会产生更多 copy region，无新生产分配、持久状态、每 draw 检查或 GPU→CPU 回读。真实 GPU 用例包含 130 个 guest/shadow 已过期的 GPU-only 输出、空预留、holes、位图字/物理边界、193 B 尾页和后续 CPU 修改。特定稀疏用例从 3,145,921 B 复制降到 549,057 B（82.55%），完整暴露时仍复制全部 65,536 B。独立完整 async 21,811,194 / sync 21,711,782 检查通过，零 VUID/SYNC，且两文件冻结 SHA 与主线合入逐项一致，独立审查通过。该百分比不是实际游戏、DRAM 或 RAM 收益；真机复测待记录。报告 `pool-migration-initialized-v1-source-ready.json`。
 
 补充内存口径：已有官方 API 帧精确清单的图片约 619.5 MiB，Pool 约 1,113 MiB；ASTC 库存 2,388 张，而该帧约 420 张被绑定，不能把库存全部称作当帧采样。跨厂商 Graphics accounting 不能直接解释为纹理解压或泄漏。单帧未引用图片约 254.6 MiB 也不构成可安全销毁证明，GPU-authored 历史内容必须保留；详细只读审计 `mali-memory-residency-candidates-v2-readonly.json`。
+
+
+### 同像素产物验证：空记录只核闭包，授权记录仍完整重证明
+
+完整包各有 6,609 份严格空 DPL 和 318 份非空 DPL。空记录不会授权任何 Shader 替换，运行期保持普通路径；部署器对其严格检查 192 B extent、头部、stage/set、五成员 SHA、实际 base/spec/pred/tssbo 模块集合与 SHA，以及反射 sidecar 闭包，不再重复 eligibility 分析来证明“未采用可选优化”。stage5 同时是原分析拒绝哨兵，按原包实际语义验证，不能误认成可用 compute 证明。非空记录仍按原 emit/build 重生成全部证明及变体并逐字节比较；原 dkey/spec/paired/metadata 与 baseline SPIR-V 检查不变，未修改编译工具或链指纹。
+
+10 项新增离线测试检查闭包/头部/模块篡改、伪装空记录拒绝和非空重证明；两机现成包各 6,609 份空闭包实际通过，独立原 41 项证明测试保持通过。主线新增测试复验通过。原慢路径高通全量 6,931 已通过并确认基础 SPIR-V 与原已部署链完全相同；Mali 原慢路径仍在执行。新部署报告分别统计 empty_fallback/regenerated，不能把闭包验证记成重做了全部 eligibility 证明。见 `deploy-empty-dpl-v1-source-ready.json`。
