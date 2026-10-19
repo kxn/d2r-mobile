@@ -110,11 +110,12 @@ target_link_options(dmhost_vulkan PRIVATE -Wl,--exclude-libs,libopus.a)
 target_sources(dmhost_vulkan PRIVATE performance_hint.c)
 get_target_property(VULKAN_SOURCES dmhost_vulkan SOURCES)
 list(REMOVE_ITEM VULKAN_SOURCES main.c)
-add_executable(native_vulkan_test tests/native_vulkan.c ${VULKAN_SOURCES})
+add_executable(native_vulkan_test tests/native_vulkan_runner.c tests/native_vulkan.c ${VULKAN_SOURCES})
 foreach(property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_OPTIONS LINK_LIBRARIES)
   get_target_property(values dmhost_vulkan ${property})
   set_property(TARGET native_vulkan_test PROPERTY ${property} ${values})
 endforeach()
+target_compile_definitions(native_vulkan_test PRIVATE DM_VULKAN_TEST_EMBED=1)
 
 # Actual original SDK-only codec oracle; never invokes nnMain or any NVN API.
 add_executable(native_opus_sdk_test tests/native_opus_sdk.c ${VULKAN_SOURCES})
