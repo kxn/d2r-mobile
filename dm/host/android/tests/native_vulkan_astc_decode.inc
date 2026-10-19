@@ -22,9 +22,16 @@ static void astc_decode_seed(NVNtexture *texture,int hdr_last) {
 }
 static VkImageView astc_decode_probe(NVNtexture *source,unsigned expected_proof) {
   mtl_sub_begin();
-  VkImageView view=vk_texture_view(71,0);
+  // A typed prospective shader access, not the raw/unknown-view API: that
+  // API intentionally makes escape sticky and must revoke the certificate.
+  vk_texture_shader_begin();
+  VkImageLayout layout;
+  VkImageView view=vk_texture_view_binding(71,0,VK_SHADER_STAGE_FRAGMENT_BIT,&layout);
   unsigned state[5];CHECK(vk_texture_test_astc_info((const tex_t *)source,view,state));
   CHECK(state[0]==expected_proof);CHECK(state[4]==expected_proof);
+  // No draw consumed this prospective probe. Keep upload history, abandon
+  // only the collected shader requests, exactly like production preflight.
+  vk_texture_shader_abandon();
   vk_internal_wait(vk_internal_commit());
   return view;
 }
