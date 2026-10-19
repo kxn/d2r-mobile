@@ -89,6 +89,8 @@ void mtl_exec(const uint8_t *p) {
       if (h.size < 24 || bytes > h.size - 24)
         die("Vulkan invalid uniform update");
       if (!bytes) break;
+      vk_pool_requirement need={address,bytes,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0};
+      int operation=vk_pool_operation_begin_ranges(&need,1);
       vk_buffer *dst;
       uint64_t off;
       if (!vk_pool_address_overwrite(address,bytes,(void **)&dst,&off,VK_PIPELINE_STAGE_TRANSFER_BIT))
@@ -106,6 +108,7 @@ void mtl_exec(const uint8_t *p) {
       vk_buffer_transfer_written_range(address,bytes);
       vk_pool_overwritten(address,bytes);
       vk_buffer_writeback_known(address,bytes,a+16);
+      vk_pool_operation_end(operation);
       break;
     }
     case OP_SET_RT:

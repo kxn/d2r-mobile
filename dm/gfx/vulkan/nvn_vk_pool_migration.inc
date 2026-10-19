@@ -1,5 +1,5 @@
-// Cold recording-owner primitive, intentionally not selected by production
-// policy yet. The caller must relinquish all untracked raw VkBuffer/map/view
+// Cold recording-owner primitive used by explicit window-policy maintenance
+// (default allocation remains whole). The caller must relinquish all raw VkBuffer/map/view
 // borrows before entry; active operation scopes are rejected rather than ended.
 // An isolated ordinary internal submission preserves device bytes, even when
 // they differ from guest/shadow. New CPU uploads occur only after it completes.
@@ -25,7 +25,14 @@ static int pool_migrate_whole_quiescent(uint64_t address) {
     last=b->end;count++;
   }
   if(!count) { pthread_mutex_unlock(&V.resources);return 0; }
-  pool_backing_span replacement={0};pool_span_create(p,&replacement,0,p->size);
+  if(p->backing_generation==UINT64_MAX) {pthread_mutex_unlock(&V.resources);return 0;}
+  pool_backing_span replacement={0};
+  if(pool_span_try_allocate(&replacement,0,p->size)!=VK_SUCCESS) {
+    pthread_mutex_unlock(&V.resources);return 0;
+  }
+  // Publish generation only with the successful replacement, not on OOM or
+  // after the old logical pool was removed while its isolated copy completed.
+  replacement.generation=p->backing_generation+1;
   pool_backing_span *original=p->backings;
   uint64_t identity=p->identity;
   // This non-recording pin also protects p if another registry caller removes
@@ -67,7 +74,8 @@ static int pool_migrate_whole_quiescent(uint64_t address) {
     p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);return 0;
   }
   pool_span_chain_destroy(p,original);
-  p->whole=replacement;p->backings=&p->whole;
+  p->whole=replacement;p->backings=&p->whole;p->backing_generation=replacement.generation;
+  p->cpu_copy_requires_gpu=1;
   p->access_serial=0;p->recording_access=NULL;
   if(atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release)==UINT64_MAX)
     die("Vulkan migration pool registry epoch overflow");

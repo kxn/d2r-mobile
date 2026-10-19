@@ -1475,7 +1475,7 @@ static int compute_create(vk_shader *s,int optional) {
   return s->compute!=VK_NULL_HANDLE;
 }
 int vk_compute_prewarm(vk_shader *s) { return compute_create(s,1); }
-void vk_dispatch(const p_dispatch *p) {
+static void dispatch_record(const p_dispatch *p) {
   if (!S.program)die("Vulkan dispatch without program");
   vk_shader *stages[6];vk_program_shaders(S.program,stages);vk_shader *s=stages[5];
   if(!s)die("Vulkan dispatch without compute shader");
@@ -1519,4 +1519,14 @@ void vk_dispatch(const p_dispatch *p) {
   vk_shader_writebacks();
   V.draws++;
   vk_bright_lut(s);
+}
+
+static int dispatch_pool_collect(void *context,vk_pool_requirement_sink sink,void *out) {
+  (void)context;vk_shader *stages[6]={0};if(!S.program)return 0;
+  vk_program_shaders(S.program,stages);
+  return vk_shader_pool_ranges_state(stages,&S,1,sink,out);
+}
+void vk_dispatch(const p_dispatch *p) {
+  int token=vk_pool_operation_begin(dispatch_pool_collect,NULL);
+  dispatch_record(p);vk_pool_operation_end(token);
 }

@@ -482,7 +482,7 @@ static struct {
 } end_sites[64];
 static unsigned end_site_count;
 void vk_render_end_at(const char *file, unsigned line) {
-  if (active_job) vk_ghost_flush();
+  if (active_job && !vk_pool_maintenance_active()) vk_ghost_flush();
   if (active_job) {
     if (V.options.stats) {
       unsigned i = 0;
@@ -862,6 +862,13 @@ static int render_cancel_obsolete_clear(const tex_t *texture,const view_t *view)
 #include "nvn_vk_bloom_quarter.inc"
 static _Atomic int vertex_divisor_fallback=-1;
 void vk_vertex_divisor_fallback(int enabled) { atomic_store(&vertex_divisor_fallback,!!enabled); }
+typedef struct {const p_draw_idx *indexed;} draw_pool_plan;
+static int draw_pool_collect(void *context,vk_pool_requirement_sink sink,void *out) {
+  draw_pool_plan *plan=context;vk_shader *list[6]={0};
+  if(!S.program)return 0;
+  vk_program_shaders(S.program,list);list[5]=NULL;
+  return vk_graphics_pool_admission(list,&S,plan->indexed,sink,out);
+}
 void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   uint64_t started = vk_profile_start();
   int quads=draw&&draw->prim==NVN_DRAW_PRIMITIVE_QUADS;
@@ -877,6 +884,17 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   vk_program_shaders(S.program, list);
   mip_clear_before_draw(list);
   list[5] = NULL;
+  if(!list[0])die("Vulkan draw without vertex shader");
+  int zero_checked=0;
+  // Preserve the original proof that this draw consumes no resources. Run it
+  // before allocation when no optional physical representation must be picked.
+  // With an alternative retain the original selected-module proof below.
+  if(V.options.pool_window_bytes && (!list[1] || !list[1]->texel_storage_alternative)) {
+    if(vk_zero_draw_can_skip(list,draw?(const void *)draw:(const void *)idx))return;
+    zero_checked=1;
+  }
+  draw_pool_plan pool_plan={idx};
+  int pool_operation=vk_pool_operation_begin(draw_pool_collect,&pool_plan);
   vk_texel_storage_selection texel_selection;
   if(list[1] && list[1]->texel_storage_alternative) {
     uint32_t storage_descriptors=0;
@@ -906,8 +924,10 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   int hybrid_selected=list[1] && list[1]->predicate && fragment_module==list[1]->predicate->module;
   VkSpecializationInfo specialization_info={.mapEntryCount=hybrid_selected?2:1,.pMapEntries=specialization_entries,
     .dataSize=hybrid_selected?8:4,.pData=specialization_words};
-  if(vk_zero_draw_can_skip(list,draw?(const void *)draw:(const void *)idx)) return;
-  if(bq_before_draw(list,draw,idx))return;
+  if(!zero_checked && vk_zero_draw_can_skip(list,draw?(const void *)draw:(const void *)idx)) {
+    vk_pool_operation_end(pool_operation);return;
+  }
+  if(bq_before_draw(list,draw,idx)) {vk_pool_operation_end(pool_operation);return;}
   float cover_p[64][4];int cover_ready=cover_positions(list[0],list[1],draw,idx,cover_p);
   vk_buffer *expanded[16] = {0};
   uint32_t expanded_stride[16] = {0}, expansion = 0;
@@ -1581,6 +1601,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   V.draws++;
   if (draw) vk_ghost_note(draw, list[1]);
   bq_after_draw();
+  vk_pool_operation_end(pool_operation);
   vk_profile_end(VK_TIME_DRAW, started);
 }
 void vk_defer_pass(VkRenderPass pass, VkFramebuffer framebuffer) {

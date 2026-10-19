@@ -28,6 +28,7 @@ present_modes.add_argument('--shader-present',dest='shader_present',action='stor
 present_modes.add_argument('--reference-present',dest='shader_present',action='store_false',help='use the original Vulkan blit presentation')
 parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
+parser.add_argument('--pool-window-bytes',type=int,help='startup-only experimental pool backing window: 0 (whole pool) or power of two >= 4096 bytes; default whole unless the native startup environment overrides it')
 parser.add_argument('--general-depth-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for depth/stencil, preserving optimized color layouts')
 parser.add_argument('--general-compute-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for readonly compute image sampling')
 parser.add_argument('--general-sampled-array-layouts-reference',action='store_true',help='comparison: retain GENERAL for sampled-only color arrays; other image layouts remain optimized')
@@ -107,6 +108,13 @@ if args.external_profile is None:
     args.external_profile = not (args.gpu_profile or args.validate)
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
+if args.attach and args.pool_window_bytes is not None:
+    parser.error('--pool-window-bytes is startup-only and cannot be used with --attach')
+if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
+        args.pool_window_bytes > (1 << 63) - 1 or
+        (args.pool_window_bytes != 0 and (args.pool_window_bytes < 4096 or
+         args.pool_window_bytes & (args.pool_window_bytes - 1)))):
+    parser.error('--pool-window-bytes must be 0 or a power of two >= 4096, within signed 64-bit range')
 if args.external_profile and (args.gpu_profile or args.validate):
     parser.error('--external-profile conflicts with --gpu-profile/--validate')
 if args.stream_submits and not args.async_submit:
@@ -155,6 +163,8 @@ if not args.attach:
               '--ez', 'validate', str(args.validate).lower()]
     if args.operation_mode is not None:
         launch += ['--es', 'operation_mode', args.operation_mode]
+    if args.pool_window_bytes is not None:
+        launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     if args.bright_k is not None:
         launch += ['--ef', 'bright_k', str(args.bright_k)]
     if args.game_res is not None:
@@ -270,6 +280,9 @@ while time.monotonic() < deadline:
                         raise SystemExit('driver constant cache policy is not active')
                     if not args.attach and state.get('sample_liveness',{}).get('reference') != args.dead_sample_queries_reference:
                         raise SystemExit('sample query liveness policy did not apply')
+                    if (not args.attach and args.pool_window_bytes is not None and
+                            state.get('pool_windows',{}).get('window_bytes') != args.pool_window_bytes):
+                        raise SystemExit('pool backing window policy did not apply')
                     if not args.attach and state.get('submission_barriers',{}).get('reference') != args.submission_barrier_reference:
                         raise SystemExit('submission barrier policy did not apply')
                     if args.cache_store_descriptors and state.get('store_descriptors',{}).get('reference',True):
@@ -291,6 +304,7 @@ while time.monotonic() < deadline:
                               'attachment_usage_reference': (True if 'color attachment usage: format capability reference' in log else
                                                              False if 'color attachment usage: actual attachment only' in log else None),
                               'eager_pool_mirrors_reference':state.get('pool_mirrors',{}).get('reference'),
+                              'requested_pool_window_bytes':args.pool_window_bytes,
                               'depth_layout_reference': (True if 'depth/stencil layouts: GENERAL reference' in log else
                                                          False if 'depth/stencil layouts: attachment/read-only optimal' in log else None),
                               'compute_layout_reference': (True if 'compute sampled layouts: GENERAL reference' in log else

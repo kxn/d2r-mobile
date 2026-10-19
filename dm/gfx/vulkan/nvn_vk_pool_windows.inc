@@ -1,5 +1,5 @@
-// Explicit, non-evicting reservation only. The default production lookup still
-// materializes the whole logical pool; no draw/dispatch invokes this policy.
+// Explicit, non-evicting reservation. Default lookups materialize the whole
+// logical pool; opt-in operation admission invokes this before handle borrows.
 // New nodes remain private until the complete batch has allocated successfully.
 typedef struct {
   pool *owner;

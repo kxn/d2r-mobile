@@ -43,10 +43,15 @@ typedef struct pool {
   unsigned references;
   uint64_t access_serial;
   pool_gpu_access *recording_access;
-  // Canonical physical ownership. Production policy remains the single whole
-  // node [0,size); no backing replacement/retirement is introduced here.
+  // Canonical physical ownership. Default policy remains one whole node.
+  // Startup opt-in reserves disjoint windows; explicit quiescent operation
+  // maintenance may replace them with a sticky whole backing.
   pool_backing_span whole,*backings;
   uint64_t backing_generation;
+  // Whole migration preserves GPU bytes that need not equal guest/shadow.
+  // Until a future range-authority proof exists, source copies from this pool
+  // must use their actual GPU result instead of publishing a shadow snapshot.
+  int cpu_copy_requires_gpu;
 } pool;
 // 上传按最多 4 KiB 的连续段复制，GPU 使用也按页保守记录；不扫描每次绑定的字节区间链。
 // Uploads copy spans of at most 4 KiB. Conservatively index GPU use by page,
@@ -132,6 +137,32 @@ static _Atomic int pool_sync_requested=-1,pool_sync_active;
 static _Atomic uint64_t sync_full_bytes,sync_used_bytes,sync_protected_bytes;
 static _Atomic uint64_t overwritten_upload_pages;
 static _Atomic int pool_mirror_requested=-1;
+static _Atomic uint64_t pool_window_requested=UINT64_MAX;
+static _Atomic int pool_options_initialized;
+static unsigned pool_operation_depth,pool_maintenance;
+static uint64_t pool_window_admissions,pool_window_added_bytes,pool_window_added_spans,pool_window_promotions;
+static _Atomic uint64_t published_window_admissions,published_window_added_bytes,published_window_added_spans,published_window_promotions;
+static _Atomic uint64_t published_window_fallbacks;
+void vk_pool_window_bytes(uint64_t bytes) {
+  if(atomic_load(&pool_options_initialized))die("Vulkan pool windows are a startup-only option");
+  if(bytes && (bytes<4096 || (bytes&(bytes-1))))die("Vulkan pool window size must be a power of two >=4096");
+  atomic_store(&pool_window_requested,bytes);
+}
+int vk_pool_maintenance_active(void) { return pool_maintenance!=0; }
+static void pool_window_publish(void) {
+  atomic_store(&published_window_admissions,pool_window_admissions);
+  atomic_store(&published_window_added_bytes,pool_window_added_bytes);
+  atomic_store(&published_window_added_spans,pool_window_added_spans);
+  atomic_store(&published_window_promotions,pool_window_promotions);
+}
+uint64_t vk_pool_window_fallbacks(void) { return atomic_load(&published_window_fallbacks); }
+void vk_pool_window_stats(uint64_t *bytes,uint64_t *admissions,uint64_t *added_bytes,uint64_t *added_spans,uint64_t *promotions) {
+  if(bytes)*bytes=V.options.pool_window_bytes;
+  if(admissions)*admissions=atomic_load(&published_window_admissions);
+  if(added_bytes)*added_bytes=atomic_load(&published_window_added_bytes);
+  if(added_spans)*added_spans=atomic_load(&published_window_added_spans);
+  if(promotions)*promotions=atomic_load(&published_window_promotions);
+}
 void vk_pool_mirror_reference(int reference) { atomic_store(&pool_mirror_requested,!!reference); }
 uint64_t vk_pool_initialized_bytes(void) {
   uint64_t bytes=0;
@@ -990,7 +1021,17 @@ static char *option_string(const char *name) {
   char *owned=strdup(value);if(!owned) die("Vulkan startup option allocation");return owned;
 }
 static void init_options(void) {
+  atomic_store(&pool_options_initialized,1);
   vk_startup_options *o=&V.options;
+  o->pool_window_bytes=atomic_load(&pool_window_requested);
+  if(o->pool_window_bytes==UINT64_MAX) {
+    const char *text=getenv("DM_VULKAN_POOL_WINDOW_BYTES");char *end=NULL;
+    errno=0;o->pool_window_bytes=text?strtoull(text,&end,10):0;
+    if(text && (!*text || *text=='-' || errno || *end))die("Vulkan invalid pool window bytes");
+  }
+  if(o->pool_window_bytes && (o->pool_window_bytes<4096 || (o->pool_window_bytes&(o->pool_window_bytes-1))))
+    die("Vulkan pool window size must be a power of two >=4096");
+  LOG("[vulkan] pool backing policy: %s window_bytes=%llu",o->pool_window_bytes?"canonical windows":"whole",(unsigned long long)o->pool_window_bytes);
   o->defer_mip_clears=option_one("DM_VULKAN_DEFER_MIP_CLEARS");
   o->stats=!external_profile && getenv("DM_VULKAN_STATS")!=NULL;
   o->validate=getenv("DM_VULKAN_VALIDATE")!=NULL;
@@ -1143,6 +1184,9 @@ static void init_device(void) {
   if (!V.physical)
     die("Vulkan has no graphics+compute queue");
   vkGetPhysicalDeviceProperties(V.physical, &V.props);
+  if(V.options.pool_window_bytes && (V.options.pool_window_bytes<V.props.limits.minUniformBufferOffsetAlignment ||
+      V.options.pool_window_bytes<V.props.limits.minStorageBufferOffsetAlignment ||
+      V.options.pool_window_bytes<V.props.limits.minTexelBufferOffsetAlignment))die("Vulkan pool window smaller than device offset alignment");
   vkGetPhysicalDeviceMemoryProperties(V.physical, &V.mem);
   vk_format_properties_init();
   VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters = {
@@ -1453,6 +1497,16 @@ int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset) {
 }
 static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents) {
   vk_mip_clear_buffer_access(addr,len);
+  // Missing windows are an admission bug, never permission to CPU-stitch an
+  // unknown GPU producer or migrate a backing after another handle was borrowed.
+  if(V.options.pool_window_bytes && len && !pool_maintenance) {
+    vk_pool_span_info proof;
+    int proof_kind=vk_pool_span_query(addr,len,&proof);
+    if(proof_kind==VK_POOL_SPAN_NONE)return 0; // original unknown-pool fallback
+    if(proof_kind!=VK_POOL_SPAN_SINGLE && !(proof_kind==VK_POOL_SPAN_UNBACKED && !pool_operation_depth))
+      die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
+          (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
+  }
   submit_resources *r=recording_resources;
   if(r && len && !r->pool_lookup_reference) {
     uint64_t epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_acquire);
@@ -2502,8 +2556,10 @@ static void trace_begin_submit(void) {
   }
   pthread_mutex_unlock(&trace_request_mutex);
 }
+static void pool_window_before_submission(void);
 static void begin_submission(int pool_migration) {
   mtl_init();
+  if(!pool_migration)pool_window_before_submission();
   vk_graphics_prewarm();
   if (V.cmd)
     die("Vulkan nested submit");
@@ -2769,6 +2825,10 @@ void vk_buffer_writebacks_flush(void) {
 void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
   if (!size)
     return;
+  vk_pool_requirement needs[]={
+    {src,size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0},
+    {dst,size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0}};
+  int operation=vk_pool_operation_begin_ranges(needs,2);
   vk_buffer *s, *d;
   uint64_t so, doff;
   if (!vk_pool_address_stage(src,size,(void **)&s,&so,VK_PIPELINE_STAGE_TRANSFER_BIT) ||
@@ -2789,7 +2849,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
     if(!vk_pool_pending_writes(src,size)) {
       pthread_mutex_lock(&V.resources);
       pool *source=pool_find(src,size);
-      if(source) {
+      if(source && !source->cpu_copy_requires_gpu) {
         pending_cpu_copy *copy=malloc(sizeof *copy);
         if(!copy) die("Vulkan known copy source allocation");
         uint8_t *snapshot=cpu_copy_allocate(size);
@@ -2808,6 +2868,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
   vk_buffer_transfer_written_range(dst,size);
   vk_pool_overwritten(dst,size);
   buffer_writeback(dst,size,known,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_pool_operation_end(operation);
 }
 void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v) {
   if (mode > 1)
@@ -2850,6 +2911,7 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   vk_pass_stats_publish();
   atomic_store_explicit(&graphics_stage_relaxed,recorded_graphics_stage_relaxed,memory_order_relaxed);
   atomic_store_explicit(&graphics_stage_fallback,recorded_graphics_stage_fallback,memory_order_relaxed);
+  pool_window_publish();
   atomic_store(&published_pool_lookup_hits,pool_lookup_hits);
   atomic_store(&published_pool_range_reuses,pool_range_reuses);
   atomic_store(&published_pool_lookup_slow,pool_lookup_slow);
@@ -3031,6 +3093,7 @@ void mtl_finish(void) {
   vk_profile_end(VK_TIME_WAIT, started);
 }
 #include "nvn_vk_pool_migration.inc"
+#include "nvn_vk_pool_policy.inc"
 void mtl_drain(void) { mtl_finish(); }
 #ifdef DM_VULKAN_TEST_EMBED
 // Deterministic ownership-gap fixture only. These expose logical readiness,

@@ -39,6 +39,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeTexelStorage(boolean enabled);
     private static native void nativeShaderPresent(boolean enabled);
     private static native void nativePoolMirrorReference(boolean reference);
+    private static native void nativePoolWindowBytes(long bytes);
     private static native void nativePerformanceHintReference(boolean reference);
     private static native void nativeImageLayoutReference(boolean reference);
     private static native void nativeSampledArrayLayoutReference(boolean reference);
@@ -128,6 +129,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // lifetime. Explicit SDK/shadow references remain available; Activity
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
+            // Native pool backing is selected before Vulkan initialization only.
+            // No extra leaves the C startup environment/default unchanged.
+            if (getIntent().hasExtra("pool_window_bytes")) {
+                Object value = getIntent().getExtras().get("pool_window_bytes");
+                if (!(value instanceof Long))
+                    throw new IllegalArgumentException("pool_window_bytes must be a long (--el)");
+                long bytes = (Long)value;
+                if (bytes < 0 || (bytes != 0 && (bytes < 4096 || (bytes & (bytes - 1)) != 0)))
+                    throw new IllegalArgumentException("pool_window_bytes must be 0 or a power of two >= 4096");
+                nativePoolWindowBytes(bytes);
+            }
             boolean shadow = getIntent().getBooleanExtra("opus_shadow", false);
             boolean nativeOpus = getIntent().getBooleanExtra("native_opus", !shadow);
             if (shadow && nativeOpus) throw new IllegalArgumentException("Opus modes are mutually exclusive");
@@ -264,6 +276,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent.hasExtra("pool_window_bytes")) {
+            android.util.Log.w("D2RPool", "pool_window_bytes is startup-only; cold restart required");
+            intent.removeExtra("pool_window_bytes");
+        }
         setIntent(intent);
         if (intent.hasExtra("display_refresh_hz")) {
             getIntent().putExtra("display_refresh_hz", intent.getFloatExtra("display_refresh_hz", 0));

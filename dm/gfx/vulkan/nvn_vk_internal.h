@@ -47,6 +47,7 @@ typedef struct {
   int gpu_profile,trace_frame_set;
   int pool_ownership_reference;
   int pool_mirror_reference;
+  uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
   const char *shader_root,*trace_directory,*frame_dump,*pipeline_cache_directory;
@@ -134,6 +135,19 @@ typedef struct {
 } vk_pool_reserve_result;
 int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
     uint64_t window_bytes,vk_pool_reserve_result *out);
+// Startup only. Zero preserves the original whole-pool policy.
+void vk_pool_window_bytes(uint64_t bytes);
+uint64_t vk_pool_window_fallbacks(void);
+void vk_pool_window_stats(uint64_t *bytes,uint64_t *admissions,uint64_t *added_bytes,
+    uint64_t *added_spans,uint64_t *promotions);
+typedef int (*vk_pool_operation_collect)(void *context,vk_pool_requirement_sink sink,void *sink_context);
+// Collection is logical and may be retried after explicit owner maintenance.
+// A nonzero token owns an immutable physical topology until operation_end.
+int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context);
+int vk_pool_operation_begin_ranges(const vk_pool_requirement *ranges,size_t count);
+void vk_pool_operation_end(int token);
+int vk_pool_maintenance_active(void);
+
 // Recording-owner idle proofs; never synchronize or end an active scope.
 int vk_shader_operation_active(void);
 int vk_texture_binding_scope_active(void);

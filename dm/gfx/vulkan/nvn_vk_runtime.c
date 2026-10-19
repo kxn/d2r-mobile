@@ -153,10 +153,15 @@ static void set_targets(const p_set_rt *rt,int window) {
 }
 static int camera(float current[16],float previous[16]) {
   const p_bind_buf *ubo=&S.ubo[0][3];vk_buffer *buffer;uint64_t offset;
-  if (!ubo->addr||ubo->size<528||!mtl_addr(ubo->addr,ubo->size,(void **)&buffer,&offset)) return 0;
+  uint64_t logical;
+  if (!ubo->addr||ubo->size<528 || !vk_pool_range_offset(ubo->addr,ubo->size,&logical)) return 0;
+  vk_pool_requirement need={ubo->addr,ubo->size,0,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1};
+  int operation=vk_pool_operation_begin_ranges(&need,1);
+  if(!mtl_addr(ubo->addr,ubo->size,(void **)&buffer,&offset)) {vk_pool_operation_end(operation);return 0;}
   // 沿原 CPU 常量读法，仅当所需范围被 GPU 更新时等完成，不因其他池写入停顿。
   // Preserve original CPU reads, waiting only for GPU writes to the required range.
   float constants[48];int waited=vk_pool_read(ubo->addr+336,sizeof constants,constants);
+  vk_pool_operation_end(operation);
   if (waited<0) return 0;
   R.stats.camera_reads++;R.stats.camera_waits+=(unsigned)waited;
   memcpy(current,constants,64);memcpy(previous,constants+32,64);return 1;

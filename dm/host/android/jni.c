@@ -56,6 +56,17 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolLook
   vk_pool_lookup_reference(reference);
 }
 extern void vk_pool_mirror_reference(int reference);
+extern void vk_pool_window_bytes(uint64_t bytes);
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePoolWindowBytes(
+    JNIEnv *env,jclass klass,jlong bytes) {
+  (void)klass;
+  if(bytes<0 || (bytes && (bytes<4096 || ((uint64_t)bytes&((uint64_t)bytes-1))))) {
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,"pool_window_bytes must be 0 or a power of two >= 4096");
+    return;
+  }
+  vk_pool_window_bytes((uint64_t)bytes);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTextureBindingReference(
     JNIEnv *env, jclass klass, jboolean reference) {
   (void)env; (void)klass;

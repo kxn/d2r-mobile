@@ -460,6 +460,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_deferred_mip_clear.inc"
 #include "native_vulkan_pending_read.inc"
 #include "native_vulkan_prewarm.inc"
+#include "native_vulkan_pool_policy.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
   vk_graphics_prepare_mode(2);
@@ -1893,6 +1894,7 @@ int dm_vulkan_test_main(void) {
   initialized_span_test();
   pool_backing_span_test();
   pool_window_reservation_test();
+  pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);
   shader_pool_ranges_test();
   shader_present_test();
   sampled_color_array_layout_test(controls[3],controls[4]);

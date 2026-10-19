@@ -100,6 +100,7 @@ VkPipelineLayout vk_program_layout_mode(vk_shader *const shaders[6],int dynamic)
 VkDescriptorSet vk_shader_bindings(vk_shader *s);
 void vk_shader_operation_begin(void);
 void vk_shader_prepare_images(vk_shader *const shaders[6],int compute);
+const char *vk_shader_pool_range_error(void);
 int vk_shader_pool_ranges(vk_shader *const shaders[6],int compute,
     vk_pool_requirement_sink sink,void *context);
 int vk_shader_pool_ranges_state(vk_shader *const shaders[6],const vk_state *state,int compute,
@@ -108,6 +109,11 @@ int vk_shader_pool_ranges_state(vk_shader *const shaders[6],const vk_state *stat
 // discards partial output. Zero-length mandatory draw bindings are not proven.
 int vk_graphics_pool_ranges(vk_shader *const shaders[6],const vk_state *state,
     const p_draw_idx *indexed,vk_pool_requirement_sink sink,void *context);
+// Admission alone can conservatively make an address-only VBO's OWN pool
+// whole and give an empty indexed draw its valid binding address.
+int vk_graphics_pool_admission(vk_shader *const shaders[6],const vk_state *state,
+    const p_draw_idx *indexed,vk_pool_requirement_sink sink,void *context);
+
 void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage);
 typedef struct {
   VkPipelineLayout layout;

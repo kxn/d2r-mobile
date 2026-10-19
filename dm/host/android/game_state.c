@@ -460,6 +460,16 @@ static void observe_tick(const uint64_t *registers) {
       mirror_reference?"true":"false",(unsigned long long)pool_registered,(unsigned long long)pool_backed,
       (unsigned long long)pool_count,(unsigned long long)pool_materialized,
       (unsigned long long)vk_pool_initialized_bytes());
+    void vk_pool_window_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+    uint64_t vk_pool_window_fallbacks(void);
+    uint64_t window_bytes,window_admissions,window_added_bytes,window_added_spans,window_promotions;
+    vk_pool_window_stats(&window_bytes,&window_admissions,&window_added_bytes,
+                         &window_added_spans,&window_promotions);
+    // Backing policy and cumulative mechanism counts, not process RSS/PSS.
+    fprintf(state_log, ",\"pool_windows\":{\"window_bytes\":%llu,\"admissions\":%llu,\"added_bytes\":%llu,\"added_spans\":%llu,\"promotions\":%llu,\"enumeration_fallbacks\":%llu}",
+      (unsigned long long)window_bytes,(unsigned long long)window_admissions,
+      (unsigned long long)window_added_bytes,(unsigned long long)window_added_spans,
+      (unsigned long long)window_promotions,(unsigned long long)vk_pool_window_fallbacks());
     uint64_t storage_direct,storage_copies,storage_bytes;int storage_reference;
     vk_storage_bias_stats(&storage_direct,&storage_copies,&storage_bytes,&storage_reference);
     fprintf(state_log, ",\"storage_alignment\":{\"reference\":%s,\"direct\":%llu,\"copies\":%llu,\"bytes\":%llu}",

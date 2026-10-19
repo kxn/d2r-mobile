@@ -1113,7 +1113,29 @@ static uint64_t copy_bytes(image *i, const p_copy_b2t *p, uint64_t row,
   return (p->r.depth - 1) * slice + ((p->r.height + bh - 1) / bh - 1) * pitch +
          (p->r.width + bw - 1) / bw * bpb;
 }
+// Pure logical copy footprint, before image_get/upload or any temporary can
+// borrow physical resources. Keep original NVN compressed block geometry.
+static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int write) {
+  if(!V.options.pool_window_bytes)return 0;
+  int bw,bh,bpb=p->tex?nvn_fmt_bpb(p->tex->d.format,&bw,&bh):0;
+  if(bpb<=0 || bw<=0 || bh<=0 || p->r.width<=0 || p->r.height<=0 || p->r.depth<=0)
+    die("Vulkan invalid logical image-copy extent");
+  if((row && row%(unsigned)bpb) || (img && (!row || img%row)))
+    die("Vulkan image copy stride invalid");
+  uint64_t blocks=((uint64_t)p->r.width+bw-1)/bw,lines=((uint64_t)p->r.height+bh-1)/bh;
+  if(blocks>UINT64_MAX/(unsigned)bpb)die("Vulkan image copy row overflow");
+  uint64_t last=blocks*bpb,pitch=row?row:last;
+  if(lines>UINT64_MAX/pitch)die("Vulkan image copy slice overflow");
+  uint64_t slice=img?img:pitch*lines,depth=(uint64_t)p->r.depth;
+  if((depth-1) && slice>UINT64_MAX/(depth-1))die("Vulkan image copy depth overflow");
+  uint64_t n=(depth-1)*slice,tail=(lines-1)*pitch;
+  if(tail>UINT64_MAX-n || last>UINT64_MAX-n-tail)die("Vulkan image copy footprint overflow");
+  n+=tail+last;
+  vk_pool_requirement need={p->src,n,0,VK_PIPELINE_STAGE_TRANSFER_BIT,write,0};
+  return vk_pool_operation_begin_ranges(&need,1);
+}
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
+  int operation=copy_pool_operation(p,row,img,0);
   vk_mip_clear_drain();
   image *i = image_get(p->tex);
   image_upload(i);
@@ -1155,8 +1177,10 @@ void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   vkCmdCopyBufferToImage(V.cmd, src->handle, i->handle, VK_IMAGE_LAYOUT_GENERAL,
                          1, &c);
   i->initialized = 1;
+  vk_pool_operation_end(operation);
 }
 void vk_texture_copy_t2b(const p_copy_b2t *p, uint64_t row, uint64_t img) {
+  int operation=copy_pool_operation(p,row,img,1);
   vk_mip_clear_drain();
   image *i = image_get(p->tex);
   if (i->decoded)
@@ -1175,6 +1199,7 @@ void vk_texture_copy_t2b(const p_copy_b2t *p, uint64_t row, uint64_t img) {
                          1, &c);
   vk_buffer_transfer_written_range(p->src,n);
   vk_buffer_writeback_stage(p->src, n, VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_pool_operation_end(operation);
 }
 static uint32_t full_zero_copy(image *s,VkImageSubresourceRange sr,image *d,
                               VkImageSubresourceRange dr,const p_copy_t2t *p) {

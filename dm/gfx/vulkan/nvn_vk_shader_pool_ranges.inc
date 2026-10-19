@@ -1,41 +1,45 @@
+// Recording-owner diagnostic for a FAILED logical proof, not timing/sampling.
+static const char *pool_range_error="batch/capacity or unsupported logical state";
+const char *vk_shader_pool_range_error(void) { return pool_range_error; }
+static int pool_range_fail(const char *reason) {pool_range_error=reason;return 0;}
 // One logical resource enumeration for actual compute dependencies and future
 // physical-backing preflight. Do not acquire VkBuffer/descriptor/temp handles.
 static int shader_pool_requirement(const p_bind_buf *buffer,int kind,int writable,
     VkPipelineStageFlags stages,uint64_t prefix_alignment,
     vk_pool_requirement_sink sink,void *context) {
   if(!buffer->addr || !buffer->size)return 1; // existing zero-buffer fallback
-  if(buffer->size>UINT64_MAX-buffer->addr)return 0;
+  if(buffer->size>UINT64_MAX-buffer->addr)return pool_range_fail("buffer address overflow");
   vk_pool_requirement range={buffer->addr,buffer->size,prefix_alignment,stages,writable,kind};
   return sink(context,&range);
 }
 int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,int compute,
     vk_pool_requirement_sink sink,void *context) {
-  if(!list || !state || !sink)return 0;
+  if(!list || !state || !sink)return pool_range_fail("invalid shader/state/sink");
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
-    if(s->stage!=stage || s->nb>128 || (s->nb&&!s->bindings))return 0;
+    if(s->stage!=stage || s->nb>128 || (s->nb&&!s->bindings))return pool_range_fail("shader stage/binding table");
     for(unsigned k=0;k<s->nb;k++) {
       const vk_binding *b=&s->bindings[k];
-      if(b->count!=1)return 0;
+      if(b->count!=1)return pool_range_fail("descriptor array count");
       const p_bind_buf *buffer=NULL;uint64_t prefix=0;
       if(b->kind==1) {
-        if(b->reg<0 || b->reg>=19)return 0;
+        if(b->reg<0 || b->reg>=19)return pool_range_fail("uniform register range");
         // c0/c1/c2 are host-owned driver/embedded constants. Ordinary UBOs
         // still resolve their FULL declared size before alignment/copy logic;
         // descriptor.range=min(size,64KiB) is not the lookup's range.
         if(b->reg>=3)buffer=&state->ubo[stage][b->reg-3];
       } else if(b->kind==2 || b->kind==8) {
-        if(b->reg<0 || b->reg>=16)return 0;
+        if(b->reg<0 || b->reg>=16)return pool_range_fail("storage register range");
         buffer=b->kind==8?&state->ubo[stage][b->reg]:&state->ssbo[stage][b->reg];
         unsigned bias=(unsigned)b->reg+(b->kind==8?16:0);
         if(s->storage_bias_mask&(UINT32_C(1)<<bias))
           prefix=V.props.limits.minStorageBufferOffsetAlignment;
       } else if(b->kind==7 || b->kind==9) {
-        if(b->reg<0 || b->reg>=(b->kind==9?32:128))return 0;
+        if(b->reg<0 || b->reg>=(b->kind==9?32:128))return pool_range_fail("texel register range");
         uint64_t handle=b->kind==9?state->img[stage][b->reg]:state->tex[stage][b->reg];
         tex_t texture;
         if(!vk_texture_descriptor(handle&0xfffff,&texture) ||
-            texture.d.target!=NVN_TEXTURE_TARGET_BUFFER)return 0;
+            texture.d.target!=NVN_TEXTURE_TARGET_BUFFER)return pool_range_fail("missing/non-buffer texel descriptor");
         p_bind_buf texel={.addr=(uintptr_t)texture.mem,.size=texture.L.size};
         if(!shader_pool_requirement(&texel,b->kind,vk_binding_writable(b),
             producer_stage(stage),0,sink,context))return 0;
@@ -43,7 +47,7 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
         // Optional texel-storage image alternatives need their selected
         // physical-image recipe, not a guessed NVN buffer extent. An unknown
         // representation cannot prove complete window requirements.
-        return 0;
+        return pool_range_fail("unsupported physical alternative binding");
       }
       if(buffer && !shader_pool_requirement(buffer,b->kind,vk_binding_writable(b),
           producer_stage(stage),prefix,sink,context))return 0;
@@ -59,35 +63,56 @@ int vk_shader_pool_ranges(vk_shader *const list[6],int compute,
 // even when CPU instance expansion later uses only a subset of that range.
 // Logical NVN state is supplied explicitly so a deferred original host draw
 // can be planned without installing its saved state into the active recorder.
-int vk_graphics_pool_ranges(vk_shader *const list[6],const vk_state *state,
-    const p_draw_idx *indexed,vk_pool_requirement_sink sink,void *context) {
-  if(!list || !list[0] || !state || !sink)return 0;
+static int graphics_pool_ranges(vk_shader *const list[6],const vk_state *state,
+    const p_draw_idx *indexed,vk_pool_requirement_sink sink,void *context,int admission) {
+  if(!list || !list[0] || !state || !sink)return pool_range_fail("missing graphics vertex shader/state");
   if(!vk_shader_pool_ranges_state(list,state,0,sink,context))return 0;
   unsigned seen=0;
   for(unsigned attribute=0;attribute<16;attribute++)
     if((list[0]->input_mask&(1u<<attribute)) && state->attr[attribute].fmt) {
       unsigned stream=state->attr[attribute].stream;
-      if(stream>=16)return 0;
+      if(stream>=16)return pool_range_fail("vertex stream index");
       if(seen&(1u<<stream))continue;
       seen|=1u<<stream;
       const NVNbufferRange *vertex=&state->vertex[stream];
       // Unlike optional shader bindings, mandatory vertex bindings have no
       // zero-buffer fallback. An address-only binding needs conservative
       // whole-pool handling until its zero-length semantics are planned too.
-      if(!vertex->address || !vertex->size)return 0;
+      if(!vertex->address)return pool_range_fail("missing mandatory vertex address");
       p_bind_buf source={.addr=vertex->address,.size=vertex->size};
+      if(!source.size) {
+        // The existing binding permits address-only VBOs and exposes the rest
+        // of their physical pool. Their finite access bound is unknown: admit
+        // this ONE complete logical pool, not every image-only pool in registry.
+        vk_pool_span_info p;
+        if(!admission || vk_pool_span_query(source.addr,1,&p)==VK_POOL_SPAN_NONE)
+          return pool_range_fail("address-only/empty mandatory vertex range");
+        source.addr=p.pool_base;source.size=p.pool_size;
+      }
       if(!shader_pool_requirement(&source,VK_POOL_REQUIRE_VERTEX,0,
           VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,0,sink,context))return 0;
     }
   if(indexed) {
-    if(indexed->count<=0 || !indexed->ibuf || (indexed->itype!=NVN_INDEX_TYPE_UNSIGNED_SHORT &&
-        indexed->itype!=NVN_INDEX_TYPE_UNSIGNED_INT))return 0;
+    if(indexed->count<0 || (!admission && !indexed->count) || !indexed->ibuf || (indexed->itype!=NVN_INDEX_TYPE_UNSIGNED_SHORT &&
+        indexed->itype!=NVN_INDEX_TYPE_UNSIGNED_INT))return pool_range_fail("empty/invalid index range/type");
     p_bind_buf source={.addr=indexed->ibuf,
-      .size=(uint64_t)indexed->count*(indexed->itype==NVN_INDEX_TYPE_UNSIGNED_SHORT?2:4)};
+      .size=indexed->count?(uint64_t)indexed->count*(indexed->itype==NVN_INDEX_TYPE_UNSIGNED_SHORT?2:4):1};
+    // An empty draw fetches no indices but its unchanged original executor
+    // still binds a real buffer at this valid offset. One byte proves that
+    // binding's address without making unrelated pools whole.
     if(!shader_pool_requirement(&source,VK_POOL_REQUIRE_INDEX,0,
         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,0,sink,context))return 0;
   }
   return 1;
+}
+
+int vk_graphics_pool_ranges(vk_shader *const list[6],const vk_state *state,
+    const p_draw_idx *indexed,vk_pool_requirement_sink sink,void *context) {
+  return graphics_pool_ranges(list,state,indexed,sink,context,0);
+}
+int vk_graphics_pool_admission(vk_shader *const list[6],const vk_state *state,
+    const p_draw_idx *indexed,vk_pool_requirement_sink sink,void *context) {
+  return graphics_pool_ranges(list,state,indexed,sink,context,1);
 }
 
 typedef struct { vk_buffer_use *uses;unsigned count; } compute_pool_requirements;
