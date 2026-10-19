@@ -2517,9 +2517,10 @@ static inline unsigned append_changed_word_runs(uint32_t changed,uint64_t block,
   }
   return count;
 }
-static unsigned changed_word_ranges(const uint8_t *guest,const uint8_t *shadow,
-                                    uint64_t offset,size_t size,VkBufferCopy *runs) {
-  unsigned count=0;size_t block=0,whole=size&~(size_t)63,paired=size&~(size_t)127;
+static inline unsigned changed_word_ranges_from(const uint8_t *guest,const uint8_t *shadow,
+    uint64_t offset,size_t size,VkBufferCopy *runs,size_t block,unsigned count) {
+  if(block>=size)return count;
+  size_t whole=size&~(size_t)63,paired=block+((size-block)&~(size_t)127);
   // Two proven in-bounds blocks share only loop bookkeeping. Each block keeps
   // the original mask/append order; equal GPU-owned words are never copied.
   for(;block<paired;block+=128) {
@@ -2535,6 +2536,29 @@ static unsigned changed_word_ranges(const uint8_t *guest,const uint8_t *shadow,
     count=append_changed_word_runs(changed_word_mask(guest+block,shadow+block,(size-block)/4),block,offset,runs,count);
   return count;
 }
+static inline unsigned changed_word_ranges_after_first(const uint8_t *guest,const uint8_t *shadow,
+    uint64_t offset,size_t size,VkBufferCopy *runs,size_t first,uint32_t mask) {
+  unsigned count=append_changed_word_runs(mask,first,offset,runs,0);
+  return changed_word_ranges_from(guest,shadow,offset,size,runs,first+64,count);
+}
+// Scan the original paired blocks without reserving the512-region cold stack.
+// The first nonzero mask is passed by value; its bytes are never read twice.
+static inline size_t first_changed_word_block(const uint8_t *guest,const uint8_t *shadow,
+    size_t size,uint32_t *mask) {
+  size_t block=0,whole=size&~(size_t)63,paired=size&~(size_t)127;
+  for(;block<paired;block+=128) {
+    *mask=changed_word_mask(guest+block,shadow+block,16);if(*mask)return block;
+    *mask=changed_word_mask(guest+block+64,shadow+block+64,16);if(*mask)return block+64;
+  }
+  if(block<whole) {
+    *mask=changed_word_mask(guest+block,shadow+block,16);if(*mask)return block;
+    block+=64;
+  }
+  if(block<size) {
+    *mask=changed_word_mask(guest+block,shadow+block,(size-block)/4);if(*mask)return block;
+  }
+  *mask=0;return size;
+}
 #ifdef DM_VULKAN_TEST_EMBED
 // Functional oracle entry only; no production counter, sampler or timing.
 uint32_t vk_test_upload_word_mask(const uint8_t *guest,const uint8_t *shadow,unsigned words) {
@@ -2543,7 +2567,8 @@ uint32_t vk_test_upload_word_mask(const uint8_t *guest,const uint8_t *shadow,uns
 #ifdef DM_VULKAN_SCAN_PAIR_ORACLE
 unsigned vk_test_upload_word_runs(const uint8_t *guest,const uint8_t *shadow,
     uint64_t offset,size_t size,VkBufferCopy *runs) {
-  return changed_word_ranges(guest,shadow,offset,size,runs);
+  uint32_t mask;size_t first=first_changed_word_block(guest,shadow,size,&mask);
+  return mask?changed_word_ranges_after_first(guest,shadow,offset,size,runs,first,mask):0;
 }
 #endif
 // Functional boundary oracle only, with real registered physical backings.
@@ -2598,22 +2623,11 @@ void vk_test_pool_copy_wait(void (*hook)(void *),void *context) {
   pool_copy_wait_hook=hook;pool_copy_wait_context=context;
 }
 #endif
-static void sync_queued_page(pool *p,uint64_t off,size_t size) {
-  // Dirty tracking is page-granular, GPU publication is byte-granular. Upload
-  // only changed words; copying unchanged neighbours would overwrite queued
-  // GPU results with stale CPU data. Pools/runs are checked for word alignment
-  // by the caller; the conservative host path handles unusual tails.
-  for(;;) {
+// Caller holds publication exclusion. Return0 only after the original wait
+// has released it; the hot caller then restarts the complete scan under lock.
+static __attribute__((noinline)) int sync_queued_page_changed(pool *p,uint64_t off,size_t size,
+    size_t first,uint32_t mask) {
     VkBufferCopy regions[512];unsigned count=0;
-    pthread_mutex_lock(&pool_publication_mu);
-    // Keep the original full-page/scalar scan as an independent reference.
-    // The default scanner handles equal and changed blocks together: there is
-    // no second read of the whole page after an initial memcmp finds a change.
-    if(recording_resources->upload_scan_reference)POOL_COPY_ADD(reference_page_span_bytes,size);
-    else POOL_COPY_ADD(scan_bytes,size);
-    if(recording_resources->upload_scan_reference && !memcmp(p->guest+off,p->shadow+off,size)) {
-      pthread_mutex_unlock(&pool_publication_mu);return;
-    }
     if(recording_resources->upload_scan_reference) {
       for(size_t i=0;i<size;) {
         if(!memcmp(p->guest+off+i,p->shadow+off+i,4)) { i+=4;continue; }
@@ -2621,8 +2635,10 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
         do { i+=4; } while(i<size&&memcmp(p->guest+off+i,p->shadow+off+i,4));
         regions[count++]=(VkBufferCopy){.srcOffset=first,.dstOffset=off+first,.size=i-first};
       }
-    } else count=changed_word_ranges(p->guest+off,p->shadow+off,off,size,regions);
-    if(!count) { pthread_mutex_unlock(&pool_publication_mu);return; }
+    } else {
+      count=changed_word_ranges_after_first(p->guest+off,p->shadow+off,off,size,regions,first,mask);
+    }
+    if(!count) { pthread_mutex_unlock(&pool_publication_mu);return 1; }
     uint64_t serial=0;
     if(pending_cpu_write((uintptr_t)p->guest+off,size))
       for(unsigned i=0;i<count;i++) {
@@ -2636,7 +2652,7 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
 #ifdef DM_VULKAN_TEST_EMBED
       if(pool_copy_wait_hook)pool_copy_wait_hook(pool_copy_wait_context);
 #endif
-      vk_internal_wait(serial);vk_system_trace_end(trace);continue;
+      vk_internal_wait(serial);vk_system_trace_end(trace);return 0;
     }
     uint64_t copied_bytes=0;
     if(pending_gpu_access(p,off,size)) {
@@ -2668,7 +2684,7 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       POOL_COPY_ADD(mirror_bytes,copied_bytes);
       POOL_COPY_ADD(shadow_bytes,copied_bytes);
       pool_cpu_synced_runs(p,regions,count,recording_resources->cpu_authority_begin);
-      pthread_mutex_unlock(&pool_publication_mu);return;
+      pthread_mutex_unlock(&pool_publication_mu);return 1;
     } else {
       // Several exact edits in one physical page reuse only its immutable
       // mapping. Content/dirty/authority proofs remain the original per-run
@@ -2688,7 +2704,25 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
     }
     POOL_COPY_ADD(shadow_bytes,copied_bytes);
     pool_cpu_synced_runs(p,regions,count,recording_resources->cpu_authority_begin);
-    pthread_mutex_unlock(&pool_publication_mu);return;
+    pthread_mutex_unlock(&pool_publication_mu);return 1;
+}
+static void sync_queued_page(pool *p,uint64_t off,size_t size) {
+  // Dirty protection and all original publication/generation rules remain in
+  // force. Equal pages need only the bounded scanner; no regions or new proof.
+  for(;;) {
+    pthread_mutex_lock(&pool_publication_mu);
+    size_t first=0;uint32_t mask=0;
+    if(recording_resources->upload_scan_reference) {
+      POOL_COPY_ADD(reference_page_span_bytes,size);
+      if(!memcmp(p->guest+off,p->shadow+off,size)) {
+        pthread_mutex_unlock(&pool_publication_mu);return;
+      }
+    } else {
+      POOL_COPY_ADD(scan_bytes,size);
+      first=first_changed_word_block(p->guest+off,p->shadow+off,size,&mask);
+      if(!mask) { pthread_mutex_unlock(&pool_publication_mu);return; }
+    }
+    if(sync_queued_page_changed(p,off,size,first,mask))return;
   }
 }
 static void sync_page(const void *memory, size_t length, void *context) {
