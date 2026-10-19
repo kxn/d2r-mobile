@@ -210,7 +210,22 @@ static int host_import_oracle(void) {
     instance.pNext=&debug;instance.enabledLayerCount=1;instance.ppEnabledLayerNames=&layer;
     instance.enabledExtensionCount=debug.pNext?2:1;instance.ppEnabledExtensionNames=instance_extensions;
   }
-  CHECK(vkCreateInstance(&instance,NULL,&context.instance)==VK_SUCCESS);
+  if(validate) {
+    uint32_t layer_count=0;
+    VkResult enumeration=vkEnumerateInstanceLayerProperties(&layer_count,NULL);
+    LOG("[host import oracle] layer_enumeration=%d count=%u",enumeration,layer_count);
+    if(enumeration==VK_SUCCESS && layer_count<=256) {
+      VkLayerProperties *layers=calloc(layer_count?layer_count:1,sizeof *layers);
+      CHECK(layers!=NULL);
+      enumeration=vkEnumerateInstanceLayerProperties(&layer_count,layers);
+      if(enumeration==VK_SUCCESS)
+        for(uint32_t i=0;i<layer_count;i++)LOG("[host import oracle] available_layer=%s",layers[i].layerName);
+      free(layers);
+    }
+  }
+  VkResult instance_result=vkCreateInstance(&instance,NULL,&context.instance);
+  LOG("[host import oracle] create_instance_result=%d validation=%d",instance_result,validate);
+  CHECK(instance_result==VK_SUCCESS);
   volkLoadInstance(context.instance);
   if(validate) {
     CHECK(vkCreateDebugUtilsMessengerEXT!=NULL);
@@ -223,8 +238,9 @@ static int host_import_oracle(void) {
   context.physical=physical[0];free(physical);
   VkPhysicalDeviceProperties device_properties;
   vkGetPhysicalDeviceProperties(context.physical,&device_properties);
-  LOG("[host import oracle] uid=%lu device=%s opt_in=%s validation=%d",
-    (unsigned long)getuid(),device_properties.deviceName,getenv("TU_DM_HOST_IMPORT")?getenv("TU_DM_HOST_IMPORT"):"unset",validate);
+  LOG("[host import oracle] uid=%lu device=%s turnip_opt_in=%s panvk_opt_in=%s validation=%d",
+    (unsigned long)getuid(),device_properties.deviceName,getenv("TU_DM_HOST_IMPORT")?getenv("TU_DM_HOST_IMPORT"):"unset",
+    getenv("PANVK_DM_HOST_IMPORT")?getenv("PANVK_DM_HOST_IMPORT"):"unset",validate);
   if(!host_import_extension(context.physical,VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
     host_import_context_destroy(&context);
     printf("{\"test\":\"host-import-standard-api\",\"result\":\"unsupported\",\"reason\":\"extension_absent\",\"uid\":%lu}\n",(unsigned long)getuid());
