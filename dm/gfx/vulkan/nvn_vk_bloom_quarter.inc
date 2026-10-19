@@ -235,7 +235,11 @@ static int bq_prove(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx,
       out->parameters.green<0 || out->parameters.blue<0)return 0;
   out->parameters.width=out->source.d.width;out->parameters.height=out->source.d.height;
   out->generation=vk_pass_generation();
-  vk_state original=S,shadow=S;int phase=0,success=0;unsigned draws=0;
+  // The proof helpers use the recording owner's S. Keep one original snapshot
+  // and advance S as the lookahead cursor, restoring it at the single exit.
+  // Helpers do not replay, submit or wait for GPU work; no other owner observes S.
+  // This avoids copying the entire state into/out of each intermediate draw.
+  vk_state original=S;int phase=0,success=0;unsigned draws=0;
   tex_t levels[BQ_DRAW_LIMIT];levels[0]=out->b0;unsigned level_count=1,up_level=0;
   // No copies, updates, dispatches, query/event side effects or unknown ops are
   // crossed. In particular S and the original A constants cannot be produced
@@ -246,8 +250,8 @@ static int bq_prove(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx,
     op_hdr header;memcpy(&header,op,sizeof header);const void *payload=op+8;
     bq_failure=100*phase+header.op;
     if(header.op==OP_DRAW || header.op==OP_DRAW_IDX) {
-      if(++draws>BQ_DRAW_LIMIT || !shadow.program)break;
-      S=shadow;vk_shader *next[6]={0};vk_program_shaders(S.program,next);
+      if(++draws>BQ_DRAW_LIMIT || !S.program)break;
+      vk_shader *next[6]={0};vk_program_shaders(S.program,next);
       const p_draw *d=header.op==OP_DRAW?payload:NULL;const p_draw_idx *di=d?NULL:payload;
       snprintf(bq_failure_shader,sizeof bq_failure_shader,"%s",next[1]?next[1]->key:"");
       tex_t target,input;uint64_t handle;
@@ -284,15 +288,14 @@ static int bq_prove(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx,
         if(!bq_sampler_identity(next[1],out->b1_handle,&out->overlay_sampler,&out->overlay_sampler_parameters))break;
         out->overlay=payload;success=1;break;
       } else break;
-      S=original;
     } else if(header.op==OP_CLEAR_COLOR) {
       const p_clear_color *clear=payload;
       // B0 clear before C is harmless; clearing S changes the original A
       // input, while clearing B1 after generation changes what D must read.
-      if(shadow.targets.n!=1 || clear->index!=0 || !shadow.targets.color[0] ||
-          bq_alias(shadow.targets.color[0],&out->source) ||
-          (phase && bq_alias(shadow.targets.color[0],&out->b1)))break;
-    } else if(!bq_shadow(&shadow,header.op,payload))break;
+      if(S.targets.n!=1 || clear->index!=0 || !S.targets.color[0] ||
+          bq_alias(S.targets.color[0],&out->source) ||
+          (phase && bq_alias(S.targets.color[0],&out->b1)))break;
+    } else if(!bq_shadow(&S,header.op,payload))break;
   }
   S=original;
 
