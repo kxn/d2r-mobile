@@ -1591,4 +1591,6 @@ SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Bus
 
 减少实际计算、复制和外存访问，在相同帧率/画质下有望降低能耗；帧率不受限时，节省可能被新增帧数消耗。持续温度及热降频还需同等工作量的真机长窗验证，当前发热与6GB验收仍未完成。
 
+当前CPU调用栈补充：另一个同APK/链、始终0.75/目标60的7.978秒窗口，用官方simpleperf `cpu-clock:u`/DWARF采样940次、零丢失，严格匹配已安装ELF的BuildID。replay线程470样本的Self DSO份额为宿主63.404%、vendor驱动22.979%、libc12.979%；驱动混淆符号不能进一步断言为忙等。官方inclusive/self分别有`vk_draw`61.91/5.96%、`vk_shader_bindings_selected`24.89/3.40%、commit16.60/2.55%、`vk_texture_view_binding`10.21/1.91%、`sync_page`8.09/4.26%，memmove Self5.11%。这些inclusive有重叠，不能相加；部分调用链止于中途，也不能拿另一次Perfetto的毫秒直接乘成精确函数耗时。该证据支持下一步优先减少真实绘制资源处理、脏页/复制与描述符工作，同时继续GPU带宽/能效候选，而不是只按旧满比例GPU结论排序。本次公有热API日志为空，不借用上一SDP窗口的thermal0；结束fresh save2/281.4ms，游戏及本次工具已核实退出。见`q735-aligned-cpu-53fbef1/summary.json`和官方报告。
+
 另新增通用启动期operation-mode诊断，默认docked不变，显式handheld重用原GetOperationMode/GetPerformanceMode/参数槽，不新写游戏规则；actual dm_opmode启动日志核验，禁止热切换。新13f0包两模式在同包720下对照；Handheld固定720高，game-res只影响手持宽高比。该模式可能影响原游戏分支，但尚不能仅由HLE断言阴影／后处理减少。源与独审见 `operation-mode-v1-source-ready.json`、`operation-mode-v1-root-review.json`。
