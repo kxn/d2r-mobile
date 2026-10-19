@@ -89,7 +89,8 @@ static int pool_operation_pin(pool_operation_plan *plan) {
 // must NOT be appended to a main CB whose later uploads execute before it.
 // Ghost replay is postponed across this maintenance-only pass end, then runs
 // immediately after reopen, before the interrupted original operation.
-static void pool_policy_promote(uint64_t base,uint64_t identity,int reopen) {
+static void pool_policy_promote(uint64_t base,uint64_t identity,int reopen,
+    const vk_pool_requirement *trigger) {
   if(pool_operation_depth || pool_maintenance || vk_shader_operation_active() ||
       vk_texture_binding_scope_active() || vk_texture_shader_collecting())
     die("Vulkan pool promotion attempted while physical handles are borrowed");
@@ -110,7 +111,7 @@ static void pool_policy_promote(uint64_t base,uint64_t identity,int reopen) {
   int whole=present && pool_window_whole(p);
   pthread_mutex_unlock(&V.resources);
   if(present && !whole) {
-    if(pool_migrate_whole_quiescent(base))pool_window_promotions++;
+    if(pool_migrate_quiescent(base,identity,trigger,V.options.pool_window_bytes))pool_window_promotions++;
     else {
       // Registry removal may race the isolated copy despite its lifetime pin.
       // The helper never publishes to a replacement logical pool. Recollect
@@ -119,7 +120,7 @@ static void pool_policy_promote(uint64_t base,uint64_t identity,int reopen) {
       p=pool_find(base,1);
       int unchanged=p && (uintptr_t)p->guest==base && p->identity==identity;
       pthread_mutex_unlock(&V.resources);
-      if(unchanged)die("Vulkan pool whole migration failed; old storage retained");
+      if(unchanged)die("Vulkan pool consolidation failed; old storage retained");
     }
   }
   stream_recording=was_stream;
@@ -145,7 +146,7 @@ static void pool_window_before_submission(void) {
     }
     pthread_mutex_unlock(&V.resources);
     if(!identity)return;
-    pool_policy_promote(base,identity,0);
+    pool_policy_promote(base,identity,0,NULL);
   }
   die("Vulkan whole-reference pool registry did not settle");
 }
@@ -178,7 +179,8 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
       // Parent admission includes every pending reentrant ghost resource.
       // An unexpected nested crossing is a proof failure, not permission to
       // invalidate its parent's already borrowed VkBuffer/copyback target.
-      pool_policy_promote(result.pool_base,result.pool_identity,1);continue;
+      pool_policy_promote(result.pool_base,result.pool_identity,1,
+          result.trigger.size?&result.trigger:NULL);continue;
     }
     if(reserved!=VK_POOL_RESERVE_OK)
       die("Vulkan pool operation reservation failed status=%d VkResult=%d; old storage retained",reserved,result.allocation_error);

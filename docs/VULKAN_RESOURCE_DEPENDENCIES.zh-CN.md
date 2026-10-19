@@ -1721,3 +1721,15 @@ CPU 对照已补两厂真机 memory-pool oracle 各 400,453 项；Mali 真实游
 新增成本：318个非空 sidecar 真实生成后580→2886 records、56,042,480→324,755,824字节，增加约269MB磁盘/工具缓存，不能当作 RSS；最大单文件2,508,680B。Q已见30个 eligible FS 若全部 query，其 retained blob 上界3,325,360→13,911,632B，非实际已加载量。P35仅3696→18656B。模块/schema 按需建立，但被读 sidecar 的完整 blob 会保留。consumer 为跨 geometry 回调重验，P35 descriptor/sampler 检查从4增至4+3；planner 不重复解析 selected。逻辑附件减少不代表物理 tile 合并、DRAM 或 FPS 改善，仍为默认关闭的候选，需重新生成/验证完整 shader chain 后真机验证。见 `pixel-local-subsets-v1-implementation-report.json`。
 
 DS 入场修复已实际部署：Mali 普通游戏3秒窗口+236 plans/+236 draws/0 abort，高通营地移动211 plans/211 draws/0 abort，画面/HUD人工静态检查正常并原生命周期两次存档停机；静态截图不能排除动态闪烁，且尚未证明帧率、发热改善。Mali 原厂单次OFF/ON对照另行记录边界，不能把开启命中当作性能收益。
+
+### 有限范围 pool 维护，避免一次跨窗读取提升整池
+
+原厂 LLDB 在真实 Mali 选角阶段捕获：400MiB池已有[0,16)、[128,144)、[144,160)MiB三个段；唯一缺失需求是VS只读SSBO范围[28,373,808,47,947,216)，长19,573,408B，横跨两个尚未backed窗口。它不是VBO、unknown/reference或节点预算回退。按16MiB对齐只需新增[16,48)MiB，累计backing可为80MiB；旧策略提升400MiB。320MiB是本次规划上避免的扩张，不是已测RSS、DRAM或帧率收益。
+
+可选window策略现在把完整触发require带到原有全quiescent维护边界，合并其窗口对齐范围与真正相交的旧段闭包。新VkBuffer使用非零逻辑origin，初始化页面保留拷贝按该origin重定位；不缩Shader声明的范围、不上传guest旧内容、不逐出GPU数据。锁内固定selected旧节点，保留lifetime pin并在copy完成/command reset/recycle后验证原pool identity、generation和splice anchor。仅退役selected，外段exact handles/generations保持；异常、OOM或同地址pool替换不得向新pool错误发布。脏页、shadow、authority与initialized bitmap不变。
+
+默认whole策略不变；fresh pool首次宽绑定、未知/零sizeVBO、完整pool/reference、预算等仍用原whole回退。本轮不做异步迁移：即使零旧段的新建也仍全finish/recycle、独立保守barrier/submit/wait；增加cold-path指针快照及heap节点，旧选中buffer会与replacement暂时共存。后续范围可继续扩张，初始80MiB不等于长游玩仍80MiB。
+
+真实GPU夹具包含完整大SSBO图形绑定的256像素oracle、GPU-only旧页/外邻字、CPU脏页/冷洞、非零origin/prefix、尾193B、外邻handle保留、OOM回滚、实际同址重建和copy前追加外段。刻意省略GPU保留copy的负控由实际GPU回读memcmp失败，而非只看计数。独立完整async21,823,961/sync21,724,549零VUID/SYNC；合入subset+DS后的owned522项、pixel-local/window16/PSO故障263,762项和完整async21,823,959项也通过零VUID/SYNC。旧257-writer夹具补齐原operation admission，未放宽生产missing-admission保护；早期错误夹具目录的缺shader失败保留，不能算通过。Android真机实际backing/PSS和稳定性待测。见 `pool-finite-consolidation-v1-source-ready.json`。
+
+补正Mali原厂计数解释：DS修复对照下降约3.4%的是 `ITER_FRAG_TASK_COMPLETED`，PA pixels由此派生；真正 `FRAG_PTILES` 上升约0.142%，外部流量+0.804%、GPU周期+3.10%，没有物理pass合并或净提速证据。旧capture未选择可用的 `ITER_FRAG_JOB_COMPLETED`，其APC不能补出job拓扑；后续必要的新候选采集将选择该官方counter。见 `pixel-local-ds-preflight-v1-hardware-merge-evidence.json`。

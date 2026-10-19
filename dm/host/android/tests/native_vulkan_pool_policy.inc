@@ -60,7 +60,7 @@ static void pool_window_ghost_promotion_test(const void *vertex,const void *frag
   CHECK(V.draws==draws+2 && V.passes==pass+2 && vk_render_active());
   vk_pool_span_info span;
   CHECK(vk_pool_span_query(S.vertex[0].address,80,&span)==VK_POOL_SPAN_SINGLE);
-  CHECK(span.logical_begin==0 && span.logical_end==(1<<20));
+  CHECK(span.logical_begin==3*65536 && span.logical_end==5*65536);
   float rect[4];CHECK(mtl_ui_ghost_rect(rect));mtl_ui_ghost(0,0,0,NULL,0,0);
   // Original empty draws still bind descriptors/vertex/index state. Preserve
   // that execution, but do not trigger whole-REGISTRY fallback merely for an
@@ -167,7 +167,11 @@ static void pool_authority_regression(uint8_t *source,uint8_t *dest) {
   // Finite interval capacity may discard precision, never an unknown byte.
   // The formerly known source was already initialized, so a new cold-page
   // initialization cannot accidentally mask this overflow negative control.
-  mtl_sub_begin();for(unsigned k=0;k<257;k++)pool_window_fill(source+3*window+k*8,4,0x55550000+k);
+  mtl_sub_begin();
+  vk_pool_requirement overflow=pool_window_need(source+3*window,257*8,2,VK_PIPELINE_STAGE_TRANSFER_BIT,0);
+  int overflow_token=vk_pool_operation_begin_ranges(&overflow,1);
+  for(unsigned k=0;k<257;k++)pool_window_fill(source+3*window+k*8,4,0x55550000+k);
+  vk_pool_operation_end(overflow_token);
   vk_internal_wait(vk_internal_commit());memcpy(expected,source+2*window+128,64);
   pool_authority_copy_case(source+2*window+128,out,64,expected,0);
   mtl_sub_begin();vk_buffer_writeback_stage((uintptr_t)source+2*window+128,64,VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -227,7 +231,7 @@ static void pool_window_production_test(const void *vertex,const void *uniform,
   mtl_sub_copy((uintptr_t)source+2*window-4,(uintptr_t)dest+10*window+1024,sizeof expected);
   CHECK(mtl_last_fence()==fence);
   CHECK(vk_pool_span_query((uintptr_t)source+2*window-4,sizeof expected,&a)==VK_POOL_SPAN_SINGLE);
-  CHECK(a.logical_begin==0&&a.logical_end==bytes&&a.handle!=b.handle);
+  CHECK(a.logical_begin==window&&a.logical_end==3*window&&a.handle!=b.handle);
   vk_stream_end();vk_internal_wait(vk_internal_commit());
   CHECK(!memcmp(expected,dest+10*window+1024,sizeof expected));
   pool_authority_regression(source,dest);

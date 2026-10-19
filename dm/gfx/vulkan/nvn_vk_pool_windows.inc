@@ -69,7 +69,7 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
   int whole_reference=V.options.pool_mirror_reference || atomic_load(&pool_sync_active) ||
       atomic_load(&pool_sync_requested)==1;
   pthread_mutex_lock(&V.resources);
-  uint64_t need_base=0,need_identity=0;
+  uint64_t need_base=0,need_identity=0;vk_pool_requirement trigger={0};
   // Reference sync enumerates all materialized pools, not just this draw's
   // requirements. Even an unrelated reserved pool must leave its holes behind
   // through the explicit whole fallback before that global sync can run.
@@ -96,10 +96,10 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
     if(p->backing_generation>UINT64_MAX-count)goto done;
     uint64_t begin,end;int single=pool_window_bounds(p,r,window_bytes,&begin,&end);
     if(p->backings && (!single || pool_window_overlaps(p,begin,end)))
-      if(!need_identity) { need_base=(uintptr_t)p->guest;need_identity=p->identity; }
+      if(!need_identity) { need_base=(uintptr_t)p->guest;need_identity=p->identity;trigger=*r; }
   }
   if(need_identity) {
-    result.pool_base=need_base;result.pool_identity=need_identity;
+    result.pool_base=need_base;result.pool_identity=need_identity;result.trigger=trigger;
     status=VK_POOL_RESERVE_NEED_WHOLE;goto done;
   }
   if(!count) { status=VK_POOL_RESERVE_OK;goto done; }
