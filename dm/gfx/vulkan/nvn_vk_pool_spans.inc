@@ -48,6 +48,21 @@ static pool_span_piece pool_span_require(pool *p,uint64_t offset,uint64_t size) 
         (unsigned long long)p->identity,(unsigned long long)offset,(unsigned long long)size);
   return out;
 }
+// The caller owns a current submission reference to p and has checked its
+// registry epoch. Referenced nodes cannot be migrated or destroyed. The hint
+// proves only physical address coverage: initialization, dirty checks and
+// dependency recording still run on every lookup. A miss uses the original
+// resolver, including its hole/cross-node failure and whole-pool behavior.
+static int pool_span_resolve_retained(pool *p,pool_backing_span *b,
+    uint64_t offset,uint64_t size,pool_span_piece *out) {
+  if(size && b && (b->begin || b->end!=p->size) &&
+      offset>=b->begin && offset<b->end && size<=b->end-offset &&
+      b->generation && b->buffer.handle && b->begin<b->end && b->end<=p->size &&
+      offset-b->begin<=b->buffer.size && size<=b->buffer.size-(offset-b->begin)) {
+    *out=(pool_span_piece){b,offset,offset-b->begin,size};return 1;
+  }
+  return pool_span_resolve(p,offset,size,out);
+}
 // V.resources MUST be held. Kept separate from the original retained-owner
 // resolver: completion/recording callers never read or write the hint. A hit
 // proves only the same physical mapping, never content freshness or visibility.

@@ -79,9 +79,20 @@ static void pool_address_proof_test(void) {
   // Both retained and forced original locked paths must preserve GPU-only
   // neighbors while uploading the exact CPU change, at nonzero local origins.
   for(unsigned mode=0;mode<2;mode++) {
+    uint32_t neighbors[4],again[4];
     vk_pool_lookup_reference(mode);mtl_sub_begin();
-    for(int i=3;i>=0;i--)pool_window_read((uint8_t *)(uintptr_t)needs[i].address,4,pixels+4*i);
+    for(int i=3;i>=0;i--) {
+      uint8_t *address=(uint8_t *)(uintptr_t)needs[i].address;
+      pool_window_read(address,4,pixels+4*i);
+      // Reuse one physical node at a different local offset, then return to
+      // GPU-only data. Alternating nodes must not reuse its predecessor's
+      // handle/offset or mistake unchanged CPU bytes for the GPU value.
+      pool_window_read(address+4,4,(uint8_t *)&neighbors[i]);
+      pool_window_read(address,4,(uint8_t *)&again[i]);
+    }
     vk_internal_wait(vk_internal_commit());CHECK(!memcmp(pixels,words,sizeof words));
+    CHECK(!memcmp(again,words,sizeof words));
+    for(unsigned i=0;i<4;i++)CHECK(neighbors[i]==0x47474747);
   }
   CHECK(vk_pool_span_query((uintptr_t)storage+2*W-4,8,&q)==VK_POOL_SPAN_CROSSING);
   CHECK(vk_pool_span_query((uintptr_t)storage+3*W+64,4,&q)==VK_POOL_SPAN_CROSSING);

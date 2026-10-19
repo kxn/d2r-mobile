@@ -307,7 +307,9 @@ typedef struct submit_resources {
   // Isolated GPU-only backing migration: never upload guest/shadow over source GPU bytes.
   int pool_migration;
   int upload_scan_reference;
-  struct { pool *owner;pool_gpu_access *use; } pool_lookups[8];
+  // Private to this recording and its retained owner. Never share the
+  // registry-locked pool hint with the completion or recording fast path.
+  struct { pool *owner;pool_gpu_access *use;pool_backing_span *span_hint; } pool_lookups[8];
   unsigned pool_lookup_count,pool_lookup_next;
   uint64_t pool_lookup_epoch;
   // Exact negative result for immutable *earlier* CPU-publication ranges.
@@ -1598,13 +1600,14 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       // pool/list index or completion-mutated recording_access is consulted.
       uint64_t logical=addr-base;
       pool_span_piece span;
-      if(!pool_span_resolve(p,logical,len,&span)) {
+      if(!pool_span_resolve_retained(p,r->pool_lookups[k].span_hint,logical,len,&span)) {
         if(guarded)
           die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
               (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
         die("Vulkan pool range requires operation preflight: identity=%llu offset=%llu bytes=%llu",
             (unsigned long long)p->identity,(unsigned long long)logical,(unsigned long long)len);
       }
+      r->pool_lookups[k].span_hint=span.backing;
       pool_initialize_range(p,logical,len);
       *buf=&span.backing->buffer;*off=span.offset;
       record_pool_range(r->pool_lookups[k].use,logical,len,stages,initial_contents);
@@ -1644,6 +1647,7 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       }
       unsigned k=r->pool_lookup_next++%8;
       r->pool_lookups[k].owner=p;r->pool_lookups[k].use=use;
+      r->pool_lookups[k].span_hint=span.backing;
       if(r->pool_lookup_count<8)r->pool_lookup_count++;
     }
   }

@@ -187,3 +187,58 @@ lock 或游戏模块执行。Mali 两条路径均得到 Cached、非 Coherent �
 它不证明实际 app 分配、Shader 读取、多 GiB 驻留、固定 guest 地址、mprotect、
 在飞版本或游戏性能。源码与结果保存在本机
 `.local/logs/ahb-shared-allocation-probe-v1-both-summary.json`。
+
+
+## 实际 Pool 拷贝量与驻留内存（1786d52）
+
+同一 APK、各机既有 Shader 链、16 MiB 窗口、0.75 固定 3D、无抓帧层，分别完成
+营地静止及原摇杆行走。字节诊断只在该次冷启动开启；普通运行默认关闭。
+以下分母是 **guest submission**，不是显示帧；两机窗口都没有 backing migration。
+
+| 每次 guest submission | Mali 静止／行走 | Adreno 735 静止／行走 |
+| --- | --- | --- |
+| 比较输入各自的逻辑扫描跨度 | 4.113／4.168 MiB | 3.893／4.052 MiB |
+| CPU 直接写入 GPU mirror | 403.0／426.0 KiB | 362.8／413.3 KiB |
+| 已计入的 CPU 复制目的字节总量 | 6.454／6.517 MiB | 6.419／6.484 MiB |
+
+约 72% 的复制目的字节来自完成后的 readback 与 known 数据发布到 guest、shadow
+两个目的地；known 不可变快照另占约 1 MiB/guest submission。字节数不是耗时，
+也不是 DRAM 总线流量。很小的 queued staging→buffer GPU copy 字节不能替代上述
+HOST_VISIBLE mirror 的 CPU 上传量。普通窗口没有排空 fence，记录与完成计数可在
+边界相差一份在途发布，不将其算作额外复制。原始数据及归一化报告位于本机
+`.local/logs/pool-copy-accounting-v1-two-device-normalized-analysis.json`。
+
+随后在默认关闭字节诊断的独立运行中，用官方 LLDB 一次 all-stop 读取 typed Pool
+地址表，并在同一 stop 读取一次内核 smaps；没有 inferior function call、驻留采样
+或 target memory probe。按每个 VMA 的页大小取覆盖区间并合并，得到：
+
+| 页覆盖范围的内核 RSS 界限 | Mali | Adreno 735 |
+| --- | --- | --- |
+| active guest heap | 1335.93 MiB | 1334.56 MiB |
+| Pool shadow 合集 | 65.07–148.46 MiB | 128.21–129.19 MiB |
+| Pool mirror CPU 映射 | PFN 映射，实际物理驻留未知 | 116.86–143.30 MiB |
+
+Shadow 1113 MiB 的虚拟容量不是已经占用 1113 MiB RAM。Mali 403 MiB backing 的
+PFN 映射在 smaps 中 RSS=0，不代表 GPU 物理驻留为零。高通 backing 容量为435 MiB，
+也不能直接当成全部驻留。Pool guest 是 active heap 的子集；不同虚拟映射也可能
+物理别名。上述界限不能相加成唯一物理 RAM，也尚未证明每个相同逻辑字节在两份
+内存中同时驻留。因此当前没有精确的重复 RAM 总量。两次采集均已原生命周期新
+存档两次、停机并关闭本次调试器。v2 页覆盖报告位于本机
+`.local/logs/pool-residency-onestop-v1-{mali,q}-1786/`。
+
+
+## 当前提交保留范围内的物理分段提示
+
+已有 01ff 的 Simpleperf 官方调用栈仍在 retained-context `pool_address` 分支看到
+`pool_span_resolve`（Mali 6、Adreno 735 11 个样本）；此前只优化了持注册锁的解析。
+现给每份提交的 8 个既有 lookup slot 各加一个私有 node 指针。引用和 registry epoch
+仍由原机制保护；命中校验不可变 node 的逻辑边界、generation/handle 和物理 Buffer
+extent，每次重算 local offset。whole backing 及未命中保留原 resolver；不共享
+`pool.locked_span_hint`，也不跳过初始化、脏页、GPU ownership 或阶段依赖检查。
+16 份提交最多增加约 1 KiB。迁移原先要求引用排空，不能在 live hint 下退休 node。
+
+新增实际 GPU 字节检查覆盖同 node 不同偏移、跨 node 切换、GPU-only 值与 CPU
+局部修改共存。owned async/serial 及全套 async Vulkan 检查通过，VVL/SYNC 零错误；
+隔离负例将 cached local offset 错用 0，真实 GPU 结果比较如期失败。未预留／空洞／
+跨 node 的五种拒绝测试都在 CPU 初始化前拒绝。现阶段只证明少做链表解析的机制
+和功能正确性，尚未取得该候选 Android 真机耗时、整帧或发热净收益。
