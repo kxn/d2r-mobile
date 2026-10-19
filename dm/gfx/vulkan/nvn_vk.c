@@ -884,6 +884,26 @@ static void reclaim_submissions(void) {
   }
 }
 
+// Owner control boundary only. No wait, submit, initialization or active-data
+// eviction: the worker has already reset every submission in retired.
+int mtl_trim_idle_resources(void) {
+  if(!V.device || V.cmd || recording_resources)return 0;
+  reclaim_submissions();
+  while(reusable_temporaries) {
+    temporary *t=reusable_temporaries;reusable_temporaries=t->next;
+    if(t->b.size>reusable_bytes)die("Vulkan idle temporary ownership");
+    reusable_bytes-=t->b.size;vk_buffer_destroy(&t->b);free(t);
+  }
+  if(reusable_bytes)die("Vulkan idle temporary accounting");
+  vk_shader_trim_idle_arenas();return 1;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_idle_temporaries(uint64_t *bytes,unsigned *count) {
+  *bytes=reusable_bytes;*count=0;
+  for(temporary *t=reusable_temporaries;t;t=t->next)(*count)++;
+}
+#endif
+
 uint32_t vk_memory_type(uint32_t bits, VkMemoryPropertyFlags flags) {
   for (uint32_t i = 0; i < V.mem.memoryTypeCount; ++i)
     if ((bits & (1u << i)) &&

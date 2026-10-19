@@ -21,6 +21,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeWatch(int type, int unitClass);
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly);
     private static native void nativeSuspend(boolean paused);
+    private static native void nativeTrimMemory();
     private static native void nativeThermalLimit(int limit);
     private static native void nativeSurface(Surface surface, float refresh);
     private static native void nativeBack();
@@ -477,6 +478,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public boolean onGenericMotionEvent(android.view.MotionEvent event) {
         return started && GameInput.motion(event) || super.onGenericMotionEvent(event);
+    }
+    @Override public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        nativeTrimMemory();
+    }
+    @Override public void onLowMemory() {
+        super.onLowMemory();
+        nativeTrimMemory();
     }
     @Override protected void onPause() {
         resumed = false;

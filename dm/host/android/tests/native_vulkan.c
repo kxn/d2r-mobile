@@ -474,11 +474,22 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pool_publication.inc"
 #include "native_vulkan_upload_page_span.inc"
 #include "native_vulkan_scan_pairs.inc"
+#include "native_vulkan_idle_trim.inc"
 #include "native_vulkan_retained_update.inc"
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+  if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
+    extern void nvn_test_idle_trim_cold_poll(void);
+    CHECK(!V.device);dm_gfx_trim_memory_request();
+    nvn_test_idle_trim_cold_poll();
+    CHECK(!V.device && nvn_test_idle_trim_pending());
+    extern int nvn_test_idle_trim_started(void);
+    dm_gfx_suspend(1);
+    CHECK(!V.device && !nvn_test_idle_trim_started() && nvn_test_idle_trim_pending());
+    dm_gfx_suspend(0);
+  }
   vk_graphics_prepare_mode(2);
   setenv("DM_TEST_VULKAN_DESCRIPTOR_POOL_SETS", "4", 1);
   setenv("DM_VULKAN_GPU_PROFILE", "1", 1);
@@ -527,6 +538,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_TEXTURE_RANGE_DIRTY_FIXTURE")) {texture_range_dirty_proof_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"texture-range-dirty\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_UPLOAD_SCAN_PAIRS_FIXTURE")) {pool_upload_pair_boundaries_test();pool_upload_pair_gpu_tails_test();pool_upload_patterns_test();upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-scan-pairs\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_UPLOAD_PAGE_SPAN_FIXTURE")) {upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-page-span\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+  if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {idle_cache_trim_test();printf("{\"test\":\"idle-cache-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_PUBLICATION_FIXTURE")) {pool_publication_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-publication\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_FLAGS_FIXTURE")) {pool_flags_test();printf("{\"test\":\"pool-flags\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   ds_plane_store_test();

@@ -485,3 +485,31 @@ OFF 跳过 helper 及 ghost getter，ON 顺序保持不变。没有新增环境�
 整体零开销；独立真实 Vulkan OFF、ON、串行回退及专有字节用例全部通过。
 这是调用减负，不声称已经提高 Android 帧率；01de8df 的上述真机数据不包含
 此后的一行调用端修改。
+
+
+## Android 内存压力下回收已完成的闲置缓冲
+
+6GB / Adreno650 两次真实原生游戏运行达到营地，但出现画面错误并被系统以
+LOW_MEMORY 终止；它们不是可玩验收。缺少稳态进程 meminfo，退出 PSS 也
+不是峰值，不能据此认定哪类内存最大。现有代码会保留最多 256MiB 可复用
+临时 buffer，以及最多 32 个常量 arena（通常约 16MiB）；这些是逻辑上限，
+并非这台机器当时实际保留量。
+
+新增 Android onTrimMemory/onLowMemory 请求；回调只设置合并原子标志，不
+初始化 GPU、不分配、不持后端锁或等待。原翻译线程在无 recording 借用的
+job 边界，回收已完成 CPU effects 与 driver reset 的 retired 资源，再销毁
+闲置 temporary 和 available driver arena。保留当前和在飞资源、Pool/
+shadow、image、PSO 及原缓存默认预算。请求未满足安全条件时继续保留。
+
+原后台先请求回收，再保持原存档与挂起顺序；已存在的异步 owner 在挂起后
+增加独立控制 job 收尾。不为回收创建 owner/GPU；DM_NVN_SYNC 或 owner
+创建失败的 inline 回退不执行回收、不改变原调度，保留 pending 请求。
+后台收尾不能保证避免存档前的 LMK，系统也可能在通知内存压力之前杀进程。
+
+独立 GPU 字节用例覆盖 active recording、GPU 未完成、GPU 完成但 reset 未
+完成时均不误回收，以及后续复用、回收与重建；真实输出字节保持正确。
+VMA 现成统计显示用例 allocation 从 3 降至 1、逻辑 bytes 从 524800 降至
+256，而 block 仍为 1。VMA 的 32MiB block 与空块保留策略使逻辑回收不等于
+物理释放。普通异步 job 增加缓存标志读取，真正回收时销毁成本及未来重新
+分配可能增加 CPU 工作；未新增生产计时器、采样器或逐帧环境变量判断。
+源码与有限测试记录在本机 `android-idle-cache-trim-v1-source-ready.json`。

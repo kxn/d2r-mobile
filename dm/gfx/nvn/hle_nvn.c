@@ -56,6 +56,25 @@
 #endif
 
 static void x_cpu_exposure(uint64_t address,uint64_t size);
+static void x_trim_after_suspend(void);
+// Low-memory callbacks never initialize GPU, acquire backend locks or wait.
+static _Atomic int g_idle_trim_requested;
+void dm_gfx_trim_memory_request(void) {
+    atomic_store_explicit(&g_idle_trim_requested,1,memory_order_release);
+}
+#ifdef DM_VULKAN_TEST_EMBED
+int nvn_test_idle_trim_pending(void) {return atomic_load_explicit(&g_idle_trim_requested,memory_order_acquire);}
+#endif
+static void x_trim_idle_requested(void) {
+    if(!atomic_load_explicit(&g_idle_trim_requested,memory_order_acquire))return;
+    if(!atomic_exchange_explicit(&g_idle_trim_requested,0,memory_order_acq_rel))return;
+    // Preserve startup/active-recording requests until a safe owner boundary.
+    if(!mtl_trim_idle_resources())
+        atomic_store_explicit(&g_idle_trim_requested,1,memory_order_release);
+}
+#ifdef DM_VULKAN_TEST_EMBED
+void nvn_test_idle_trim_cold_poll(void) {x_trim_idle_requested();}
+#endif
 
 // ---------- 槽表、跳板、未实现桩 ----------
 // ---------- Slot table, thunks, unimplemented stubs ----------
@@ -896,7 +915,7 @@ void dm_gfx_suspend(int on) {
     if (on) while (g_inflight_api) pthread_cond_wait(&g_susp_cv, &g_susp_mu);
     else pthread_cond_broadcast(&g_susp_cv);
     pthread_mutex_unlock(&g_susp_mu);
-    if (on) { x_drain(); mtl_drain(); LOG("[nvn] 图形挂起：在途 GPU 工作已清空"); } else LOG("[nvn] 图形恢复");
+    if (on) { x_drain(); mtl_drain(); x_trim_after_suspend(); LOG("[nvn] 图形挂起：在途 GPU 工作已清空"); } else LOG("[nvn] 图形恢复");
 }
 // 一条实时线程的声明状态：游戏主线程（取图处）与翻译线程（帧边界）各一份，按各自每帧 CPU 自动调整（见 set_time_constraint_comp）
 // Declaration state of one real-time thread: one each for the game main thread (at acquire) and the translation thread (at frame boundaries), each adjusted automatically from its own per-frame CPU (see set_time_constraint_comp)
@@ -914,7 +933,7 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 // completes, so waiting for fence f means waiting until "f is translated and the GPU is done"; by the time the game reclaims command memory or rewrites objects by fence, the translation thread has long finished reading them.
 // Present tickets become this queue's job numbers: acquire first waits for that job to run, then waits on the present thread ticket it was swapped for. Setting the frame number is queued too: replay resets bloom sampling and other state by frame number,
 // which must not be changed by the game thread in the middle of translation. DM_NVN_SYNC=1: jobs run in place on the calling thread (the same execution function), as the control and measurement baseline.
-enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_CPU_EXPOSURE, XJ_READ_TEXELS };
+enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_CPU_EXPOSURE, XJ_READ_TEXELS, XJ_IDLE_TRIM };
 typedef struct {tex_t texture;unsigned level,layer;NVNcopyRegion region;uint8_t *dest;size_t row,image;} x_texels;
 typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; int *cpu_access_result; const x_texels *read_texels; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
 #define XQ 32
@@ -923,6 +942,13 @@ static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done;   // 入队任务数 /
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
 static int g_x_sync; static pthread_t g_x_thr;
+static _Atomic int g_x_started;
+#ifdef DM_VULKAN_TEST_EMBED
+int nvn_test_idle_trim_started(void) {return atomic_load_explicit(&g_x_started,memory_order_acquire);}
+int nvn_test_idle_trim_supported(void) {
+    return atomic_load_explicit(&g_x_started,memory_order_acquire) && !g_x_sync;
+}
+#endif
 static _Thread_local int g_x_owner;
 #ifdef __ANDROID__
 // Optional platform policy, mirroring the original Apple deadline declaration.
@@ -956,6 +982,10 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
 }
 static void x_run(const xjob *j, uint64_t job) {
     int prior_owner=g_x_owner;g_x_owner=1;
+    // Legacy inline reference can run on different guest threads (including
+    // tail FRAME outside the suspend API gate). Never trim on that path.
+    if(!g_x_sync)x_trim_idle_requested();
+    if(j->kind==XJ_IDLE_TRIM) {g_x_owner=prior_owner;return;}
     if(j->kind==XJ_READ_TEXELS) {
         const x_texels *r=j->read_texels;
         mtl_read_texels(&r->texture,r->level,r->layer,&r->region,r->dest,r->row,r->image);
@@ -1005,7 +1035,7 @@ static void *x_thread(void *a) {
 }
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
-    if (g_x_sync) { mtl_pool_defer_publication_disable(); LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); return; }
+    if (g_x_sync) { mtl_pool_defer_publication_disable(); LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); atomic_store_explicit(&g_x_started,1,memory_order_release);return; }
     pthread_attr_t at; pthread_attr_init(&at);
 #ifdef __APPLE__
     pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
@@ -1013,6 +1043,7 @@ static void x_start(void) {
     pthread_attr_setstacksize(&at, 8 << 20);
     if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { mtl_pool_defer_publication_disable(); LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
+    atomic_store_explicit(&g_x_started,1,memory_order_release);
 }
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
     static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, x_start);
@@ -1040,6 +1071,17 @@ static void x_wait(uint64_t job) {
 #endif
 }
 static void x_drain(void) { pthread_mutex_lock(&g_xmu); uint64_t job = g_xq_in; pthread_mutex_unlock(&g_xmu); x_wait(job); }
+static void x_trim_after_suspend(void) {
+    // No trim-created queue/GPU initialization. Inline-reference fallback
+    // has no dedicated owner; leave the request pending without changing its
+    // legacy scheduling. Async tail FRAME jobs share this same worker queue.
+    dm_gfx_trim_memory_request();
+    if(!atomic_load_explicit(&g_x_started,memory_order_acquire) || g_x_sync)return;
+    pthread_mutex_lock(&g_susp_mu);
+    int exclusive=g_susp && !g_inflight_api;pthread_mutex_unlock(&g_susp_mu);
+    if(!exclusive)die("NVN lifecycle trim lacks suspend exclusion");
+    xjob j={.kind=XJ_IDLE_TRIM};x_wait(x_push(&j));
+}
 static void x_cpu_exposure(uint64_t address,uint64_t size) {
     if(!size)return;
     if(size>UINT64_MAX-address)die("NVN CPU exposure address overflow");

@@ -81,6 +81,7 @@ typedef struct vk_shader_submission vk_shader_submission;
 vk_shader_submission *vk_shader_begin(vk_shader_submission *recycled);
 void vk_shader_end(vk_shader_submission *submission);
 void vk_shader_recycle(vk_shader_submission *submission);
+void vk_shader_trim_idle_arenas(void);
 void vk_shader_destroy(vk_shader_submission *submission);
 typedef struct { uint32_t count,offsets[VK_UNIFORM_OFFSET_CAPACITY]; } vk_uniform_offsets;
 VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,

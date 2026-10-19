@@ -731,6 +731,21 @@ void vk_shader_recycle(vk_shader_submission *state) {
     state->descriptor_current = NULL;
   }
 }
+// Only completed/recycled arenas enter this list. Active constants and
+// immutable in-flight descriptors retain arenas on their submission context.
+void vk_shader_trim_idle_arenas(void) {
+  if(binding_state)die("Vulkan idle arena trim during descriptor recording");
+  while(available_driver_arenas) {
+    driver_arena *a=available_driver_arenas;available_driver_arenas=a->next;
+    if(!available_driver_arena_count || a->used)die("Vulkan idle arena ownership");
+    available_driver_arena_count--;
+    atomic_fetch_sub(&driver_arena_live,a->buffer.size);
+    vk_buffer_destroy(&a->buffer);free(a);
+  }
+}
+#ifdef DM_VULKAN_TEST_EMBED
+unsigned vk_test_idle_driver_arenas(void) {return available_driver_arena_count;}
+#endif
 void vk_shader_destroy(vk_shader_submission *state) {
   if (!state) return;
   vk_shader_recycle(state);
@@ -817,6 +832,12 @@ static void driver_arena_store(driver_constant *copy,const uint8_t *data,size_t 
   memcpy(a->buffer.map+copy->offset,data,bytes);
   a->used++;shader_recorded.driver_arena_slots += 1;
 }
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_idle_driver_store(const uint8_t *data,size_t bytes,vk_buffer *buffer,uint64_t *offset) {
+  driver_constant copy={0};if(!binding_state || bytes>65536)die("Vulkan idle arena fixture");
+  driver_arena_store(&copy,data,bytes);*buffer=*copy.buffer;*offset=copy.offset;
+}
+#endif
 // Only these bytes vary in the driver ABI. Build exact keys from current S on
 // every call, including direct state restores; no dirty-generation prediction.
 // c0 packs address:u64,size:u32 (the ABI record's remaining u32 is zero).

@@ -618,6 +618,11 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeThermalL
   vk_set_thermal_limit(limit);
   dm_android_3d_thermal_limit(limit);
 }
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTrimMemory(
+    JNIEnv *env,jclass klass) {
+  (void)env;(void)klass;
+  extern void dm_gfx_trim_memory_request(void);dm_gfx_trim_memory_request();
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSuspend(
     JNIEnv *env, jclass klass, jboolean paused) {
   (void)env;
@@ -628,6 +633,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSuspend(
   lifecycle_suspended = !!paused;
   void mtl_present_discard(int);
   if (paused) {
+    extern void dm_gfx_trim_memory_request(void);dm_gfx_trim_memory_request();
     dm_focus_set(3);
     dm_ui_lifecycle(1);
     mtl_present_discard(1);
