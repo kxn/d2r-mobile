@@ -1632,3 +1632,14 @@ SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Bus
 运行时 query 使用构造期固定的 canonical owner 和精确实际 VkShaderModule，最多检查五个记录，不在每次候选 draw 遍历全局 Shader 列表。独立 loader 的损坏闭包、错误 owner、五类模块和当前高通四个真实生产模块已通过官方 Vulkan validation；合入主线后 41 项离线测试及包含生产内存窗口的原 NVN 异步 21,809,890 项检查通过。该提交只提供加载/描述符基础，尚不执行原游戏双 subpass；不能把主机 loader 成功当成实际附件融合或带宽收益。完整链仍须在最终集成源冻结后重建、核验并部署。
 
 另新增通用启动期operation-mode诊断，默认docked不变，显式handheld重用原GetOperationMode/GetPerformanceMode/参数槽，不新写游戏规则；actual dm_opmode启动日志核验，禁止热切换。新13f0包两模式在同包720下对照；Handheld固定720高，game-res只影响手持宽高比。该模式可能影响原游戏分支，但尚不能仅由HLE断言阴影／后处理减少。源与独审见 `operation-mode-v1-source-ready.json`、`operation-mode-v1-root-review.json`。
+
+
+### 同像素 renderer 接入：完成主机验证，待真机带宽验收
+
+通用候选已接入原 NVN replay：在首段 secondary 录制前进行有界命令前瞻，使用两个 subpass 与 input attachment 变体消费可证明的同像素来源。运行期同时证明实际模块、几何/UV、viewport、sampler/LOD、mip/layer、资源身份和别名；不识别场景或固定游戏 Shader 标识。未知命令、查询、跨提交边界或无法证明的数据依赖保持普通绘制。外部 history 保留 LOAD，后续仍可能使用的来源保留 STORE；不能把逻辑采样消除算成已消除全部附件写回。
+
+单 mip 图像复用原整图 layout/access 状态，多 mip 沿用已受支持的细分追踪，复杂场景保守回退。失败回退在重画前释放 pool operation token，geometry 检查可能触发提交时先核对 job/recording/pass 身份，避免访问已回收计划。运行期开关只初始化一次，原子读取，默认关闭。每个准入计划约 52 KiB，另有仅启用时约 49 KiB scratch 和额外 descriptor/PSO/证明成本，必须计入实际收益。
+
+最终统一源在 Lavapipe 上通过完整异步 21,810,491 项、串行 cover-reference 17 用例 85,080 项，以及启用 16 MiB 生产窗口且故意令 subpass PSO 创建失败的 85,089 项检查，零 VUID/SYNC。失败注入验证普通路径实际 GPU 像素、STORE 与操作引用释放。首轮失败注入 harness 在惰性初始化前检查配置而失败，已调整测试初始化，保留原失败日志。这些结果只证明所测语义和回退，不证明 Android 已融合、硬件 tile 合并、DRAM 降低或涨帧。完整源指纹与日志见 `pixel-local-render-v2-main-source-ready.json`。
+
+内存镜像的范围 authority 已在高通同包整池/窗口/整池验证：窗口模式采集区间的 known-copy fallback 约 18.6 KiB，与整池约 18.6 KiB 接近，原先约 237 MB 的额外回读退化已消除。对应 GPU 回读是逻辑记录，不是硬件 DRAM 流量。窗口 PSS 约 2,587,485 KiB，后一次整池约 2,606,748 KiB，但两次整池本身波动约 60 MiB，仍不足以宣称显著 RAM 降幅；Mali 同包对照另行记录。

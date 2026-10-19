@@ -462,8 +462,14 @@ static void observe_tick(const uint64_t *registers) {
       (unsigned long long)pool_count,(unsigned long long)pool_materialized,
       (unsigned long long)vk_pool_initialized_bytes());
     void vk_pool_window_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
-    // Immutable backend selection, not a draw/GPU timing measurement.
-    fprintf(state_log, ",\"pixel_local\":{\"enabled\":%s}",vk_pixel_local_enabled()?"true":"false");
+    // Functional admission counts from the existing submission publication;
+    // these do not measure bandwidth, tile merging or GPU duration.
+    void vk_pixel_local_stats(uint64_t *,uint64_t *,uint64_t *);
+    uint64_t local_planned,local_draws,local_aborts;
+    vk_pixel_local_stats(&local_planned,&local_draws,&local_aborts);
+    fprintf(state_log, ",\"pixel_local\":{\"enabled\":%s,\"planned\":%llu,\"draws\":%llu,\"aborts\":%llu}",
+      vk_pixel_local_enabled()?"true":"false",(unsigned long long)local_planned,
+      (unsigned long long)local_draws,(unsigned long long)local_aborts);
     uint64_t vk_pool_window_fallbacks(void);
     uint64_t window_bytes,window_admissions,window_added_bytes,window_added_spans,window_promotions;
     vk_pool_window_stats(&window_bytes,&window_admissions,&window_added_bytes,

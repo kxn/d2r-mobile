@@ -6,10 +6,14 @@
 #include "nvn_vk_freeze.h"
 #include "nvn_vk_plan.h"
 #include "nvn_vk_system_trace.h"
+#include "nvn_vk_pixel_local.h"
+#include "nvn_vk_pixel_local_runtime.h"
 #include <math.h>
 #include <stdatomic.h>
 #include "nvn_vk_render_objects.inc"
+typedef struct pl_job pl_job;
 typedef struct render_job {
+  pl_job *local;
   struct render_job *next;
   VkRenderPass pass;
   VkRenderPass final_pass;
@@ -58,11 +62,14 @@ static vk_graphics_submission *graphics_state;
 // Keep consecutive draws to the same targets in one pass; end it for transfers,
 // query resets or target changes.
 static render_job *active_job;
+static int pl_render_end(render_job *job);
+static int pl_target_clear(const p_set_rt*,const p_scissor*,int,VkImageAspectFlags,const VkClearValue*);
 // Single recording owner; cross-thread getters see the last graphics_end.
 static struct {
   uint64_t depth_omissions,store_omissions,load_omissions,readonly_store_omissions;
   uint64_t clear_attachment_omissions,prepare_reuses,prepare_checks;
   uint64_t prepare_lookups;
+  uint64_t pixel_local_plans,pixel_local_draws,pixel_local_aborts;
 } draw_recorded;
 static int draw_state_reference(void) {
   static int reference=-1;
@@ -108,6 +115,10 @@ static void render_bind_index(render_job *j,VkBuffer buffer,VkDeviceSize offset,
     j->bound_index_buffer=buffer;j->bound_index_offset=offset;j->bound_index_type=type;
     j->bound_index_valid=1;
   }
+}
+static atomic_uint_fast64_t pixel_local_plans,pixel_local_draws,pixel_local_aborts;
+void vk_pixel_local_stats(uint64_t *planned,uint64_t *draws,uint64_t *aborts) {
+  *planned=atomic_load(&pixel_local_plans);*draws=atomic_load(&pixel_local_draws);*aborts=atomic_load(&pixel_local_aborts);
 }
 static atomic_uint_fast64_t depth_omissions;
 static atomic_uint_fast64_t store_omissions;
@@ -228,6 +239,7 @@ static int readonly_depth_target(const p_set_rt *targets,int may_write,draw_targ
 int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
                            VkImageAspectFlags aspect,
                            const VkClearValue *value) {
+  if(pl_target_clear(rt,sc,index,aspect,value))return 1;
   if (rt->n < 0 || rt->n > 8)
     die("Vulkan clear render target count");
   // A clear-only pass must not load/store untouched siblings. Keep the normal
@@ -483,6 +495,7 @@ static struct {
 static unsigned end_site_count;
 void vk_render_end_at(const char *file, unsigned line) {
   if (active_job && !vk_pool_maintenance_active()) vk_ghost_flush();
+  if(active_job && active_job->local) {pl_render_end(active_job);mip_clear_materialize();return;}
   if (active_job) {
     if (V.options.stats) {
       unsigned i = 0;
@@ -638,6 +651,9 @@ typedef struct cached_pipeline {
   VkPipeline pipeline;
   VkPipelineLayout layout;
   unsigned warm_origin;
+  VkRenderPass local_pass;
+  render_pass_object *local_object;
+  unsigned subpass;
 } cached_pipeline;
 static cached_pipeline *pipelines[2][1024];
 static _Atomic uint32_t pipeline_count;
@@ -714,6 +730,9 @@ void vk_graphics_end(vk_graphics_submission *state) {
   atomic_store_explicit(&prepare_reuses,draw_recorded.prepare_reuses,memory_order_relaxed);
   atomic_store_explicit(&prepare_checks,draw_recorded.prepare_checks,memory_order_relaxed);
   atomic_store_explicit(&prepare_lookups,draw_recorded.prepare_lookups,memory_order_relaxed);
+  atomic_store(&pixel_local_plans,draw_recorded.pixel_local_plans);
+  atomic_store(&pixel_local_draws,draw_recorded.pixel_local_draws);
+  atomic_store(&pixel_local_aborts,draw_recorded.pixel_local_aborts);
   mip_clear_publish();
   graphics_state = NULL;
 }
@@ -728,7 +747,7 @@ void vk_graphics_recycle(vk_graphics_submission *state) {
     if(j->pass_object) render_pass_release(j->pass_object);
     else vkDestroyRenderPass(V.device,j->pass,NULL);
     if(j->final_pass_object) render_pass_release(j->final_pass_object);
-    free(j);
+    free(j->local);free(j);
   }
 }
 static VkPrimitiveTopology topology(int p) {
@@ -860,6 +879,9 @@ static int render_cancel_obsolete_clear(const tex_t *texture,const view_t *view)
 #include "nvn_vk_zero_draw.inc"
 #include "nvn_vk_nofxaa.inc"
 #include "nvn_vk_bloom_quarter.inc"
+#include "nvn_vk_pixel_local_geometry.inc"
+#include "nvn_vk_pixel_local_plan.inc"
+#include "nvn_vk_pixel_local_render.inc"
 static _Atomic int vertex_divisor_fallback=-1;
 void vk_vertex_divisor_fallback(int enabled) { atomic_store(&vertex_divisor_fallback,!!enabled); }
 typedef struct {const p_draw_idx *indexed;} draw_pool_plan;
@@ -928,6 +950,24 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     vk_pool_operation_end(pool_operation);return;
   }
   if(bq_before_draw(list,draw,idx)) {vk_pool_operation_end(pool_operation);return;}
+  int original_specialized=list[1] && (fragment_module==list[1]->specialization_module || hybrid_selected);
+  const vk_pixel_local_proof *local_consumer=pl_consumer(list[0],list[1],fragment_module,draw,idx);
+  render_job *local_job=local_consumer?active_job:NULL;
+  uint64_t local_recording=local_consumer?vk_recording_serial():0,local_pass_number=V.passes;
+  VkImageView local_views[8];VkImageLayout local_layouts[8];
+  if(local_consumer) {
+    memcpy(local_views,local_job->local->input_views,sizeof local_views);
+    memcpy(local_layouts,local_job->local->input_layouts,sizeof local_layouts);
+  }
+  if(local_consumer) {fragment_module=local_consumer->module;list[1]=local_consumer->shader;}
+  pl_job *local_ready=NULL;
+  if(vk_pixel_local_enabled() && !local_consumer) {
+    if(active_job && !target_fields_equal(&active_targets,&S.targets))vk_render_end();
+    if(!active_job && S.targets.n>0 && S.targets.n<=8 && S.targets.color[0]) {
+      const tex_t *t=S.targets.color[0];
+      local_ready=pl_prepare(draw,idx,t->d.width,t->d.height);
+    }
+  }
   float cover_p[64][4];int cover_ready=cover_positions(list[0],list[1],draw,idx,cover_p);
   vk_buffer *expanded[16] = {0};
   uint32_t expanded_stride[16] = {0}, expansion = 0;
@@ -1062,17 +1102,28 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   uint64_t cover_descriptor_epoch=cover_ready?vk_texture_descriptor_epoch():0;
   vk_texture_binding_scope_begin();
   vk_shader_prepare_images(list,0);
+  if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
+    vk_texture_binding_scope_end();free(local_ready);
+    vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+  }
   vk_shader_operation_begin();
   vk_texture_shader_begin();
   for (int i = 0; i < 5; i++)
     if (list[i]) {
+      if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
+        vk_texture_binding_scope_end();vk_texture_shader_record();vk_shader_writebacks();
+        free(local_ready);vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+      }
       stages[ns++] = (VkPipelineShaderStageCreateInfo){
           .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
           .stage = vk_stage(i),
           .module = i==1?fragment_module:list[i]->module,
-          .pSpecializationInfo=i==1 && (fragment_module==list[1]->specialization_module || hybrid_selected)?&specialization_info:NULL,
+          .pSpecializationInfo=i==1 && original_specialized?&specialization_info:NULL,
           .pName = "main"};
-      sets[i] = vk_shader_bindings_selected(list[i],dynamic_uniforms,&uniform_offsets[list[i]->set],
+      if(i==1 && local_consumer) {
+        sets[i]=vk_shader_pixel_local_bindings(local_consumer,dynamic_uniforms,&uniform_offsets[list[i]->set],
+            local_views,local_layouts,texel_selection.shader?&texel_selection:NULL);
+      } else sets[i] = vk_shader_bindings_selected(list[i],dynamic_uniforms,&uniform_offsets[list[i]->set],
           i==1?&texel_selection:NULL);
     }
   vk_texture_binding_scope_end();
@@ -1107,6 +1158,13 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     if (include_depth && !active_job->has_depth) vk_render_end();
     else include_depth = active_job->has_depth;
   }
+  if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() ||
+      local_pass_number!=V.passes || (ds.depthTestEnable && ds.depthWriteEnable) || stencil_writing || !pl_enter(local_job))) {
+    // No consumer command has been emitted. Retire the descriptor batch and
+    // redo the ordinary draw, preserving already-executed producer commands.
+    vk_texture_shader_record();vk_shader_writebacks();vk_render_end();
+    free(local_ready);vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+  }
   VkAttachmentDescription descriptions[9];
   VkImageView views_[9];
   VkAttachmentReference color[8], depth = {0};
@@ -1124,7 +1182,9 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
                                            VK_IMAGE_LAYOUT_GENERAL};
       continue;
     }
-    vk_attachment a = k==S.targets.n && readonly_depth_target(&S.targets,
+    vk_attachment a;
+    if(local_consumer) a=k==S.targets.n?local_job->local->depth_attachment:local_job->local->second_attachments[k];
+    else a=k==S.targets.n && readonly_depth_target(&S.targets,
         ds.depthWriteEnable || stencil_writing,&target_match)?
         vk_texture_readonly_attachment(t,v):vk_texture_attachment(t,v);
     if(k==S.targets.n && !stencil_writing &&
@@ -1158,6 +1218,11 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   }
   if (!na)
     die("Vulkan draw without render targets");
+  if(local_consumer) {
+    memcpy(color,local_job->local->second_colors,S.targets.n*sizeof *color);
+    depth=local_job->local->second_depth;na=local_job->attachment_count;
+    memcpy(descriptions,local_job->attachments,na*sizeof *descriptions);
+  }
   // 查询池重置可结束通道；必须在选择通道之前，避免重新开始带一次性清除的通道。
   // Query resets can end a pass. Do them before selecting it, so a pass with
   // one-time attachment clears is never accidentally begun again.
@@ -1174,6 +1239,10 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   } else vk_counter_pass_end();
   if(precise_dependencies && pass_before_query && !vk_render_active())
     vk_texture_graphics_barrier();
+  if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
+    vk_texture_shader_record();vk_shader_writebacks();free(local_ready);
+    vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+  }
   render_job *j = active_job;
   if (!j || !render_targets_equal(&S.targets,&target_match) ||
       !contains(j->area, area)) {
@@ -1194,7 +1263,10 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
                                  .pAttachments = descriptions,
                                  .subpassCount = 1,
                                  .pSubpasses = &subpass};
-    j->pass_object=render_pass_acquire(&rp);j->pass=j->pass_object->handle;
+    if(!pl_job_create(j,local_ready,descriptions,views_,color,include_depth?&depth:NULL,&na,width,height)) {
+      j->pass_object=render_pass_acquire(&rp);j->pass=j->pass_object->handle;
+    }
+    local_ready=NULL;
     VkFramebufferCreateInfo fb = {.sType =
                                       VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                                   .renderPass = j->pass,
@@ -1208,6 +1280,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     j->next = graphics_state->jobs;
     graphics_state->jobs = j;
   }
+  free(local_ready);local_ready=NULL;
   uint32_t effective_expansion=0;
   for(unsigned i=0;i<16;i++) if(expanded[i]) effective_expansion|=1u<<i;
   pipeline_context context={.epoch=vk_pipeline_state_epoch(),.program_serial=S.program->serial,
@@ -1219,7 +1292,10 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   for(unsigned i=0;i<na;i++) context.formats[i]=descriptions[i].format;
   memcpy(context.colors,color,S.targets.n*sizeof *color);
   int prepare_mode=active_pipeline_prepare_mode;
-  int reuse=prepared_pipeline&&!memcmp(&prepared_context,&context,sizeof context);
+  VkRenderPass local_pass=j->local?j->pass:VK_NULL_HANDLE;
+  unsigned local_subpass=j->local?j->local->subpass:0;
+  int reuse=prepared_pipeline && prepared_pipeline->local_pass==local_pass &&
+      prepared_pipeline->subpass==local_subpass && !memcmp(&prepared_context,&context,sizeof context);
   cached_pipeline *cached=prepared_pipeline;
   uint32_t streams=prepared_streams;
   // 状态代号与实际附件/模板角色未变时，直接复用已解析管线，不再组键或哈希。
@@ -1344,7 +1420,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
       .pDepthStencilState = &ds,
       .pColorBlendState = &blend,
       .pDynamicState = &dyn,
-      .renderPass = j->pass};
+      .renderPass = j->pass,.subpass=local_subpass};
   pipeline_key key;
   memset(&key, 0, sizeof key);
   key.specialization_word=specialization_words[0];key.specialization_mask=specialization_words[1];
@@ -1391,13 +1467,17 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   for(;;) {
   unsigned bucket=pipeline_bucket(&key,legacy);
   for (cached = pipelines[legacy][bucket]; cached; cached = cached->next[legacy])
-    if (!memcmp(&key, &cached->key, sizeof key))
+    if (cached->local_pass==local_pass && cached->subpass==local_subpass && !memcmp(&key, &cached->key, sizeof key))
       break;
   if (!cached) {
     cached = calloc(1, sizeof *cached);
     if (!cached)
       die("Vulkan pipeline cache allocation");
-    cached->key = key;
+    cached->key = key;cached->local_pass=local_pass;cached->subpass=local_subpass;
+    if(local_pass) {
+      cached->local_object=j->pass_object;
+      pthread_mutex_lock(&render_object_mu);cached->local_object->references++;pthread_mutex_unlock(&render_object_mu);
+    }
     cached->layout = vk_program_layout_mode(list,dynamic_uniforms);
     ci.layout = cached->layout;
     int compile_trace=vk_system_trace_begin("Vulkan graphics PSO creation");
@@ -1405,12 +1485,18 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     VkResult compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
     vk_pipeline_cache_end(compiled==VK_SUCCESS);
     vk_system_trace_end(compile_trace);
+    if(compiled!=VK_SUCCESS && local_consumer) {
+      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
+      render_pass_release(cached->local_object);free(cached);
+      vk_texture_shader_record();vk_shader_writebacks();vk_render_end();
+      vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+    }
     if(compiled==VK_ERROR_UNKNOWN && list[1] &&
         (fragment_module==list[1]->specialization_module || hybrid_selected)) {
       // Optional hybrid -> original exact-word specialization -> base. Each
       // retry updates the complete module/tuple key; no failed PSO is cached.
       if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
-      free(cached);cached=NULL;
+      render_pass_release(cached->local_object);free(cached);cached=NULL;
       if(hybrid_selected) {
         fragment_module=vk_uniform_predicate_rejected(list[1],specialization_words);
         hybrid_selected=0;specialization_info.mapEntryCount=1;specialization_info.dataSize=4;
@@ -1438,7 +1524,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
       cached->next[mode]=pipelines[mode][b];pipelines[mode][b]=cached;
     }
     pipeline_count++;
-    pipeline_recipe_record(&key,list);
+    if(!local_pass)pipeline_recipe_record(&key,list);
   }
   break;
   }
@@ -1477,7 +1563,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   if (!active_job) {
     j->gpu_region = vk_gpu_region_begin("render", list[1] ? list[1]->key : list[0]->key,
                                        j->area.extent.width, j->area.extent.height);
-    render_record_begin(j,descriptions,na,color,S.targets.n,include_depth?&depth:NULL,NULL);
+    render_record_begin(j,descriptions,na,color,S.targets.n,include_depth?&depth:NULL,j->local?j->clears:NULL);
     active_job = j;
     active_writes = 0;
     active_targets = S.targets;
@@ -1490,7 +1576,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   }
   vk_gpu_region_label(active_job->gpu_region, list[1] ? list[1]->key : list[0]->key);
   active_job->clear_only=0;
-  cover_first_draw(active_job,list,&ds,draw,idx,cover_ready,(const float (*)[4])cover_p,cover_descriptor_epoch);
+  if(!active_job->local)cover_first_draw(active_job,list,&ds,draw,idx,cover_ready,(const float (*)[4])cover_p,cover_descriptor_epoch);
   int state_reference=draw_state_reference();
   for (int i = 0; i < 16; i++)
     if (streams & (1u << i)) {
@@ -1579,6 +1665,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
                      idx->base_instance);
   else
     vkCmdDraw(V.cmd, draw->count, 1, draw->first, 0);
+  if(local_consumer && active_job==local_job) {local_job->local->finished=1;draw_recorded.pixel_local_draws++;}
   if(vk_mip_clear_pending() && mip_clear.returned && active_job==mip_clear.job)
     mip_clear_recorded.continued++;
   vk_counter_draw_end(occlusion);
@@ -1599,7 +1686,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
                          S.targets.has_cview[i] ? &S.targets.cview[i] : NULL,
                          list[1]->key);
   V.draws++;
-  if (draw) vk_ghost_note(draw, list[1]);
+  if (draw) vk_ghost_note(draw, local_consumer?local_consumer->source_shader:list[1]);
   bq_after_draw();
   vk_pool_operation_end(pool_operation);
   vk_profile_end(VK_TIME_DRAW, started);

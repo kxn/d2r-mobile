@@ -142,6 +142,7 @@ void vk_counter_begin(void) {
 static sample_query **samples;
 static unsigned sample_count, sample_capacity;
 static int counting;
+int vk_counter_counting(void) {return counting;}
 static void sample_release(void *opaque) {
   sample_query *q = opaque;
   if (atomic_fetch_sub(&q->refs, 1) == 1) {

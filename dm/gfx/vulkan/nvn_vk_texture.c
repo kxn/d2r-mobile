@@ -7,6 +7,7 @@
 #include "nvn_vk_shader.h"
 #include "nvn_vk_extrap.h"
 #include "nvn_vk_present_shader.h"
+#include "nvn_vk_pixel_local_runtime.h"
 #include <math.h>
 #include <stdatomic.h>
 typedef struct image_view {
@@ -707,9 +708,10 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
     usage |= VK_IMAGE_USAGE_STORAGE_BIT;
   if (i->aspect != VK_IMAGE_ASPECT_COLOR_BIT)
     usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  else if ((required || attachment_usage_mode()) &&
+  else if (((required&VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) || attachment_usage_mode()) &&
       (props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
     usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  usage|=required;
   VkImageCreateInfo ci = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
       .imageType = t->d.target == NVN_TEXTURE_TARGET_3D
@@ -2300,6 +2302,83 @@ static vk_attachment texture_attachment(const tex_t *t,const view_t *v,int reado
                          i->tex.d.samples > 1
                              ? (VkSampleCountFlagBits)i->tex.d.samples
                              : VK_SAMPLE_COUNT_1_BIT,layout};
+}
+// Input attachment views are deliberately single-mip, unlike the original
+// NVN sampled view. No ordinary read visibility proof authorizes INPUT_READ.
+static image *pixel_local_owner(const vk_pixel_local_image *p) {
+  if(!p || p->generation!=image_recipe_generation || p->recording!=vk_recording_serial())return NULL;
+  for(image *i=image_buckets[p->serial%8192];i;i=i->hash_next)
+    if(i->tex.serial==p->serial && i->handle==p->image)return i;
+  return NULL;
+}
+int vk_texture_pixel_local_valid(const vk_pixel_local_image *p) {
+  image *i=pixel_local_owner(p);
+  return i && (!i->tex.has_layout || (i->stamp==p->stamp &&
+      !nvn_dirty_since(i->tex.mem,i->tex.L.size,p->stamp)));
+}
+int vk_texture_pixel_local_prepare(const tex_t *t,int local,vk_pixel_local_image *out) {
+  if(t && (t->d.format==NVN_FORMAT_RGBX8 || t->d.format==NVN_FORMAT_RGBX8_SRGB ||
+      t->d.format==NVN_FORMAT_BGRX8 || t->d.format==NVN_FORMAT_BGRX8_SRGB))return 0;
+  if(!t || t->d.target!=NVN_TEXTURE_TARGET_2D || t->L.layers!=1 || t->d.samples>1 ||
+      !t->d.levels || t->d.levels>16 || aspect_for(t->d.format)!=VK_IMAGE_ASPECT_COLOR_BIT)return 0;
+  VkFormatProperties features;vk_format_properties(vk_nvn_format(t->d.format),&features);
+  if(!(features.optimalTilingFeatures&VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))return 0;
+  vk_mip_clear_texture_access(t,NULL,0);
+  VkImageUsageFlags usage=VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT|(local?VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT:0);
+  image *i=image_get_usage(t,usage);
+  if(!local)image_upload(i);
+  // A single-mip/single-layer 2D image uses the existing whole-image
+  // layout/layout_scope representation. Do not manufacture mip tracking or
+  // admit complex untracked arrays/3D images through this path.
+  int whole=i->levels==1 && i->layers==1 && i->description.imageType==VK_IMAGE_TYPE_2D &&
+      i->extent.depth==1 && i->aspect==VK_IMAGE_ASPECT_COLOR_BIT;
+  if((!image_mip_tracked(i) && !whole) || i->description.samples!=VK_SAMPLE_COUNT_1_BIT || i->decoded)return 0;
+  VkImageSubresourceRange r={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+  VkPipelineStageFlags stages=local?VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT:VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  VkAccessFlags access=local?VK_ACCESS_COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT:VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+  VkImageLayout layout=local?VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  image_range_layout_access(i,r,layout,stages,access);
+  if(!local) {
+    // Invalidate SHADER_READ-only proofs before the dedicated input request.
+    i->access_generation++;
+    image_cell(i,0,0,0)->visible=0;
+    image_request q=image_request_make(i,r,stages,access);image_dependencies(&q,1,0,1);
+    image_record(i,r,stages,access,0);
+  }
+  VkImageViewCreateInfo ci={.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,.image=i->handle,
+    .viewType=VK_IMAGE_VIEW_TYPE_2D,.format=i->format,.subresourceRange=r};
+  *out=(vk_pixel_local_image){.generation=image_recipe_generation,.serial=t->serial,
+    .recording=vk_recording_serial(),.stamp=i->stamp,.image=i->handle,.usage=i->description.usage,.local=local,
+    .attachment={cached_view(i,&ci,usage),
+      i->format,i->extent,VK_SAMPLE_COUNT_1_BIT,layout}};
+  i->last_use=out->recording;
+  return 1;
+}
+int vk_texture_pixel_local_enter(const vk_pixel_local_image *p) {
+  image *i=pixel_local_owner(p);if(!i)return 0;image_access *c=image_cell(i,0,0,0);
+  i->last_use=vk_recording_serial();i->access_generation++;
+  if(p->local) {
+    if(image_mip_tracked(i)) {
+      c->mip_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      c->mip_scope=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      i->layout=c->mip_layout;
+      for(unsigned l=1;l<i->levels;l++)if(image_cell(i,0,l,0)->mip_layout!=i->layout) {i->layout=VK_IMAGE_LAYOUT_MAX_ENUM;break;}
+    } else {
+      // The implicit subpass transition covers the entire single-mip image.
+      // Preserve writer clocks/readers in its original access history below.
+      if(i->levels!=1 || i->layers!=1 || i->description.imageType!=VK_IMAGE_TYPE_2D ||
+          i->aspect!=VK_IMAGE_ASPECT_COLOR_BIT)return 0;
+      i->layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      i->layout_scope=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+  }
+  // Retain all producer/write clocks and readers. The implicit dependency
+  // covers input reads only, never subsequent ordinary shader reads.
+  c->visible=0;c->layout_ordered=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  c->layout_ordered_access=VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+  image_record(i,(VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1},
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_ACCESS_INPUT_ATTACHMENT_READ_BIT,0);
+  return 1;
 }
 vk_attachment vk_texture_attachment(const tex_t *t,const view_t *v) { return texture_attachment(t,v,0); }
 vk_attachment vk_texture_readonly_attachment(const tex_t *t,const view_t *v) { return texture_attachment(t,v,1); }

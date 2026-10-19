@@ -1,3 +1,4 @@
+#include "nvn_vk_pixel_local_runtime.h"
 // 直接回放原 hle_nvn.c 写出的命令；未移植的实际操作明确失败，不返回伪成功。
 // Replay commands written by the original hle_nvn.c directly; unported
 // operations fail explicitly rather than report success.
@@ -49,6 +50,7 @@ void mtl_exec(const uint8_t *p) {
     const uint8_t *a = p + sizeof h;
     vk_pass_plan_op(p);
     vk_mip_clear_replay(p,h.op);
+    vk_pixel_local_replay(p);
     if (vk_freeze_op(h.op,a)) {
       p+=h.size;
       continue;
@@ -112,7 +114,7 @@ void mtl_exec(const uint8_t *p) {
       break;
     }
     case OP_SET_RT:
-      if(memcmp(&S.targets,a,sizeof S.targets)) vk_stream_target_boundary();
+      if(memcmp(&S.targets,a,sizeof S.targets) && !vk_pixel_local_target_boundary(p)) vk_stream_target_boundary();
       S.targets = *(const p_set_rt *)a;
       break;
     case OP_SCISSOR:

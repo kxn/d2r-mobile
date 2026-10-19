@@ -10,13 +10,21 @@ typedef struct {
   unsigned count;
   pixel_local_record records[];
 } pixel_local_cache;
+static _Atomic int pixel_local_initial=-1;
+static pthread_once_t pixel_local_once=PTHREAD_ONCE_INIT;
+static void pixel_local_initialize(void) {
+  const char *value=getenv("DM_VULKAN_PIXEL_LOCAL");
+  if(value && strcmp(value,"0") && strcmp(value,"1"))
+    LOG("[vulkan] invalid DM_VULKAN_PIXEL_LOCAL; keeping disabled");
+  atomic_store_explicit(&pixel_local_initial,value && !strcmp(value,"1"),memory_order_relaxed);
+}
 int vk_pixel_local_enabled(void) {
-  static int initial=-1;
+  // This immutable scalar publishes no other data. Steady-state readers need
+  // one relaxed load; simultaneous first readers sample the environment once.
+  int initial=atomic_load_explicit(&pixel_local_initial,memory_order_relaxed);
   if(initial<0) {
-    const char *value=getenv("DM_VULKAN_PIXEL_LOCAL");
-    initial=value && !strcmp(value,"1");
-    if(value && strcmp(value,"0") && strcmp(value,"1"))
-      LOG("[vulkan] invalid DM_VULKAN_PIXEL_LOCAL; keeping disabled");
+    pthread_once(&pixel_local_once,pixel_local_initialize);
+    initial=atomic_load_explicit(&pixel_local_initial,memory_order_relaxed);
   }
   return initial;
 }

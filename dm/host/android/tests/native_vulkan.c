@@ -461,6 +461,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pending_read.inc"
 #include "native_vulkan_prewarm.inc"
 #include "native_vulkan_pool_policy.inc"
+#include "native_vulkan_pixel_local.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
   vk_graphics_prepare_mode(2);
@@ -506,6 +507,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
   if (getenv("DM_VULKAN_ACQUIRE_TEST")) return acquire_sync_scope_test();
   if (getenv("DM_VULKAN_MEMORY_TEST")) {
     memory_suballocation_test();
