@@ -469,6 +469,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pool_address.inc"
 #include "native_vulkan_pool_authority_batch.inc"
 #include "native_vulkan_pool_copy_accounting.inc"
+#include "native_vulkan_pool_flags.inc"
 #include "native_vulkan_retained_update.inc"
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
@@ -519,6 +520,7 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+  if(getenv("DM_POOL_FLAGS_FIXTURE")) {pool_flags_test();printf("{\"test\":\"pool-flags\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   ds_plane_store_test();
   if(getenv("DM_DS_PLANE_STORE_FIXTURE")) {CHECK(vk_validation_error_count()==0);printf("{\"test\":\"ds-plane-store\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
@@ -1923,6 +1925,7 @@ int dm_vulkan_test_main(void) {
   pool_address_proof_test();
   pool_authority_batch_test();
   pool_copy_accounting_test();
+  pool_flags_test();
   retained_update_test();
   pool_finite_consolidation_test();
   pool_window_reservation_test();

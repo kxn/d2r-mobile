@@ -450,6 +450,11 @@ void mtl_pool_add(const void *mem, uint64_t size) {
     pthread_mutex_unlock(&g_mu);
 }
 
+// Flags do not change the original shared NoCopy allocation or semantics.
+void mtl_pool_add_flags(const void *mem, uint64_t size, int flags) {
+    (void)flags; mtl_pool_add(mem, size);
+}
+
 void mtl_pool_del(const void *mem) {
     g_reg_gen++;
     id<MTLBuffer> gone = nil;

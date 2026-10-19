@@ -277,3 +277,56 @@ ASTC 游戏资源都算成命中。独立 fixture 用 TEST_EMBED 能力屏蔽强
 分支，并保留 native BC 对照，检查4种BC格式、3 mip、2 layer、首次／不变／一子
 资源脏重传的全部 GPU 输出像素。合入后统一回归与真机验收另行记录，尚无该候选
 在真实游戏减少多少驻留内存或发热的结论。
+
+## e7b1331 真机窗口对照及默认策略
+
+同一冻结 APK、原有 Shader 链、固定 0.75 3D、原生输出、bloom 开启，关闭
+字节诊断及抓帧层。两台分别完成原摇杆营地行走；每次只取一份系统 meminfo，
+前后核对位置及 backing 不变，结束后原生命周期新存档两次并停机。
+
+| 单次营地快照 | Mali 16 / 4 MiB | Adreno 735 16 / 4 MiB |
+| --- | --- | --- |
+| PSS（KiB） | 3348237 / 3230772 | 2645751 / 2690167 |
+| Graphics（KiB，已包含在 PSS） | 1543140 / 1414216 | 567920 / 601156 |
+| backing 容量（MiB，非物理驻留） | 451 / 279 | 435 / 291 |
+| 启动及行走累计 promotion | 5 / 19 | 6 / 18 |
+
+Mali 的 PSS 少 114.7 MiB，高通反而多 43.4 MiB。每机各一对快照，驱动分配
+历史和实际场景工作量仍可能不同，不能把容量差直接当作驻留收益或因果证明。
+高通第一次 4 MiB 路线未在 5 秒内达到原 radius=4，保留失败记录；只增加原摇杆
+操作时间预算到 12 秒后的独立重试通过，没有放宽距离断言或修改游戏状态。
+
+随后 Mali 的官方 Perfetto / Simpleperf 独立对照中，4 / 16 MiB 的 NVN replay
+Running 为 27.87 / 29.54 ms，运行时加权系统频率为 1571 / 1518 MHz。16 MiB
+后半段发生热等级上升和目标节奏 30→20，4 MiB 保持 30；两者不能直接比较净
+CPU 或帧率收益。两个工具窗口中都没有 promotion 或 backing 变化，因此没有
+测到较小窗口增加合并时的额外成本，也不能排除行走／新资源加载时卡顿。
+当前继续保留 **16 MiB 默认值**，4 MiB 为显式对照选项；没有宣称已解决持续
+发热或实际 6 GiB 设备启动。数据分别位于本机
+`.local/logs/pool-window-memory-v3-two-device-pair-analysis.json` 和
+`.local/logs/current-cpu-e7b-mali-window-pair-v1-analysis.json`。
+
+## 只在实际 PSO 创建时构造 Shader Stage 参数
+
+`VkPipelineShaderStageCreateInfo` 原先在每次 draw 的资源循环中构造，即使最终
+命中已有 PSO。现延后到真正调用驱动创建管线的 miss 分支；所有逐 draw 资源
+准备、依赖、完整 key 和缓存失效规则保持。hybrid→原 specialization→base 的
+失败回退每次先查缓存，只有真实 miss 才按当前 module／完整 tuple 重建参数。
+保留 pixel-local 替换 Shader 前的 specialization 判定，不能从 clone 重新猜测。
+
+命中时省去 stage 参数写入，常见 VS+FS 为 96 字节栈结构；不是 GPU 带宽节省。
+真实 miss 多一次最多五级的扫描，没有新堆分配或持久缓存。原 NDK O3 编译
+的栈帧与保存寄存器不变。GPU 字节测试同时检查实际驱动参数、缓存命中和两级
+创建失败回退；不以静态指令数或功能测试数冒充 Android 整帧收益。
+
+## 保留原 NVN Pool flags，暂不改变可见性策略
+
+HLE 已保留原 MemoryPool flags，但此前向后端注册时丢失。新增独立入口传递
+原始 32 位 flags 和 known 状态，明确区分显式零与旧调用方未知；每个私有 Pool
+增加 8 字节，无逐 draw 开销。Metal 委托原 NoCopy 分配，Vulkan 只存元数据。
+usage、分配类型、脏页、GPU 依赖、CPU 发布和写回都不读取这些新字段。
+
+这些字段供官方 LLDB 在一次 all-stop 读取真实 Pool 意图，不新增计时／采样器。
+尚不能据 flags 或未观察到 CPU read 就删除回读：游戏仍可经普通指针读取，
+完成后的 shadow 也是后续 CPU 修改比较的基线。任何共享分配或可见性省略都
+需另证 NVN 合同、实际读写依赖和在飞生命周期；本改动本身没有内存或帧率收益。

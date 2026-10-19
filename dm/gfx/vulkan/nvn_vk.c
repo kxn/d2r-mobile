@@ -56,6 +56,10 @@ typedef struct pool {
   // The legacy flag is only a fail-closed fallback for untracked migration/OOM.
   int cpu_copy_requires_gpu,cpu_authority_tracking;
   pool_cpu_authority *cpu_authority;
+  // Original NVN intent only; never interpreted as VkMemoryPropertyFlags.
+  // Known zero flags and unknown legacy callers remain distinguishable.
+  uint32_t nvn_flags;
+  int nvn_flags_known;
 } pool;
 #include "nvn_vk_cpu_authority.inc"
 // 上传按最多 4 KiB 的连续段复制，GPU 使用也按页保守记录；不扫描每次绑定的字节区间链。
@@ -1468,11 +1472,12 @@ static void pool_materialize(pool *p) {
   pool_span_create(p,&p->whole,0,p->size);p->backings=&p->whole;
   if(V.options.pool_mirror_reference) pool_initialize_range(p,0,p->size);
 }
-void mtl_pool_add(const void *mem, uint64_t size) {
+static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, int known) {
   mtl_init();
   pool *p = calloc(1, sizeof *p);
   if (!p || !size) die("Vulkan pool allocation");
   p->guest = (uint8_t *)mem;p->size = size;
+  p->nvn_flags=flags;p->nvn_flags_known=known;
   p->cpu_authority_tracking=V.options.pool_window_bytes!=0;
   pthread_mutex_lock(&V.resources);
   for (pool *v = pools; v; v = v->next)
@@ -1489,6 +1494,19 @@ void mtl_pool_add(const void *mem, uint64_t size) {
   pool_adds++;
   pthread_mutex_unlock(&V.resources);
 }
+void mtl_pool_add(const void *mem, uint64_t size) { pool_add_metadata(mem,size,0,0); }
+void mtl_pool_add_flags(const void *mem, uint64_t size, int flags) {
+  pool_add_metadata(mem,size,(uint32_t)flags,1);
+}
+#ifdef DM_VULKAN_TEST_EMBED
+// Owned functional metadata assertion only; not used by the game or profiler.
+int vk_test_pool_flags(uint64_t address,uint32_t *flags,int *known,uint64_t *identity) {
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
+  if(p) { *flags=p->nvn_flags;*known=p->nvn_flags_known;*identity=p->identity; }
+  pthread_mutex_unlock(&V.resources);return p!=NULL;
+}
+#endif
+
 void mtl_pool_del(const void *mem) {
   mtl_finish();
   pthread_mutex_lock(&V.resources);

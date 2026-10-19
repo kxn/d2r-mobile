@@ -118,6 +118,39 @@ static void uniform_predicate_fixture_pixel(const uint32_t *p,uint32_t raw,uint3
   // is exact and increments the exponent, retaining every mantissa flag bit.
   CHECK(p[2]==extra+UINT32_C(0x00800000));CHECK(p[3]==extra);
 }
+// Observe real driver creation arguments; fault mode deliberately rejects the
+// first hybrid and old-spec creates before running the original GPU oracle.
+static PFN_vkCreateGraphicsPipelines predicate_stage_create_original;
+static vk_shader *predicate_stage_shader;
+static VkShaderModule predicate_stage_vertex;
+static unsigned predicate_stage_creates,predicate_stage_faults,predicate_stage_base;
+static int predicate_stage_fault_mode;
+static VkResult VKAPI_CALL predicate_stage_create(VkDevice device,VkPipelineCache cache,
+    uint32_t count,const VkGraphicsPipelineCreateInfo *infos,const VkAllocationCallbacks *allocation,VkPipeline *pipelines) {
+  CHECK(count==1);const VkGraphicsPipelineCreateInfo *ci=infos;
+  CHECK(ci->stageCount==2 && ci->pStages);CHECK(ci->subpass==0);
+  const VkPipelineShaderStageCreateInfo *vs=ci->pStages,*fs=ci->pStages+1;
+  CHECK(vs->sType==VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO && !vs->pNext && !vs->flags);
+  CHECK(vs->stage==VK_SHADER_STAGE_VERTEX_BIT && vs->module==predicate_stage_vertex);
+  CHECK(!vs->pSpecializationInfo && !strcmp(vs->pName,"main"));
+  CHECK(fs->sType==VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO && !fs->pNext && !fs->flags);
+  CHECK(fs->stage==VK_SHADER_STAGE_FRAGMENT_BIT && !strcmp(fs->pName,"main"));
+  vk_shader *s=predicate_stage_shader;predicate_stage_creates++;
+  if(fs->module==s->module) {CHECK(!fs->pSpecializationInfo);predicate_stage_base++;}
+  else {
+    CHECK(fs->module==s->specialization_module || fs->module==s->predicate->module);
+    const VkSpecializationInfo *sp=fs->pSpecializationInfo;CHECK(sp && sp->pMapEntries && sp->pData);
+    int hybrid=fs->module==s->predicate->module;
+    CHECK(sp->mapEntryCount==(hybrid?2:1) && sp->dataSize==(hybrid?8:4));
+    CHECK(sp->pMapEntries[0].constantID==s->specialization_id && !sp->pMapEntries[0].offset && sp->pMapEntries[0].size==4);
+    if(hybrid)CHECK(sp->pMapEntries[1].constantID==s->predicate->id && sp->pMapEntries[1].offset==4 && sp->pMapEntries[1].size==4);
+    if(predicate_stage_fault_mode && predicate_stage_faults<2) {
+      CHECK(hybrid==(predicate_stage_faults==0));predicate_stage_faults++;
+      pipelines[0]=VK_NULL_HANDLE;return VK_ERROR_UNKNOWN;
+    }
+  }
+  return predicate_stage_create_original(device,cache,count,infos,allocation,pipelines);
+}
 static void uniform_predicate_test(const void *vertex) {
   vk_state saved=S;uint8_t control[0x880],compute_control[0x880];
   memset(control,56,sizeof control);memset(compute_control,2,sizeof compute_control);
@@ -125,6 +158,11 @@ static void uniform_predicate_test(const void *vertex) {
   CHECK(shader->specialization_integer_only);CHECK(shader->specialization_slot==1);
   CHECK(shader->predicate->slot==2 && shader->predicate->offset==320 && shader->predicate->count==2);
   CHECK(shader->predicate->id!=shader->specialization_id);
+  CHECK(!predicate_stage_create_original);predicate_stage_create_original=vkCreateGraphicsPipelines;
+  predicate_stage_shader=shader;predicate_stage_vertex=vk_shader_get(vertex)->module;
+  predicate_stage_creates=predicate_stage_faults=predicate_stage_base=0;
+  predicate_stage_fault_mode=getenv("DM_TEST_PSO_STAGE_FAILURE")!=NULL;
+  vkCreateGraphicsPipelines=predicate_stage_create;
   uint64_t hits0,pending0,limits0,variants0,rejected0,masks0[16];int enabled0,spec_enabled;
   vk_uniform_predicate_stats(&hits0,&pending0,&limits0,&variants0,&rejected0,masks0,&enabled0);
   uint64_t ignored[4];vk_uniform_specialization_stats(ignored,ignored+1,ignored+2,ignored+3,&spec_enabled);
@@ -157,14 +195,19 @@ static void uniform_predicate_test(const void *vertex) {
     uint32_t extra=(numeric?UINT32_C(0x3f800000):UINT32_C(0x3f000000))|((m&1)?16:0)|((m&2)?2:0);
     dm_guest_write_prepare(storage,4);memcpy(storage,&raw,4);
     dm_guest_write_prepare(storage+65536+320,4);memcpy(storage+65536+320,&extra,4);
-    for(unsigned hybrid=0;hybrid<2;hybrid++) {
+    for(unsigned phase=0;phase<2;phase++) {
+      unsigned hybrid=predicate_stage_fault_mode?1-phase:phase;
+      unsigned creates_before=predicate_stage_creates;
       vk_uniform_predicate_enabled(hybrid);
       CALL(nvnCommandBufferBeginRecording,&local);
       uniform_predicate_fixture_bind(&local,&program,&texture,&ds,&polygon,&color,&mask,storage);
       CALL(nvnCommandBufferDrawArrays,&local,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
       submit(CALL(nvnCommandBufferEndRecording,&local));CALL(nvnTextureReadTexels,&texture,NULL,&region,pixels);
       for(unsigned n=0;n<256;n++)uniform_predicate_fixture_pixel(pixels[n],raw,extra);
-      if(!hybrid)memcpy(reference,pixels,sizeof reference);else CHECK(!memcmp(reference,pixels,sizeof pixels));
+      if(!phase)memcpy(reference,pixels,sizeof reference);else CHECK(!memcmp(reference,pixels,sizeof pixels));
+      // Numeric changes leave the exact raw/mask tuple and static state equal.
+      // Existing prepared/full-key hits must not call the driver again.
+      if(numeric)CHECK(predicate_stage_creates==creates_before);
     }
   }
   vk_uniform_predicate_enabled(1);
@@ -228,6 +271,12 @@ static void uniform_predicate_test(const void *vertex) {
     CHECK(shader->predicate->variants==16);CHECK(variants-variants0==16);CHECK(limits>limits0);CHECK(pending>pending0);
     CHECK(hits>hits0);for(unsigned n=0;n<4;n++)CHECK(masks[n]>masks0[n]);
   }
+  vkCreateGraphicsPipelines=predicate_stage_create_original;predicate_stage_create_original=NULL;
+  CHECK(predicate_stage_creates>0);
+  if(predicate_stage_fault_mode) {CHECK(predicate_stage_faults==2);CHECK(predicate_stage_base>0);CHECK(shader->specialization_disabled);}
+  else CHECK(!predicate_stage_faults);
+  LOG("[vulkan PSO stage fixture] actual_driver_creates=%u injected_failures=%u base_creates=%u; stage/module/spec arguments and cache-hit GPU pixels passed",
+      predicate_stage_creates,predicate_stage_faults,predicate_stage_base);
   LOG("[vulkan Uniform predicate fixture] hits=%llu pending=%llu limits=%llu variants=%llu rejected=%llu disabled=%d",
     (unsigned long long)(hits-hits0),(unsigned long long)(pending-pending0),(unsigned long long)(limits-limits0),
     (unsigned long long)(variants-variants0),(unsigned long long)(rejected-rejected0),shader->predicate->disabled);

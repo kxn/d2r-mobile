@@ -13,7 +13,9 @@ void bf_want_note(const char *key);
 
 // 内存池：[mem, mem+size) 外扩到页边界建零拷贝缓冲；按 GPU 地址（= CPU 地址）反查缓冲与偏移
 // Memory pool: [mem, mem+size) is expanded outward to page boundaries to build a zero-copy buffer; look up the buffer and offset by GPU address (= CPU address)
+// Legacy callers have unknown intent. Explicit NVN flags are metadata only.
 void mtl_pool_add(const void *mem, uint64_t size);
+void mtl_pool_add_flags(const void *mem, uint64_t size, int flags);
 void mtl_pool_del(const void *mem);
 int mtl_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off);   // 成功 1；buf 是 (__bridge) id<MTLBuffer> | 1 on success; buf is a (__bridge) id<MTLBuffer>
 

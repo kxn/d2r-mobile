@@ -946,8 +946,6 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
   if (!S.program)
     die("Vulkan draw without program");
   vk_shader *list[6] = {0};
-  VkPipelineShaderStageCreateInfo stages[5];
-  uint32_t ns = 0;
   vk_program_shaders(S.program, list);
   mip_clear_before_draw(list);
   list[5] = NULL;
@@ -1176,12 +1174,6 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
         vk_texture_binding_scope_end();vk_texture_shader_abandon();vk_shader_operation_abandon();
         free(local_ready);vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
       }
-      stages[ns++] = (VkPipelineShaderStageCreateInfo){
-          .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-          .stage = vk_stage(i),
-          .module = i==1?fragment_module:list[i]->module,
-          .pSpecializationInfo=i==1 && original_specialized?&specialization_info:NULL,
-          .pName = "main"};
       if(i==1 && local_consumer) {
         sets[i]=vk_shader_pixel_local_bindings(local_consumer,dynamic_uniforms,&uniform_offsets[list[i]->set],
             local_views,local_layouts,texel_selection.shader?&texel_selection:NULL);
@@ -1488,8 +1480,6 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
       .pDynamicStates = dynamic};
   VkGraphicsPipelineCreateInfo ci = {
       .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-      .stageCount = ns,
-      .pStages = stages,
       .pVertexInputState = &vi,
       .pInputAssemblyState = &ia,
       .pViewportState = &vp,
@@ -1558,6 +1548,18 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
     }
     cached->layout = vk_program_layout_mode(list,dynamic_uniforms);
     ci.layout = cached->layout;
+    // Stage create-info is consumed only by the actual driver MISS. Keep all
+    // per-draw resource work above; cached pipelines need no Vulkan creation
+    // representation. Rebuild from the current module/tuple on each retry.
+    VkPipelineShaderStageCreateInfo stages[5];
+    uint32_t ns=0;
+    for(unsigned i=0;i<5;i++) if(list[i])
+      stages[ns++]=(VkPipelineShaderStageCreateInfo){
+        .sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage=vk_stage(i),.module=i==1?fragment_module:list[i]->module,
+        .pSpecializationInfo=i==1 && original_specialized?&specialization_info:NULL,
+        .pName="main"};
+    ci.stageCount=ns;ci.pStages=stages;
     int compile_trace=vk_system_trace_begin("Vulkan graphics PSO creation");
     vk_pipeline_cache_begin();
     VkResult compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
@@ -1606,10 +1608,7 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
       context.fragment_module=fragment_module;context.specialization_word=specialization_words[0];
       context.specialization_mask=specialization_words[1];
       key.modules[1]=fragment_module;key.specialization_word=specialization_words[0];key.specialization_mask=specialization_words[1];
-      for(unsigned st=0;st<ns;st++)if(stages[st].stage==VK_SHADER_STAGE_FRAGMENT_BIT) {
-        stages[st].module=fragment_module;
-        stages[st].pSpecializationInfo=fragment_module==list[1]->specialization_module?&specialization_info:NULL;
-      }
+      original_specialized=fragment_module==list[1]->specialization_module;
       continue;
     }
     VK_CHECK(compiled);
