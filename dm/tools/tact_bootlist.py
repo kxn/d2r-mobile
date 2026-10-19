@@ -30,7 +30,7 @@ for l in open(f'{R}/build_manifest.psv', encoding='utf-8'):
     if l.startswith(('FileId', '#')): continue
     f = l.rstrip('\n').split('|')
     if len(f) < 10: continue
-    fn = f'{int(f[2]):02d}-{int(f[3]):08d}.data'; off = int(f[6][22:32], 16); es = int(f[7]); enc = f[8]; m = mm(fn)
+    fn = f'{int(f[2]):02d}-{int(f[3]):08x}.data'; off = int(f[6][22:32], 16); es = int(f[7]); enc = f[8]; m = mm(fn)
     if enc == 'z': idx[(m[off:off + 16].hex(), es)].append((fn, off)); continue
     if enc.startswith('b') and m[off:off + 4] == b'BLTE':
         hs = struct.unpack_from('>I', m, off + 4)[0]

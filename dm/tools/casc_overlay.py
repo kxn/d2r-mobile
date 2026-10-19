@@ -49,6 +49,7 @@ when the EKey or block checksum is computed wrong the game exits as soon as it r
 
 import hashlib
 from pathlib import Path
+import re
 import struct
 import sys
 import zlib
@@ -56,6 +57,26 @@ import zlib
 
 def die(message):
     raise SystemExit(f"casc_overlay.py: {message}")
+
+
+def data_filename(chunk, archive):
+    """Match the game's %02lu-%08lx.data: decimal chunk, hexadecimal archive."""
+    if not (0 <= chunk <= 255 and 0 <= archive <= 255):
+        die("chunk and archive must each fit the EKey's 8-bit field (0..255)")
+    return f"{chunk:02d}-{archive:08x}.data"
+
+
+def parse_pack_location(value):
+    # Preserve decimal CLI numbers (including leading zeros); explicit 0x is optional.
+    try:
+        parts = value.split("-")
+        if len(parts) != 2:
+            raise ValueError
+        location = tuple(int(p, 16 if p.lower().startswith("0x") else 10) for p in parts)
+    except ValueError:
+        die("pack location must be chunk-archive (decimal, or explicit 0x hexadecimal)")
+    data_filename(*location)
+    return location
 
 
 def norm_path(value):
@@ -114,7 +135,7 @@ def read_manifest(source):
 
 def read_data_file(data_dir, ekey, encoded_size):
     chunk, archive = ekey[9], ekey[10]
-    filename = data_dir / f"{chunk:02d}-{archive:08d}.data"
+    filename = data_dir / data_filename(chunk, archive)
     with filename.open("rb") as stream:
         stream.seek(int.from_bytes(ekey[11:16], "big"))
         raw = stream.read(encoded_size)
@@ -156,13 +177,15 @@ def blte_encode(content, block_size=256 * 1024):
 
 def available_location(data_dir):
     used = set()
-    for entry in data_dir.glob("??-????????.data"):
-        try:
-            used.add((int(entry.name[:2]), int(entry.name[3:11])))
-        except ValueError:
+    for entry in data_dir.glob("*.data"):
+        match = re.fullmatch(r"([0-9]{2,3})-([0-9a-fA-F]{8})\.data", entry.name)
+        if match is None:
             continue
+        chunk, archive = int(match[1], 10), int(match[2], 16)
+        if chunk <= 255 and archive <= 255:
+            used.add((chunk, archive))
     for chunk in range(256):
-        for archive in range(1, 0x100000000):
+        for archive in range(1, 256):   # Both fields in key-layout 8 8 40 are one byte.
             if (chunk, archive) not in used:
                 return chunk, archive
     die("no unused data-file location")
@@ -390,7 +413,7 @@ def write_pack(source, output, replacements, location):
     import concurrent.futures as cf
     chunk, archive = location
     data_dir = source / "data"
-    name = f"{chunk:02d}-{archive:08d}.data"
+    name = data_filename(chunk, archive)
     if (data_dir / name).exists():
         die(f"pack location {name} already exists in source RomFS")
     vfs_content = load_vfs1(source)
@@ -505,7 +528,7 @@ def rewrite_tvfs(source, output, replacements, prebuilt=None):
     root[pos:pos + 16] = new_vfs_ekey
     set_cft_sizes(root, pos, new_vfs_encoded, new_vfs_decoded)
     new_root_ekey, new_root_decoded, new_root_encoded = append(bytes(root))
-    data_name = f"{new_chunk:02d}-{new_archive:08d}.data"
+    data_name = data_filename(new_chunk, new_archive)
     (output / "data" / data_name).write_bytes(new_data)
     new_config = replace_config(lines, "vfs-1", hashlib.md5(bytes(vfs_content)).hexdigest() + " " + new_vfs_ekey.hex())
     new_config = replace_config(new_config, "vfs-1-size", f"{new_vfs_decoded} {new_vfs_encoded}")
@@ -536,7 +559,7 @@ def make_overlay(source, output, replacements, prebuilt=None):
 
 def main(argv):
     if len(argv) == 6 and argv[1] == "pack":   # pack <RomFS> <输出目录> <替换表.tsv> <块号-档号> | pack <RomFS> <output dir> <replacement-table.tsv> <chunk number-archive number>
-        chunk, archive = (int(x) for x in argv[5].split("-"))
+        chunk, archive = parse_pack_location(argv[5])
         write_pack(Path(argv[2]).resolve(), Path(argv[3]).resolve(), read_replacements(argv[4]), (chunk, archive))
         return
     prebuilt = None
