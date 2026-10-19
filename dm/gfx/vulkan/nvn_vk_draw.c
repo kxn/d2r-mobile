@@ -995,7 +995,7 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
   }
   // A saved optional ghost draw was checked without waiting at its entry;
   // it must never demand/commit inside an outer draw's borrowed resources.
-  if(!vk_ghost_replaying())vk_shader_cpu_sources(list,&S,0);
+  if(V.options.pool_defer_publication && !vk_ghost_replaying())vk_shader_cpu_sources(list,&S,0);
   draw_pool_plan pool_plan={idx};
   int pool_operation=vk_pool_operation_begin(draw_pool_collect,&pool_plan);
   vk_texel_storage_selection texel_selection;

@@ -460,3 +460,28 @@ CPU 上传和 ghost 捕获后 texture/VBO 改写，supported ON、默认 OFF、�
 永不如此读取。因此保持默认 OFF，需真机 ON/OFF、画面与实际 readback／CPU
 工作量对照；未宣称整帧、发热或内存净收益。工具链与原游戏 binary 未为此
 叠补丁，继续从原始 ExeFS 经同一入口生成并核验部署。
+
+
+## 当前同包真机对照与默认路径调用开销
+
+01de8df 的同一 APK / ELF / 原始模块在 Mali-G710 与 Adreno735 上均完成
+实验 OFF 和 ON 的原生游戏营地步行、截图检查及原生命周期两次存档后停机。
+两机分别沿用已核验的 Shader 链；实际 getter 与请求一致，没有用宿主测试
+替代真实游戏。当前记录见本机 `pool-pub-v2-{mali,q}-{off,on}1-*`。
+
+Mali 同为 305 次 guest-submit 的功能计数区间，录制的 readback 字节由
+428,072,560B 降为 28,313,200B，即每次约 1.40MB → 0.093MB（减少 93.4%）；
+已知 CPU 副本发布字节基本不变。这是待执行读回工作的减少，不是已完成
+memcpy、物理 DRAM 或显示帧计数。官方 Streamline 独立导出中，系统 GPU
+外部读写速率分别下降 12.3% / 15.5%；两轮 pacing target、variant 和迁移
+状态存在差异，不能将每秒速率下降直接写成同帧带宽、帧率或发热净收益。
+部分 GPU 等待指标仍上升，也不能声称 CPU/GPU 互等已解决。完整边界在本机
+`pool-pub-v2-mali-off-on-analysis-ready-v1.json`；实验继续默认关闭。
+
+检查最终 Android ELF 还发现，OFF draw 会调用立即返回的 CPU 来源 helper，
+但编译后的函数在判断前已经建立 320B 栈帧。调用端增加同一不可变选项判断，
+OFF 跳过 helper 及 ghost getter，ON 顺序保持不变。没有新增环境变量读取或
+改动资源依赖。独立 NDK 代码同时增加 36B、draw 栈帧增加 16B，不能称为
+整体零开销；独立真实 Vulkan OFF、ON、串行回退及专有字节用例全部通过。
+这是调用减负，不声称已经提高 Android 帧率；01de8df 的上述真机数据不包含
+此后的一行调用端修改。
