@@ -3,6 +3,46 @@
 // borrows before entry; active operation scopes are rejected rather than ended.
 // An isolated ordinary internal submission preserves device bytes, even when
 // they differ from guest/shadow. New CPU uploads occur only after it completes.
+#ifdef DM_VULKAN_TEST_EMBED
+static uint64_t pool_migration_test_copy_bytes;
+uint64_t vk_test_pool_migration_copy_bytes(void) { return pool_migration_test_copy_bytes; }
+#endif
+// Initialized pages have been exposed through an actual nonempty pool buffer
+// lookup/writeback, including overwrite/GPU-only writers. Dirty generations or
+// CPU-shadow authority cannot substitute: GPU results need not match either.
+// Reserved untouched pages need no preservation; their first lookup will still
+// initialize from guest in the replacement. Do not change the original bitmap.
+static void pool_migration_copy_initialized(const pool *p,const pool_backing_span *b,
+    VkBuffer destination) {
+  if(!p->initialized_pages)return;
+  enum {BATCH=64};VkBufferCopy copies[BATCH];unsigned count=0;
+  uint64_t first=b->begin>>GPU_ACCESS_SHIFT,last=(b->end-1)>>GPU_ACCESS_SHIFT;
+  for(uint64_t word=first/64;word<=last/64;word++) {
+    unsigned low=word==first/64?first%64:0,high=word==last/64?last%64:63;
+    uint64_t bits=p->initialized_pages[word]&((UINT64_MAX<<low)&(UINT64_MAX>>(63-high)));
+    while(bits) {
+      unsigned bit=__builtin_ctzll(bits),end=bit;
+      while(end<63 && (bits&(UINT64_C(1)<<(end+1))))end++;
+      uint64_t lo=(word*64+bit)<<GPU_ACCESS_SHIFT,hi=(word*64+end+1)<<GPU_ACCESS_SHIFT;
+      if(lo<b->begin)lo=b->begin;
+      if(hi>b->end)hi=b->end; // includes the final non-page-sized pool tail
+      VkBufferCopy copy={.srcOffset=lo-b->begin,.dstOffset=lo,.size=hi-lo};
+      if(count && copies[count-1].srcOffset+copies[count-1].size==copy.srcOffset)
+        copies[count-1].size+=copy.size;
+      else {
+        if(count==BATCH) {
+          vkCmdCopyBuffer(V.cmd,b->buffer.handle,destination,count,copies);count=0;
+        }
+        copies[count++]=copy;
+      }
+#ifdef DM_VULKAN_TEST_EMBED
+      pool_migration_test_copy_bytes+=copy.size;
+#endif
+      bits&=~((UINT64_MAX<<bit)&(UINT64_MAX>>(63-end)));
+    }
+  }
+  if(count)vkCmdCopyBuffer(V.cmd,b->buffer.handle,destination,count,copies);
+}
 static int pool_migrate_whole_quiescent(uint64_t address) {
   if(V.cmd || recording_resources || stream_recording || vk_render_active() ||
      vk_counter_active() || vk_shader_operation_active() || vk_texture_binding_scope_active() ||
@@ -40,6 +80,9 @@ static int pool_migrate_whole_quiescent(uint64_t address) {
   p->references++;
   pthread_mutex_unlock(&V.resources);
 
+#ifdef DM_VULKAN_TEST_EMBED
+  pool_migration_test_copy_bytes=0;
+#endif
   begin_submission(1);
   VkMemoryBarrier source={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
     .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT};
@@ -51,8 +94,7 @@ static int pool_migrate_whole_quiescent(uint64_t address) {
     // CPU initial contents. Migration is not a guest overwrite or publication.
     record_pool_use(p,b->begin,b->end-b->begin,VK_PIPELINE_STAGE_TRANSFER_BIT,0);
     pthread_mutex_unlock(&V.resources);
-    VkBufferCopy copy={.srcOffset=0,.dstOffset=b->begin,.size=b->end-b->begin};
-    vkCmdCopyBuffer(V.cmd,b->buffer.handle,replacement.buffer.handle,1,&copy);
+    pool_migration_copy_initialized(p,b,replacement.buffer.handle);
   }
   VkBufferMemoryBarrier destination={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
     .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,

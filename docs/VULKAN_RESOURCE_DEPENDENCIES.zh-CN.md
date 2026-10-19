@@ -1643,3 +1643,14 @@ SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Bus
 最终统一源在 Lavapipe 上通过完整异步 21,810,491 项、串行 cover-reference 17 用例 85,080 项，以及启用 16 MiB 生产窗口且故意令 subpass PSO 创建失败的 85,089 项检查，零 VUID/SYNC。失败注入验证普通路径实际 GPU 像素、STORE 与操作引用释放。首轮失败注入 harness 在惰性初始化前检查配置而失败，已调整测试初始化，保留原失败日志。这些结果只证明所测语义和回退，不证明 Android 已融合、硬件 tile 合并、DRAM 降低或涨帧。完整源指纹与日志见 `pixel-local-render-v2-main-source-ready.json`。
 
 内存镜像的范围 authority 已在高通同包整池/窗口/整池验证：窗口模式采集区间的 known-copy fallback 约 18.6 KiB，与整池约 18.6 KiB 接近，原先约 237 MB 的额外回读退化已消除。对应 GPU 回读是逻辑记录，不是硬件 DRAM 流量。窗口 PSS 约 2,587,485 KiB，后一次整池约 2,606,748 KiB，但两次整池本身波动约 60 MiB，仍不足以宣称显著 RAM 降幅；Mali 同包对照另行记录。
+
+
+### 迁移只保留实际暴露页面，避免触碰未使用内存
+
+Mali 同包整池/16 MiB 窗口/整池的 PSS 为 4,015,898 / 4,310,244 / 4,076,973 KiB；Graphics 为 2,213,668 / 2,499,576 / 2,262,436 KiB。窗口发生两次整池升级，最终 backing extent 与整池相同；不能声称降低 RAM。最后一次整池已触发目标 30 FPS、CPU 频率降至约 1.56 GHz，不能拿它和前两次约 2.09 GHz 的 trace 做纯优化 FPS 对比。三次均原生命周期存档并停机。实际免回读复制已恢复；逻辑 fallback 与提交数近似成比例，没有原来的额外整池回读退化。
+
+源码核实没有漏掉旧 VkBuffer 的销毁与 VMA free。旧实现迁移却复制整个已分配窗口，包括从未实际用于 GPU buffer 的页：这会给新旧存储增加无必要读写，并可能扩大实际触碰页面。新实现复用单调 initialized-page bitmap，仅复制旧 backing 内已暴露页面的连续区间，裁到物理边界和池尾，64 个 region 一批。所有实际 pool-address 路径和 writeback 在暴露 GPU buffer 前均初始化相交页，因此覆盖 GPU-only 输出；不能用 CPU dirty 或 CPU-known authority 代替这个证明。原 bitmap、上传代数、authority、同步和提交完成边界都不改变；未来首次使用冷页仍从当前 guest 初始化。
+
+额外成本是迁移冷路径扫描原位图和最多 1,536 B 局部复制区域数组；碎片页面会产生更多 copy region，无新生产分配、持久状态、每 draw 检查或 GPU→CPU 回读。真实 GPU 用例包含 130 个 guest/shadow 已过期的 GPU-only 输出、空预留、holes、位图字/物理边界、193 B 尾页和后续 CPU 修改。特定稀疏用例从 3,145,921 B 复制降到 549,057 B（82.55%），完整暴露时仍复制全部 65,536 B。独立完整 async 21,811,194 / sync 21,711,782 检查通过，零 VUID/SYNC，且两文件冻结 SHA 与主线合入逐项一致，独立审查通过。该百分比不是实际游戏、DRAM 或 RAM 收益；真机复测待记录。报告 `pool-migration-initialized-v1-source-ready.json`。
+
+补充内存口径：已有官方 API 帧精确清单的图片约 619.5 MiB，Pool 约 1,113 MiB；ASTC 库存 2,388 张，而该帧约 420 张被绑定，不能把库存全部称作当帧采样。跨厂商 Graphics accounting 不能直接解释为纹理解压或泄漏。单帧未引用图片约 254.6 MiB 也不构成可安全销毁证明，GPU-authored 历史内容必须保留；详细只读审计 `mali-memory-residency-candidates-v2-readonly.json`。

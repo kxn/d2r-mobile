@@ -5,6 +5,7 @@
 extern int vk_test_pool_split_backings(uint64_t address,uint64_t split);
 extern int vk_test_pool_gap_backings(uint64_t address,uint64_t first_end,uint64_t tail_begin);
 extern int vk_test_pool_migrate_whole(uint64_t address);
+extern uint64_t vk_test_pool_migration_copy_bytes(void);
 static void pool_span_gpu_read(uint8_t *guest,unsigned size,uint8_t *result) {
   vk_buffer *source;uint64_t offset;
   CHECK(vk_pool_address_stage((uintptr_t)guest,size,(void **)&source,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
@@ -28,7 +29,75 @@ static void pool_span_gpu_fill(uint8_t *guest,unsigned size,uint32_t value) {
   vk_pool_overwritten((uintptr_t)guest,size);
   vk_buffer_transfer_written_range((uintptr_t)guest,size);
 }
+static void pool_migration_initialized_test(void) {
+  if(V.options.pool_mirror_reference)return; // existing eager-whole oracle below
+  uint64_t full,used,protected;int reference;
+  vk_pool_sync_policy_stats(&full,&used,&protected,&reference);vk_pool_sync_reference(0);mtl_finish();
+  // Reservations alone do not expose any game-buffer bytes. No metadata or
+  // physical source content is needed when this pool becomes whole.
+  uint8_t *cold;CHECK(!posix_memalign((void **)&cold,65536,65536));
+  dm_guest_write_prepare(cold,65536);memset(cold,0x39,65536);mtl_pool_add(cold,65536);
+  CHECK(vk_test_pool_split_backings((uintptr_t)cold,8192));
+  CHECK(vk_test_pool_migrate_whole((uintptr_t)cold));CHECK(vk_test_pool_migration_copy_bytes()==0);
+  uint8_t bytes[1024];mtl_sub_begin();pool_span_gpu_read(cold+16384+5,64,bytes);
+  vk_internal_wait(vk_internal_commit());for(unsigned k=0;k<64;k++)CHECK(bytes[k]==0x39);
+  mtl_pool_del(cold);free(cold);
+
+  enum {PAGE=4096,SPLIT=1<<20,SIZE=(3<<20)+193};uint8_t *storage;
+  CHECK(!posix_memalign((void **)&storage,65536,SIZE));dm_guest_write_prepare(storage,SIZE);
+  for(unsigned k=0;k<SIZE;k++)storage[k]=(uint8_t)(k*17+(k/PAGE)*3+0x23);
+  mtl_pool_add(storage,SIZE);CHECK(vk_test_pool_split_backings((uintptr_t)storage,SPLIT));
+  uint64_t initialized=vk_pool_initialized_bytes();uint32_t before=0x91abcdef,after=0x718293a4;
+  uint8_t expected[1024];memcpy(expected,storage+2*PAGE+31,64);
+  memcpy(expected+64,storage+64*PAGE-64,128);memcpy(expected+192,storage+3*1024*1024,193);
+  mtl_sub_begin();pool_span_gpu_read(storage+2*PAGE+31,64,bytes);
+  pool_span_gpu_read(storage+64*PAGE-64,128,bytes+64);
+  pool_span_gpu_fill(storage+SPLIT-4,4,before);pool_span_gpu_fill(storage+SPLIT+4,4,after);
+  pool_span_gpu_read(storage+3*1024*1024,193,bytes+192);
+  // More than64 disjoint runs in one physical backing exercises bounded copy
+  // batching; every output is GPU-only, with deliberately stale guest/shadow.
+  for(unsigned k=0;k<130;k++)pool_span_gpu_fill(storage+(100+2*k)*PAGE+16,4,0x55550000+k);
+  vk_internal_wait(vk_internal_commit());CHECK(!memcmp(bytes,expected,385));
+  CHECK(memcmp(storage+SPLIT-4,&before,4)!=0);CHECK(memcmp(storage+SPLIT+4,&after,4)!=0);
+  uint64_t preserved=134*UINT64_C(4096)+193; //135 distinct pages, final page193B
+  CHECK(vk_pool_initialized_bytes()-initialized==preserved);
+  mtl_finish();CHECK(vk_test_pool_migrate_whole((uintptr_t)storage));
+  CHECK(vk_test_pool_migration_copy_bytes()==preserved);
+  CHECK(vk_pool_initialized_bytes()-initialized==preserved);
+  mtl_sub_begin();pool_span_gpu_read(storage+2*PAGE+31,64,bytes);
+  pool_span_gpu_read(storage+64*PAGE-64,128,bytes+64);
+  pool_span_gpu_read(storage+3*1024*1024,193,bytes+192);
+  pool_span_gpu_read(storage+SPLIT-4,4,bytes+400);pool_span_gpu_read(storage+SPLIT+4,4,bytes+404);
+  for(unsigned k=0;k<130;k++)pool_span_gpu_read(storage+(100+2*k)*PAGE+16,4,bytes+408+4*k);
+  vk_internal_wait(vk_internal_commit());CHECK(!memcmp(bytes,expected,385));
+  CHECK(!memcmp(bytes+400,&before,4));CHECK(!memcmp(bytes+404,&after,4));
+  for(unsigned k=0;k<130;k++) {uint32_t word=0x55550000+k;CHECK(!memcmp(bytes+408+4*k,&word,4));}
+  // Migration never marks the reserved cold pages initialized. Their first
+  // real lookup still obtains the current guest bytes, including CPU edits.
+  dm_guest_write_prepare(storage+400*PAGE+9,64);memset(storage+400*PAGE+9,0xb7,64);
+  dm_guest_write_prepare(storage+2*PAGE+31,4);memset(storage+2*PAGE+31,0x68,4);
+  mtl_sub_begin();pool_span_gpu_read(storage+400*PAGE+9,64,bytes);
+  pool_span_gpu_read(storage+2*PAGE+31,4,bytes+64);vk_internal_wait(vk_internal_commit());
+  for(unsigned k=0;k<64;k++)CHECK(bytes[k]==0xb7);for(unsigned k=0;k<4;k++)CHECK(bytes[64+k]==0x68);
+  CHECK(vk_pool_initialized_bytes()-initialized==preserved+PAGE);
+  mtl_pool_del(storage);free(storage);
+
+  // If every page was actually exposed (the eager/full-reference condition),
+  // preservation remains the complete old extent, including GPU-only output.
+  CHECK(!posix_memalign((void **)&storage,65536,65536));dm_guest_write_prepare(storage,65536);
+  memset(storage,0x48,65536);mtl_pool_add(storage,65536);
+  CHECK(vk_test_pool_split_backings((uintptr_t)storage,8192));
+  mtl_sub_begin();vk_buffer *buffer;uint64_t offset;
+  CHECK(vk_pool_address_stage((uintptr_t)storage,8192,(void **)&buffer,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  CHECK(vk_pool_address_stage((uintptr_t)storage+8192,65536-8192,(void **)&buffer,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  pool_span_gpu_fill(storage+65532,4,before);vk_internal_wait(vk_internal_commit());mtl_finish();
+  CHECK(vk_test_pool_migrate_whole((uintptr_t)storage));CHECK(vk_test_pool_migration_copy_bytes()==65536);
+  mtl_sub_begin();pool_span_gpu_read(storage+65532,4,bytes);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(bytes,&before,4));mtl_pool_del(storage);free(storage);vk_pool_sync_reference(reference);
+  LOG("[vulkan initialized migration fixture] zero exposed bytes, sparse549057/3145921B, GPU-only outputs,64-run batching, bitmap-word and physical-span boundaries,193B tail, cold pages/CPU edits and full exposed extent preserved");
+}
 static void pool_backing_span_test(void) {
+  pool_migration_initialized_test();
   enum {size=65536,split=8192};uint8_t *storage;
   CHECK(!posix_memalign((void **)&storage,65536,size));
   dm_guest_write_prepare(storage,size);
