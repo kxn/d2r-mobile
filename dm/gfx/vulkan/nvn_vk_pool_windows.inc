@@ -133,7 +133,13 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
 #ifdef DM_VULKAN_TEST_EMBED
     if(allocated==VK_SUCCESS && pool_reserve_fail_after==0)allocated=VK_ERROR_OUT_OF_DEVICE_MEMORY;
 #endif
-    if(allocated==VK_SUCCESS)allocated=pool_span_try_allocate(q->backing,q->begin,q->end);
+    if(allocated==VK_SUCCESS && !pool_host_try_span(q->owner,q->backing,q->begin,q->end,requirements,count)) {
+#ifdef DM_VULKAN_TEST_EMBED
+      if(pool_host_test_fail_mirror) {pool_host_test_fail_mirror=0;allocated=VK_ERROR_OUT_OF_DEVICE_MEMORY;}
+      else
+#endif
+      allocated=pool_span_try_allocate(q->backing,q->begin,q->end);
+    }
     if(allocated!=VK_SUCCESS) {
       result.allocation_error=allocated;
       status=(allocated==VK_ERROR_OUT_OF_HOST_MEMORY || allocated==VK_ERROR_OUT_OF_DEVICE_MEMORY)?

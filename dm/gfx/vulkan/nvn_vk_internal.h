@@ -26,7 +26,7 @@ typedef struct vk_buffer {
   uint8_t *map;
   VkDeviceSize size;
   VkMemoryPropertyFlags properties;
-  int readback;
+  int readback, imported_host; // raw imported VkDeviceMemory; never owned by VMA
 } vk_buffer;
 typedef struct vk_effect {
   struct vk_effect *next;
@@ -49,6 +49,7 @@ typedef struct {
   int pool_mirror_reference;
   int pool_copy_accounting;
   int pool_defer_publication;
+  int pool_host_readonly;
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
@@ -109,6 +110,9 @@ const char *vk_pipeline_cache_path(void);
 static inline int vk_trace_frame_active(void) {
   return V.trace_frame_set && V.frame == V.trace_frame;
 }
+void vk_pool_host_cpu_write_prepare(uint64_t address,uint64_t size);
+int vk_pool_host_imported_range(uint64_t address,uint64_t size);
+uint64_t vk_pool_host_pinned_bytes(void);
 uint32_t vk_memory_type(uint32_t bits, VkMemoryPropertyFlags flags);
 // Metadata-only proof; never uploads, records hazards, or materializes a pool.
 int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset);

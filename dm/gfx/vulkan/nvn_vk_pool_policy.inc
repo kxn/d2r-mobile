@@ -16,7 +16,10 @@ static int pool_operation_add(void *context,const vk_pool_requirement *range) {
   // Exact duplicates need only one physical reservation; keep access semantics
   // in the original consumers rather than modifying their dependency records.
   for(size_t k=0;k<plan->count;k++)if(plan->ranges[k].address==range->address &&
-      plan->ranges[k].size==range->size && plan->ranges[k].prefix_alignment==range->prefix_alignment)return 1;
+      plan->ranges[k].size==range->size && plan->ranges[k].prefix_alignment==range->prefix_alignment) {
+      plan->ranges[k].writable|=range->writable;
+      plan->ranges[k].stages|=range->stages;return 1;
+    }
   plan->ranges[plan->count++]=*range;return 1;
 }
 static void pool_operation_unpin(pool_operation_plan *plan) {
@@ -145,6 +148,14 @@ static int pool_window_full_reference(void) {
 }
 static void pool_window_before_submission(void) {
   if(!V.options.pool_window_bytes || V.cmd || pool_maintenance || !pool_window_full_reference())return;
+  if(V.options.pool_host_readonly)for(;;) {
+    uint64_t base=0,size=0;pthread_mutex_lock(&V.resources);
+    for(pool *p=pools;p;p=p->next)if(pool_host_overlap(p,0,p->size)) {
+      base=(uintptr_t)p->guest;size=p->size;break;
+    }
+    pthread_mutex_unlock(&V.resources);if(!size)break;
+    vk_pool_host_cpu_write_prepare(base,size);
+  }
   // A reference transition is global, before begin creates a recording owner.
   // Even an unrelated partial pool must be whole before eager sync visits it.
   for(unsigned tries=0;tries<VK_POOL_RESERVE_MAX_REQUIREMENTS;tries++) {
@@ -172,6 +183,7 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
     if(!collect(context,pool_operation_add,plan))pool_operation_whole_plan(plan,"operation enumeration");
     else if(!vk_ghost_pool_ranges(pool_operation_add,plan))pool_operation_whole_plan(plan,"pending ghost enumeration");
     if(descriptors!=vk_texture_descriptor_epoch())continue;
+    if(pool_host_prepare_writers(plan->ranges,plan->count))continue;
     // Steady state is allocation-free: complete already-backed operations
     // need neither a temporary reservation array nor sorting/allocation.
     if(!pool_window_full_reference() && pool_operation_pin(plan)) {
@@ -181,6 +193,7 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
       pool_operation_unpin(plan);continue;
     }
     pool_operation_bound_nodes(plan);
+    if(pool_host_prepare_writers(plan->ranges,plan->count))continue;
     vk_pool_reserve_result result;
     int reserved=vk_pool_reserve_ranges(plan->ranges,plan->count,V.options.pool_window_bytes,&result);
     if(reserved==VK_POOL_RESERVE_NEED_WHOLE) {

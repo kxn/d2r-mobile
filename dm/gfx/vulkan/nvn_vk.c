@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <stdatomic.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #if defined(__aarch64__)
 #include <arm_neon.h>
 #endif
@@ -62,6 +63,9 @@ typedef struct pool {
   uint32_t nvn_flags;
   int nvn_flags_known;
   pool_cpu_exposure *cpu_exposure; // experiment-only, lazy bounded range exclusions
+  struct pool_host_reject *host_reject;
+  unsigned host_reject_count;
+  int host_reject_all;
   int cpu_exposure_full; // metadata OOM/size fallback, never drops excluded pages
 } pool;
 #include "nvn_vk_cpu_authority.inc"
@@ -71,6 +75,18 @@ typedef struct pool {
 // rather than walking a growing byte-interval list for every buffer binding.
 enum { GPU_ACCESS_SHIFT = 12 };
 static VkResult buffer_try_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback);
+static _Atomic uint64_t pool_host_pinned;
+#ifdef DM_VULKAN_TEST_EMBED
+static int pool_host_test_fail_import,pool_host_test_fail_mirror;
+static uint64_t pool_host_test_attempts;
+#endif
+static int pool_host_supported;
+static uint64_t pool_host_alignment;
+static int pool_host_try_span(pool *p,pool_backing_span *b,uint64_t begin,uint64_t end,
+    const vk_pool_requirement *requirements,size_t count);
+static int pool_host_prepare_writers(const vk_pool_requirement *ranges,size_t count);
+static int pool_host_overlap(const pool *p,uint64_t begin,uint64_t size);
+static void pool_host_reject_destroy(pool *p);
 #include "nvn_vk_pool_spans.inc"
 #include "nvn_vk_upload_dual.inc"
 static const VkPipelineStageFlags pool_stages[]={
@@ -936,7 +952,10 @@ void vk_buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) { buf
 void vk_buffer_destroy(vk_buffer *b) {
   if (b->handle)
     vkDestroyBuffer(V.device, b->handle, NULL);
-  vk_memory_free(b->allocation);
+  if(b->imported_host) {
+    vkFreeMemory(V.device,b->memory,NULL);
+    atomic_fetch_sub(&pool_host_pinned,b->size);
+  } else vk_memory_free(b->allocation);
   memset(b, 0, sizeof *b);
 }
 static void *completion_thread(void *unused) {
@@ -1161,6 +1180,7 @@ static void init_options(void) {
   o->extrap_no_pipeline=getenv("DM_RT_TEST_NOPSO")!=NULL;
   o->extrap_mask=getenv("DM_RT_TEST_MASK")!=NULL;
   o->gpu_profile=getenv("DM_VULKAN_GPU_PROFILE")!=NULL;
+  o->pool_host_readonly=option_one("DM_VULKAN_POOL_HOST_READONLY");
   o->pool_ownership_reference=option_one("DM_VULKAN_POOL_OWNERSHIP_REFERENCE");
   o->pool_mirror_reference=atomic_load(&pool_mirror_requested);
   if(o->pool_mirror_reference<0) o->pool_mirror_reference=option_one("DM_VULKAN_EAGER_POOL_MIRRORS");
@@ -1322,8 +1342,8 @@ static void init_device(void) {
                            .queueCreateInfoCount = 1,
                            .pQueueCreateInfos = &q,
                            .pEnabledFeatures = &V.features};
-  const char *device_extensions[8];
-  int have_divisor = 0, have_timeline = 0, have_float16 = 0;
+  const char *device_extensions[10];
+  int have_divisor = 0, have_timeline = 0, have_float16 = 0, have_host_import = 0;
   int have_driver_properties=0;
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
@@ -1364,6 +1384,9 @@ static void init_device(void) {
         available[i].specVersion >= 3)
       have_divisor = 1;
   }
+  for(uint32_t k=0;k<extension_count_device;k++)
+    if(!strcmp(available[k].extensionName,VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME))
+      have_host_import=1;
   free(available);
   vk_loader_check_device(V.physical,have_driver_properties);
   if (have_divisor) {
@@ -1400,6 +1423,16 @@ static void init_device(void) {
       // disabled; buffers, push constants, varyings and outputs retain ABI.
       float16.shaderInt8=VK_FALSE;
       float16.pNext=draw_parameters.pNext;draw_parameters.pNext=&float16;
+    }
+  }
+  if(V.options.pool_host_readonly && have_host_import) {
+    VkPhysicalDeviceExternalMemoryHostPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+    VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&host};
+    vkGetPhysicalDeviceProperties2(V.physical,&properties);
+    pool_host_alignment=host.minImportedHostPointerAlignment;
+    if(pool_host_alignment && !(pool_host_alignment&(pool_host_alignment-1)) && pool_host_alignment<=65536) {
+      device_extensions[dc.enabledExtensionCount++]=VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+      pool_host_supported=1;
     }
   }
   dc.ppEnabledExtensionNames = device_extensions;
@@ -1574,6 +1607,7 @@ void mtl_pool_del(const void *mem) {
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
   pool_spans_destroy(p);
   free(p->cpu_exposure);
+  pool_host_reject_destroy(p);
   free(p->cpu_authority);
   free(p->shadow);
   free(p->page_upload_stamps);
@@ -1651,6 +1685,9 @@ int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset) {
   return p!=NULL;
 }
 static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents) {
+  // An unscoped legacy borrow carries no complete readonly-use proof.
+  if(V.options.pool_host_readonly && len && !pool_operation_depth && !pool_maintenance)
+    vk_pool_host_cpu_write_prepare(addr,len);
   vk_mip_clear_buffer_access(addr,len);
   // Admission is checked by the same exact physical resolution used below,
   // before initialization may copy CPU bytes into any backing. A missing
@@ -2748,6 +2785,21 @@ static void sync_used_changed_pages(const void *memory,size_t length,void *conte
 }
 static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
+  if(V.options.pool_host_readonly) {
+    pool_span_piece piece;
+    if(pool_span_resolve(p,offset,1,&piece) && piece.backing->buffer.imported_host) {
+      // These GPU bytes ARE the CPU storage. Retain image dirty generations;
+      // only the redundant Buffer mirror/compare/upload is omitted.
+      uint64_t boundary=(piece.backing->end+4095)>>12;
+      if(end>boundary) {sync_used_run(p,first,boundary,tracked);sync_used_run(p,boundary,end,tracked);}
+      return;
+    }
+    // A logical dirty run can cross imported and ordinary physical nodes.
+    if(pool_span_resolve(p,offset,1,&piece) && piece.backing->end<limit) {
+      uint64_t boundary=(piece.backing->end+4095)>>12;
+      sync_used_run(p,first,boundary,tracked);sync_used_run(p,boundary,end,tracked);return;
+    }
+  }
   if(limit>p->size) limit=p->size;
   uint64_t stamp=UINT64_MAX;
   for(uint64_t page=first;page<end;page++) {
@@ -2966,6 +3018,7 @@ static void effect_copy_kind(void *dst,const void *src,size_t size,uint32_t kind
   V.effect_tail = &e->next;
 }
 void vk_effect_copy(void *dst,const void *src,size_t size) {
+  vk_pool_host_cpu_write_prepare((uintptr_t)dst,size);
   effect_copy_kind(dst,src,size,POOL_COPY_GENERIC);
 }
 static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *known,
@@ -2979,6 +3032,7 @@ static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *kn
     die("Vulkan writeback outside a pool");
   pool_materialize(p);
   uint64_t off = dst - (uintptr_t)p->guest;
+  if(pool_host_overlap(p,off,size))die("Vulkan readonly host GPU writer missed preborrow admission");
   pool_initialize_range(p,off,size);
   if(actual_write)pool_cpu_written(p,off,size);
   uint64_t known_cutoff=known&&(p->cpu_authority_tracking||p->cpu_copy_requires_gpu)?pool_cpu_cutoff():0;
@@ -3151,7 +3205,8 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
     if(!vk_pool_pending_writes(src,size)) {
       pthread_mutex_lock(&V.resources);
       pool *source=pool_find(src,size);
-      if(source && pool_cpu_copy_proven(source,src-(uintptr_t)source->guest,size)) {
+      if(source && !pool_host_overlap(source,src-(uintptr_t)source->guest,size) &&
+          pool_cpu_copy_proven(source,src-(uintptr_t)source->guest,size)) {
         pending_cpu_copy *copy=malloc(sizeof *copy);
         if(!copy) die("Vulkan known copy source allocation");
         uint8_t *snapshot=cpu_copy_allocate(size);
@@ -3173,6 +3228,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
   vk_pool_operation_end(operation);
 }
 void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v) {
+  vk_pool_host_cpu_write_prepare((uintptr_t)val,sizeof *val);
   if(V.options.pool_defer_publication)vk_pool_cpu_prepare((uintptr_t)val,sizeof *val);
   if (mode > 1)
     die("Vulkan unsupported event mode %u", mode);
@@ -3398,6 +3454,7 @@ void mtl_finish(void) {
 }
 #include "nvn_vk_pool_migration.inc"
 #include "nvn_vk_pool_policy.inc"
+#include "nvn_vk_pool_host_readonly.inc"
 void mtl_drain(void) { mtl_finish(); }
 #ifdef DM_VULKAN_TEST_EMBED
 // Deterministic ownership-gap fixture only. These expose logical readiness,

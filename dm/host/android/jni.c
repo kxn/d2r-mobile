@@ -695,10 +695,17 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only, jboolean validation,
-    jboolean host_import, jboolean host_import_opt_in) {
+    jboolean host_import, jboolean host_import_opt_in, jboolean pool_host_import) {
   (void)klass;
-  if (host_import) {
-    setenv("DM_VULKAN_HOST_IMPORT_TEST", "1", 1);
+  if(host_import && pool_host_import)die("Vulkan host import fixture modes are mutually exclusive");
+  if(pool_host_import) {
+    setenv("DM_POOL_HOST_READONLY_FIXTURE", "1", 1);
+    setenv("DM_VULKAN_POOL_HOST_READONLY", "1", 1);
+    setenv("DM_VULKAN_POOL_WINDOW_BYTES", "4096", 1);
+  }
+  if (host_import || pool_host_import) {
+    if(host_import)setenv("DM_VULKAN_HOST_IMPORT_TEST", "1", 1);
+    else unsetenv("DM_VULKAN_HOST_IMPORT_TEST");
     setenv("TU_DM_HOST_IMPORT", host_import_opt_in ? "true" : "false", 1);
     setenv("PANVK_DM_HOST_IMPORT", host_import_opt_in ? "true" : "false", 1);
   } else {

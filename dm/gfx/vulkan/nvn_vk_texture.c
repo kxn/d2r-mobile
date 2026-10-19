@@ -1411,6 +1411,14 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer,
                      size_t img) {
   if (V.cmd)
     die("Vulkan synchronous read during recording");
+  if(V.options.pool_host_readonly) {
+  int host_bw,host_bh;unsigned host_bpb=nvn_fmt_bpb(t->d.format,&host_bw,&host_bh);
+  size_t host_width=(r->width+host_bw-1)/host_bw*host_bpb;
+  size_t host_rows=(r->height+host_bh-1)/host_bh;
+  size_t host_row=row?row:host_width,host_img=img?img:host_row*host_rows;
+  size_t host_written=((r->depth?r->depth:1)-1)*host_img+(host_rows-1)*host_row+host_width;
+  vk_pool_host_cpu_write_prepare((uintptr_t)dst,host_written);
+  }
   mtl_sub_begin();
   vk_texture_cpu_preflight(t);
   image *i = image_get(t);

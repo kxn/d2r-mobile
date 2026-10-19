@@ -122,7 +122,8 @@ static void pool_spans_copy_from_guest(pool *p,uint64_t offset,uint64_t size) {
   pool_span_piece piece;int next;
   while((next=pool_span_iter_next(&it,&piece))==1) {
     if(!piece.backing->buffer.map)die("Vulkan pool backing not host mapped");
-    memcpy(piece.backing->buffer.map+piece.offset,p->guest+piece.logical,piece.size);
+    if(!piece.backing->buffer.imported_host)
+      memcpy(piece.backing->buffer.map+piece.offset,p->guest+piece.logical,piece.size);
   }
   if(next<0)die("Vulkan pool copy across unbacked hole");
 }
