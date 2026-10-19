@@ -37,16 +37,16 @@ static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned widt
   uint64_t recording=vk_recording_serial(),passes=V.passes;
   pl_candidate *candidate=pl_plan(draw,idx,width,height);if(!candidate)return NULL;
   pl_job *p=calloc(1,sizeof *p);if(!p)return NULL;p->plan=*candidate;
-  p->second_count=p->plan.second.targets.n;
+  p->second_count=p->plan.second_targets.n;
   for(unsigned k=0;k<p->second_count;k++) {
-    const p_set_rt *rt=&p->plan.second.targets;
+    const p_set_rt *rt=&p->plan.second_targets;
     vk_texture_prepare_attachment(rt->color[k],rt->has_cview[k]?&rt->cview[k]:NULL);
     p->second_attachments[k]=vk_texture_attachment(rt->color[k],rt->has_cview[k]?&rt->cview[k]:NULL);
     vk_attachment *a=&p->second_attachments[k];
     if(a->samples!=VK_SAMPLE_COUNT_1_BIT || a->extent.width!=width || a->extent.height!=height)goto fail;
   }
-  if(p->plan.second.targets.depth) {
-    const p_set_rt *rt=&p->plan.second.targets;
+  if(p->plan.second_targets.depth) {
+    const p_set_rt *rt=&p->plan.second_targets;
     p->depth_attachment=vk_texture_readonly_attachment(rt->depth,rt->has_dview?&rt->dview:NULL);
     vk_attachment *a=&p->depth_attachment;
     if(a->samples!=VK_SAMPLE_COUNT_1_BIT || a->extent.width!=width || a->extent.height!=height)goto fail;
@@ -63,7 +63,7 @@ static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned widt
   // Establish old writers/readers -> real LOAD/STORE before beginning it,
   // rather than trying to hoist an attachment hazard from inside subpass1.
   if(!p->plan.first.targets.depth && p->second_has_depth) {
-    const p_set_rt *rt=&p->plan.second.targets;
+    const p_set_rt *rt=&p->plan.second_targets;
     int store=!V.load_store_op_none; // Same condition as pl_job_create below.
     if(!vk_texture_pixel_local_depth_preflight(rt->depth,rt->has_dview?&rt->dview:NULL,
         &p->depth_attachment,store))goto fail;
@@ -111,9 +111,9 @@ static int pl_job_create(render_job *j,pl_job *p,VkAttachmentDescription descrip
     p->inputs[k]=(VkAttachmentReference){a,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     p->input_views[k]=token->attachment.view;p->input_layouts[k]=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   }
-  p->second_count=p->plan.second.targets.n;
+  p->second_count=p->plan.second_targets.n;
   for(unsigned k=0;k<p->second_count;k++) {
-    const p_set_rt *rt=&p->plan.second.targets;
+    const p_set_rt *rt=&p->plan.second_targets;
     vk_attachment a=p->second_attachments[k];
     if(a.samples!=VK_SAMPLE_COUNT_1_BIT || a.extent.width!=width || a.extent.height!=height)goto fallback;
     int n=pl_add_attachment(p,rt->color[k],rt->has_cview[k]?&rt->cview[k]:NULL,descriptions,handles,count,&a);
@@ -121,8 +121,8 @@ static int pl_job_create(render_job *j,pl_job *p,VkAttachmentDescription descrip
     // Clear commands remain at their exact command position in subpass1.
     // LOAD keeps an early-aborted plan from executing a future clear.
   }
-  if(p->plan.second.targets.depth) {
-    const p_set_rt *rt=&p->plan.second.targets;
+  if(p->plan.second_targets.depth) {
+    const p_set_rt *rt=&p->plan.second_targets;
     vk_attachment a=p->depth_attachment;
     if(a.samples!=VK_SAMPLE_COUNT_1_BIT || a.extent.width!=width || a.extent.height!=height)goto fallback;
     int n=pl_add_attachment(p,rt->depth,rt->has_dview?&rt->dview:NULL,descriptions,handles,count,&a);
@@ -225,7 +225,7 @@ static int pl_target_clear(const p_set_rt *rt,const p_scissor *sc,int index,
   if(p->finished || !p->current || ((const op_hdr *)p->current)->op!=OP_CLEAR_COLOR ||
       index<0 || index>=(int)p->second_count || !p->plan.clears[index] ||
       (p->clear_seen&(1u<<index)) || aspect!=VK_IMAGE_ASPECT_COLOR_BIT ||
-      !target_fields_equal(rt,&p->plan.second.targets) ||
+      !target_fields_equal(rt,&p->plan.second_targets) ||
       memcmp(value,&p->plan.clear_values[index],sizeof *value) ||
       (sc && (sc->x>0 || sc->y>0 || (int64_t)sc->x+sc->w<p->plan.width || (int64_t)sc->y+sc->h<p->plan.height)))return 0;
   if(!pl_enter(active_job))return 0;
@@ -250,7 +250,7 @@ static const vk_pixel_local_proof *pl_consumer(vk_shader *vs,vk_shader *fs,VkSha
       proof->group_count!=p->plan.fragment->group_count || proof->set!=p->plan.fragment->set || proof->count!=p->plan.fragment->count ||
       proof->uv_location!=p->plan.fragment->uv_location ||
       memcmp(proof->bindings,p->plan.fragment->bindings,proof->count*sizeof *proof->bindings) ||
-      !target_fields_equal(&S.targets,&p->plan.second.targets) || !pl_consumer_resources(&S,&p->plan,proof))goto fail;
+      !target_fields_equal(&S.targets,&p->plan.second_targets) || !pl_consumer_resources(&S,&p->plan,proof))goto fail;
   int geometry=pl_geometry(&S,vertex,proof->uv_location,draw,idx,p->plan.width,p->plan.height);
   // A reference CPU read can submit/wait/recycle the context. Do not touch p
   // after that callback until both identity and recording lifetime still match.
