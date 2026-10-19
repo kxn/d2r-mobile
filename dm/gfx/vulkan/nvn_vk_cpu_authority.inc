@@ -144,6 +144,9 @@ scalar:
   for(unsigned k=0;k<n;k++)pool_cpu_synced(p,runs[k].dstOffset,runs[k].size,cutoff);
 }
 static int pool_cpu_copy_proven(pool *p,uint64_t offset,uint64_t size) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared)return 0; // no shadow snapshot exists in this fixed mode
+#endif
   if(!p->cpu_authority_tracking&&!p->cpu_copy_requires_gpu)return 1;
   if(!size || offset>p->size || size>p->size-offset)return 0;
   int known=1;pthread_mutex_lock(&pool_cpu_authority_mu);

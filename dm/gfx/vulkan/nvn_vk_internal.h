@@ -27,6 +27,9 @@ typedef struct vk_buffer {
   VkDeviceSize size;
   VkMemoryPropertyFlags properties;
   int readback;
+#ifdef DM_VULKAN_SHARED_POOLS
+  int shared_import;
+#endif
 } vk_buffer;
 typedef struct vk_effect {
   struct vk_effect *next;
@@ -371,3 +374,8 @@ void vk_mip_clear_stats(uint64_t *admitted,uint64_t *materialized,uint64_t *cont
                         uint64_t *rejected,int *enabled);
 
 int vk_ghost_replaying(void);
+
+#ifdef DM_VULKAN_SHARED_POOLS
+int vk_pool_shared_mode(void);
+void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate);
+#endif

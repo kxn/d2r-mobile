@@ -226,3 +226,10 @@ add_custom_target(dm_original_assets
   COMMAND bash "${HOST}/../../scripts/dev/build-original-assets.sh"
   VERBATIM)
 add_dependencies(dm_original_features dm_original_assets)
+
+option(DM_VULKAN_SHARED_POOLS "Build fixed lazy whole shared-pool experiment" OFF)
+if(DM_VULKAN_SHARED_POOLS)
+  foreach(shared_target dmhost_android native_vulkan_test)
+    target_compile_definitions(${shared_target} PRIVATE DM_VULKAN_SHARED_POOLS=1)
+  endforeach()
+endif()

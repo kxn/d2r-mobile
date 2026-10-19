@@ -483,6 +483,101 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
 #include "native_vulkan_astc_decode.inc"
+#ifdef DM_VULKAN_SHARED_POOLS
+extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
+extern void vk_test_shared_close_arm(void),vk_test_shared_close_wait(void);
+typedef struct {NVNmemoryPool *pool;_Atomic int done;} fixed_shared_close_context;
+static void *fixed_shared_close_thread(void *arg) {fixed_shared_close_context *c=arg;CALL(nvnMemoryPoolFinalize,c->pool);atomic_store(&c->done,1);return NULL;}
+static void fixed_shared_close_test(void) {
+  uint8_t *memory;CHECK(!posix_memalign((void **)&memory,65536,65536));memset(memory,0x7b,65536);
+  NVNmemoryPool source;NVNmemoryPoolBuilder b;CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&b,memory,65536);CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&source,&b));
+  VkSemaphoreTypeCreateInfoKHR type={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR,.semaphoreType=VK_SEMAPHORE_TYPE_TIMELINE_KHR};
+  VkSemaphoreCreateInfo create={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,.pNext=&type};VkSemaphore gate;
+  VK_CHECK(vkCreateSemaphore(V.device,&create,NULL,&gate));uint64_t value=1;
+  VkTimelineSemaphoreSubmitInfoKHR timeline={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,.waitSemaphoreValueCount=1,.pWaitSemaphoreValues=&value};
+  VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  VkSubmitInfo block={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.pNext=&timeline,.waitSemaphoreCount=1,.pWaitSemaphores=&gate,.pWaitDstStageMask=&stage};
+  pthread_mutex_lock(&V.queue_mu);VK_CHECK(vkQueueSubmit(V.queue,1,&block,VK_NULL_HANDLE));pthread_mutex_unlock(&V.queue_mu);
+  CALL(nvnCommandBufferBeginRecording,&cmd);CALL(nvnCommandBufferCopyBufferToBuffer,&cmd,(uintptr_t)memory,(uintptr_t)(bytes+(2u<<20)),256,0);
+  NVNcommandHandle h=end();CALL(nvnQueueSubmitCommands,&queue,1,&h);
+  fixed_shared_close_context context={.pool=&source};pthread_t closer;vk_test_shared_close_arm();
+  CHECK(!pthread_create(&closer,NULL,fixed_shared_close_thread,&context));vk_test_shared_close_wait();CHECK(!atomic_load(&context.done));
+  VkSemaphoreSignalInfoKHR signal={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO_KHR,.semaphore=gate,.value=1};VK_CHECK(V.signal_timeline(V.device,&signal));
+  CHECK(!pthread_join(closer,NULL));CHECK(atomic_load(&context.done));
+  for(unsigned k=0;k<256;k++)CHECK(bytes[(2u<<20)+k]==0x7b);
+  vk_pool_span_info span;CHECK(vk_pool_span_query((uintptr_t)memory,4096,&span)==VK_POOL_SPAN_NONE);
+  // Reuse exact original address only after close completes: fresh identity,
+  // no stale handle/shadow/pin may survive this ABA lifetime.
+  CHECK(CALL(nvnMemoryPoolInitialize,&source,&b));CHECK(vk_pool_span_query((uintptr_t)memory,4096,&span)==VK_POOL_SPAN_UNBACKED);
+  CALL(nvnMemoryPoolFinalize,&source);free(memory);vkDestroySemaphore(V.device,gate,NULL);
+}
+
+static void fixed_shared_buffer_test(void) {
+  CHECK(vk_pool_shared_mode());
+  CHECK(!setenv("DM_VULKAN_SHARED_POOLS","0",1)); // cannot change selected mode
+  CHECK(vk_pool_shared_mode());
+  NVNmemoryPoolBuilder builder;CALL(nvnMemoryPoolBuilderSetDefaults,&builder);
+  CALL(nvnMemoryPoolBuilderSetDevice,&builder,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&builder,bytes,4u<<20);
+  CALL(nvnMemoryPoolBuilderSetFlags,&builder,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&memory,&builder));CHECK(!nvn_dirty_tracked(bytes,4u<<20));
+  int ready,shadow;uint32_t properties;
+  CHECK(vk_test_fixed_shared_pool((uintptr_t)bytes,&ready,&shadow,&properties));CHECK(!ready && !shadow);
+  vk_pool_span_info meta;CHECK(vk_pool_span_query((uintptr_t)bytes,4096,&meta)==VK_POOL_SPAN_UNBACKED);
+  CHECK(CALL(nvnCommandBufferInitialize,&cmd,&device));CALL(nvnCommandBufferAddCommandMemory,&cmd,&memory,0,1u<<20);
+  // Existing unaligned byte Copy/recorded Update/CPU-after-GPU roundtrip oracle.
+  buffer_byte_test();
+  uint8_t control[0x880];memset(control,2,sizeof control);NVNprogram program;
+  NVNshaderData shader={.control=control};CHECK(CALL(nvnProgramInitialize,&program,&device));
+  CHECK(CALL(nvnProgramSetShaders,&program,1,&shader));
+  uint32_t *src=(void *)(bytes+(1u<<20)),*dst=(void *)(bytes+(2u<<20));
+  for(unsigned round=0;round<4;round++) {
+    for(unsigned i=0;i<64;i++) {src[i]=round*77+i*17;dst[i]=0xfefefefe;}
+    CALL(nvnMemoryPoolFlushMappedRange,&memory,(1u<<20),256);
+    CALL(nvnCommandBufferBeginRecording,&cmd);
+    CALL(nvnCommandBufferBindProgram,&cmd,&program,NVN_SHADER_STAGE_COMPUTE_BIT);
+    CALL(nvnCommandBufferBindStorageBuffer,&cmd,NVN_SHADER_STAGE_COMPUTE,0,(uintptr_t)src,256);
+    CALL(nvnCommandBufferBindStorageBuffer,&cmd,NVN_SHADER_STAGE_COMPUTE,1,(uintptr_t)dst,256);
+    CALL(nvnCommandBufferDispatchCompute,&cmd,1,1,1);submit(end());
+    CALL(nvnMemoryPoolInvalidateMappedRange,&memory,(2u<<20),256);
+    for(unsigned i=0;i<64;i++)CHECK(dst[i]==src[i]*3+7);
+    CHECK(vk_test_fixed_shared_pool((uintptr_t)bytes,&ready,&shadow,&properties));CHECK(ready && !shadow);
+    CHECK(vk_pool_span_query((uintptr_t)src,256,&meta)==VK_POOL_SPAN_SINGLE);
+    CHECK(meta.logical_begin==0 && meta.logical_end==(4u<<20));
+    CHECK(!nvn_dirty_tracked(bytes,4u<<20));
+  }
+  if(getenv("DM_FIXED_SHARED_CACHELINE_NEGATIVE")) {
+    CHECK(V.timeline_semaphore);
+    VkSemaphoreTypeCreateInfoKHR type={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR,.semaphoreType=VK_SEMAPHORE_TYPE_TIMELINE_KHR};
+    VkSemaphoreCreateInfo create={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,.pNext=&type};VkSemaphore gate;
+    VK_CHECK(vkCreateSemaphore(V.device,&create,NULL,&gate));uint64_t value=1;
+    VkTimelineSemaphoreSubmitInfoKHR timeline={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,.waitSemaphoreValueCount=1,.pWaitSemaphoreValues=&value};
+    VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkSubmitInfo block={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.pNext=&timeline,.waitSemaphoreCount=1,.pWaitSemaphores=&gate,.pWaitDstStageMask=&stage};
+    pthread_mutex_lock(&V.queue_mu);VK_CHECK(vkQueueSubmit(V.queue,1,&block,VK_NULL_HANDLE));pthread_mutex_unlock(&V.queue_mu);
+    CALL(nvnCommandBufferBeginRecording,&cmd);CALL(nvnCommandBufferCopyBufferToBuffer,&cmd,(uintptr_t)src,(uintptr_t)dst,64,0);
+    NVNcommandHandle h=end();CALL(nvnQueueSubmitCommands,&queue,1,&h);
+    // Cache API on another word in that destination atom/page must reject,
+    // never hide a wait or invalidate CPU data while GPU work is pending.
+    CALL(nvnMemoryPoolFlushMappedRange,&memory,(2u<<20)+4,4);
+    die("Shared cacheline negative unexpectedly accepted");
+  }
+  if(getenv("DM_FIXED_SHARED_IMAGE_NEGATIVE")) {
+    dirty_range_fixture image={0};dirty_range_create(&image);
+    dirty_range_fill(image.data,4096,(uint8_t[]){255,0,0,255});dirty_range_pixels(&image.tex[0],(uint8_t[]){255,0,0,255});
+    die("Shared unsupported packaged image unexpectedly accepted");
+  }
+  fixed_shared_close_test();
+  // Backend CPU-demand fixture deliberately owns a raw host submit serial.
+  // Run after all NVN Submit jobs; never reset or falsify either fence counter.
+  buffer_cpu_read_test();
+  CALL(nvnProgramFinalize,&program);CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&memory);
+  CHECK(vk_pool_span_query((uintptr_t)bytes,4096,&meta)==VK_POOL_SPAN_NONE);
+  LOG("[fixed shared fixture] actual properties=%#x atom=%llu, host coherent=%u; no shadow; linear NVN-only, packaged image contract remains blocked",properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,!!(properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+}
+#endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
@@ -538,6 +633,12 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_FIXED_SHARED_BUFFER_FIXTURE")) {
+    fixed_shared_buffer_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"fixed-shared-NVN-buffer\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   if(getenv("DM_BUFFER_HISTORY_FIXTURE")) {
     // Initialize the active submission policy before the existing partition
     // fixture checks it; neither oracle's byte assertions are changed.
