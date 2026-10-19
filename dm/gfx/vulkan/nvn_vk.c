@@ -1516,6 +1516,13 @@ static int pool_test_split_backings(uint64_t address,uint64_t split,uint64_t tai
   }
   pthread_mutex_unlock(&V.resources);return result;
 }
+// Owned death fixtures retain the pool and read only its lock-free atomic
+// byte count from SIGABRT; never traverse the registry inside a signal handler.
+const _Atomic uint64_t *vk_test_pool_initialized_counter(uint64_t address) {
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
+  const _Atomic uint64_t *result=p?&p->initialized_bytes:NULL;
+  pthread_mutex_unlock(&V.resources);return result;
+}
 VkBuffer vk_test_pool_locked_span_hint(uint64_t address) {
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
   VkBuffer result=p&&p->locked_span_hint?p->locked_span_hint->buffer.handle:VK_NULL_HANDLE;
@@ -1537,16 +1544,10 @@ int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset) {
 }
 static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents) {
   vk_mip_clear_buffer_access(addr,len);
-  // Missing windows are an admission bug, never permission to CPU-stitch an
-  // unknown GPU producer or migrate a backing after another handle was borrowed.
-  if(V.options.pool_window_bytes && len && !pool_maintenance) {
-    vk_pool_span_info proof;
-    int proof_kind=vk_pool_span_query(addr,len,&proof);
-    if(proof_kind==VK_POOL_SPAN_NONE)return 0; // original unknown-pool fallback
-    if(proof_kind!=VK_POOL_SPAN_SINGLE && !(proof_kind==VK_POOL_SPAN_UNBACKED && !pool_operation_depth))
-      die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
-          (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
-  }
+  // Admission is checked by the same exact physical resolution used below,
+  // before initialization may copy CPU bytes into any backing. A missing
+  // window is never permission to stitch or silently create whole storage.
+  int guarded=V.options.pool_window_bytes && len && !pool_maintenance;
   submit_resources *r=recording_resources;
   if(r && len && !r->pool_lookup_reference) {
     uint64_t epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_acquire);
@@ -1561,21 +1562,44 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       // waits for that reference through true fence and CPU effects; no stale
       // pool/list index or completion-mutated recording_access is consulted.
       uint64_t logical=addr-base;
+      pool_span_piece span;
+      if(!pool_span_resolve(p,logical,len,&span)) {
+        if(guarded)
+          die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
+              (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
+        die("Vulkan pool range requires operation preflight: identity=%llu offset=%llu bytes=%llu",
+            (unsigned long long)p->identity,(unsigned long long)logical,(unsigned long long)len);
+      }
       pool_initialize_range(p,logical,len);
-      pool_span_piece span=pool_span_require(p,logical,len);
       *buf=&span.backing->buffer;*off=span.offset;
       record_pool_range(r->pool_lookups[k].use,logical,len,stages,initial_contents);
       pool_lookup_hits++;return 1;
     }
   }
-  pool_lookup_slow++;
   pthread_mutex_lock(&V.resources);
   pool *p = pool_find(addr, len);
+  // The former admission query returned unknown guarded ranges before the
+  // slow counter. Keep that counter's meaning while doing only one lookup.
+  if(p || !guarded)pool_lookup_slow++;
   if (p) {
-    pool_materialize(p);
     uint64_t logical=addr-(uintptr_t)p->guest;
+    pool_span_piece span;
+    if(guarded && p->backings) {
+      if(!pool_span_resolve_locked(p,logical,len,&span))
+        die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
+            (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
+      // Reservation can allocate buffers without initializing CPU metadata.
+      pool_materialize_metadata(p);
+    } else {
+      if(guarded && pool_operation_depth)
+        die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
+            (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
+      // Preserve the original unbacked depth-zero, maintenance, whole-mode
+      // and zero-length address-only materialization behavior.
+      pool_materialize(p);
+      span=pool_span_require_locked(p,logical,len);
+    }
     pool_initialize_range(p,logical,len);
-    pool_span_piece span=pool_span_require_locked(p,logical,len);
     *buf=&span.backing->buffer;*off=span.offset;
     pool_gpu_access *use=record_pool_use(p,logical,len,stages,initial_contents);
     if(r && use && !r->pool_lookup_reference) {

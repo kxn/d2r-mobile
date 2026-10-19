@@ -63,7 +63,28 @@ recording/completion 路径沿用原解析器，没有增加锁、原子操作�
 
 正常适用时减少重复锁和扫描；新增一次输入校验，超限时另付一次失败合并。
 当前回退实现还可能同时保留两个约 6 KiB 临时栈数组，没有新增持久内存或堆分配。
-该机制有当前 Android simpleperf 热点依据，但尚无此批量实现的真机耗时或涨帧结论。
+该机制有当前 Android simpleperf 热点依据，不将局部工作减少直接写成涨帧。
+
+同一 Adreno、同一 shader 链及设置的后续真游戏对照中，完整 replay 的平均
+Running 为 25.5545 → 25.3338 ms，wall 为 27.9586 → 27.8674 ms。
+归属更新的 inclusive 样本为 13/481 → 1/457，采样丢失为零；两次的 PSO、
+冷启动 backing 布局和 OS 所选频率仍有差异，不能把时间变化全部归因于此修改。
+两家设备均已执行真实游戏模块，完成原生命周期存档并停机；持续散热尚未验收。
+
+## 地址解析只证明一次物理范围
+
+窗口模式的 `pool_address` 原先先持资源注册锁调用 `vk_pool_span_query`，
+之后在 retained owner 路径或再次持锁的慢路径中，又解析一次相同物理范围。
+现在在原 mip-clear 回调之后，使用原 epoch 核验和 submission owner 引用，
+用同一次精确物理解析完成 admission 与返回值准备，再初始化实际范围。
+洞、跨 backing、活动操作内未预留的范围仍拒绝；未知 Pool 和空范围保持原回退。
+
+返回的 backing 由原 submission 引用保护到真实 fence、CPU effects 完成。
+初始化过程没有提交、回调或迁移，因此可以沿用刚证明的物理偏移。
+不新增地址缓存、锁、原子操作或持久状态，不减少脏页、上传、authority 或 hazard
+检查；减少的是重复注册查找和物理解析。新增 guarded 分支，真实 Android 的
+CPU 时间、整帧和散热收益仍待候选对照。功能测试包含真实 GPU 字节、非零物理
+起点、同地址重建和 admission 失败前不初始化；这些检查不代替真实游戏验收。
 
 ## 实验：两个子 Pass 使用同一个只读深度附件
 
@@ -93,7 +114,28 @@ DS LOAD 的读取历史。该登记不进入待提交或待放弃的 shader 批�
 共享深度的启动查询声明放在运行时头文件。离线 proof/module ABI 的头文件
 保持原字节，原 shader 工具自然计算相同链号，无须改写缓存身份或任何产物。
 
-下一步只用相同包、相同 shader 链的普通路径、子集 input attachment、共享
-深度三种模式，检查原厂 fragment job、task、processed tile、外部读写和周期。
-这些计数器含义不同；单个 draw 的区间时间不能作为 TBDR shader 成本分摊依据。
-是否默认启用须等待真机画面与原厂数据。
+三种模式已使用相同包、同一完整验证 shader 链，在 Mali 真游戏中完成普通画面
+检查和原厂 Streamline 捕获。普通运行使用 Android 默认 16 MiB 窗口；三段
+GPU 对照均显式使用整池参考，其他设置相同，不能混用两者的内存数据。
+
+按 2–10 秒窗口内完整 CAM 帧数归一的结果：
+
+| 每完整帧 | 普通路径 | 子集 input attachment | 再启用共享深度 |
+| --- | ---: | ---: | ---: |
+| 外部读写 | 367.755 MB | 354.795 MB | 367.629 MB |
+| Fragment jobs | 140.779 | 139.896 | 140.593 |
+| Fragment tasks | 53,300 | 51,353 | 51,741 |
+
+子集路径观察到外部读写减少 3.52%、fragment tasks 减少 3.65%，但 processed
+tiles 仅变动约 −0.10%，总 GPU 周期增加约 1.98%。这支持局部访存工作减少，
+不能证明总 GPU 提速、物理 tile pass 合并或持续降温。新增的有界命令分析和
+变体选择还有 CPU 成本，不能只用 GPU 指标忽略它们。
+
+共享深度段在捕获内新增 PSO/变体，读写量约回到普通路径水平，尚不能证明它的
+独立收益或回退。两项开关目前仍默认关闭。三段均出现公开热状态策略的目标
+60 → 30 变化，GPU 频率计数不可用；不据此宣称实际帧率被硬限制为 30。
+
+上述计数器是系统 GPU 数据；起止还有两个不完整边界帧，不是应用独占计数。
+PA pixels 由 fragment tasks × 1024 派生，不是独立的片元 Shader invocation。
+单个 draw 区间时间也不能作为 TBDR shader 成本分摊依据。完整本地报告为
+`.local/logs/shared-ds-v3-mali-arm-three-phase-official-comparison-v1.json`。
