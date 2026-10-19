@@ -436,6 +436,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_command_reset.inc"
 #include "native_vulkan_buffer_partition.inc"
 #include "native_vulkan_pool.inc"
+#include "native_vulkan_dirty_range.inc"
 #include "native_vulkan_acquire.inc"
 #include "native_vulkan_stream.inc"
 #include "native_vulkan_read.inc"
@@ -521,6 +522,7 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+  if(getenv("DM_TEXTURE_RANGE_DIRTY_FIXTURE")) {texture_range_dirty_proof_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"texture-range-dirty\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_UPLOAD_PAGE_SPAN_FIXTURE")) {upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-page-span\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_FLAGS_FIXTURE")) {pool_flags_test();printf("{\"test\":\"pool-flags\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   ds_plane_store_test();
@@ -1858,6 +1860,7 @@ int dm_vulkan_test_main(void) {
   storage_offset_dependency_test(controls[5]);
   compute_texel_dependencies_test(controls[2]);
   texture_dirty_proof_test();
+  texture_range_dirty_proof_test();
   clear_sibling_preservation_test();
   clear_active_target_test(controls[0],controls[1]);
   target_match_test(controls[0],controls[1]);

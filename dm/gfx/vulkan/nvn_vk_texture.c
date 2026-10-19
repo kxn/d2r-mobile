@@ -49,6 +49,7 @@ typedef struct image {
   VkImageAspectFlags aspect;
   uint64_t stamp;
   uint64_t checked_dirty_epoch,checked_dirty_stamp;
+  nvn_dirty_range_proof checked_dirty_range;
   uint64_t last_use;
   uint64_t trace_stamp, trace_levels;
   int initialized, decoded;
@@ -790,15 +791,28 @@ static void image_upload(image *i) {
     // Take the publication sequence BEFORE checking pages. A later edit
     // invalidates this proof on the next use; never advance the upload stamp.
     uint64_t epoch=nvn_dirty_change_epoch();
-    if(!texture_dirty_reference_active && i->checked_dirty_epoch==epoch &&
+    if(!texture_dirty_reference_active && epoch && i->checked_dirty_epoch==epoch &&
        i->checked_dirty_stamp==i->stamp) { texture_dirty_hits++;return; }
+    nvn_dirty_range_proof proof = {0};
+    if (!texture_dirty_reference_active && epoch) {
+      // Snapshot BEFORE the original page test. A concurrent/later publication
+      // must invalidate this negative result; latest generation is not a key.
+      if (nvn_dirty_range_refresh(&i->checked_dirty_range, &proof)) {
+        if (i->checked_dirty_stamp == i->stamp &&
+            proof.changes == i->checked_dirty_range.changes) {
+          i->checked_dirty_epoch = epoch; texture_dirty_hits++; return;
+        }
+      } else nvn_dirty_range_observe(t->mem, t->L.size, &proof);
+    }
     texture_dirty_checks++;
     if(!nvn_dirty_since(t->mem,t->L.size,i->stamp)) {
-      i->checked_dirty_epoch=epoch;i->checked_dirty_stamp=i->stamp;return;
+      i->checked_dirty_epoch=epoch;i->checked_dirty_stamp=i->stamp;
+      i->checked_dirty_range=proof;return;
     }
   }
   // Untracked sources are always uploaded; they must not acquire a proof.
   i->checked_dirty_epoch=0;
+  i->checked_dirty_range=(nvn_dirty_range_proof){0};
   if (t->d.samples > 1 || i->aspect != VK_IMAGE_ASPECT_COLOR_BIT)
     die("Vulkan packaged depth/MS image unsupported");
   image_general_transfer(i);

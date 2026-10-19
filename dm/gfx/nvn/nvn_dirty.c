@@ -34,7 +34,7 @@ enum { BUSY_WAIT_MS = 2000 };
 // 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
 // Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
 #define MAX_RANGE 4096   // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing
-typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; } range_t;
+typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes; } range_t;
 static range_t g_r[MAX_RANGE];
 static _Atomic int g_nr;
 static uintptr_t g_pg, g_shift;
@@ -84,16 +84,39 @@ static range_t *find(uintptr_t a) {
     for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_r[i].live, memory_order_acquire) && a >= g_r[i].base && a < g_r[i].end) return &g_r[i];
     return NULL;
 }
-static void unprotect_page(range_t *r, uintptr_t p) {   // 调用方已把状态从 PROT 改成 BUSY | The caller has already changed the state from PROT to BUSY
+// MAX is a permanent invalid key; saturation must never expose a wrap window.
+// All changes after initialization are RMWs: an acquire of a later completion
+// also observes earlier lifetime invalidation through the release sequence.
+_Static_assert(__atomic_always_lock_free(sizeof(uint64_t), 0), "dirty publication requires lock-free 64-bit atomics");
+static void advance(_Atomic uint64_t *clock) {
+    uint64_t old = atomic_load_explicit(clock, memory_order_relaxed);
+    while (old != UINT64_MAX && !atomic_compare_exchange_weak_explicit(
+        clock, &old, old + 1, memory_order_release, memory_order_relaxed)) {}
+}
+#ifdef DM_DIRTY_RANGE_TEST_HOOKS
+static nvn_dirty_test_hook test_hook;
+static void *test_hook_context;
+void nvn_dirty_test_publication_hook(nvn_dirty_test_hook hook, void *context) {
+    test_hook_context = context; test_hook = hook; // set/reset only while writer joined
+}
+#endif
+static void unprotect_page(range_t *r, uintptr_t p, int host_write) {   // 调用方已把状态从 PROT 改成 BUSY | The caller has already changed the state from PROT to BUSY
     mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
     uint64_t generation = atomic_fetch_add(&g_now, 1) + 1;
+#ifdef DM_DIRTY_RANGE_TEST_HOOKS
+    // Never pause a signal handler. Only the owned host-preparation test uses it.
+    if (host_write && test_hook) test_hook((void *)(r->base + (p << g_shift)), generation, test_hook_context);
+#else
+    (void)host_write;
+#endif
     atomic_store(&r->gen[p], generation);
     // 并发解保护不能让区间代号倒退；先发布页代号再发布区间最大值。
     // Concurrent unprotects must not move the range clock backwards. Publish
     // the page generation before the range maximum.
     uint64_t latest = atomic_load(&r->latest);
     while (latest < generation && !atomic_compare_exchange_weak(&r->latest, &latest, generation)) {}
-    atomic_fetch_add_explicit(&g_changes,1,memory_order_release);
+    advance(&r->changes);
+    advance(&g_changes);
     atomic_store(&r->state[p], PG_NONE);
 }
 static int on_fault(void *addr, int is_write, void *uc) {
@@ -102,7 +125,7 @@ static int on_fault(void *addr, int is_write, void *uc) {
     if (!r) return 0;
     uintptr_t p = (address(addr) - r->base) >> g_shift;
     uint8_t st = PG_PROT;
-    if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); atomic_fetch_add(&g_faults, 1); return 1; }
+    if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p, 0); atomic_fetch_add(&g_faults, 1); return 1; }
     if (st == PG_BUSY) return busy_wait(r, p);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
     return atomic_load(&r->gen[p]) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
 }
@@ -114,7 +137,7 @@ static void prep_write(void *addr, size_t len) {
         uintptr_t stop = e < r->end ? e : r->end;
         for (uintptr_t p = (a - r->base) >> g_shift, q = (stop - 1 - r->base) >> g_shift; p <= q; p++) {
             for (;;) { uint8_t st = PG_PROT;   // 见 BUSY 等完要重看：对方可能是在设只读，等完这页是 PROT，照样得解 | After waiting out BUSY, look again: the other side may have been setting read-only, in which case the page is PROT after the wait and still has to be unprotected
-                if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); atomic_fetch_add(&g_preps, 1); break; }
+                if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p, 1); atomic_fetch_add(&g_preps, 1); break; }
                 if (st != PG_BUSY || !busy_wait(r, p)) break; }
         }
         a = stop;
@@ -139,6 +162,10 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
     }
     { int lv = atomic_fetch_add(&g_live, 1) + 1, pk = atomic_load(&g_live_peak); while (lv > pk && !atomic_compare_exchange_weak(&g_live_peak, &pk, lv)) {} }
     range_t *r = &g_r[slot];
+    // Neither clock is reset on reuse. Invalidate the old token BEFORE publishing
+    // any sequence which could otherwise be paired with that old lifetime.
+    advance(&r->lifetime);
+    advance(&r->changes);
     uintptr_t base = address(mem) & ~(g_pg - 1), end = (address(mem) + size + g_pg - 1) & ~(g_pg - 1);
     size_t np = (end - base) >> g_shift;
     _Atomic uint8_t *state = r->state;
@@ -156,7 +183,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
     atomic_store(&r->latest, 0);
     if (slot == n) atomic_store(&g_nr, n + 1);
     atomic_store_explicit(&r->live, 1, memory_order_release);
-    atomic_fetch_add_explicit(&g_changes,1,memory_order_release);
+    advance(&g_changes);
     pthread_mutex_unlock(&g_slot_mu);
 }
 // 池销毁：先把仍受保护的页还原成可写（池内存归还游戏后可能另作他用），再标失效
@@ -164,7 +191,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
 void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_lock(&g_slot_mu);
     range_t *r = find(address(mem));
-    if (r) { prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); atomic_fetch_add_explicit(&g_changes,1,memory_order_release); }
+    if (r) { advance(&r->lifetime); advance(&r->changes); prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); advance(&g_changes); }
     pthread_mutex_unlock(&g_slot_mu);
 }
 int nvn_dirty_tracked(const void *addr, size_t len) {
@@ -189,7 +216,45 @@ void nvn_dirty_protect(const void *addr, size_t len) {
     }
 }
 uint64_t nvn_dirty_now(void) { return atomic_load(&g_now); }
-uint64_t nvn_dirty_change_epoch(void) { return atomic_load_explicit(&g_changes,memory_order_acquire); }
+uint64_t nvn_dirty_change_epoch(void) {
+    uint64_t value = atomic_load_explicit(&g_changes, memory_order_acquire);
+    return value == UINT64_MAX ? 0 : value;
+}
+int nvn_dirty_range_refresh(const nvn_dirty_range_proof *old, nvn_dirty_range_proof *proof) {
+    if (!old->lifetime || old->lifetime == UINT64_MAX || old->slot >= MAX_RANGE) return 0;
+    range_t *r = &g_r[old->slot];
+    uint64_t life = atomic_load_explicit(&r->lifetime, memory_order_acquire);
+    uint64_t seq = atomic_load_explicit(&r->changes, memory_order_acquire);
+    // No plain envelope/state pointer reads: slot reuse may be concurrent.
+    if (life != old->lifetime || !seq || seq == UINT64_MAX ||
+        !atomic_load_explicit(&r->live, memory_order_acquire) ||
+        atomic_load_explicit(&r->lifetime, memory_order_acquire) != life) return 0;
+    *proof = (nvn_dirty_range_proof){old->slot, 0, life, seq};
+    return 1;
+}
+int nvn_dirty_range_observe(const void *addr, size_t len, nvn_dirty_range_proof *proof) {
+    uintptr_t a = address(addr);
+    if (!len || len > UINTPTR_MAX - a || pthread_mutex_trylock(&g_slot_mu)) return 0;
+    range_t *r = find(a);
+    int valid = r && len <= r->end - a;
+    if (valid) {
+        nvn_dirty_range_proof key = {(uint32_t)(r - g_r), 0,
+            atomic_load_explicit(&r->lifetime, memory_order_acquire), 0};
+        valid = nvn_dirty_range_refresh(&key, proof);
+    }
+    pthread_mutex_unlock(&g_slot_mu);
+    return valid;
+}
+#ifdef DM_DIRTY_RANGE_TEST_HOOKS
+void nvn_dirty_test_poison_range(const void *addr, int lifetime) {
+    pthread_mutex_lock(&g_slot_mu);
+    range_t *r = find(address(addr));
+    if (r) atomic_store_explicit(lifetime ? &r->lifetime : &r->changes, UINT64_MAX, memory_order_release);
+    pthread_mutex_unlock(&g_slot_mu);
+}
+uint64_t nvn_dirty_test_global_epoch(uint64_t value) { return atomic_exchange(&g_changes, value); }
+void nvn_dirty_test_lock_slots(int lock) { if (lock) pthread_mutex_lock(&g_slot_mu); else pthread_mutex_unlock(&g_slot_mu); }
+#endif
 void nvn_dirty_visit(const void *addr, size_t len, uint64_t stamp,
                      void (*visit)(const void *, size_t, void *), void *context) {
     if (!len) return;
