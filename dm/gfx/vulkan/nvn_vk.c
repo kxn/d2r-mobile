@@ -919,6 +919,12 @@ static void reclaim_submissions(void) {
 int mtl_trim_idle_resources(void) {
   if(!V.device || V.cmd || recording_resources)return 0;
   reclaim_submissions();
+  // Available contexts have completed effects AND command-pool reset. Drop
+  // the entire idle descriptor owner so no retained/history set outlives its
+  // pool; the next begin lazily rebuilds it. Active/in-flight owners stay put.
+  for(submit_resources *r=available_resources;r;r=r->next) {
+    vk_shader_destroy(r->shader);r->shader=NULL;
+  }
   while(reusable_temporaries) {
     temporary *t=reusable_temporaries;reusable_temporaries=t->next;
     if(t->b.size>reusable_bytes)die("Vulkan idle temporary ownership");
