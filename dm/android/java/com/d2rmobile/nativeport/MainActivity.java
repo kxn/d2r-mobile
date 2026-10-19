@@ -41,6 +41,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativePixelLocal(boolean enabled);
+    private static native void nativePixelLocalSharedDs(boolean enabled);
     private static native void nativeUploadDualStore(boolean enabled);
     private static native void nativePerformanceHintReference(boolean reference);
     private static native void nativeImageLayoutReference(boolean reference);
@@ -132,6 +133,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", false));
+            nativePixelLocalSharedDs(getIntent().getBooleanExtra("pixel_local_shared_ds", false));
             nativeUploadDualStore(getIntent().getBooleanExtra("upload_dual_store", false));
             // Select backing before Vulkan initialization. Finite maintenance
             // keeps a complete binding contiguous without expanding every pool.
@@ -287,6 +289,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("pool_window_bytes")) {
             android.util.Log.w("D2RPool", "pool_window_bytes is startup-only; cold restart required");
             intent.removeExtra("pool_window_bytes");
+        }
+        if (intent.hasExtra("pixel_local_shared_ds")) {
+            android.util.Log.w("D2RPixelLocal", "pixel_local_shared_ds is startup-only; cold restart required");
+            intent.removeExtra("pixel_local_shared_ds");
         }
         if (intent.hasExtra("pixel_local")) {
             android.util.Log.w("D2RPixelLocal", "pixel_local is startup-only; cold restart required");

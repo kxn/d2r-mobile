@@ -2426,6 +2426,26 @@ int vk_texture_pixel_local_depth_preflight(const tex_t *t,const view_t *v,
   }
   return 1;
 }
+// Publish only a LOAD that the physical render pass has actually executed.
+// No preparation, callbacks or prospective shader batch: even an abandoned
+// consumer with STORE_NONE still performed this fixed-function read.
+int vk_texture_pixel_local_depth_loaded(const tex_t *t,const view_t *v,
+    const vk_attachment *attachment) {
+  if(!t || !t->serial || !attachment || vk_render_active())return 0;
+  image *i;for(i=image_buckets[t->serial%8192];i;i=i->hash_next)if(i->tex.serial==t->serial)break;
+  if(!i || i->tex.mem!=t->mem || memcmp(&i->tex.d,&t->d,sizeof t->d) ||
+      memcmp(&i->tex.L,&t->L,sizeof t->L) || i->aspect==VK_IMAGE_ASPECT_COLOR_BIT ||
+      i->layout!=attachment->layout)return 0;
+  VkImageSubresourceRange r=attachment_range(i,v);
+  image_view *view;for(view=i->views;view;view=view->next)if(view->handle==attachment->view)break;
+  if(!view || view->description.image!=i->handle || view->description.format!=attachment->format ||
+      memcmp(&view->description.subresourceRange,&r,sizeof r))return 0;
+  // Preserve all old writers and visibility. A real read invalidates the
+  // preflight-only ordering stamp and becomes a later writer's source scope.
+  image_record(i,r,VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,0);
+  return 1;
+}
 static void attachment_access(const tex_t *t,const view_t *v,VkImageAspectFlags aspect,int writable,int collect) {
   vk_mip_clear_texture_access(t,v,1);
   image *i=image_get(t);

@@ -3,6 +3,7 @@
 // bindings and c0/c1/c2 conventions; GPU instructions translate offline,
 // runtime only creates Vulkan objects.
 #include "nvn_vk_shader.h"
+#include "nvn_vk_pixel_local_runtime.h"
 #include "nvn_vk_system_trace.h"
 #include "../../host/crypto.h"
 #include <stdatomic.h>

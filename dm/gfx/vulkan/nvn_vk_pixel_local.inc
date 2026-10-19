@@ -11,11 +11,16 @@ typedef struct {
   pixel_local_record records[];
 } pixel_local_cache;
 static _Atomic int pixel_local_initial=-1;
+static _Atomic int pixel_local_shared_ds=-1;
 static pthread_once_t pixel_local_once=PTHREAD_ONCE_INIT;
 static void pixel_local_initialize(void) {
   const char *value=getenv("DM_VULKAN_PIXEL_LOCAL");
   if(value && strcmp(value,"0") && strcmp(value,"1"))
     LOG("[vulkan] invalid DM_VULKAN_PIXEL_LOCAL; keeping disabled");
+  const char *shared=getenv("DM_VULKAN_PIXEL_LOCAL_SHARED_DS");
+  if(shared && strcmp(shared,"0") && strcmp(shared,"1"))
+    LOG("[vulkan] invalid DM_VULKAN_PIXEL_LOCAL_SHARED_DS; keeping disabled");
+  atomic_store_explicit(&pixel_local_shared_ds,shared && !strcmp(shared,"1"),memory_order_relaxed);
   atomic_store_explicit(&pixel_local_initial,value && !strcmp(value,"1"),memory_order_relaxed);
 }
 int vk_pixel_local_enabled(void) {
@@ -27,6 +32,15 @@ int vk_pixel_local_enabled(void) {
     initial=atomic_load_explicit(&pixel_local_initial,memory_order_relaxed);
   }
   return initial;
+}
+int vk_pixel_local_shared_ds_enabled(void) {
+  // Same startup freeze and publication as the existing optional policy.
+  int enabled=atomic_load_explicit(&pixel_local_shared_ds,memory_order_relaxed);
+  if(enabled<0) {
+    pthread_once(&pixel_local_once,pixel_local_initialize);
+    enabled=atomic_load_explicit(&pixel_local_shared_ds,memory_order_relaxed);
+  }
+  return enabled;
 }
 static uint32_t pixel_local_word(const void *memory) {
   const uint8_t *p=memory;

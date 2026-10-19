@@ -30,6 +30,7 @@ parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental source-proved pixel-local subpasses; requires matching shader sidecars (default off)')
+parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
 parser.add_argument('--upload-dual-store',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental direct upload: one guest load feeds map and shadow (default off)')
 parser.add_argument('--general-depth-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for depth/stencil, preserving optimized color layouts')
 parser.add_argument('--general-compute-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for readonly compute image sampling')
@@ -112,6 +113,10 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.pool_window_bytes is not None:
     parser.error('--pool-window-bytes is startup-only and cannot be used with --attach')
+if args.pixel_local_shared_ds and args.pixel_local is not True:
+    parser.error('--pixel-local-shared-ds requires --pixel-local')
+if args.attach and args.pixel_local_shared_ds is not None:
+    parser.error('--pixel-local-shared-ds is startup-only and cannot be used with --attach')
 if args.attach and args.pixel_local is not None:
     parser.error('--pixel-local/--no-pixel-local are startup-only and cannot be used with --attach')
 if args.attach and args.upload_dual_store is not None:
@@ -182,6 +187,8 @@ if not args.attach:
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     launch += ['--ez', 'pixel_local', str(bool(args.pixel_local)).lower()]
+    if args.pixel_local_shared_ds is not None:
+        launch += ['--ez', 'pixel_local_shared_ds', str(args.pixel_local_shared_ds).lower()]
     launch += ['--ez', 'upload_dual_store', str(bool(args.upload_dual_store)).lower()]
     if args.bright_k is not None:
         launch += ['--ef', 'bright_k', str(args.bright_k)]
@@ -301,6 +308,9 @@ while time.monotonic() < deadline:
                     if (not args.attach and args.pool_window_bytes is not None and
                             state.get('pool_windows',{}).get('window_bytes') != args.pool_window_bytes):
                         raise SystemExit('pool backing window policy did not apply')
+                    if (not args.attach and args.pixel_local_shared_ds is not None and
+                            state.get('pixel_local',{}).get('shared_readonly_ds') != args.pixel_local_shared_ds):
+                        raise SystemExit('pixel-local shared DS startup policy did not apply')
                     if (not args.attach and args.pixel_local is not None and
                             state.get('pixel_local',{}).get('enabled') != args.pixel_local):
                         raise SystemExit('pixel-local backend startup policy did not apply')
@@ -328,6 +338,8 @@ while time.monotonic() < deadline:
                               'requested_pool_window_bytes':args.pool_window_bytes,
                               'requested_pixel_local':args.pixel_local,
                               'actual_pixel_local':state.get('pixel_local',{}).get('enabled'),
+                              'requested_pixel_local_shared_ds':args.pixel_local_shared_ds,
+                              'actual_pixel_local_shared_ds':state.get('pixel_local',{}).get('shared_readonly_ds'),
                               'depth_layout_reference': (True if 'depth/stencil layouts: GENERAL reference' in log else
                                                          False if 'depth/stencil layouts: attachment/read-only optimal' in log else None),
                               'compute_layout_reference': (True if 'compute sampled layouts: GENERAL reference' in log else

@@ -891,7 +891,11 @@ static int draw_pool_collect(void *context,vk_pool_requirement_sink sink,void *o
   vk_program_shaders(S.program,list);list[5]=NULL;
   return vk_graphics_pool_admission(list,&S,plan->indexed,sink,out);
 }
-void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
+static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable_local_plan) {
+  // A state change outside the complete planned sequence cannot enable
+  // format-dependent bias inside a synthetic no-DS producer pass.
+  if(active_job && active_job->local && !active_job->local->subpass &&
+      active_job->local->shared_first_depth && S.poly.offset_en)vk_render_end();
   uint64_t started = vk_profile_start();
   int quads=draw&&draw->prim==NVN_DRAW_PRIMITIVE_QUADS;
   if (idx&&idx->prim==NVN_DRAW_PRIMITIVE_QUADS)
@@ -961,7 +965,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   }
   if(local_consumer) {fragment_module=local_consumer->module;list[1]=local_consumer->shader;}
   pl_job *local_ready=NULL;
-  if(vk_pixel_local_enabled() && !local_consumer) {
+  if(vk_pixel_local_enabled() && !disable_local_plan && !local_consumer) {
     if(active_job && !target_fields_equal(&active_targets,&S.targets))vk_render_end();
     if(!active_job && S.targets.n>0 && S.targets.n<=8 && S.targets.color[0]) {
       const tex_t *t=S.targets.color[0];
@@ -1121,7 +1125,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   vk_shader_prepare_images(list,0);
   if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
     vk_texture_binding_scope_end();free(local_ready);
-    vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+    vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
   }
   vk_shader_operation_begin();
   vk_texture_shader_begin();
@@ -1129,7 +1133,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     if (list[i]) {
       if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
         vk_texture_binding_scope_end();vk_texture_shader_abandon();vk_shader_operation_abandon();
-        free(local_ready);vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+        free(local_ready);vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
       }
       stages[ns++] = (VkPipelineShaderStageCreateInfo){
           .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -1165,6 +1169,16 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
         stencil(S.ds.zfail_b),compare(S.ds.sf_b),S.stencil_value[1],S.stencil_mask[1],S.stencil_ref[1]};
   }
   if(S.targets.depth) vk_runtime_apply_stencil(&ds);
+  int shared_first_depth=(local_ready && local_ready->shared_first_depth) ||
+      (!local_consumer && active_job && active_job->local && !active_job->local->subpass && active_job->local->shared_first_depth);
+  if(shared_first_depth) {
+    // Logical no-DS ignores all leftover tests/writes. A physical DS reference
+    // must not turn those stale NVN flags into observable comparisons/writes.
+    ds=(VkPipelineDepthStencilStateCreateInfo){
+      .sType=VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+      .depthCompareOp=VK_COMPARE_OP_ALWAYS,
+      .front={.compareOp=VK_COMPARE_OP_ALWAYS},.back={.compareOp=VK_COMPARE_OP_ALWAYS}};
+  }
   int stencil_writing=pipeline_stencil_writes(&ds);
   need_depth |= ds.depthTestEnable || ds.depthWriteEnable || ds.stencilTestEnable;
   int has_color = 0;
@@ -1180,7 +1194,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     // No consumer command has been emitted. Abandon the descriptor batch and
     // redo the ordinary draw, preserving already-executed producer commands.
     vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
-    free(local_ready);vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+    free(local_ready);vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
   }
   VkAttachmentDescription descriptions[9];
   VkImageView views_[9];
@@ -1258,7 +1272,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     vk_texture_graphics_barrier();
   if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
     vk_texture_shader_abandon();vk_shader_operation_abandon();free(local_ready);
-    vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+    vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
   }
   render_job *j = active_job;
   if (!j || !render_targets_equal(&S.targets,&target_match) ||
@@ -1298,13 +1312,19 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     graphics_state->jobs = j;
   }
   free(local_ready);local_ready=NULL;
+  int physical_depth=include_depth;
+  VkAttachmentReference pipeline_depth=depth;
+  if(j->local && !j->local->subpass && j->local->shared_first_depth) {
+    physical_depth=1;pipeline_depth=j->local->second_depth;
+    na=j->attachment_count;memcpy(descriptions,j->attachments,na*sizeof *descriptions);
+  }
   uint32_t effective_expansion=0;
   for(unsigned i=0;i<16;i++) if(expanded[i]) effective_expansion|=1u<<i;
   pipeline_context context={.epoch=vk_pipeline_state_epoch(),.program_serial=S.program->serial,
     .fragment_module=fragment_module,.specialization_word=specialization_words[0],
     .specialization_mask=specialization_words[1],.dynamic_uniforms=dynamic_uniforms,
-    .targets=S.targets.n,.attachments=na,.has_depth=include_depth,.samples=samples,
-    .topology=topology(idx?idx->prim:draw->prim),.expansion=effective_expansion,.depth=depth};
+    .targets=S.targets.n,.attachments=na,.has_depth=physical_depth,.samples=samples,
+    .topology=topology(idx?idx->prim:draw->prim),.expansion=effective_expansion,.depth=pipeline_depth};
   pipeline_depth_key(&context.ds,&ds);
   for(unsigned i=0;i<na;i++) context.formats[i]=descriptions[i].format;
   memcpy(context.colors,color,S.targets.n*sizeof *color);
@@ -1447,7 +1467,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   for (unsigned i = 0; i < na; i++)
     key.formats[i] = descriptions[i].format;
   memcpy(key.colors, color, S.targets.n * sizeof *color);
-  key.depth = depth;
+  key.depth = pipeline_depth;
   memcpy(key.streams, vb, nb * sizeof *vb);
   // stepRate 是管线状态；漏掉它会把 divisor=3 的绘制复用成 divisor=2。
   // stepRate is pipeline state: omitting it would reuse divisor=2 for a
@@ -1465,7 +1485,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   key.streams_count = nb;
   key.attributes_count = nattr;
   key.topology = ia.topology;
-  key.has_depth = include_depth;
+  key.has_depth = physical_depth;
   key.logic_enable = blend.logicOpEnable;
   key.logic_op = blend.logicOp;
   if(reuse&&prepare_mode==2) {
@@ -1502,11 +1522,30 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     VkResult compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
     vk_pipeline_cache_end(compiled==VK_SUCCESS);
     vk_system_trace_end(compile_trace);
+    if(compiled!=VK_SUCCESS && j->local && !local_consumer &&
+        j->local->shared_first_depth && !j->local->subpass &&
+        ((!j->secondary && !active_job) || active_job==j)) {
+      // This current producer draw was not issued. A fresh job has no secondary
+      // to end; a previously recorded one must STORE its earlier real draws.
+      // Neither path replays those draws or consumes a future clear command.
+      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
+      render_pass_release(cached->local_object);free(cached);
+      vk_texture_shader_abandon();vk_shader_operation_abandon();
+      if(!j->secondary) {
+        // Only release this job's references, not shared cached/in-flight FB/RP.
+        if(graphics_state->jobs!=j)die("Vulkan unrecorded pixel-local job order");
+        graphics_state->jobs=j->next;
+        framebuffer_release(j->framebuffer_object);render_pass_release(j->pass_object);
+        free(j->local);free(j);draw_recorded.pixel_local_plans--;
+      } else vk_render_end();
+      vk_pool_operation_end(pool_operation);
+      vk_draw_record(draw,idx,1);return;
+    }
     if(compiled!=VK_SUCCESS && local_consumer) {
       if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
       render_pass_release(cached->local_object);free(cached);
       vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
-      vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
+      vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
     }
     if(compiled==VK_ERROR_UNKNOWN && list[1] &&
         (fragment_module==list[1]->specialization_module || hybrid_selected)) {
@@ -1708,6 +1747,10 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   vk_pool_operation_end(pool_operation);
   vk_profile_end(VK_TIME_DRAW, started);
 }
+void vk_draw(const p_draw *draw,const p_draw_idx *idx) {
+  vk_draw_record(draw,idx,0);
+}
+
 void vk_defer_pass(VkRenderPass pass, VkFramebuffer framebuffer) {
   render_job *j = calloc(1, sizeof *j);
   if (!j)

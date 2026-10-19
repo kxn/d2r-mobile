@@ -2,6 +2,9 @@
 // generation is checked before looking up an owner after any callback.
 #pragma once
 #include "nvn_vk_shader.h"
+// Runtime startup choice; independent of the offline proof/module ABI.
+// Experimental unchanged physical readonly DS, immutable startup choice, OFF.
+int vk_pixel_local_shared_ds_enabled(void);
 typedef struct {
   uint64_t generation,serial,recording,stamp;
   VkImage image;
@@ -18,6 +21,10 @@ int vk_texture_pixel_local_enter(const vk_pixel_local_image *token);
 // attachment. Orders its real LOAD/(optional STORE) without recording access.
 int vk_texture_pixel_local_depth_preflight(const tex_t *texture,const view_t *view,
     const vk_attachment *attachment,int store);
+// After real EndRenderPass, immediate physical LOAD reader history only.
+// Does not enter any prospective shader batch or prepare/change resources.
+int vk_texture_pixel_local_depth_loaded(const tex_t *texture,const view_t *view,
+    const vk_attachment *attachment);
 int vk_pixel_local_target_boundary(const void *op);
 int vk_pixel_local_replay(const uint8_t *op);
 

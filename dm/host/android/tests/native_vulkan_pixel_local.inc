@@ -49,6 +49,7 @@ static VKAPI_ATTR void VKAPI_CALL pixel_local_batch_barrier(
 }
 #include "native_vulkan_pixel_local_mip_alias.inc"
 #include "native_vulkan_pixel_local_depth.inc"
+#include "native_vulkan_pixel_local_shared_ds.inc"
 static PFN_vkCreateRenderPass pixel_subset_pass_original;
 static unsigned pixel_subset_inputs,pixel_subset_attachments,pixel_subset_two_pass_creates;
 static VKAPI_ATTR VkResult VKAPI_CALL pixel_subset_pass(VkDevice d,const VkRenderPassCreateInfo *ci,
@@ -283,5 +284,6 @@ static int pixel_local_render_test(void) {
   CALL(nvnMemoryPoolFinalize,&pool);free(storage);S=saved;vk_pipeline_state_changed();
   CHECK(pixel_local_mip_alias_test()==0);
   CHECK(pixel_local_depth_preflight_test()==0);
+  CHECK(pixel_local_shared_depth_test()==0);
   CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pixel-local-render\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
 }

@@ -339,7 +339,7 @@ static int lifecycle_suspended;
 // Android mode is a startup choice; never send an in-process mode-change event.
 static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
-static int pixel_local_startup;
+static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int upload_dual_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeUploadDualStore(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -365,6 +365,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePixelLoc
     return;
   }
   pixel_local_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePixelLocalSharedDs(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"pixel_local_shared_ds is fixed before native startup");
+    return;
+  }
+  pixel_local_shared_ds_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeOpusMode(
@@ -489,6 +502,12 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
     die("Android pixel-local startup environment");
   if(setenv("DM_VULKAN_UPLOAD_DUAL_STORE",upload_dual_startup?"1":"0",1))
     die("Android dual upload startup environment");
+  if(setenv("DM_VULKAN_PIXEL_LOCAL_SHARED_DS",pixel_local_shared_ds_startup?"1":"0",1))
+    die("Android pixel-local shared DS startup environment");
+  extern int vk_pixel_local_shared_ds_enabled(void);
+  if(vk_pixel_local_shared_ds_enabled()!=pixel_local_shared_ds_startup)
+    die("Android pixel-local shared DS initialized before startup selection");
+  LOG("Android pixel-local shared readonly DS startup enabled=%d",pixel_local_shared_ds_startup);
   extern int vk_pixel_local_enabled(void);
   if(vk_pixel_local_enabled()!=pixel_local_startup)
     die("Android pixel-local policy initialized before startup selection");

@@ -55,11 +55,16 @@ layout(set=1,binding=1)uniform sampler2D source;
 void main(){a=vec4(textureLod(source,uv,0).b*(64./255.),0,0,1);b=vec4(0,64./255.,0,1);c=vec4(0,0,64./255.,1);}
 ''',[(3,1,0,0,0,1,0,2)],-1,7))
 items.append((194,1,items[2][2],items[2][3],-1,1))
+# Borrowed physical DS must not make original no-DS depth export/discard
+# perform a comparison or write. Exact original color math stays unchanged.
+items.append((195,1,items[1][2].replace('void main(){','void main(){gl_FragDepth=.9375;if(gl_FragCoord.x<8.)discard;'),[],-1,7))
+# Distinct second producer, so its failed PSO cannot reuse the first PSO.
+items.append((196,1,items[1][2].replace('64./255.','128./255.').replace('void main(){','void main(){gl_FragDepth=.25;if(gl_FragCoord.x<8.)discard;'),[],-1,7))
 for marker,stage,text,bindings,pos,colors in items:
  key=hashlib.sha256(bytes([marker])*0x880).hexdigest()[:16]
  source=root/(key+('.vert'if stage==0 else'.comp'if stage==5 else'.frag'));source.write_text(text)
  path=root/(key+'.spv');subprocess.run(['glslangValidator','-V','--target-env','vulkan1.1',str(source),'-o',str(path)],check=True)
- blobs={'spv':path.read_bytes(),'meta':struct.pack('<12I',0x324b5644,stage,2 if stage==5 else stage,len(bindings),0,1,1,1,pos&0xffffffff,int(pos>=0),colors,1)+b''.join(struct.pack('<8i',*b)for b in bindings)}
+ blobs={'spv':path.read_bytes(),'meta':struct.pack('<12I',0x324b5644,stage,2 if stage==5 else stage,len(bindings),0,1,1,1,pos&0xffffffff,(int(pos>=0)|(2 if marker in (195,196) else 0)),colors,1)+b''.join(struct.pack('<8i',*b)for b in bindings)}
  for suffix,data in blobs.items():(root/(key+'.'+suffix)).write_bytes(data)
  payload,proof=wire.build(blobs,{'descriptor_set':2 if stage==5 else stage})
  (root/(key+'.plocal')).write_bytes(payload)

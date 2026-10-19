@@ -3,7 +3,7 @@
 #include "../../gfx/vulkan/nvn_vk_window.h"
 #include "../../gfx/vulkan/nvn_vk_freeze.h"
 #include "../../gfx/vulkan/nvn_vk_extrap.h"
-#include "../../gfx/vulkan/nvn_vk_pixel_local.h"
+#include "../../gfx/vulkan/nvn_vk_pixel_local_runtime.h"
 #include "dm.h"
 #include "opus_shadow.h"
 #include "dm_guest_player.h"
@@ -467,8 +467,8 @@ static void observe_tick(const uint64_t *registers) {
     void vk_pixel_local_stats(uint64_t *,uint64_t *,uint64_t *);
     uint64_t local_planned,local_draws,local_aborts;
     vk_pixel_local_stats(&local_planned,&local_draws,&local_aborts);
-    fprintf(state_log, ",\"pixel_local\":{\"enabled\":%s,\"planned\":%llu,\"draws\":%llu,\"aborts\":%llu}",
-      vk_pixel_local_enabled()?"true":"false",(unsigned long long)local_planned,
+    fprintf(state_log, ",\"pixel_local\":{\"enabled\":%s,\"shared_readonly_ds\":%s,\"planned\":%llu,\"draws\":%llu,\"aborts\":%llu}",
+      vk_pixel_local_enabled()?"true":"false",vk_pixel_local_shared_ds_enabled()?"true":"false",(unsigned long long)local_planned,
       (unsigned long long)local_draws,(unsigned long long)local_aborts);
     uint64_t vk_pool_window_fallbacks(void);
     uint64_t window_bytes,window_admissions,window_added_bytes,window_added_spans,window_promotions;

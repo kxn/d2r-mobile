@@ -303,6 +303,10 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
     if(op==p->set_op)break;
     if(h.op==OP_DRAW || h.op==OP_DRAW_IDX) {
       if(!pl_no_writers(&scan))return NULL;
+      // With no logical producer DS, adding a physical format can affect
+      // depth bias (including FS-visible z). Do not change original bias.
+      if(vk_pixel_local_shared_ds_enabled() && !p->first.targets.depth &&
+          p->second.targets.depth && scan.poly.offset_en)return NULL;
       for(int a=0;a<S.targets.n;a++)if(S.targets.color[a] && pl_shader_read_alias(&scan,S.targets.color[a],S.targets.has_cview[a]?&S.targets.cview[a]:NULL))return NULL;
       for(int a=0;a<p->second.targets.n;a++) {
         const tex_t *t=p->second.targets.color[a];

@@ -10,7 +10,7 @@ struct pl_job {
   tex_t textures[9];view_t views[9];uint8_t has_view[9];
   uint32_t next,subpass,second_count,second_has_depth,clear_seen;
   const uint8_t *current;
-  int finished;
+  int finished,shared_first_depth;
 };
 static int pl_add_attachment(pl_job *p,const tex_t *t,const view_t *v,
     VkAttachmentDescription descriptions[9],VkImageView handles[9],unsigned *count,
@@ -51,6 +51,8 @@ static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned widt
     vk_attachment *a=&p->depth_attachment;
     if(a->samples!=VK_SAMPLE_COUNT_1_BIT || a->extent.width!=width || a->extent.height!=height)goto fail;
     p->second_has_depth=1;
+    p->shared_first_depth=vk_pixel_local_shared_ds_enabled() && !p->plan.first.targets.depth;
+    if(p->shared_first_depth && a->layout!=VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)goto fail;
   }
   for(unsigned round=0;round<2;round++)for(unsigned k=0;k<p->plan.fragment->count;k++) {
     int local=0;for(int a=0;a<S.targets.n;a++)local|=pl_tex_same(&p->plan.inputs[k],S.targets.color[a]);
@@ -135,9 +137,12 @@ static int pl_job_create(render_job *j,pl_job *p,VkAttachmentDescription descrip
   // every descriptor, physical token and current geometry at its own position.
   for(unsigned k=0;k<p->plan.fragment->count;k++)if(!vk_texture_pixel_local_valid(&p->tokens[k]))goto fallback;
   p->plan.descriptor_epoch=vk_texture_descriptor_epoch();
+  // Logical first targets stay unchanged. Only the physical topology shares
+  // the existing readonly view; no duplicate image or fabricated draw access.
+  const VkAttachmentReference *first_depth=p->shared_first_depth?&p->second_depth:depth;
   uint32_t preserve[2][9],np[2]={0};
   for(unsigned a=0;a<*count;a++) {
-    int first=depth && depth->attachment==a,second=p->second_has_depth && p->second_depth.attachment==a;
+    int first=first_depth && first_depth->attachment==a,second=p->second_has_depth && p->second_depth.attachment==a;
     for(int k=0;k<S.targets.n;k++)first|=colors[k].attachment==a;
     for(unsigned k=0;k<p->second_count;k++)second|=p->second_colors[k].attachment==a;
     for(unsigned k=0;k<p->plan.fragment->count;k++)second|=p->inputs[k].attachment==a;
@@ -145,7 +150,7 @@ static int pl_job_create(render_job *j,pl_job *p,VkAttachmentDescription descrip
   }
   VkSubpassDescription sub[2]={
     {.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS,.colorAttachmentCount=S.targets.n,.pColorAttachments=colors,
-     .pDepthStencilAttachment=depth,.preserveAttachmentCount=np[0],.pPreserveAttachments=preserve[0]},
+     .pDepthStencilAttachment=first_depth,.preserveAttachmentCount=np[0],.pPreserveAttachments=preserve[0]},
     {.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS,.inputAttachmentCount=p->plan.fragment->count,.pInputAttachments=p->inputs,
      .colorAttachmentCount=p->second_count,.pColorAttachments=p->second_colors,
      .pDepthStencilAttachment=p->second_has_depth?&p->second_depth:NULL,
@@ -187,6 +192,13 @@ static int pl_render_end(render_job *j) {
   // The empty-second fallback still performs each original producer STORE.
   // Future consumers therefore see defined contents, with no replayed draws.
   active_job=NULL;active_writes=0;
+  if(p->second_has_depth) {
+    unsigned n=p->second_depth.attachment;
+    if((j->attachments[n].loadOp==VK_ATTACHMENT_LOAD_OP_LOAD ||
+        j->attachments[n].stencilLoadOp==VK_ATTACHMENT_LOAD_OP_LOAD) &&
+        !vk_texture_pixel_local_depth_loaded(&p->textures[n],p->has_view[n]?&p->views[n]:NULL,&p->depth_attachment))
+      die("Vulkan pixel-local actual DS LOAD physical lifetime");
+  }
   for(unsigned n=0;n<j->attachment_count;n++)if(p->textures[n].serial &&
       j->attachments[n].storeOp==VK_ATTACHMENT_STORE_OP_STORE)
     vk_texture_attachment_store(&p->textures[n],p->has_view[n]?&p->views[n]:NULL,1);
