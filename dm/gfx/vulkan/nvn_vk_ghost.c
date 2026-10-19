@@ -68,7 +68,7 @@ int vk_ghost_pool_ranges(vk_pool_requirement_sink sink,void *context) {
     const vk_state *state=ghost.candidate[i].state;
     if(!state || !state->program)return 0;
     vk_shader *shaders[6]={0};vk_program_shaders(state->program,shaders);shaders[5]=NULL;
-    if(!vk_graphics_pool_ranges(shaders,state,NULL,sink,context))return 0;
+    if(!vk_graphics_pool_admission(shaders,state,NULL,sink,context))return 0;
   }
   return 1;
 }
