@@ -5,6 +5,7 @@
 #include "nvn_vk_metadata.h"
 #include "nvn_vk_state.h"
 #include "nvn_vk_prewarm.h"
+#include "nvn_vk_pool_ranges.h"
 enum { VK_UNIFORM_OFFSET_CAPACITY=16 };
 // Optional immutable second-word predicate recipe. Mutable admitted tuples are
 // owned by the sole recording thread; a paired descriptor alternative never
@@ -99,6 +100,14 @@ VkPipelineLayout vk_program_layout_mode(vk_shader *const shaders[6],int dynamic)
 VkDescriptorSet vk_shader_bindings(vk_shader *s);
 void vk_shader_operation_begin(void);
 void vk_shader_prepare_images(vk_shader *const shaders[6],int compute);
+int vk_shader_pool_ranges(vk_shader *const shaders[6],int compute,
+    vk_pool_requirement_sink sink,void *context);
+int vk_shader_pool_ranges_state(vk_shader *const shaders[6],const vk_state *state,int compute,
+    vk_pool_requirement_sink sink,void *context);
+// Metadata proof only; false selects conservative whole-pool handling and
+// discards partial output. Zero-length mandatory draw bindings are not proven.
+int vk_graphics_pool_ranges(vk_shader *const shaders[6],const vk_state *state,
+    const p_draw_idx *indexed,vk_pool_requirement_sink sink,void *context);
 void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage);
 typedef struct {
   VkPipelineLayout layout;
@@ -125,6 +134,7 @@ void vk_storage_bias_stats(uint64_t *direct,uint64_t *copies,uint64_t *bytes,int
 VkDescriptorSet vk_descriptor_allocate(VkDescriptorSetLayout layout);
 VkShaderStageFlagBits vk_stage(uint32_t stage);
 void vk_ghost_note(const p_draw *draw, vk_shader *fragment);
+int vk_ghost_pool_ranges(vk_pool_requirement_sink sink,void *context);
 VkPipelineLayout vk_program_layout(vk_shader *const shaders[6]);
 VkImageView vk_texture_view(int id, int storage);
 int vk_texture_descriptor(int id,tex_t *out);

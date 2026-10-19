@@ -54,6 +54,24 @@ static void clear_candidates(void) {
   for (unsigned i = 0; i < ghost.n; i++) free(ghost.candidate[i].state);
   ghost.n = 0;
 }
+// Pending drag-follow candidates are already-recorded original host draws.
+// Include all of them in physical-backing planning before an outer operation
+// borrows buffers: render_end may replay the selected candidate reentrantly.
+// This only visits logical metadata, without swapping the active NVN state,
+// selecting a candidate or causing the pending replay to execute early.
+int vk_ghost_pool_ranges(vk_pool_requirement_sink sink,void *context) {
+  if(!sink)return 0;
+  // The UI can re-enable dragging before a later render_end. Disabling only
+  // changes the request flag; it does not retire these saved candidates.
+  if(ghost.busy || !ghost.n || ghost.pass!=V.passes)return 1;
+  for(unsigned i=0;i<ghost.n;i++) {
+    const vk_state *state=ghost.candidate[i].state;
+    if(!state || !state->program)return 0;
+    vk_shader *shaders[6]={0};vk_program_shaders(state->program,shaders);shaders[5]=NULL;
+    if(!vk_graphics_pool_ranges(shaders,state,NULL,sink,context))return 0;
+  }
+  return 1;
+}
 void vk_ghost_note(const p_draw *draw, vk_shader *fragment) {
   if (!atomic_load(&enabled) || ghost.busy || !fragment || draw->count != 4 ||
       S.stream[0].stride != 20 || S.vertex[0].size != 80 ||

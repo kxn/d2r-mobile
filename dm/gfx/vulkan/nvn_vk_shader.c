@@ -245,6 +245,7 @@ typedef struct {
 } shader_operation;
 static shader_operation shader_operations[8];
 static unsigned shader_operation_depth;
+int vk_shader_operation_active(void) { return shader_operation_depth!=0; }
 #define current_operation (shader_operations[shader_operation_depth-1])
 void vk_shader_operation_begin(void) {
   if(shader_operation_depth==sizeof shader_operations/sizeof *shader_operations)
@@ -265,6 +266,7 @@ static VkPipelineStageFlags producer_stage(unsigned stage) {
   if(stage>=sizeof stages/sizeof *stages) die("Vulkan shader producer stage");
   return stages[stage];
 }
+#include "nvn_vk_shader_pool_ranges.inc"
 void vk_shader_writebacks(void) {
   if(!shader_operation_depth) die("Vulkan shader operation underflow");
   for (unsigned i = 0; i < current_operation.storage_copy_count; i++)
@@ -1489,29 +1491,11 @@ void vk_dispatch(const p_dispatch *p) {
   vk_texture_shader_begin();
   VkDescriptorSet set = vk_shader_bindings(s);
   vk_texture_binding_scope_end();
-  vk_buffer_use uses[128];unsigned use_count=0;
-  for(unsigned k=0;k<s->nb;k++) {
-    const vk_binding *binding=&s->bindings[k];
-    p_bind_buf *buffer=NULL;
-    if(binding->kind==1 && binding->reg>=3 && binding->reg<19)
-      buffer=&S.ubo[5][binding->reg-3];
-    if(binding->kind==2 || binding->kind==8)
-      buffer=binding->kind==8?&S.ubo[5][binding->reg]:&S.ssbo[5][binding->reg];
-    if(buffer && buffer->addr && buffer->size) {
-      int copied=0;
-      for(unsigned j=0;j<current_operation.storage_copy_count;j++)
-        if(current_operation.storage_copies[j].address==buffer->addr &&
-            current_operation.storage_copies[j].size==buffer->size) copied=1;
-      if(!copied) uses[use_count++]=(vk_buffer_use){buffer->addr,buffer->size,vk_binding_writable(binding)};
-    }
-    if(binding->kind==7 || binding->kind==9) {
-      uint64_t handle=binding->kind==9?S.img[5][binding->reg]:S.tex[5][binding->reg];
-      tex_t texture;
-      if(!vk_texture_descriptor(handle&0xfffff,&texture) ||
-          texture.d.target!=NVN_TEXTURE_TARGET_BUFFER) die("Vulkan compute texel dependency descriptor");
-      uses[use_count++]=(vk_buffer_use){(uintptr_t)texture.mem,texture.L.size,vk_binding_writable(binding)};
-    }
-  }
+  vk_buffer_use uses[128];
+  compute_pool_requirements requirements={.uses=uses};
+  if(!vk_shader_pool_ranges(stages,1,compute_pool_requirement,&requirements))
+    die("Vulkan incomplete compute pool requirements");
+  unsigned use_count=requirements.count;
   // Query all buffer uses together after descriptor copies have been recorded,
   // before publishing this dispatch's producers. Images have their own batch.
   vk_compute_buffer_dependencies(uses,use_count,0);

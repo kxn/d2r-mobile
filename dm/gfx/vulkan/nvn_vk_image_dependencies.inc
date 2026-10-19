@@ -89,7 +89,9 @@ static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelin
   if(stages) i->use_clock=++image_write_clock;
   int mip_stamped=stages && image_mip_tracked(i) &&
       !(r.levelCount>1 && covered && read->mip_stamp>image_pass_begin_clock);
-  if(mip_stamped)
+  // Covered reads return before the cell walk. All other accesses already
+  // visit these exact color/mip cells below; stamp them during that walk.
+  if(mip_stamped && covered)
     for(unsigned level=r.baseMipLevel;level<r.baseMipLevel+r.levelCount;level++)
       image_cell(i,0,level,0)->use_clock=i->use_clock;
   if(writing && r.baseMipLevel<16) {
@@ -109,6 +111,9 @@ static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelin
     for(unsigned level=r.baseMipLevel;level<r.baseMipLevel+r.levelCount;level++)
       for(unsigned layer=r.baseArrayLayer;layer<r.baseArrayLayer+r.layerCount;layer++) {
         image_access *c=image_cell(i,a,level,layer);
+        // mip_stamped implies a single-layer color image. The normalized
+        // range therefore visits exactly the cells of the former stamp loop.
+        if(mip_stamped) c->use_clock=i->use_clock;
         if(stages) { c->layout_ordered=0;c->layout_ordered_access=0; }
         if(writing) {
           if(image_record_merging) {

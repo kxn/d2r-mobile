@@ -428,6 +428,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_store.inc"
 #include "native_vulkan_cover.inc"
 #include "native_vulkan_mip_cover.inc"
+#include "native_vulkan_mip_stamp_write.inc"
 #include "native_vulkan_quad.inc"
 #include "native_vulkan_extrap.inc"
 #include "native_vulkan_submit.inc"
@@ -446,6 +447,8 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_driver_key.inc"
 #include "native_vulkan_buffer_visibility.inc"
 #include "native_vulkan_initialized_span.inc"
+#include "native_vulkan_pool_span.inc"
+#include "native_vulkan_pool_ranges.inc"
 #include "native_vulkan_buffer_scope.inc"
 #include "native_vulkan_present.inc"
 #include "native_vulkan_sampled_array.inc"
@@ -1882,8 +1885,11 @@ int dm_vulkan_test_main(void) {
   dynamic_uniform_test(controls[0]);
   sampled_mip_load_cover_test();
   mip_stamp_test(controls[3],controls[4]);
+  mip_stamp_write_test();
   buffer_scope_test();
   initialized_span_test();
+  pool_backing_span_test();
+  shader_pool_ranges_test();
   shader_present_test();
   sampled_color_array_layout_test(controls[3],controls[4]);
   texel_storage_test(controls[0]);

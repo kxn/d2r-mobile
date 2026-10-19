@@ -23,6 +23,11 @@ vk_context V = {.resources = PTHREAD_MUTEX_INITIALIZER,
                 .queue_mu = PTHREAD_MUTEX_INITIALIZER,
                 .present_queue_mu = PTHREAD_MUTEX_INITIALIZER};
 typedef struct pool_gpu_access pool_gpu_access;
+typedef struct pool_backing_span {
+  struct pool_backing_span *next;
+  uint64_t begin,end,generation;
+  vk_buffer buffer;
+} pool_backing_span;
 typedef struct pool {
   struct pool *next;
   uint8_t *guest, *shadow;
@@ -38,12 +43,16 @@ typedef struct pool {
   unsigned references;
   uint64_t access_serial;
   pool_gpu_access *recording_access;
-  vk_buffer buffer;
+  // Canonical physical ownership. Production policy remains the single whole
+  // node [0,size); no backing replacement/retirement is introduced here.
+  pool_backing_span whole,*backings;
+  uint64_t backing_generation;
 } pool;
 // 上传按最多 4 KiB 的连续段复制，GPU 使用也按页保守记录；不扫描每次绑定的字节区间链。
 // Uploads copy spans of at most 4 KiB. Conservatively index GPU use by page,
 // rather than walking a growing byte-interval list for every buffer binding.
 enum { GPU_ACCESS_SHIFT = 12 };
+#include "nvn_vk_pool_spans.inc"
 static const VkPipelineStageFlags pool_stages[]={
   VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -88,6 +97,8 @@ typedef struct pending_cpu_copy {
 typedef struct queued_pool_upload {
   struct queued_pool_upload *next;
   VkBuffer source,destination;
+  const pool_backing_span *backing;
+  uint64_t backing_generation;
   unsigned count;
   VkPipelineStageFlags before,after;
   VkBufferCopy regions[];
@@ -133,7 +144,7 @@ void vk_pool_mirror_stats(uint64_t *registered,uint64_t *backed,uint64_t *count,
   pthread_mutex_lock(&V.resources);
   for(pool *p=pools;p;p=p->next) {
     *registered+=p->size;(*count)++;
-    if(p->buffer.handle) { *backed+=p->size;(*materialized)++; }
+    if(p->backings) { *backed+=pool_spans_bytes(p);(*materialized)++; }
   }
   pthread_mutex_unlock(&V.resources);
   *reference=V.options.pool_mirror_reference;
@@ -214,6 +225,8 @@ typedef struct submit_resources {
   queued_pool_upload **pool_upload_tail;
   int pool_sync_reference,cpu_copy_reference,submission_barrier_reference;
   int pool_lookup_reference;
+  // Isolated GPU-only backing migration: never upload guest/shadow over source GPU bytes.
+  int pool_migration;
   int upload_scan_reference;
   struct { pool *owner;pool_gpu_access *use; } pool_lookups[8];
   unsigned pool_lookup_count,pool_lookup_next;
@@ -1297,7 +1310,7 @@ static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
       while(end<63 && (missing&(UINT64_C(1)<<(end+1)))) end++;
       uint64_t lo=(word*64+bit)<<GPU_ACCESS_SHIFT,hi=(word*64+end+1)<<GPU_ACCESS_SHIFT;
       if(hi>p->size) hi=p->size;
-      memcpy(p->buffer.map+lo,p->guest+lo,hi-lo);
+      pool_spans_copy_from_guest(p,lo,hi-lo);
       memcpy(p->shadow+lo,p->guest+lo,hi-lo);
       p->initialized_bytes+=hi-lo;
       uint64_t run=(UINT64_MAX<<bit)&(UINT64_MAX>>(63-end));
@@ -1315,8 +1328,8 @@ static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
     p->initialized_first_page=first;p->initialized_end_page=end_page;
   }
 }
-static void pool_materialize(pool *p) {
-  if(p->buffer.handle) return;
+static void pool_materialize_metadata(pool *p) {
+  if(p->shadow)return;
   uint64_t size=p->size;
   p->page_upload_stamps=calloc(((size-1)>>GPU_ACCESS_SHIFT)+1,sizeof(uint64_t));
   if(!p->page_upload_stamps) die("Vulkan pool page upload generations");
@@ -1325,16 +1338,12 @@ static void pool_materialize(pool *p) {
   p->shadow = calloc(1, size);
   if (!p->shadow)
     die("Vulkan pool shadow allocation: %llu", (unsigned long long)size);
-  vk_buffer_create(
-      &p->buffer, size,
-      VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-          VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
-          VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
-          VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-  if(V.options.pool_mirror_reference) pool_initialize_range(p,0,size);
+}
+static void pool_materialize(pool *p) {
+  if(p->backings)return;
+  pool_materialize_metadata(p);
+  pool_span_create(p,&p->whole,0,p->size);p->backings=&p->whole;
+  if(V.options.pool_mirror_reference) pool_initialize_range(p,0,p->size);
 }
 void mtl_pool_add(const void *mem, uint64_t size) {
   mtl_init();
@@ -1369,7 +1378,7 @@ void mtl_pool_del(const void *mem) {
   if(atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release)==UINT64_MAX)
     die("Vulkan pool registry epoch overflow");
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
-  vk_buffer_destroy(&p->buffer);
+  pool_spans_destroy(p);
   free(p->shadow);
   free(p->page_upload_stamps);
   free(p->initialized_pages);
@@ -1383,6 +1392,48 @@ static pool *pool_find(uint64_t addr, uint64_t size) {
       return p;
   return NULL;
 }
+int vk_pool_span_query(uint64_t addr,uint64_t size,vk_pool_span_info *out) {
+  vk_pool_span_info value={0};int status=VK_POOL_SPAN_NONE;
+  pthread_mutex_lock(&V.resources);
+  pool *p=size?pool_find(addr,size):NULL;
+  if(p) {
+    value.pool_identity=p->identity;value.pool_base=(uintptr_t)p->guest;value.pool_size=p->size;
+    value.logical_begin=addr-value.pool_base;value.logical_end=value.logical_begin+size;value.size=size;
+    pool_span_piece span;
+    if(!p->backings) status=VK_POOL_SPAN_UNBACKED;
+    else if(!pool_span_resolve(p,value.logical_begin,size,&span)) status=VK_POOL_SPAN_CROSSING;
+    else {
+      status=VK_POOL_SPAN_SINGLE;value.logical_begin=span.backing->begin;value.logical_end=span.backing->end;
+      value.backing_generation=span.backing->generation;value.local_offset=span.offset;
+      value.handle=span.backing->buffer.handle;
+    }
+  }
+  pthread_mutex_unlock(&V.resources);
+  if(out)*out=value;
+  return status;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+// Only a fresh unused owned fixture pool may acquire two real immutable
+// backings. This does not migrate, discard initialized bytes or bypass refs.
+static int pool_test_split_backings(uint64_t address,uint64_t split,uint64_t tail_begin) {
+  int result=0;pthread_mutex_lock(&V.resources);
+  pool *p=pool_find(address,1);
+  if(p && (uintptr_t)p->guest==address && !p->backings && !p->references &&
+      !atomic_load(&p->initialized_bytes) && split && split<=tail_begin && tail_begin<p->size &&
+      !(split&4095) && !(tail_begin&4095)) {
+    pool_backing_span *tail=calloc(1,sizeof *tail);if(!tail)die("Vulkan fixture span allocation");
+    pool_materialize_metadata(p);pool_span_create(p,&p->whole,0,split);
+    pool_span_create(p,tail,tail_begin,p->size);p->whole.next=tail;p->backings=&p->whole;result=1;
+  }
+  pthread_mutex_unlock(&V.resources);return result;
+}
+int vk_test_pool_split_backings(uint64_t address,uint64_t split) {
+  return pool_test_split_backings(address,split,split);
+}
+int vk_test_pool_gap_backings(uint64_t address,uint64_t first_end,uint64_t tail_begin) {
+  return pool_test_split_backings(address,first_end,tail_begin);
+}
+#endif
 int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset) {
   pthread_mutex_lock(&V.resources);
   pool *p=pool_find(addr,size);
@@ -1405,9 +1456,11 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       // This exact context already owns use->owner's reference. Pool removal
       // waits for that reference through true fence and CPU effects; no stale
       // pool/list index or completion-mutated recording_access is consulted.
-      pool_initialize_range(p,addr-base,len);
-      *buf=&p->buffer;*off=addr-base;
-      record_pool_range(r->pool_lookups[k].use,*off,len,stages,initial_contents);
+      uint64_t logical=addr-base;
+      pool_initialize_range(p,logical,len);
+      pool_span_piece span=pool_span_require(p,logical,len);
+      *buf=&span.backing->buffer;*off=span.offset;
+      record_pool_range(r->pool_lookups[k].use,logical,len,stages,initial_contents);
       pool_lookup_hits++;return 1;
     }
   }
@@ -1416,10 +1469,11 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
   pool *p = pool_find(addr, len);
   if (p) {
     pool_materialize(p);
-    pool_initialize_range(p,addr-(uintptr_t)p->guest,len);
-    *buf = &p->buffer;
-    *off = addr - (uintptr_t)p->guest;
-    pool_gpu_access *use=record_pool_use(p,*off,len,stages,initial_contents);
+    uint64_t logical=addr-(uintptr_t)p->guest;
+    pool_initialize_range(p,logical,len);
+    pool_span_piece span=pool_span_require(p,logical,len);
+    *buf=&span.backing->buffer;*off=span.offset;
+    pool_gpu_access *use=record_pool_use(p,logical,len,stages,initial_contents);
     if(r && use && !r->pool_lookup_reference) {
       uint64_t epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_relaxed);
       if(r->pool_lookup_epoch!=epoch) {
@@ -1532,7 +1586,7 @@ static struct {
   uint64_t address,size;
   // A guest address can be reused by a later pool with another GPU mirror.
   // Keep the identity of the actual, context-retained physical producer.
-  uint64_t pool_identity;
+  uint64_t pool_identity,backing_generation;
   VkBuffer buffer;
   VkPipelineStageFlags producers;
   VkPipelineStageFlags visible;
@@ -1565,7 +1619,7 @@ static pool *buffer_recording_owner(uint64_t address,uint64_t size) {
   for(pool_gpu_access *use=recording_resources->gpu_accesses;use;use=use->next) {
     pool *p=use->owner;uint64_t base=(uintptr_t)p->guest;
     if(address>=base && address-base<=p->size && size<=p->size-(address-base) &&
-        p->buffer.handle && p->access_serial==recording_resources->queue_serial &&
+        p->backings && p->access_serial==recording_resources->queue_serial &&
         p->recording_access==use) {
       // A removed pool can remain alive until this context completes. If a
       // concurrent registration reused its address, never guess which mirror
@@ -1576,35 +1630,37 @@ static pool *buffer_recording_owner(uint64_t address,uint64_t size) {
   }
   return owner;
 }
-static int buffer_history_owner(unsigned index,const pool *p) {
+static int buffer_history_owner(unsigned index,const pool *p,const pool_backing_span *backing) {
   uint64_t base=(uintptr_t)p->guest,address=vertex_buffer_writes[index].address;
-  return vertex_buffer_writes[index].pool_identity==p->identity &&
-      vertex_buffer_writes[index].buffer==p->buffer.handle && address>=base &&
-      address-base<=p->size && vertex_buffer_writes[index].size<=p->size-(address-base);
+  pool_span_piece span;
+  return vertex_buffer_writes[index].pool_identity==p->identity && address>=base &&
+      pool_span_resolve((pool *)p,address-base,vertex_buffer_writes[index].size,&span) &&
+      span.backing==backing && vertex_buffer_writes[index].buffer==backing->buffer.handle &&
+      vertex_buffer_writes[index].backing_generation==backing->generation;
 }
 static int buffer_named_dependencies(VkCommandBuffer command,const vk_buffer_use *uses,unsigned count,
     VkPipelineStageFlags sources,VkPipelineStageFlags destination,VkAccessFlags writes,
     VkAccessFlags access,VkPipelineStageFlags visible_producers) {
   if(atomic_load(&buffer_memory_reference) || vertex_buffer_write_overflow || !recording_resources)
     return 0;
-  pool *owners[16];unsigned owners_count=0;
+  pool *owners[16];pool_backing_span *backings[16];unsigned owners_count=0;
   for(unsigned k=0;k<count;k++) {
     const vk_buffer_use *u=&uses[k];
     if(!u->address || !u->size) continue;
-    pool *p=buffer_recording_owner(u->address,u->size);
-    if(!p) return 0;
-    unsigned at=0;while(at<owners_count && owners[at]!=p) at++;
+    pool *p=buffer_recording_owner(u->address,u->size);pool_span_piece span;
+    if(!p || !pool_span_resolve(p,u->address-(uintptr_t)p->guest,u->size,&span)) return 0;
+    unsigned at=0;while(at<owners_count && backings[at]!=span.backing) at++;
     if(at==owners_count) {
       if(owners_count==sizeof owners/sizeof *owners) return 0;
-      owners[owners_count++]=p;
+      owners[owners_count]=p;backings[owners_count++]=span.backing;
     }
-    // Coalescing can retain an older mirror or a cross-pool interval. A
-    // logical overlap alone cannot prove that this physical barrier covers it.
+    // Logical overlap alone cannot prove a named physical barrier. Unknown,
+    // coalesced cross-backing or retired producers use the original global fallback.
     for(unsigned j=buffer_write_start(u->address);j<vertex_buffer_write_count;j++) {
       uint64_t a=vertex_buffer_writes[j].address;
       if(a>=u->address && a-u->address>=u->size) break;
       if(!u->writable && !(destination&~vertex_buffer_writes[j].visible)) continue;
-      if(!buffer_history_owner(j,p)) return 0;
+      if(!buffer_history_owner(j,p,span.backing)) return 0;
     }
   }
   if(!owners_count) return 0;
@@ -1612,12 +1668,12 @@ static int buffer_named_dependencies(VkCommandBuffer command,const vk_buffer_use
   for(unsigned k=0;k<owners_count;k++) barriers[k]=(VkBufferMemoryBarrier){
     .sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,.srcAccessMask=writes,.dstAccessMask=access,
     .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
-    .buffer=owners[k]->buffer.handle,.offset=0,.size=VK_WHOLE_SIZE};
+    .buffer=backings[k]->buffer.handle,.offset=0,.size=VK_WHOLE_SIZE};
   vkCmdPipelineBarrier(command,sources,destination,0,0,NULL,owners_count,barriers,0,NULL);
   VkPipelineStageFlags common=~(VkPipelineStageFlags)0;
   for(unsigned j=0;j<vertex_buffer_write_count;j++) {
     if(vertex_buffer_writes[j].producers && !(vertex_buffer_writes[j].producers&~visible_producers))
-      for(unsigned k=0;k<owners_count;k++) if(buffer_history_owner(j,owners[k])) {
+      for(unsigned k=0;k<owners_count;k++) if(buffer_history_owner(j,owners[k],backings[k])) {
         vertex_buffer_writes[j].visible|=destination;break;
       }
     common&=vertex_buffer_writes[j].visible;
@@ -1735,8 +1791,10 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   buffer_common_visible=0;
   vertex_visibility_pending=1;
   pool *owner=buffer_recording_owner(address,size);
-  uint64_t identity=owner?owner->identity:0;
-  VkBuffer physical=owner?owner->buffer.handle:VK_NULL_HANDLE;
+  pool_span_piece span;
+  int backed=owner&&pool_span_resolve(owner,address-(uintptr_t)owner->guest,size,&span);
+  uint64_t identity=backed?owner->identity:0,generation=backed?span.backing->generation:0;
+  VkBuffer physical=backed?span.backing->buffer.handle:VK_NULL_HANDLE;
   uint64_t end=address+size;
   // Producer histories outlive CPU completion. Coalesce touching intervals
   // rather than filling the bounded table with each frame's overlapping
@@ -1749,12 +1807,14 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
     uint64_t b=a+vertex_buffer_writes[i].size;
     if((address<b && a<end) ||
         ((address==b || end==a) && vertex_buffer_writes[i].producers==producers &&
-          vertex_buffer_writes[i].pool_identity==identity && vertex_buffer_writes[i].buffer==physical)) {
+          vertex_buffer_writes[i].pool_identity==identity && vertex_buffer_writes[i].buffer==physical &&
+          vertex_buffer_writes[i].backing_generation==generation)) {
       if(a<address) address=a;
       if(b>end) end=b;
       producers|=vertex_buffer_writes[i].producers;
-      if(vertex_buffer_writes[i].pool_identity!=identity || vertex_buffer_writes[i].buffer!=physical) {
-        identity=0;physical=VK_NULL_HANDLE;
+      if(vertex_buffer_writes[i].pool_identity!=identity || vertex_buffer_writes[i].buffer!=physical ||
+          vertex_buffer_writes[i].backing_generation!=generation) {
+        identity=0;generation=0;physical=VK_NULL_HANDLE;
       }
       vertex_buffer_write_count--;
       memmove(vertex_buffer_writes+i,vertex_buffer_writes+i+1,
@@ -1772,6 +1832,7 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   vertex_buffer_writes[at].address=address;
   vertex_buffer_writes[at].size=end-address;
   vertex_buffer_writes[at].pool_identity=identity;
+  vertex_buffer_writes[at].backing_generation=generation;
   vertex_buffer_writes[at].buffer=physical;
   vertex_buffer_writes[at].producers=producers;
   vertex_buffer_writes[at].visible=0;vertex_buffer_write_count++;
@@ -2022,6 +2083,8 @@ static void record_pool_upload_commands(void) {
   queued_pool_upload *pages[512]={0};int independent=records<=256;
   size_t index=0;
   for(queued_pool_upload *u=r->pool_uploads;u;u=u->next) {
+    if(!u->backing || u->backing->generation!=u->backing_generation ||
+       u->backing->buffer.handle!=u->destination)die("Vulkan queued pool backing changed");
     if(!u->before) u->before=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     if(!u->after) u->after=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     order[index++]=u;
@@ -2142,6 +2205,40 @@ uint32_t vk_test_upload_word_mask(const uint8_t *guest,const uint8_t *shadow,uns
   return changed_word_mask(guest,shadow,words);
 }
 #endif
+// Capture actual immutable backing/local offsets while holding the original
+// pool reference. Later upload command recording never re-resolves a logical
+// address against a newer physical map. One record per touched backing keeps
+// sparse runs grouped, exactly as the whole-pool policy did.
+static void queue_pool_page_upload(pool *p,uint64_t off,size_t size,const vk_buffer *snapshot,
+    uint64_t snapshot_offset,const VkBufferCopy *regions,unsigned count) {
+  pool_span_iter it;if(!pool_span_iter_begin(p,off,size,&it))die("Vulkan queued pool bounds");
+  pool_span_piece span;int next;submit_resources *r=recording_resources;
+  while((next=pool_span_iter_next(&it,&span))==1) {
+    queued_pool_upload *u=NULL;
+    for(unsigned k=0;k<count;k++) {
+      uint64_t lo=regions[k].dstOffset,hi=lo+regions[k].size;
+      if(lo<span.logical)lo=span.logical;
+      if(hi>span.logical+span.size)hi=span.logical+span.size;
+      if(lo>=hi)continue;
+      if(!u) {
+        u=malloc(sizeof *u+count*sizeof *regions);if(!u)die("Vulkan queued pool upload allocation");
+        *u=(queued_pool_upload){.source=snapshot->handle,.destination=span.backing->buffer.handle,
+          .backing=span.backing,.backing_generation=span.backing->generation};
+        *r->pool_upload_tail=u;r->pool_upload_tail=&u->next;
+      }
+      uint64_t src=regions[k].srcOffset+(lo-regions[k].dstOffset);
+      if(src<snapshot_offset || src-snapshot_offset>snapshot->size || hi-lo>snapshot->size-(src-snapshot_offset))
+        die("Vulkan queued pool snapshot bounds");
+      u->regions[u->count++]=(VkBufferCopy){.srcOffset=src-snapshot_offset,
+        .dstOffset=lo-span.backing->begin,.size=hi-lo};
+      u->before|=pending_pool_stages(p,lo,hi-lo);
+      u->after|=p->access_serial==r->queue_serial?
+        access_stages(p->recording_access,lo,hi-lo):VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+      vk_buffer_transfer_written_range((uintptr_t)p->guest+lo,hi-lo);
+    }
+  }
+  if(next<0)die("Vulkan queued upload across unbacked hole");
+}
 static void sync_queued_page(pool *p,uint64_t off,size_t size) {
   // Dirty tracking is page-granular, GPU publication is byte-granular. Upload
   // only changed words; copying unchanged neighbours would overwrite queued
@@ -2196,25 +2293,10 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       }
       vk_buffer *snapshot=vk_temp_buffer(snapshot_capacity);
       memcpy(snapshot->map,p->guest+off+snapshot_offset,snapshot_size);
-      submit_resources *r=recording_resources;
-      queued_pool_upload *u=malloc(sizeof *u+count*sizeof *regions);
-      if(!u) die("Vulkan queued pool upload allocation");
-      *u=(queued_pool_upload){.source=snapshot->handle,.destination=p->buffer.handle,.count=count};
-      memcpy(u->regions,regions,count*sizeof *regions);
-      if(compact) u->regions[0].srcOffset=0;
-      *r->pool_upload_tail=u;r->pool_upload_tail=&u->next;
-      for(unsigned k=0;k<count;k++) {
-        uint64_t dst=regions[k].dstOffset,n=regions[k].size;
-        u->before|=pending_pool_stages(p,dst,n);
-        u->after|=p->access_serial==r->queue_serial?
-          access_stages(p->recording_access,dst,n):VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-        // Later command buffers may consume this range at another stage.
-        // Keep its transfer producer visible to the existing deferred checks.
-        vk_buffer_transfer_written_range((uintptr_t)p->guest+dst,n);
-      }
+      queue_pool_page_upload(p,off,size,snapshot,snapshot_offset,regions,count);
     } else {
       for(unsigned i=0;i<count;i++)
-        memcpy(p->buffer.map+regions[i].dstOffset,p->guest+regions[i].dstOffset,regions[i].size);
+        pool_spans_copy_from_guest(p,regions[i].dstOffset,regions[i].size);
     }
     for(unsigned i=0;i<count;i++)
       memcpy(p->shadow+regions[i].dstOffset,p->guest+regions[i].dstOffset,regions[i].size);
@@ -2258,7 +2340,7 @@ static void sync_page(const void *memory, size_t length, void *context) {
         vk_system_trace_end(wait_trace);
         continue;
       }
-      memcpy(p->buffer.map + off, p->guest + off, size);
+      pool_spans_copy_from_guest(p,off,size);
       memcpy(p->shadow + off, p->guest + off, size);
       pthread_mutex_unlock(&pool_publication_mu);
       break;
@@ -2271,12 +2353,12 @@ void vk_pool_sync(void) {
   uint64_t started = vk_profile_start();
   pthread_mutex_lock(&V.resources);
   size_t count = 0;
-  for (pool *p = pools; p; p = p->next) if(p->buffer.handle) count++;
+  for (pool *p = pools; p; p = p->next) if(p->backings) count++;
   pool **snapshot = count ? malloc(count * sizeof *snapshot) : NULL;
   if (count && !snapshot) die("Vulkan upload pool snapshot allocation");
   size_t n = 0;
   for (pool *p = pools; p; p = p->next) {
-    if(!p->buffer.handle) continue;
+    if(!p->backings) continue;
     pool_initialize_range(p,0,p->size);
     p->references++;
     snapshot[n++] = p;
@@ -2407,7 +2489,7 @@ static void trace_begin_submit(void) {
   }
   pthread_mutex_unlock(&trace_request_mutex);
 }
-void mtl_sub_begin(void) {
+static void begin_submission(int pool_migration) {
   mtl_init();
   vk_graphics_prewarm();
   if (V.cmd)
@@ -2455,6 +2537,7 @@ void mtl_sub_begin(void) {
   }
   pthread_mutex_lock(&completion_mu);
   recording_resources->queue_serial = queue_submitted + 1;
+  recording_resources->pool_migration=pool_migration;
   recording_resources->pending_read_size=0;
   pthread_mutex_unlock(&completion_mu);
   int pool_reference=atomic_load(&pool_sync_requested);
@@ -2491,7 +2574,7 @@ void mtl_sub_begin(void) {
   vk_texture_end_submit();
   recording_resources->texture = vk_texture_begin(recording_resources->texture);
   recording_resources->shader = vk_shader_begin(recording_resources->shader);
-  if(recording_resources->pool_sync_reference) vk_pool_sync();
+  if(recording_resources->pool_sync_reference && !pool_migration) vk_pool_sync();
   int submission_reference=atomic_load(&submission_barrier_requested);
   if(submission_reference<0) {
     const char *setting=getenv("DM_VULKAN_SUBMISSION_BARRIER_REFERENCE");
@@ -2534,6 +2617,8 @@ void mtl_sub_begin(void) {
   // Preserve pending buffer/vertex visibility across command-buffer boundaries.
   if(r->submission_barrier_reference) vk_barrier();
 }
+void mtl_sub_begin(void) { begin_submission(0); }
+
 void vk_effect_copy(void *dst, const void *src, size_t size) {
   vk_effect *e = calloc(1, sizeof *e);
   if (!e)
@@ -2631,32 +2716,32 @@ void vk_buffer_writebacks_flush(void) {
       copied=1;
       recording_resources->readback_bytes+=size;
       atomic_fetch_add(&sync_readback_ranges,1);atomic_fetch_add(&sync_readback_bytes,size);
-      vk_buffer *snapshot = temp_readback(size);
-      if(snapshot->readback&&(snapshot->properties&VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
-        atomic_fetch_add(&cached_readback_bytes,size);
-      VkBufferCopy copy = {.srcOffset = r->offset, .size = size};
-      if(!recording_resources->submission_barrier_reference) {
-        // Only this produced byte range must be ready for readback. Unrelated
-        // attachment writes need not stall this transfer or a following vertex
-        // stage. Unknown producers retain their conservative source scope.
-        VkBufferMemoryBarrier dependency={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-          .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT,
-          .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
-          .buffer=w->owner->buffer.handle,.offset=r->offset,.size=size};
-        vkCmdPipelineBarrier(V.cmd,r->producers,VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0,0,NULL,1,&dependency,0,NULL);
+      pool_span_iter it;
+      if(!pool_span_iter_begin(w->owner,r->offset,size,&it))die("Vulkan writeback bounds");
+      pool_span_piece span;int span_status;
+      while((span_status=pool_span_iter_next(&it,&span))==1) {
+        vk_buffer *snapshot=temp_readback(span.size);
+        if(snapshot->readback&&(snapshot->properties&VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
+          atomic_fetch_add(&cached_readback_bytes,span.size);
+        VkBufferCopy copy={.srcOffset=span.offset,.size=span.size};
+        if(!recording_resources->submission_barrier_reference) {
+          VkBufferMemoryBarrier dependency={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT,
+            .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+            .buffer=span.backing->buffer.handle,.offset=span.offset,.size=span.size};
+          vkCmdPipelineBarrier(V.cmd,r->producers,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0,0,NULL,1,&dependency,0,NULL);
+        }
+        // Keep logical page ownership separate from the local physical copy.
+        pthread_mutex_lock(&V.resources);
+        record_pool_access(w->owner,span.logical,span.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+        pthread_mutex_unlock(&V.resources);
+        vkCmdCopyBuffer(V.cmd,span.backing->buffer.handle,snapshot->handle,1,&copy);
+        if(recording_resources->submission_barrier_reference)vk_buffer_transfer_written();
+        vk_effect_copy(w->owner->guest+span.logical,snapshot->map,span.size);
+        vk_effect_copy(w->owner->shadow+span.logical,snapshot->map,span.size);
       }
-      // The readback copy is another GPU reader of the mirror, after its
-      // producer. Upload WAR dependencies must include TRANSFER as well.
-      pthread_mutex_lock(&V.resources);
-      record_pool_access(w->owner,r->offset,size,VK_PIPELINE_STAGE_TRANSFER_BIT);
-      pthread_mutex_unlock(&V.resources);
-      vkCmdCopyBuffer(V.cmd, w->owner->buffer.handle, snapshot->handle, 1, &copy);
-      // This destination is CPU-only, owned until its fence completes. It is
-      // not a pending vertex/uniform/indirect-buffer producer.
-      if(recording_resources->submission_barrier_reference) vk_buffer_transfer_written();
-      vk_effect_copy(w->owner->guest + r->offset, snapshot->map, size);
-      vk_effect_copy(w->owner->shadow + r->offset, snapshot->map, size);
+      if(span_status<0)die("Vulkan writeback across unbacked hole");
       writeback_range *next = r->next;
       free(r);
       r = next;
@@ -2783,7 +2868,15 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
                      .pCommandBuffers = &s->cmd,
                      .signalSemaphoreCount = signal != VK_NULL_HANDLE,
                      .pSignalSemaphores = signal ? &signal : NULL};
-  if(r->pool_sync_reference) vk_pool_sync();
+  if(r->pool_migration) {
+    if(r->writebacks || r->cpu_copies || r->pool_uploads || V.effects)
+      die("Vulkan backing migration acquired guest publication/upload effects");
+    for(pool_gpu_access *use=r->gpu_accesses;use;use=use->next) {
+      uint64_t words=((use->owner->size-1)>>(GPU_ACCESS_SHIFT+6))+1;
+      for(uint64_t word=0;word<words;word++)if(use->upload_pages[word])
+        die("Vulkan backing migration acquired CPU upload input");
+    }
+  } else if(r->pool_sync_reference) vk_pool_sync();
   else sync_used_pools();
   atomic_store(&published_upload_page_rechecks_skipped,upload_page_rechecks_skipped);
   record_pool_upload_commands();
@@ -2924,6 +3017,7 @@ void mtl_finish(void) {
   vk_system_trace_end(reset_trace);
   vk_profile_end(VK_TIME_WAIT, started);
 }
+#include "nvn_vk_pool_migration.inc"
 void mtl_drain(void) { mtl_finish(); }
 #ifdef DM_VULKAN_TEST_EMBED
 // Deterministic ownership-gap fixture only. These expose logical readiness,

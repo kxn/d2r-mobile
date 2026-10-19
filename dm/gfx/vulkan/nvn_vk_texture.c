@@ -1518,6 +1518,7 @@ typedef struct {
 } texture_binding_scope;
 static texture_binding_scope texture_binding_scopes[TEXTURE_BINDING_SCOPE_DEPTH];
 static unsigned texture_binding_scope_depth;
+int vk_texture_binding_scope_active(void) { return texture_binding_scope_depth!=0; }
 static uint64_t texture_binding_scope_clock;
 static int texture_binding_scope_overflow;
 void vk_texture_binding_scope_begin(void) {

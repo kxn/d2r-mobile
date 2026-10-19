@@ -108,6 +108,20 @@ static inline int vk_trace_frame_active(void) {
 uint32_t vk_memory_type(uint32_t bits, VkMemoryPropertyFlags flags);
 // Metadata-only proof; never uploads, records hazards, or materializes a pool.
 int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset);
+// Non-owning value snapshot for operation preflight, not permission to record
+// GPU work. Coordinates are pool-relative; local_offset is relative to handle.
+// A real address lookup still retains the pool through fence AND CPU effects.
+typedef struct vk_pool_span_info {
+  uint64_t pool_identity,pool_base,pool_size;
+  uint64_t backing_generation,logical_begin,logical_end,local_offset,size;
+  VkBuffer handle;
+} vk_pool_span_info;
+enum { VK_POOL_SPAN_NONE=0,VK_POOL_SPAN_SINGLE=1,
+       VK_POOL_SPAN_UNBACKED=2,VK_POOL_SPAN_CROSSING=3 };
+int vk_pool_span_query(uint64_t addr,uint64_t size,vk_pool_span_info *out);
+// Recording-owner idle proofs; never synchronize or end an active scope.
+int vk_shader_operation_active(void);
+int vk_texture_binding_scope_active(void);
 int vk_pool_address_stage(uint64_t addr,uint64_t size,void **buffer,uint64_t *offset,VkPipelineStageFlags stages);
 int vk_pool_address_overwrite(uint64_t addr,uint64_t size,void **buffer,uint64_t *offset,VkPipelineStageFlags stages);
 void vk_pool_overwritten(uint64_t addr,uint64_t size);

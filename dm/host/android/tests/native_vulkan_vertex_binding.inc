@@ -60,6 +60,22 @@ static void vertex_binding_ghost_test(const void *vertex,const void *fragment) {
   // bind its saved A, restore S, then the outer draw must bind B in this same
   // secondary. The three disjoint icons make stale cache state visible.
   S.vertex[0].address=(uintptr_t)storage+0x40000;vk_pipeline_state_changed();
+  pool_range_fixture requirements={.capacity=32};VkCommandBuffer current=V.cmd;
+  CHECK(vk_ghost_pool_ranges(pool_range_collect,&requirements));
+  int planned_vertex=0,planned_uniform=0;
+  for(unsigned r=0;r<requirements.count;r++) {
+    const vk_pool_requirement *need=&requirements.ranges[r];
+    if(need->binding_kind==VK_POOL_REQUIRE_VERTEX) {
+      CHECK(need->address==(uintptr_t)storage+0x30000&&need->size==80);planned_vertex++;
+    }
+    if(need->address==(uintptr_t)matrix&&need->size==64)planned_uniform++;
+  }
+  CHECK(planned_vertex==1&&planned_uniform==1);
+  CHECK(S.vertex[0].address==(uintptr_t)storage+0x40000&&V.draws==draws&&V.passes==pass&&V.cmd==current);
+  mtl_ui_ghost(0,0,0,NULL,0,0);requirements.count=0;
+  CHECK(vk_ghost_pool_ranges(pool_range_collect,&requirements));
+  CHECK(requirements.count>=2); // temporarily disabled candidates still exist
+  mtl_ui_ghost(1,.25f,.25f,grid,.75f,.75f);
   vk_ghost_flush();CHECK(V.draws==draws+1 && V.passes==pass && vk_render_active());
   float rect[4];CHECK(mtl_ui_ghost_rect(rect));mtl_ui_ghost(0,0,0,NULL,0,0);
   vk_draw(&draw,NULL);CHECK(V.draws==draws+2 && V.passes==pass);
