@@ -196,6 +196,9 @@ void vk_texture_recycle(vk_texture_submission *submission);
 void vk_texture_destroy(vk_texture_submission *submission);
 void vk_texel_view_stats(uint64_t *hits,uint64_t *creates);
 void vk_texture_dirty_stats(uint64_t *hits,uint64_t *checks);
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_texture_owned_scopes(int enabled);
+#endif
 void vk_texture_dirty_reference(int reference);
 int vk_texture_dirty_reference_mode(void);
 // Proven zero stored/sample components: RGB=7, RGBA=15, unknown=0. Missing

@@ -51,7 +51,10 @@ typedef struct image {
   VkImageAspectFlags aspect;
   uint64_t stamp;
   uint64_t checked_dirty_epoch,checked_dirty_stamp;
-  nvn_dirty_range_proof checked_dirty_range;
+  union {
+    nvn_dirty_range_proof checked_dirty_range;
+    nvn_dirty_scope_proof checked_dirty_scope;
+  };
   uint64_t last_use;
   uint64_t trace_stamp, trace_levels;
   int initialized, decoded;
@@ -836,6 +839,16 @@ static uint64_t texture_dirty_hits,texture_dirty_checks;
 static _Atomic uint64_t published_texture_dirty_hits,published_texture_dirty_checks;
 static _Atomic int texture_dirty_requested=-1,texture_dirty_active;
 static int texture_dirty_reference_active;
+// Source-only owned import experiment. No game/production selector: an owned
+// fixture must opt in before any logical image exists. Do not switch a union
+// proof's interpretation during the lifetime of an already-created image.
+static int texture_owned_scopes;
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_texture_owned_scopes(int enabled) {
+  if(images || V.cmd)die("Vulkan owned scope fixture selection after image creation");
+  texture_owned_scopes=!!enabled;
+}
+#endif
 void vk_texture_dirty_reference(int reference) { atomic_store(&texture_dirty_requested,!!reference); }
 int vk_texture_dirty_reference_mode(void) { return atomic_load(&texture_dirty_active); }
 void vk_texture_dirty_stats(uint64_t *hits,uint64_t *checks) {
@@ -859,7 +872,7 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
   const tex_t *t=&i->tex;
   // Untracked sources are always uploaded; they must not acquire a proof.
   i->checked_dirty_epoch=0;
-  i->checked_dirty_range=(nvn_dirty_range_proof){0};
+  i->checked_dirty_scope=(nvn_dirty_scope_proof){0};
   if (t->d.samples > 1 || i->aspect != VK_IMAGE_ASPECT_COLOR_BIT)
     die("Vulkan packaged depth/MS image unsupported");
   image_general_transfer(i);
@@ -942,6 +955,30 @@ static void image_upload(image *i) {
   if(i->initialized) {
     // Take the publication sequence BEFORE checking pages. A later edit
     // invalidates this proof on the next use; never advance the upload stamp.
+    if(texture_owned_scopes) {
+      // Scope refresh MUST precede every global/range negative fastreturn.
+      // Even a previously identical global epoch cannot authorize overlap or
+      // a new exclusion lifetime. Keep the actual immutable texture envelope.
+      nvn_dirty_scope_proof scope={0};uint64_t scoped_epoch=0;
+      int valid=0;
+      if(!texture_dirty_reference_active) {
+        valid=nvn_dirty_scope_refresh(t->mem,t->L.size,&i->checked_dirty_scope,&scope,&scoped_epoch);
+        if(valid && i->checked_dirty_stamp==i->stamp &&
+            scope.changes==i->checked_dirty_scope.changes &&
+            scope.exclusion_version==i->checked_dirty_scope.exclusion_version) {
+          i->checked_dirty_epoch=scoped_epoch;texture_dirty_hits++;return;
+        }
+        if(!valid)valid=nvn_dirty_scope_observe(t->mem,t->L.size,&scope,&scoped_epoch);
+      }
+      texture_dirty_checks++;
+      if(!nvn_dirty_since(t->mem,t->L.size,i->stamp)) {
+        // Only the original negative page test creates a reusable proof.
+        // Never change i->stamp: a reserved N may still publish after N+1.
+        i->checked_dirty_epoch=valid?scoped_epoch:0;i->checked_dirty_stamp=i->stamp;
+        i->checked_dirty_scope=valid?scope:(nvn_dirty_scope_proof){0};return;
+      }
+      image_upload_contents(i);return;
+    }
     uint64_t epoch=nvn_dirty_change_epoch();
     if(!texture_dirty_reference_active && epoch && i->checked_dirty_epoch==epoch &&
        i->checked_dirty_stamp==i->stamp) { texture_dirty_hits++;return; }
