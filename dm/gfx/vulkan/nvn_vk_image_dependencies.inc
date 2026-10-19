@@ -76,38 +76,9 @@ static int image_read_covered(image *i,VkImageSubresourceRange r,VkPipelineStage
   image_read_proof *p=image_read_cached(i,r);
   return p && !(stages&~(visibility?p->visible:p->readers));
 }
-static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,
-                          VkAccessFlags access,int visibility_proven) {
-  int writing=!!image_writes(access);
-  if(writing)i->cpu_rebuildable=0;
-  image_read_proof *read=writing?NULL:image_read_cached(i,r);
-  int covered=read && !(stages&~(visibility_proven?read->visible:read->readers));
-  // Keep every logical clock increment and whole-image timestamp. Cell use
-  // clocks are observed only relative to physical pass begin: once this exact
-  // covered range has been stamped after that cutoff, restamping its mips
-  // cannot change any consumer's before/after classification. A later pass
-  // cutoff includes all intervening global increments and requires a restamp.
-  if(stages) i->use_clock=++image_write_clock;
-  int mip_stamped=stages && image_mip_tracked(i) &&
-      !(r.levelCount>1 && covered && read->mip_stamp>image_pass_begin_clock);
-  // Covered reads return before the cell walk. All other accesses already
-  // visit these exact color/mip cells below; stamp them during that walk.
-  if(mip_stamped && covered)
-    for(unsigned level=r.baseMipLevel;level<r.baseMipLevel+r.levelCount;level++)
-      image_cell(i,0,level,0)->use_clock=i->use_clock;
-  if(writing && r.baseMipLevel<16) {
-    unsigned n=r.levelCount<16-r.baseMipLevel?r.levelCount:16-r.baseMipLevel;
-    i->zero_mips&=~zero_mip_mask(r.baseMipLevel,n);
-  }
-  // Repeated immutable shader bindings have the same normalized view. Retain
-  // their exact-range proof instead of walking all mips/layers for each draw.
-  // Every image write, including operation pre-clear and unknown access,
-  // invalidates it. This does not expand a reader to unrelated subresources.
-  if(writing) i->access_generation++;
-  else if(covered) {
-    if(mip_stamped && r.levelCount>1) read->mip_stamp=i->use_clock;
-    return;
-  }
+static __attribute__((noinline)) void image_record_cells(image *i,VkImageSubresourceRange r,
+    VkPipelineStageFlags stages,VkAccessFlags access,int visibility_proven,
+    image_read_proof *read,int writing,int mip_stamped) {
   for(unsigned a=0;a<3;a++) if(r.aspectMask&(1u<<a))
     for(unsigned level=r.baseMipLevel;level<r.baseMipLevel+r.levelCount;level++)
       for(unsigned layer=r.baseArrayLayer;layer<r.baseArrayLayer+r.layerCount;layer++) {
@@ -149,6 +120,40 @@ static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelin
     if(visibility_proven) read->visible|=stages;
     if(mip_stamped && r.levelCount>1) read->mip_stamp=i->use_clock;
   }
+}
+static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,
+                          VkAccessFlags access,int visibility_proven) {
+  int writing=!!image_writes(access);
+  if(writing)i->cpu_rebuildable=0;
+  image_read_proof *read=writing?NULL:image_read_cached(i,r);
+  int covered=read && !(stages&~(visibility_proven?read->visible:read->readers));
+  // Keep every logical clock increment and whole-image timestamp. Cell use
+  // clocks are observed only relative to physical pass begin: once this exact
+  // covered range has been stamped after that cutoff, restamping its mips
+  // cannot change any consumer's before/after classification. A later pass
+  // cutoff includes all intervening global increments and requires a restamp.
+  if(stages) i->use_clock=++image_write_clock;
+  int mip_stamped=stages && image_mip_tracked(i) &&
+      !(r.levelCount>1 && covered && read->mip_stamp>image_pass_begin_clock);
+  // Covered reads return before the cell walk. All other accesses already
+  // visit these exact color/mip cells below; stamp them during that walk.
+  if(mip_stamped && covered)
+    for(unsigned level=r.baseMipLevel;level<r.baseMipLevel+r.levelCount;level++)
+      image_cell(i,0,level,0)->use_clock=i->use_clock;
+  if(writing && r.baseMipLevel<16) {
+    unsigned n=r.levelCount<16-r.baseMipLevel?r.levelCount:16-r.baseMipLevel;
+    i->zero_mips&=~zero_mip_mask(r.baseMipLevel,n);
+  }
+  // Repeated immutable shader bindings have the same normalized view. Retain
+  // their exact-range proof instead of walking all mips/layers for each draw.
+  // Every image write, including operation pre-clear and unknown access,
+  // invalidates it. This does not expand a reader to unrelated subresources.
+  if(writing) i->access_generation++;
+  else if(covered) {
+    if(mip_stamped && r.levelCount>1) read->mip_stamp=i->use_clock;
+    return;
+  }
+  image_record_cells(i,r,stages,access,visibility_proven,read,writing,mip_stamped);
 }
 // Non-request callers still supply arbitrary view/layer ranges, so retain the
 // depth/stencil coupling, 3D slice mapping and bounds checks at that boundary.
