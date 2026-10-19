@@ -75,7 +75,7 @@ static int pool_migrate_whole_quiescent(uint64_t address) {
   }
   pool_span_chain_destroy(p,original);
   p->whole=replacement;p->backings=&p->whole;p->backing_generation=replacement.generation;
-  p->cpu_copy_requires_gpu=1;
+  pool_cpu_migrated(p);
   p->access_serial=0;p->recording_access=NULL;
   if(atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release)==UINT64_MAX)
     die("Vulkan migration pool registry epoch overflow");
@@ -86,7 +86,9 @@ static int pool_migrate_whole_quiescent(uint64_t address) {
   // Old physical histories cannot prove a named dependency on the new buffer.
   // Retain a conservative logical transfer producer (no recording owner), not
   // stale VkBuffer identity. Other pools' histories remain fully represented.
+  pool_cpu_preserving++;
   vertex_buffer_produced(address,migrated_size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  pool_cpu_preserving--;
   return 1;
 }
 #ifdef DM_VULKAN_TEST_EMBED

@@ -23,6 +23,7 @@ vk_context V = {.resources = PTHREAD_MUTEX_INITIALIZER,
                 .queue_mu = PTHREAD_MUTEX_INITIALIZER,
                 .present_queue_mu = PTHREAD_MUTEX_INITIALIZER};
 typedef struct pool_gpu_access pool_gpu_access;
+typedef struct pool_cpu_authority pool_cpu_authority;
 typedef struct pool_backing_span {
   struct pool_backing_span *next;
   uint64_t begin,end,generation;
@@ -48,11 +49,12 @@ typedef struct pool {
   // maintenance may replace them with a sticky whole backing.
   pool_backing_span whole,*backings;
   uint64_t backing_generation;
-  // Whole migration preserves GPU bytes that need not equal guest/shadow.
-  // Until a future range-authority proof exists, source copies from this pool
-  // must use their actual GPU result instead of publishing a shadow snapshot.
-  int cpu_copy_requires_gpu;
+  // Tracking starts with window-mode pool creation, before any buffer writer.
+  // The legacy flag is only a fail-closed fallback for untracked migration/OOM.
+  int cpu_copy_requires_gpu,cpu_authority_tracking;
+  pool_cpu_authority *cpu_authority;
 } pool;
+#include "nvn_vk_cpu_authority.inc"
 // 上传按最多 4 KiB 的连续段复制，GPU 使用也按页保守记录；不扫描每次绑定的字节区间链。
 // Uploads copy spans of at most 4 KiB. Conservatively index GPU use by page,
 // rather than walking a growing byte-interval list for every buffer binding.
@@ -84,6 +86,7 @@ typedef struct writeback_range {
   struct writeback_range *next;
   uint64_t offset, end;
   const uint8_t *known;
+  uint64_t known_cutoff;
   VkPipelineStageFlags producers;
 } writeback_range;
 typedef struct pool_writeback {
@@ -91,6 +94,25 @@ typedef struct pool_writeback {
   pool *owner;
   writeback_range *ranges;
 } pool_writeback;
+static void pool_cpu_published_ranges(void *context) {
+  pool_writeback *w=context;
+  // All guest+shadow memcpy effects precede callbacks, and the submission's
+  // original GPU-use references retain this logical pool until callbacks end.
+  while(w->ranges) {
+    writeback_range *r=w->ranges;w->ranges=r->next;
+    pool_cpu_synced(w->owner,r->offset,r->end-r->offset,r->known_cutoff);free(r);
+  }
+  free(w);
+}
+static void pool_cpu_publish_ranges(pool_writeback *w) {
+  if(w->owner->cpu_authority_tracking || w->owner->cpu_copy_requires_gpu)
+    vk_completion(pool_cpu_published_ranges,w);
+  else {
+    // Default whole mode retains original immediate freeing/no authority map.
+    while(w->ranges) {writeback_range *r=w->ranges;w->ranges=r->next;free(r);}
+    free(w);
+  }
+}
 typedef struct {
   uint64_t address, size;
 } cpu_write_range;
@@ -257,6 +279,7 @@ typedef struct submit_resources {
   queued_pool_upload **pool_upload_tail;
   int pool_sync_reference,cpu_copy_reference,submission_barrier_reference;
   int pool_lookup_reference;
+  uint64_t cpu_authority_begin;
   // Isolated GPU-only backing migration: never upload guest/shadow over source GPU bytes.
   int pool_migration;
   int upload_scan_reference;
@@ -1363,6 +1386,9 @@ static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
       if(hi>p->size) hi=p->size;
       pool_spans_copy_from_guest(p,lo,hi-lo);
       memcpy(p->shadow+lo,p->guest+lo,hi-lo);
+      // The unset initialized bit proves this page has never been exposed to
+      // a GPU binding, including before a canonical backing migration.
+      pool_cpu_synced(p,lo,hi-lo,UINT64_MAX);
       p->initialized_bytes+=hi-lo;
       uint64_t run=(UINT64_MAX<<bit)&(UINT64_MAX>>(63-end));
       p->initialized_pages[word]|=run;missing&=~run;
@@ -1403,6 +1429,7 @@ void mtl_pool_add(const void *mem, uint64_t size) {
   pool *p = calloc(1, sizeof *p);
   if (!p || !size) die("Vulkan pool allocation");
   p->guest = (uint8_t *)mem;p->size = size;
+  p->cpu_authority_tracking=V.options.pool_window_bytes!=0;
   pthread_mutex_lock(&V.resources);
   for (pool *v = pools; v; v = v->next)
     if ((uintptr_t)mem < (uintptr_t)v->guest + v->size &&
@@ -1432,6 +1459,7 @@ void mtl_pool_del(const void *mem) {
     die("Vulkan pool registry epoch overflow");
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
   pool_spans_destroy(p);
+  free(p->cpu_authority);
   free(p->shadow);
   free(p->page_upload_stamps);
   free(p->initialized_pages);
@@ -1846,6 +1874,19 @@ void vk_buffer_vertex_require(uint64_t address,uint64_t size) {
   vk_buffer_shader_read(address,size,
       VK_PIPELINE_STAGE_VERTEX_INPUT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT);
 }
+static void buffer_cpu_written(pool *owner,uint64_t address,uint64_t size) {
+  if(pool_cpu_preserving)return;
+  if(owner)pool_cpu_written(owner,address-(uintptr_t)owner->guest,size);
+  else if(recording_resources) {
+    // Removed/recreated guest addresses can be ambiguous. Every intersecting
+    // context-retained owner loses authority; never guess one physical pool.
+    for(pool_gpu_access *use=recording_resources->gpu_accesses;use;use=use->next) {
+      pool *p=use->owner;uint64_t base=(uintptr_t)p->guest;
+      uint64_t lo=address>base?address:base,hi=address+size<base+p->size?address+size:base+p->size;
+      if(lo<hi)pool_cpu_written(p,lo-base,hi-lo);
+    }
+  }
+}
 static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStageFlags producers) {
   if(!address||!size) return;
   if(size>UINT64_MAX-address) die("Vulkan buffer producer range overflow");
@@ -1855,6 +1896,7 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   buffer_common_visible=0;
   vertex_visibility_pending=1;
   pool *owner=buffer_recording_owner(address,size);
+  buffer_cpu_written(owner,address,size);
   pool_span_piece span;
   int backed=owner&&pool_span_resolve(owner,address-(uintptr_t)owner->guest,size,&span);
   uint64_t identity=backed?owner->identity:0,generation=backed?span.backing->generation:0;
@@ -1902,8 +1944,11 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   vertex_buffer_writes[at].visible=0;vertex_buffer_write_count++;
 }
 void vk_buffer_transfer_written_range(uint64_t address,uint64_t size) {
-  if(recording_resources->submission_barrier_reference) buffer_transfer_pending=1;
-  else vertex_buffer_produced(address,size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  if(recording_resources->submission_barrier_reference) {
+    pool *owner=buffer_recording_owner(address,size);
+    buffer_cpu_written(owner,address,size);
+    buffer_transfer_pending=1;
+  } else vertex_buffer_produced(address,size,VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
 void vk_buffer_shader_written(uint64_t address,uint64_t size,VkPipelineStageFlags stages) {
   vertex_buffer_produced(address,size,stages);
@@ -2298,7 +2343,9 @@ static void queue_pool_page_upload(pool *p,uint64_t off,size_t size,const vk_buf
       u->before|=pending_pool_stages(p,lo,hi-lo);
       u->after|=p->access_serial==r->queue_serial?
         access_stages(p->recording_access,lo,hi-lo):VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+      pool_cpu_preserving++;
       vk_buffer_transfer_written_range((uintptr_t)p->guest+lo,hi-lo);
+      pool_cpu_preserving--;
     }
   }
   if(next<0)die("Vulkan queued upload across unbacked hole");
@@ -2362,8 +2409,10 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       for(unsigned i=0;i<count;i++)
         pool_spans_copy_from_guest(p,regions[i].dstOffset,regions[i].size);
     }
-    for(unsigned i=0;i<count;i++)
+    for(unsigned i=0;i<count;i++) {
       memcpy(p->shadow+regions[i].dstOffset,p->guest+regions[i].dstOffset,regions[i].size);
+      pool_cpu_synced(p,regions[i].dstOffset,regions[i].size,recording_resources->cpu_authority_begin);
+    }
     pthread_mutex_unlock(&pool_publication_mu);return;
   }
 }
@@ -2406,6 +2455,7 @@ static void sync_page(const void *memory, size_t length, void *context) {
       }
       pool_spans_copy_from_guest(p,off,size);
       memcpy(p->shadow + off, p->guest + off, size);
+      pool_cpu_synced(p,off,size,recording_resources?recording_resources->cpu_authority_begin:0);
       pthread_mutex_unlock(&pool_publication_mu);
       break;
     }
@@ -2607,6 +2657,7 @@ static void begin_submission(int pool_migration) {
   pthread_mutex_lock(&completion_mu);
   recording_resources->queue_serial = queue_submitted + 1;
   recording_resources->pool_migration=pool_migration;
+  recording_resources->cpu_authority_begin=V.options.pool_window_bytes?pool_cpu_cutoff():0;
   recording_resources->pending_read_size=0;
   pthread_mutex_unlock(&completion_mu);
   int pool_reference=atomic_load(&pool_sync_requested);
@@ -2710,6 +2761,8 @@ static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,
   pool_materialize(p);
   uint64_t off = dst - (uintptr_t)p->guest;
   pool_initialize_range(p,off,size);
+  pool_cpu_written(p,off,size);
+  uint64_t known_cutoff=known&&(p->cpu_authority_tracking||p->cpu_copy_requires_gpu)?pool_cpu_cutoff():0;
   record_pool_access(p, off, size,producers);
   pool_writeback *w = recording_resources->writebacks;
   while (w && w->owner != p) w = w->next;
@@ -2739,7 +2792,8 @@ static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,
   // Merging a partial/adjacent write must invalidate the complete proof. A new
   // known write may replace an old interval only when it covers their union.
   if(off!=known_offset||end!=known_end) known=NULL;
-  *r = (writeback_range){.next=*at,.offset=off,.end=end,.known=known,.producers=producers};
+  *r = (writeback_range){.next=*at,.offset=off,.end=end,.known=known,
+    .known_cutoff=known?known_cutoff:0,.producers=producers};
   *at = r;
   pthread_mutex_unlock(&V.resources);
 }
@@ -2780,7 +2834,7 @@ void vk_buffer_writebacks_flush(void) {
         vk_effect_copy(w->owner->guest+r->offset,r->known,size);
         vk_effect_copy(w->owner->shadow+r->offset,r->known,size);
         atomic_fetch_add(&cpu_copy_published,size);
-        writeback_range *next=r->next;free(r);r=next;continue;
+        r=r->next;continue;
       }
       copied=1;
       recording_resources->readback_bytes+=size;
@@ -2811,11 +2865,12 @@ void vk_buffer_writebacks_flush(void) {
         vk_effect_copy(w->owner->shadow+span.logical,snapshot->map,span.size);
       }
       if(span_status<0)die("Vulkan writeback across unbacked hole");
-      writeback_range *next = r->next;
-      free(r);
-      r = next;
+      // Unlike a known CPU value captured at its original copy, a GPU
+      // readback snapshots every earlier writer at this physical command.
+      r->known_cutoff=(w->owner->cpu_authority_tracking||w->owner->cpu_copy_requires_gpu)?pool_cpu_cutoff():0;
+      r=r->next;
     }
-    free(w);
+    pool_cpu_publish_ranges(w);
   }
   VkMemoryBarrier host_read = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
       .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
@@ -2849,7 +2904,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
     if(!vk_pool_pending_writes(src,size)) {
       pthread_mutex_lock(&V.resources);
       pool *source=pool_find(src,size);
-      if(source && !source->cpu_copy_requires_gpu) {
+      if(source && pool_cpu_copy_proven(source,src-(uintptr_t)source->guest,size)) {
         pending_cpu_copy *copy=malloc(sizeof *copy);
         if(!copy) die("Vulkan known copy source allocation");
         uint8_t *snapshot=cpu_copy_allocate(size);

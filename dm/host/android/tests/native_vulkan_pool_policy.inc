@@ -82,6 +82,120 @@ static void pool_window_ghost_promotion_test(const void *vertex,const void *frag
   LOG("[vulkan production pool windows] pending original ghost survives explicit pass/submission/whole migration before restored outer draw");
 }
 
+static void pool_authority_copy_case(uint8_t *source,uint8_t *dest,unsigned size,const void *expected,int known) {
+  uint64_t snapshots,published,fallbacks,after_snapshots,after_published,after_fallbacks;int reference,after_reference;
+  vk_cpu_copy_stats(&snapshots,&published,&fallbacks,&reference);
+  mtl_sub_begin();mtl_sub_copy((uintptr_t)source,(uintptr_t)dest,size);
+  vk_cpu_copy_stats(&after_snapshots,&after_published,&after_fallbacks,&after_reference);
+  CHECK(after_reference==reference);
+  if(!reference) {
+    CHECK(after_snapshots-snapshots==(known?size:0));
+    CHECK(after_fallbacks-fallbacks==(known?0:size));
+  }
+  vk_internal_wait(vk_internal_commit());CHECK(!memcmp(expected,dest,size));
+}
+static void pool_authority_regression(uint8_t *source,uint8_t *dest) {
+  enum {window=65536};uint8_t *a=source+2*window+8,*out=dest+10*window+4096;
+  uint8_t expected[64];uint32_t value;
+  // The original preceding32B test still requires the real GPU-only bytes.
+  // A disjoint readonly CPU source must regain the snapshot path immediately,
+  // even though this same physical pool has migrated and contains unknown16B.
+  memcpy(expected,source+2*window+128,64);
+  pool_authority_copy_case(source+2*window+128,out,64,expected,1);
+  mtl_sub_begin();vk_buffer_writeback_stage((uintptr_t)a,16,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_internal_wait(vk_internal_commit());memcpy(expected,a,16);
+  pool_authority_copy_case(a,out,16,expected,1);
+  value=0x10203040;mtl_sub_begin();pool_window_fill(a,4,value);vk_internal_wait(vk_internal_commit());
+  memcpy(expected,&value,4);memcpy(expected+4,a+4,12);
+  pool_authority_copy_case(a,out,16,expected,0);
+  pool_authority_copy_case(a+4,out+32,12,expected+4,1);
+
+  // A known-value effect represents its original COPY, not any later GPU-only
+  // write in the same CB. A flush-time generation would incorrectly wash out
+  // this writer when the old known snapshot is published into guest/shadow.
+  memcpy(expected,source+2*window+128,16);value=0x33445566;
+  mtl_sub_begin();mtl_sub_copy((uintptr_t)source+2*window+128,(uintptr_t)a,16);
+  pool_window_fill(a,4,value);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(a,expected,16));memcpy(expected,&value,4);
+  pool_authority_copy_case(a,out,16,expected,0);
+
+  // Likewise, a real GPU snapshot taken by an early flush cannot certify the
+  // later writer. Its old publication remains visible to CPU until NVN asks
+  // for a true later result; the next COPY must use current physical bytes.
+  uint32_t before=0x76543210,after=0xa1b2c3d4;
+  mtl_sub_begin();pool_window_fill(a,16,before);
+  vk_buffer_writeback_stage((uintptr_t)a,16,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_buffer_writebacks_flush();pool_window_fill(a,4,after);
+  vk_internal_wait(vk_internal_commit());
+  for(unsigned k=0;k<16;k++)CHECK(a[k]==((uint8_t *)&before)[k%4]);
+  for(unsigned k=0;k<16;k++)expected[k]=((uint8_t *)&before)[k%4];memcpy(expected,&after,4);
+  pool_authority_copy_case(a,out,16,expected,0);
+  // Only the changed CPU word is uploaded. It supersedes the old unknown GPU
+  // value, while unchanged neighboring bytes remain the actual GPU contents.
+  value=0x89abcdef;dm_guest_write_prepare(a,4);memcpy(a,&value,4);memcpy(expected,&value,4);
+  pool_authority_copy_case(a,out,16,expected,0); // selected before commit/upload
+  pool_authority_copy_case(a,out,16,expected,1); // exact upload now proved it
+
+  // Queued CPU uploads precede the MAIN command buffer. Publishing changed
+  // bytes must not certify a later-recorded main writer at the same address.
+  value=0x0badcafe;dm_guest_write_prepare(a,4);memcpy(a,&value,4);
+  after=0xdecaf123;memcpy(expected,&after,4);
+  mtl_sub_begin();pool_window_fill(a,4,after);
+  mtl_sub_copy((uintptr_t)a,(uintptr_t)out,16);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(expected,out,16));
+  pool_authority_copy_case(a,out,16,expected,0);
+
+  // At the exact interval limit, a changed CPU subrange would require257
+  // entries. Declining that clear is conservative: the physical CPU upload
+  // still happens, but the subsequent source must use a true GPU snapshot.
+  uint8_t *capacity;CHECK(!posix_memalign((void **)&capacity,window,window));
+  dm_guest_write_prepare(capacity,window);memset(capacity,0x29,window);mtl_pool_add(capacity,window);
+  mtl_sub_begin();mtl_sub_copy((uintptr_t)capacity,(uintptr_t)out,64);
+  pool_window_fill(capacity,16,0x11223344);
+  for(unsigned k=0;k<255;k++)pool_window_fill(capacity+64+k*8,4,0x77770000+k);
+  vk_internal_wait(vk_internal_commit());
+  value=0x87654321;dm_guest_write_prepare(capacity+4,4);memcpy(capacity+4,&value,4);
+  pool_authority_copy_case(capacity+4,out,4,&value,0);
+  // The serial/global-barrier reference intentionally uploads the complete
+  // changed page, so it can prove the whole page rather than split an entry.
+  int sparse_upload=vk_async_submissions() && vk_submission_barrier_mode()==0;
+  pool_authority_copy_case(capacity+4,out,4,&value,!sparse_upload);
+  mtl_sub_begin();vk_buffer_writeback_stage((uintptr_t)capacity+4,4,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_internal_wait(vk_internal_commit());pool_authority_copy_case(capacity+4,out,4,&value,1);
+  mtl_pool_del(capacity);free(capacity);
+
+  // Finite interval capacity may discard precision, never an unknown byte.
+  // The formerly known source was already initialized, so a new cold-page
+  // initialization cannot accidentally mask this overflow negative control.
+  mtl_sub_begin();for(unsigned k=0;k<257;k++)pool_window_fill(source+3*window+k*8,4,0x55550000+k);
+  vk_internal_wait(vk_internal_commit());memcpy(expected,source+2*window+128,64);
+  pool_authority_copy_case(source+2*window+128,out,64,expected,0);
+  mtl_sub_begin();vk_buffer_writeback_stage((uintptr_t)source+2*window+128,64,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_internal_wait(vk_internal_commit());
+  pool_authority_copy_case(source+2*window+128,out,64,expected,1);
+
+  if(vk_async_submissions() && V.timeline_semaphore) {
+    VkSemaphoreTypeCreateInfoKHR type={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR,
+      .semaphoreType=VK_SEMAPHORE_TYPE_TIMELINE_KHR};
+    VkSemaphoreCreateInfo create={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,.pNext=&type};VkSemaphore gate;
+    VK_CHECK(vkCreateSemaphore(V.device,&create,NULL,&gate));uint64_t one=1;
+    VkTimelineSemaphoreSubmitInfoKHR timeline={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
+      .waitSemaphoreValueCount=1,.pWaitSemaphoreValues=&one};VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkSubmitInfo block={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.pNext=&timeline,
+      .waitSemaphoreCount=1,.pWaitSemaphores=&gate,.pWaitDstStageMask=&stage};
+    pthread_mutex_lock(&V.queue_mu);VK_CHECK(vkQueueSubmit(V.queue,1,&block,VK_NULL_HANDLE));pthread_mutex_unlock(&V.queue_mu);
+    a=source+2*window+128;before=0x12345678;after=0x91a2b3c4;
+    mtl_sub_begin();pool_window_fill(a,16,before);vk_buffer_writeback_stage((uintptr_t)a,16,VK_PIPELINE_STAGE_TRANSFER_BIT);
+    uint64_t first=vk_internal_commit();CHECK(vk_completed_serial()<first);
+    mtl_sub_begin();pool_window_fill(a,4,after);uint64_t second=vk_internal_commit();
+    CHECK(vk_completed_serial()<first);
+    VkSemaphoreSignalInfoKHR signal={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO_KHR,.semaphore=gate,.value=1};
+    VK_CHECK(V.signal_timeline(V.device,&signal));vk_internal_wait(second);mtl_finish();vkDestroySemaphore(V.device,gate,NULL);
+    for(unsigned k=0;k<16;k++)expected[k]=((uint8_t *)&before)[k%4];memcpy(expected,&after,4);
+    pool_authority_copy_case(a,out,16,expected,0);
+  }
+  LOG("[vulkan pool CPU authority fixture] original stale bytes, adjacent known sources, exact publication/CPU upload recovery, same-CB known/readback and CPU-upload cutoffs, bounded overflow/split refusal and newer in-flight writer passed");
+}
 static void pool_window_production_test(const void *vertex,const void *uniform,
     const void *readonly,const void *compute) {
   enum {window=65536,bytes=4<<20};
@@ -116,6 +230,7 @@ static void pool_window_production_test(const void *vertex,const void *uniform,
   CHECK(a.logical_begin==0&&a.logical_end==bytes&&a.handle!=b.handle);
   vk_stream_end();vk_internal_wait(vk_internal_commit());
   CHECK(!memcmp(expected,dest+10*window+1024,sizeof expected));
+  pool_authority_regression(source,dest);
   // Full reference must migrate the unrelated partial destination BEFORE
   // begin_submission's eager sync, not discover its holes during a draw.
   vk_pool_sync_reference(1);mtl_sub_begin();

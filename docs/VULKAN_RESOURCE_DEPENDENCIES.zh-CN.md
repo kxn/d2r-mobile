@@ -1619,6 +1619,8 @@ SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Bus
 
 原报告 `pool-window-production-v1-q-comparison.json`、`pool-window-production-v1-q-frequency-comparison.json` 保留全部输入和失败尝试。待修复迁移后的额外回读，再核对 Mali 的真实内存；不能将高通的 extent/PSS 关系直接推广到不同驱动。
 
+额外回读的后续修复已按范围接入：启动窗口池从首次 GPU buffer writer 起保存 CPU shadow 未获证明的字节区间；旧完成回写只清除其实际快照代数之前的重叠段，后写的字节和未同步邻居仍未知。CPU 上传只证明本次提交开始前的写入，迁移本身不制造新的未知数据。原 GPU-only 迁移字节、精确部分发布、同命令缓冲的晚写、旧在途发布、CPU 上传及满表拒绝拆分均有实际 GPU 负例；独立异步 21,810,491、同步 21,711,079 项通过，合入主线后的异步同样通过且零 VUID/SYNC。每个实际写入的窗口池懒分配 6,152 B、有界区间表和互斥；pool 增加 8 B、写回节点增加 8 B，并增加每个受追踪池每次 flush 的 56 B 完成回调。普通整池不分配区间表。该修复尚无真机新对照，不把它算成已降低的实际 DRAM、PSS 或 CPU 耗时；它也没有扩大 `try_read/cover_read` 的 CPU 可读证明。
+
 ### 带宽与发热的优先级
 
 外部 DRAM 未饱和只约束吞吐瓶颈判断，不排除访存的能耗成本。继续优先减少中间附件外存往返、不必要的上传/回读与复制，并分别记录逻辑工作量、原厂硬件外存流量、整帧表现和持续热状态。当前同像素 input attachment/subpass 的实际 renderer 与模块变体仍在隔离实现，尚未装机，不能提前计入上述内存候选的收益。源附件仍有后续使用时保留 STORE，实际 tile 合并与净流量变化须由真机工具验证。
