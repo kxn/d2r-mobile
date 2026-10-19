@@ -1,8 +1,40 @@
+static vk_pool_requirement pool_window_need(uint8_t *,uint64_t,int,VkPipelineStageFlags,uint64_t);
+static void pool_window_read(uint8_t *,unsigned,uint8_t *);
 static void dirty_range_fill(uint8_t *,size_t,const uint8_t[4]);
 // Original NVN API + unchanged pixel oracle, borrowed 2MiB pool / 64KiB nodes.
 // No attach API, guest allocator, synthetic time or driver capability injection.
+// Legacy metadata-only pools can be untracked (including dirty registry
+// capacity fallback) while adjacent upload pages live in distinct mirrors.
+// Keep the original whole visitor callback and original GPU copies intact.
+static void borrowed_untracked_mirror_fallback_test(void) {
+  enum { W=65536, N=2*W };uint8_t *memory;
+  CHECK(!posix_memalign((void **)&memory,W,N));
+  for(unsigned i=0;i<N;i++)memory[i]=(uint8_t)(i*17+(i/4096)*11+0x37);
+  CHECK(!nvn_dirty_tracked(memory,N));mtl_pool_add(memory,N);
+  vk_pool_requirement needs[]={
+    pool_window_need(memory+W-4096,4096,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0),
+    pool_window_need(memory+W,4096,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0)};
+  vk_pool_reserve_result result;vk_pool_span_info a,b;
+  CHECK(vk_pool_reserve_ranges(needs,2,W,&result)==VK_POOL_RESERVE_OK && result.added_spans==2);
+  CHECK(vk_pool_span_query(needs[0].address,4096,&a)==VK_POOL_SPAN_SINGLE);
+  CHECK(vk_pool_span_query(needs[1].address,4096,&b)==VK_POOL_SPAN_SINGLE);
+  CHECK(a.handle!=b.handle && a.logical_end==b.logical_begin);
+  CHECK(!vk_test_pool_owned_properties(needs[0].address) && !vk_test_pool_owned_properties(needs[1].address));
+  uint8_t actual[8192];
+  for(unsigned round=0;round<2;round++) {
+    if(round)for(unsigned i=0;i<8192;i++)memory[W-4096+i]^=(uint8_t)(0xa5+i);
+    mtl_sub_begin();int op=vk_pool_operation_begin_ranges(needs,2);
+    pool_window_read(memory+W-4096,4096,actual);pool_window_read(memory+W,4096,actual+4096);
+    vk_pool_operation_end(op);vk_internal_wait(vk_internal_commit());
+    for(unsigned i=0;i<8192;i++)CHECK(actual[i]==memory[W-4096+i]);
+    CHECK(!nvn_dirty_tracked(memory,N));
+  }
+  mtl_pool_del(memory);free(memory);
+  LOG("[borrowed ordinary mirror fallback] untracked adjacent independent mirrors, combined visitor run and later CPU edits preserve original GPU bytes");
+}
 static int borrowed_nvn_windows_test(void) {
   mtl_init();CHECK(vk_test_pool_owned_supported());CHECK(dm_gfx_borrow_async_ready());
+  if(getenv("DM_BORROWED_NVN_MIRROR_FALLBACK_FIXTURE")) {borrowed_untracked_mirror_fallback_test();return 0;}
   borrowed_gpu_fixture f={0};uint8_t vertex[0x880]={0},fragment[0x880];memset(fragment,39,sizeof fragment);
   NVNshaderData shaders[]={{.control=vertex},{.control=fragment}};
   CHECK(CALL(nvnProgramInitialize,&f.program,&device));CHECK(CALL(nvnProgramSetShaders,&f.program,2,shaders));
