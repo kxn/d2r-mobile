@@ -84,7 +84,7 @@ class EmptyPixelLocalDeployment(unittest.TestCase):
             self.assertTrue(self.valid(self.paired))
 
     def test_all_header_fields_and_exact_empty_extent_are_checked(self):
-        for offset, value in [(0,0), (4,2), (8,196), (12,0), (12,2), (16,0),
+        for offset, value in [(0,0), (4,wire.VERSION+1), (8,196), (12,0), (12,2), (16,0),
                               (20,1), (24,188), (28,1)]:
             payload = bytearray(self.empty[2]); struct.pack_into('<I', payload, offset, value)
             with self.subTest(offset=offset, value=value), self.assertRaises(SystemExit):
@@ -92,6 +92,16 @@ class EmptyPixelLocalDeployment(unittest.TestCase):
         for payload in (self.empty[2][:-1], self.empty[2]+bytes(4)):
             with self.subTest(size=len(payload)), self.assertRaises(SystemExit):
                 self.valid(self.reseal(self.empty, payload))
+
+    def test_wire_and_reflection_schema_are_independent(self):
+        self.assertEqual(wire.VERSION,2);self.assertEqual(policy.VERSION,1)
+        self.assertTrue(self.valid())
+        fixture=copy.deepcopy(self.empty);fixture[1]['pixel_local_runtime']['schema']=1
+        with self.assertRaises(SystemExit):self.valid(fixture)
+        fixture=copy.deepcopy(self.empty);fixture[1]['pixel_local']['schema']=2
+        with self.assertRaises(SystemExit):self.valid(fixture)
+        payload=bytearray(self.empty[2]);struct.pack_into('<I',payload,4,1)
+        with self.assertRaises(SystemExit):self.valid(self.reseal(self.empty,bytes(payload)))
 
     def test_five_member_closure_including_absent_members_is_checked(self):
         for slot in range(5):

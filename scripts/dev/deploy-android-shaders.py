@@ -41,6 +41,7 @@ def verify_empty_pixel_local(blobs, reflection, payload, report_data, stage, des
     records always use the original independent regeneration below.
     """
     from dmsh_pixel_local_wire import actual_modules, MAGIC, VERSION, HEADER_BYTES, SUFFIXES
+    from dmsh_pixel_local import VERSION as REFLECTION_VERSION
     declared = reflection.get('pixel_local_runtime', {})
     if type(declared.get('records')) is not int or declared['records'] != 0:
         return False
@@ -61,18 +62,18 @@ def verify_empty_pixel_local(blobs, reflection, payload, report_data, stage, des
                          'records': 0, 'source_modules': module_hashes},
             'empty pixel-local source module closure mismatch')
     require(reflection.get('pixel_local') == {
-                'schema': VERSION, 'sha256': hashlib.sha256(report_data).hexdigest()},
+                'schema': REFLECTION_VERSION, 'sha256': hashlib.sha256(report_data).hexdigest()},
             'empty pixel-local reflection hash mismatch')
     report = json.loads(report_data)
     require(set(report) == {'schema', 'closure_verified', 'consumer_rule', 'artifacts', 'modules'} and
-            report['schema'] == VERSION and report['closure_verified'] is True and
+            report['schema'] == REFLECTION_VERSION and report['closure_verified'] is True and
             report['consumer_rule'] == 'exact module SHA only; do not reuse base proof for alternatives' and
             report['artifacts'] == {s: hashlib.sha256(code).hexdigest() for s, code in blobs.items()} and
             isinstance(report['modules'], dict) and set(report['modules']) == set(modules),
             'empty pixel-local reflection closure mismatch')
     for name, digest in module_hashes.items():
         entry = report['modules'][name]
-        require(isinstance(entry, dict) and entry.get('schema') == VERSION and
+        require(isinstance(entry, dict) and entry.get('schema') == REFLECTION_VERSION and
                 entry.get('source_sha256') == digest,
                 'empty pixel-local reflection source mismatch')
     base = report['modules']['base']
