@@ -701,6 +701,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   if(pool_host_import) {
     setenv("DM_POOL_HOST_READONLY_FIXTURE", "1", 1);
     setenv("DM_VULKAN_POOL_HOST_READONLY", "1", 1);
+    setenv("DM_VULKAN_POOL_COPY_ACCOUNTING", "1", 1);
     setenv("DM_VULKAN_POOL_WINDOW_BYTES", "4096", 1);
   }
   if (host_import || pool_host_import) {

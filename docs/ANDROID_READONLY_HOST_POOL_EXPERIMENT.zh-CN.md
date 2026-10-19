@@ -39,3 +39,12 @@ Android 普通 app UID 的显式入口：`run_game=false, run_vulkan_tests=true,
 已验证：CPU→GPU 读取、fence 后 CPU 重写、同页不重叠 CPU/GPU 访问、写用途的预借用镜像转换、host event/counter 目的转换、imported 来源的已知值回退、queued 使用后销毁与原映射存活。该入口没有帧率计时、采样器或性能结论。
 
 预算拒绝和合成分配失败注入已有独立功能检查，注入结果不能充当 KGSL 内核错误证据。剩余门槛：审查所有隐式 writer/CPU effect 入口、真实 KGSL 已保护页失败的具体错误和 sticky 路线，以及 Android 新 NVN 窗口 fixture。未完成前不接真实游戏、不默认开启。
+
+
+## 拷贝计数与受保护页边界
+
+`initial_mirror_bytes` 只累加实际执行 memcpy 的普通镜像段；imported 段为零，首次 CPU shadow 保留并独立记入 `initial_shadow_bytes`。只读→镜像交接的两份实际拷贝也分别记入 `mirror_bytes` / `shadow_bytes`。功能入口显式启用既有 copy accounting，不把这些逻辑字节称为 DRAM 流量。
+
+额外功能案例仅对测试自行 mmap 的有限页调用原 `nvn_dirty_protect`，在首次 Buffer 使用前形成只读页；实际 writable host import 只尝试一次，失败则镜像，重复使用不重试。该测试既不访问游戏地址空间，也不整体解保护或改用其他 ioctl。驱动可以合法接受或拒绝这种映射；结果必须记录实际 VkResult/驱动诊断，不能把 Lavapipe 的接受推断成 KGSL 的接受。普通 NVN Finalize 保留其原有页保护清理。
+
+无 validation layer 时，若驱动支持 `VK_EXT_debug_utils`，实验启用官方驱动诊断 callback 以保留原始错误原因；这不是 VUID/同步验证覆盖。若驱动不支持 debug-utils，不影响 Buffer fallback 逻辑，也不得伪造底层 errno。

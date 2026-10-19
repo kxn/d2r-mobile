@@ -151,7 +151,9 @@ static int pool_host_demote(uint64_t address,uint64_t size) {
   pool_backing_span replacement={0};VK_CHECK(pool_span_try_allocate(&replacement,begin,end));
   pthread_mutex_lock(&pool_publication_mu);
   memcpy(replacement.buffer.map,owner->guest+begin,end-begin);
+  POOL_COPY_ADD(mirror_bytes,end-begin);
   pool_materialize_metadata(owner);memcpy(owner->shadow+begin,owner->guest+begin,end-begin);
+  POOL_COPY_ADD(shadow_bytes,end-begin);
   pthread_mutex_unlock(&pool_publication_mu);
   vk_buffer prior=old.backing->buffer;old.backing->buffer=replacement.buffer;
   old.backing->generation=++owner->backing_generation;

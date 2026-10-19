@@ -1203,6 +1203,12 @@ static void init_options(void) {
   o->frame_dump=option_string("DM_VULKAN_FRAME_DUMP");
   const char *at=getenv("DM_VULKAN_FRAME_DUMP_AT");o->frame_dump_at=at?strtoull(at,NULL,10):1;
 }
+static VkBool32 VKAPI_PTR pool_host_driver_message(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT types,const VkDebugUtilsMessengerCallbackDataEXT *data,void *context) {
+  (void)severity;(void)types;(void)context;
+  LOG("[vulkan driver diagnostic; no validation layer] %s",data->pMessage?data->pMessage:"");
+  return VK_FALSE;
+}
 static void init_device(void) {
   vk_loader_initialize();
   const char *async = getenv("DM_VULKAN_ASYNC");
@@ -1224,6 +1230,7 @@ static void init_device(void) {
              *extension = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
   const char *extensions[4];
   uint32_t extension_count = 0;
+  int host_driver_debug=0;
 #ifdef __ANDROID__
   if (vk_window_attached()) {
     extensions[extension_count++] = VK_KHR_SURFACE_EXTENSION_NAME;
@@ -1267,6 +1274,19 @@ static void init_device(void) {
       LOG("[vulkan] synchronization validation requested");
     }
     ci.pNext = &debug;
+  } else if(V.options.pool_host_readonly) {
+    // Official driver diagnostics expose actual import rejection reasons.
+    // This enables no validation layer and must never imply VUID coverage.
+    uint32_t count=0;VK_CHECK(vkEnumerateInstanceExtensionProperties(NULL,&count,NULL));
+    VkExtensionProperties *available=calloc(count?count:1,sizeof *available);
+    if(!available)die("Vulkan driver diagnostic extension list");
+    VK_CHECK(vkEnumerateInstanceExtensionProperties(NULL,&count,available));
+    for(uint32_t k=0;k<count;k++)if(!strcmp(available[k].extensionName,extension))host_driver_debug=1;
+    free(available);
+    if(host_driver_debug) {
+      debug.pfnUserCallback=pool_host_driver_message;
+      extensions[extension_count++]=extension;ci.pNext=&debug;
+    }
   }
   ci.enabledExtensionCount = extension_count;
   ci.ppEnabledExtensionNames = extensions;
@@ -1274,7 +1294,7 @@ static void init_device(void) {
   volkLoadInstance(V.instance);
   vk_loader_check_instance(V.instance,vk_window_attached());
   vk_window_surface_create();
-  if (getenv("DM_VULKAN_VALIDATE")) {
+  if (getenv("DM_VULKAN_VALIDATE") || host_driver_debug) {
     VkDebugUtilsMessengerEXT messenger;
     PFN_vkCreateDebugUtilsMessengerEXT create = (void *)vkGetInstanceProcAddr(
         V.instance, "vkCreateDebugUtilsMessengerEXT");
@@ -1511,9 +1531,9 @@ static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
       while(end<63 && (missing&(UINT64_C(1)<<(end+1)))) end++;
       uint64_t lo=(word*64+bit)<<GPU_ACCESS_SHIFT,hi=(word*64+end+1)<<GPU_ACCESS_SHIFT;
       if(hi>p->size) hi=p->size;
-      pool_spans_copy_from_guest(p,lo,hi-lo);
+      uint64_t mirror_copied=pool_spans_copy_from_guest(p,lo,hi-lo);
       memcpy(p->shadow+lo,p->guest+lo,hi-lo);
-      POOL_COPY_ADD(initial_mirror_bytes,hi-lo);
+      POOL_COPY_ADD(initial_mirror_bytes,mirror_copied);
       POOL_COPY_ADD(initial_shadow_bytes,hi-lo);
       // The unset initialized bit proves this page has never been exposed to
       // a GPU binding, including before a canonical backing migration.

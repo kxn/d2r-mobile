@@ -30,11 +30,20 @@ static void pool_host_readonly_test(void) {
   CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);CALL(nvnMemoryPoolBuilderSetStorage,&mb,storage,65536);
   CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));CHECK(vk_pool_host_pinned_bytes()==0);
+  vk_pool_copy_stats copy_before,copy_after;vk_pool_copy_snapshot(&copy_before);
   uint8_t out[512],expected[512];memcpy(expected,storage+128,256);
   VkSemaphore gate=VK_NULL_HANDLE;
   if(vk_async_submissions()&&V.timeline_semaphore)gate=pool_copy_gate();
   mtl_sub_begin();pool_host_read(storage+128,256,out);uint64_t serial=vk_internal_commit();
   CHECK(vk_pool_host_imported_range((uintptr_t)storage,4096));CHECK(vk_pool_host_pinned_bytes()==4096);
+  vk_pool_copy_snapshot(&copy_after);
+  if(copy_before.enabled) {
+    CHECK(copy_after.initial_mirror_bytes-copy_before.initial_mirror_bytes==0);
+    CHECK(copy_after.initial_shadow_bytes-copy_before.initial_shadow_bytes==4096);
+  }
+  printf("{\"test\":\"readonly-first-copy-bytes\",\"accounting\":%s,\"mirror\":%llu,\"shadow\":%llu}\n",
+    copy_before.enabled?"true":"false",(unsigned long long)(copy_after.initial_mirror_bytes-copy_before.initial_mirror_bytes),
+    (unsigned long long)(copy_after.initial_shadow_bytes-copy_before.initial_shadow_bytes));
   // CPU may edit unrelated bytes on the same physical page while the GPU
   // reads this immutable interval. No whole-page CPU/GPU handoff is needed.
   dm_guest_write_prepare(storage+1024,4);memset(storage+1024,0x7b,4);
@@ -105,7 +114,23 @@ static void pool_host_readonly_test(void) {
   attempts=vk_test_pool_host_attempts();mtl_sub_begin();pool_host_read(storage+64,128,out);
   vk_internal_wait(vk_internal_commit());CHECK(vk_pool_host_pinned_bytes()==0);
   CHECK(vk_test_pool_host_attempts()==attempts);CALL(nvnMemoryPoolFinalize,&pool);
-  vk_test_pool_window_bytes(4096);vk_test_pool_host_limits(16<<20,32<<20);
+  vk_test_pool_window_bytes(4096);
+  // A new owned NVN pool page is protected through the original dirty API,
+  // before its first buffer use. Try writable import once, never unprotect it
+  // to make GUP succeed. Drivers may reject or support this mapping; record
+  // the real result and prove that mirror/read bytes and retries stay correct.
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));
+  nvn_dirty_protect(storage+40960,4096);attempts=vk_test_pool_host_attempts();
+  mtl_sub_begin();pool_host_read(storage+40960,128,out);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(out,storage+40960,128));
+  int protected_imported=vk_pool_host_imported_range((uintptr_t)storage+40960,4096);
+  CHECK(vk_test_pool_host_attempts()==attempts+1);
+  mtl_sub_begin();pool_host_read(storage+40960,128,out);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(out,storage+40960,128));CHECK(vk_test_pool_host_attempts()==attempts+1);
+  printf("{\"test\":\"readonly-protected-owned-page\",\"imported\":%s,\"attempts\":1,\"retry_imports\":0,\"pinned\":%llu}\n",
+    protected_imported?"true":"false",(unsigned long long)vk_pool_host_pinned_bytes());
+  CALL(nvnMemoryPoolFinalize,&pool);CHECK(vk_pool_host_pinned_bytes()==0);
+  vk_test_pool_host_limits(16<<20,32<<20);
   storage[8192]=0x57;CHECK(storage[8192]==0x57);CHECK(munmap(storage,65536)==0);
   CHECK(vk_validation_error_count()==0);
 }

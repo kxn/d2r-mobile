@@ -117,15 +117,19 @@ static void pool_spans_destroy(pool *p) {
   pool_span_chain_destroy(p,p->backings);p->backings=NULL;
 }
 // Caller preserves the original publication exclusion and GPU-access checks.
-static void pool_spans_copy_from_guest(pool *p,uint64_t offset,uint64_t size) {
+static uint64_t pool_spans_copy_from_guest(pool *p,uint64_t offset,uint64_t size) {
+  uint64_t copied=0;
   pool_span_iter it;if(!pool_span_iter_begin(p,offset,size,&it))die("Vulkan pool copy range");
   pool_span_piece piece;int next;
   while((next=pool_span_iter_next(&it,&piece))==1) {
     if(!piece.backing->buffer.map)die("Vulkan pool backing not host mapped");
-    if(!piece.backing->buffer.imported_host)
+    if(!piece.backing->buffer.imported_host) {
       memcpy(piece.backing->buffer.map+piece.offset,p->guest+piece.logical,piece.size);
+      copied+=piece.size;
+    }
   }
   if(next<0)die("Vulkan pool copy across unbacked hole");
+  return copied;
 }
 // Short-lived physical proof only: the caller already owns a pool reference,
 // holds publication exclusion and ruled out pending GPU access. The retained
