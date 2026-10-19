@@ -39,6 +39,9 @@ class Bulk(unittest.TestCase):
         mip['source_alpha_range'] = [254, 254]
         self.assertTrue(bulk.quality_failures({'mips': [mip]}, policy))
         self.assertEqual(bulk.category('data/own_nrm.texture', {'format': 62}), 'normal_keep4')
+        for name in ('data/Own_Normal.texture', 'data/decal_NRM$NRM.texture'):
+            self.assertEqual(bulk.category(name, {'format': 61}), 'normal_keep4')
+        self.assertEqual(bulk.category('data/detailnormal/rock_alb.texture', {'format': 62}), 'albedo')
 
     @unittest.skipUnless(os.environ.get('ASTCENC_TEST'), 'set ASTCENC_TEST to actual astcenc')
     def test_interruption_resume_corruption_and_exact_baseline(self):

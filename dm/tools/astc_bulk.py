@@ -53,9 +53,15 @@ def load_source(root):
                            'original_cache_sha256': repack.sha(raw)}
 
 
+def normal_texture(name):
+    # Original resources also contain Normal and NRM$NRM aliases. Match the
+    # basename, not directories such as detailnormal containing ALB/ORM files.
+    return name.rsplit('/', 1)[-1].lower().endswith(
+        ('_nrm.texture', '_normal.texture', '_nrm$nrm.texture'))
+
+
 def category(name, entry):
-    # Same suffix convention as upstream, always preserve NRM baseline bytes.
-    if name.endswith('_nrm.texture'):
+    if normal_texture(name):
         return 'normal_keep4'
     if name.endswith('_orm.texture'):
         return 'orm'
@@ -195,7 +201,7 @@ def batch(options):
         for name in selection:
             if name not in entries or name not in rows or name not in baseline_indices:
                 raise ValueError('selection absent from source/baseline: ' + name)
-            if name.endswith('_nrm.texture'):
+            if normal_texture(name):
                 raise ValueError('normal conversion forbidden in bulk recipe: ' + name)
             if not name.startswith('data/') or '..' in Path(name).parts:
                 raise ValueError('invalid logical path: ' + name)

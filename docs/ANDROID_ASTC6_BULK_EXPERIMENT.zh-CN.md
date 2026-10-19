@@ -16,13 +16,20 @@ BC3 format61/62，type2/depth1/layoutType3，原 C 可表达的打包布局、�
 清单先核 descriptor/manifest，完整 header、每级 mip、thumbnail 与原图对应关系
 在转换时继续严格验证；不能把 metadata 候选当成已完成逐图验证。
 
-当前原资源有 27,195 个 BC3 descriptor，其中 8,447 个 `_nrm.texture` 保持现有
-full4，不参与本入口。非 NRM 共 18,748：ALB 8,881、ORM 8,570、其它线性 1,018、
-其它 sRGB 279。主要 ALB 为 256²/9mip，ORM 为 128²/8mip。非 NRM 原 decoded
-文件体积共 950,815,224 字节。按原 C 布局预估，NVN padded storage
-948,893,184→695,153,152 字节，linear compressed blocks
-907,616,528→420,964,144 字节。没有计入实际 VkImage requirements，也不是实测
-总线带宽、显存占用或 FPS 收益；质量回退还会减少可转换范围。
+原资源不仅有 `_nrm.texture`，还有 `_normal.texture`、`_nrm$nrm.texture`
+法线别名。三种后缀均按文件名（不区分大小写）保留现有 full4，不参与转换；
+目录名含 `normal` 不影响其中的 ALB/ORM。原先仅按 `_nrm` 统计的
+18,748 个候选含 270 个别名，应再排除。已冻结的旧配方若仍在执行，不修改其
+输入或覆盖 checkpoint；组合入口须额外保留这些别名，只把其余通过质量检查的
+纹理与完整 full4 合并，并记录 batch 与实际组合数量的差异。
+
+修正后 27,195 个 BC3 descriptor 中保留 8,717 个法线，剩余 18,478 个候选：
+ALB 8,881、ORM 8,570、其它线性 748、其它 sRGB 279。候选原 decoded 文件共
+944,094,312 字节；原 C 预估 padded storage 942,199,296→689,903,104 字节，
+linear blocks 901,514,480→418,037,152 字节。法线原编码、mip 和 thumbnail 均不改。
+
+这些数量和压缩块体积都不等于实际 VkImage requirements、总线带宽、显存占用
+或 FPS 收益；质量回退还会减少可转换范围。
 
 ## 小批量与恢复
 
