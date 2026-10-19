@@ -202,6 +202,9 @@ void vk_test_texture_owned_scopes(int enabled);
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
 void vk_test_pool_owned_enable(void);
 int vk_test_pool_owned_supported(void);
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_pool_import_dedicated_reject(int mode);
+#endif
 int vk_test_pool_owned_attach(uint64_t address,uint64_t bytes);
 int vk_test_pool_owned_retire(uint64_t address,uint64_t size);
 void vk_test_pool_owned_stats(uint64_t *imports,uint64_t *retirements);

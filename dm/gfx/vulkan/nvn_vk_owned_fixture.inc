@@ -6,6 +6,14 @@ void vk_test_pool_owned_enable(void) {
   owned_fixture_requested=1;V.owned_fixture_active=1;vk_test_texture_owned_scopes(1);
 }
 int vk_test_pool_owned_supported(void) {return owned_fixture_supported;}
+#ifdef DM_VULKAN_TEST_EMBED
+// Strict failure injection only, never force an unsupported import to succeed.
+static int host_import_dedicated_reject_test;
+void vk_test_pool_import_dedicated_reject(int mode) {
+  if(mode<0 || mode>2 || V.cmd || pool_operation_depth)die("Vulkan import dedicated test scope");
+  pthread_mutex_lock(&V.resources);host_import_dedicated_reject_test=mode;pthread_mutex_unlock(&V.resources);
+}
+#endif
 static int pool_host_attach(uint64_t address,uint64_t bytes,int borrowed,uint64_t identity) {
   if(!owned_fixture_requested || !owned_fixture_supported || !owned_fixture_alignment ||
       !bytes || bytes>(16u<<20) || address%owned_fixture_alignment || bytes%owned_fixture_alignment ||
@@ -43,13 +51,33 @@ static int pool_host_attach(uint64_t address,uint64_t bytes,int borrowed,uint64_
     .usage=create.usage,.handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
   VkExternalBufferProperties props={.sType=VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES};
   vkGetPhysicalDeviceExternalBufferProperties(V.physical,&info,&props);
-  VkResult result=props.externalMemoryProperties.externalMemoryFeatures&VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT?
+  VkExternalMemoryFeatureFlags external_features=props.externalMemoryProperties.externalMemoryFeatures;
+  int forced_dedicated=0;
+#ifdef DM_VULKAN_TEST_EMBED
+  forced_dedicated=host_import_dedicated_reject_test;
+#endif
+  // Supporting imported HOST payloads does not imply support for dedicated
+  // allocations. This bounded prototype declines those and keeps the mirror.
+  VkExternalMemoryFeatureFlags effective_features=external_features;
+  if(forced_dedicated==1)effective_features|=VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT;
+  VkResult result=(effective_features&VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) &&
+    !(effective_features&VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT)?
     VK_SUCCESS:VK_ERROR_INVALID_EXTERNAL_HANDLE;
+  LOG("[host import capability] usage=%#x externalFeatures=%#x effectiveFeatures=%#x forcedDedicatedReject=%d",create.usage,external_features,effective_features,forced_dedicated);
   if(result==VK_SUCCESS)result=vkCreateBuffer(V.device,&create,NULL,&fresh.handle);
   if(result==VK_SUCCESS) {
-    VkMemoryRequirements needs;vkGetBufferMemoryRequirements(V.device,fresh.handle,&needs);
+    VkMemoryDedicatedRequirements dedicated={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+    VkMemoryRequirements2 requirements={.sType=VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,.pNext=&dedicated};
+    VkBufferMemoryRequirementsInfo2 buffer_info={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,.buffer=fresh.handle};
+    vkGetBufferMemoryRequirements2(V.device,&buffer_info,&requirements);
+    VkMemoryRequirements needs=requirements.memoryRequirements;
+    LOG("[host import capability] requiresDedicated=%u prefersDedicated=%u forcedDedicatedReject=%d",
+      dedicated.requiresDedicatedAllocation,dedicated.prefersDedicatedAllocation,forced_dedicated);
+    VkBool32 effective_requires=dedicated.requiresDedicatedAllocation;
+    if(forced_dedicated==2)effective_requires=VK_TRUE;
+    if(effective_requires)result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
     VkMemoryHostPointerPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
-    result=vkGetMemoryHostPointerPropertiesEXT(V.device,VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,p->guest,&host);
+    if(result==VK_SUCCESS)result=vkGetMemoryHostPointerPropertiesEXT(V.device,VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,p->guest,&host);
     uint32_t type=UINT32_MAX;uint64_t atom=V.props.limits.nonCoherentAtomSize;
     for(unsigned pass=0;result==VK_SUCCESS && pass<2 && type==UINT32_MAX;pass++)
       for(uint32_t k=0;k<V.mem.memoryTypeCount;k++) {

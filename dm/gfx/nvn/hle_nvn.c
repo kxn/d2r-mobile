@@ -966,6 +966,14 @@ static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
 static int g_x_sync; static pthread_t g_x_thr;
 static _Atomic int g_x_started;
+static pthread_once_t g_x_once=PTHREAD_ONCE_INIT;
+#if defined(DM_VULKAN_BORROWED_NVN_FIXTURE) && defined(DM_VULKAN_TEST_EMBED)
+static int g_borrow_fail_translation_worker;
+void nvn_test_borrow_fail_translation_worker(int fail) {
+    if(atomic_load(&g_x_started))die("NVN worker failure test must be cold");
+    g_borrow_fail_translation_worker=!!fail;
+}
+#endif
 #ifdef DM_VULKAN_TEST_EMBED
 int nvn_test_idle_trim_started(void) {return atomic_load_explicit(&g_x_started,memory_order_acquire);}
 int nvn_test_idle_trim_supported(void) {
@@ -1070,12 +1078,24 @@ static void x_start(void) {
     pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     pthread_attr_setstacksize(&at, 8 << 20);
-    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { mtl_pool_defer_publication_disable(); LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
+    int creation_failed=0;
+#if defined(DM_VULKAN_BORROWED_NVN_FIXTURE) && defined(DM_VULKAN_TEST_EMBED)
+    if(g_borrow_fail_translation_worker) {
+        LOG("[nvn test] injected translation worker creation failure");creation_failed=1;
+    } else
+#endif
+    creation_failed=pthread_create(&g_x_thr,&at,x_thread,NULL)!=0;
+    if (creation_failed) { mtl_pool_defer_publication_disable(); LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
     atomic_store_explicit(&g_x_started,1,memory_order_release);
 }
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+int dm_gfx_borrow_async_ready(void) {
+    pthread_once(&g_x_once,x_start);return !g_x_sync;
+}
+#endif
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
-    static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, x_start);
+    pthread_once(&g_x_once,x_start);
     pthread_mutex_lock(&g_xmu);
     while (g_xq_in - g_xq_done >= XQ) pthread_cond_wait(&g_xcv, &g_xmu);
     if (j->kind == XJ_SUBMIT) j->sub = atomic_fetch_add(&g_x_subs, 1) + 1;

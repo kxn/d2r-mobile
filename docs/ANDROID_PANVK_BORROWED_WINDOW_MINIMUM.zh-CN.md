@@ -49,3 +49,18 @@ LVP 实际 memory flags 是 **0xf/coherent**；本轮不据此宣称 Mali noncoh
 范围刻意限于一个完整小 Pool。大 Pool 的内部纯 UBO/VBO 窗口、多 import node、跨窗口/跨 Pool alias、借用存储早于 Pool 有效期失效的实际游戏行为均未获生产验收。现有调用日志缺每个 Pool 的地址/extent，不能声称游戏存在或不存在符合这 64KiB 条件的 Pool。没有真实游戏零拷贝、FPS、带宽或发热收益结论。
 
 新 unit 首次把 borrowed 检查放在故意耗尽 dirty 时钟的旧 scoped 负例之后而失败；保留原失败日志，调整测试顺序至耗尽负例之前，没有重置或放松生产时钟/断言。首次缺系统头的编译诊断见会话摘录记录（原 build log 已被后续增量构建覆盖）；误用上次可执行文件的输出保留且不计入验收。
+
+## 独审修正：dedicated 防护、async-only、实际 VBO
+
+24120 原冻结和原报告保持不动。新的 review-fix 分支只补独审的三个差量，不混主线 dirty 批处理或新驱动。
+
+1. 导入前查 exact usage 的 `externalMemoryFeatures`，并通过原 `vkGetBufferMemoryRequirements2` / `VkMemoryDedicatedRequirements` 查 buffer 专属要求。`DEDICATED_ONLY` 或 `requiresDedicatedAllocation` 均拒绝导入、销毁临时 buffer、先 unpin 再释放 dirty 排除，并走原镜像；`prefersDedicatedAllocation` 不当成必须。旧 owned 导入器也复用这个保守检查。
+2. **规范边界不能误述**：官方最新文档明确 HOST_ALLOCATION/HOST_MAPPED_FOREIGN_MEMORY 不能报告 DEDICATED_ONLY；只有相关外部 handle 要求专属分配时 buffer 的 `requiresDedicatedAllocation` 才能为 TRUE。因此此精确 HOST-only 路径的两类拒绝是对异常/非规范报告的防护，不是说合规 HOST 驱动本来就应要求 dedicated。没有套用 export-only 的 00639 VUID。[外部内存 flags](https://docs.vulkan.org/refpages/latest/refpages/source/VkExternalMemoryFeatureFlagBits.html)，[DedicatedRequirements](https://docs.vulkan.org/refpages/latest/refpages/source/VkMemoryDedicatedRequirements.html)。
+3. 在原 Initialize 捕获 lease **之前**调用原翻译队列同一 `pthread_once`，确认专用异步 worker 创建成功。`DM_NVN_SYNC=1` 或创建失败只保留原镜像，**不发 lease、不导入、不使用借用层的 inline owner-close**。不把 TLS `g_x_owner` 当作全局排他。线程仍只有原来的一条，普通默认路径不提前启动它。
+4. 新实际 VBO 测试复用已有 marker14/11 shader：原 `BindVertexBuffers`→DrawArrays→GPU readback，CPU 顶点坐标使输出全屏覆盖→完全裁掉→全屏覆盖；同一个 VkBuffer/代数和一次 import 保持。分别覆盖原 write_prepare 与直接 CPU 写，不是只检验 planner 枚举。
+
+修正版 LVP 0xf、官方 VVL+sync、原异步 owner：**10867 checks**。实际 usage=0x91，externalFeatures=0x4（IMPORTABLE），requiresDedicated=0、prefersDedicated=0。仅测试的严格失败注入在 real query 之后增加拒绝要求，不会强制成功；日志分别标明 actual/effective/forced 值。两类 dedicated 拒绝均以零 vkAllocateMemory/GUP、原 UBO GPU 像素正确回退。
+
+另外两个独立进程各 **540 checks**：`DM_NVN_SYNC=1`；仅夹具注入原 translation pthread_create 失败分支。二者实际没有 lease/没有 GUP，普通镜像 UBO 的 GPU 像素仍正确。注入是确定性测试，不冒充系统真的耗尽线程资源；completion worker 不受该注入影响。
+
+这些修正没有扩大借用有效范围，没有新增设备/游戏/非 coherent 验收。新成本是首次导入多一次 requirements2 query，以及首次合格 Initialize 的原 once/worker 就绪检查；没有每 draw 的 getenv、全表扫描或等待。

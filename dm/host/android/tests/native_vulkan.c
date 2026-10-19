@@ -493,6 +493,7 @@ int dm_vulkan_test_main(void) {
   crash_thread_init();
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
   if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
+    if(getenv("DM_BORROWED_NVN_WORKER_REJECT_FIXTURE"))nvn_test_borrow_fail_translation_worker(1);
     vk_test_pool_borrow_enable();CHECK(!setenv("DM_VULKAN_POOL_WINDOW_BYTES","65536",1));
   }
 #endif

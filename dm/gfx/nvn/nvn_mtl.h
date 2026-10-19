@@ -57,6 +57,10 @@ int mtl_pool_defer_publication_mode(void);
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
 // Experimental whole-pool borrowed lifetime; returns 0 when cold selector OFF.
 void mtl_pool_borrow_registered(const void *mem,uint64_t size);
+int dm_gfx_borrow_async_ready(void);
+#ifdef DM_VULKAN_TEST_EMBED
+void nvn_test_borrow_fail_translation_worker(int fail);
+#endif
 uint64_t mtl_pool_borrow_mark(uint64_t address,uint64_t size,int closing);
 void mtl_pool_borrow_owner_close(uint64_t address,uint64_t size,uint64_t identity);
 void dm_gfx_borrow_before_cpu_change(uint64_t address,uint64_t size);

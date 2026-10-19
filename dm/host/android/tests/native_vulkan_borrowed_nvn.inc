@@ -14,7 +14,7 @@ static void borrowed_pool_init(NVNmemoryPool *pool,uint8_t *address,size_t size)
   CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,pool,&b));
 }
-static NVNcommandHandle borrowed_record(borrowed_gpu_fixture *f,uint8_t *uniform,int writer,float value) {
+static NVNcommandHandle borrowed_record_impl(borrowed_gpu_fixture *f,uint8_t *uniform,int writer,float value,const NVNprogram *vbo_program) {
   NVNdepthStencilState ds;CALL(nvnDepthStencilStateSetDefaults,&ds);CALL(nvnDepthStencilStateSetDepthTestEnable,&ds,0);
   CALL(nvnDepthStencilStateSetDepthWriteEnable,&ds,0);CALL(nvnDepthStencilStateSetStencilTestEnable,&ds,0);
   NVNpolygonState polygon;CALL(nvnPolygonStateSetDefaults,&polygon);CALL(nvnPolygonStateSetCullFace,&polygon,NVN_FACE_NONE);
@@ -26,11 +26,24 @@ static NVNcommandHandle borrowed_record(borrowed_gpu_fixture *f,uint8_t *uniform
   CALL(nvnCommandBufferSetViewports,&f->commands,0,1,viewport);CALL(nvnCommandBufferSetScissor,&f->commands,0,0,16,16);
   CALL(nvnCommandBufferBindDepthStencilState,&f->commands,&ds);CALL(nvnCommandBufferBindPolygonState,&f->commands,&polygon);
   CALL(nvnCommandBufferBindColorState,&f->commands,&color);CALL(nvnCommandBufferBindChannelMaskState,&f->commands,&mask);
-  CALL(nvnCommandBufferBindVertexAttribState,&f->commands,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&f->commands,0,NULL);
-  CALL(nvnCommandBufferBindProgram,&f->commands,&f->program,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
-  CALL(nvnCommandBufferBindUniformBuffer,&f->commands,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)uniform,65536);
+  if(vbo_program) {
+    NVNvertexAttribState attr;CALL(nvnVertexAttribStateSetDefaults,&attr);
+    CALL(nvnVertexAttribStateSetStreamIndex,&attr,0);CALL(nvnVertexAttribStateSetFormat,&attr,NVN_FORMAT_RG32F,0);
+    NVNvertexStreamState stream;CALL(nvnVertexStreamStateSetDefaults,&stream);CALL(nvnVertexStreamStateSetStride,&stream,8);
+    NVNbufferRange range={(uintptr_t)uniform,24};
+    CALL(nvnCommandBufferBindVertexAttribState,&f->commands,1,&attr);CALL(nvnCommandBufferBindVertexStreamState,&f->commands,1,&stream);
+    CALL(nvnCommandBufferBindVertexBuffers,&f->commands,0,1,&range);
+    const float black[]={0,0,0,1};CALL(nvnCommandBufferClearColor,&f->commands,0,black,15);
+  } else {
+    CALL(nvnCommandBufferBindVertexAttribState,&f->commands,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&f->commands,0,NULL);
+  }
+  CALL(nvnCommandBufferBindProgram,&f->commands,vbo_program?vbo_program:&f->program,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+  if(!vbo_program)CALL(nvnCommandBufferBindUniformBuffer,&f->commands,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)uniform,65536);
   CALL(nvnCommandBufferDrawArrays,&f->commands,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
   return CALL(nvnCommandBufferEndRecording,&f->commands);
+}
+static NVNcommandHandle borrowed_record(borrowed_gpu_fixture *f,uint8_t *uniform,int writer,float value) {
+  return borrowed_record_impl(f,uniform,writer,value,NULL);
 }
 static void borrowed_pixels(borrowed_gpu_fixture *f,float value) {
   uint8_t pixels[1024];NVNcopyRegion region={0,0,0,16,16,1};
@@ -57,13 +70,23 @@ static void borrowed_nvn_buffer_test(void) {
   CALL(nvnCommandBufferAddCommandMemory,&f.commands,&f.backing,131072,393216);
   uint8_t *uniform;CHECK(!posix_memalign((void **)&uniform,65536,65536));memset(uniform,0,65536);
   NVNmemoryPool source;borrowed_pool_init(&source,uniform,65536);
-  CHECK(vk_test_pool_borrow_state((uintptr_t)uniform)==1);
+  uint64_t specialization[4];int enabled;vk_uniform_specialization_stats(specialization,specialization+1,specialization+2,specialization+3,&enabled);
+  vk_uniform_specialization_enabled(0);vk_state saved=S;int properties=0;
+  if(getenv("DM_BORROWED_NVN_ASYNC_REJECT_FIXTURE") || getenv("DM_BORROWED_NVN_WORKER_REJECT_FIXTURE")) {
+    CHECK(!dm_gfx_borrow_async_ready());CHECK(!vk_test_pool_borrow_state((uintptr_t)uniform));
+    uint64_t before,retired,after,retired_after;vk_test_pool_owned_stats(&before,&retired);
+    *(float *)uniform=.25f;submit(borrowed_record(&f,uniform,0,0));borrowed_pixels(&f,.25f);
+    CHECK(!vk_test_pool_owned_properties((uintptr_t)uniform));
+    vk_test_pool_owned_stats(&after,&retired_after);CHECK(after==before && retired_after==retired);
+    CALL(nvnMemoryPoolFinalize,&source);
+    LOG("[borrowed NVN fixture] dedicated async owner unavailable: no lease/no GUP; ordinary mirrored UBO pixels passed");
+    goto cleanup;
+  }
+  CHECK(dm_gfx_borrow_async_ready());CHECK(vk_test_pool_borrow_state((uintptr_t)uniform)==1);
   CHECK(!vk_test_pool_owned_attach((uintptr_t)uniform,65536)); // old provenance API cannot be substituted
   vk_pool_span_info first;CHECK(vk_pool_span_query((uintptr_t)uniform,65536,&first)==VK_POOL_SPAN_UNBACKED);
   uint64_t imports,retirements;vk_test_pool_owned_stats(&imports,&retirements);
-  uint64_t specialization[4];int enabled;vk_uniform_specialization_stats(specialization,specialization+1,specialization+2,specialization+3,&enabled);
-  vk_uniform_specialization_enabled(0);vk_state saved=S;
-  const float values[]={.25f,.75f,.125f,.875f};int properties=0;
+  const float values[]={.25f,.75f,.125f,.875f};
   for(unsigned iteration=0;iteration<4;iteration++) {
     if(iteration)nvn_dirty_protect(uniform,65536); // active lease must skip protection
     if(iteration&1)dm_guest_write_prepare(uniform,4);
@@ -181,8 +204,44 @@ static void borrowed_nvn_buffer_test(void) {
   CHECK(!mprotect(uniform,65536,PROT_READ));CHECK(!mprotect(uniform,65536,PROT_READ|PROT_WRITE));
   dm_guest_write_prepare(uniform,4);*(float *)uniform=.75f;
   submit(borrowed_record(&f,uniform,0,0));borrowed_pixels(&f,.75f);CALL(nvnMemoryPoolFinalize,&source);
+  // Actual VBO fetch: vertex bytes control full coverage -> fully clipped ->
+  // full coverage. Same imported handle/generation across legal CPU edits.
+  // Existing marker14 position shader and marker11 vary-color fragment only.
+  memset(uniform,0,65536);borrowed_pool_init(&source,uniform,65536);
+  uint8_t vc[0x880],fc[0x880];memset(vc,14,sizeof vc);memset(fc,11,sizeof fc);
+  NVNshaderData vd[]={{.control=vc},{.control=fc}};NVNprogram vbo_program;
+  CHECK(CALL(nvnProgramInitialize,&vbo_program,&device));CHECK(CALL(nvnProgramSetShaders,&vbo_program,2,vd));
+  const float positions[][6]={{-1,-1,3,-1,-1,3},{4,4,6,4,4,6},{-1,-1,3,-1,-1,3}};
+  vk_pool_span_info initial_vbo={0};uint64_t vi,vr;vk_test_pool_owned_stats(&vi,&vr);
+  for(unsigned k=0;k<3;k++) {
+    if(k)nvn_dirty_protect(uniform,65536);
+    if(k==1)dm_guest_write_prepare(uniform,24);
+    memcpy(uniform,positions[k],24);
+    submit(borrowed_record_impl(&f,uniform,0,0,&vbo_program));
+    uint8_t rgba[1024];NVNcopyRegion region={0,0,0,16,16,1};CALL(nvnTextureReadTexels,&f.target,NULL,&region,rgba);
+    const uint8_t expected[]={0,k==1?0:128,k==1?0:255,255};
+    for(unsigned p=0;p<256;p++)CHECK(!memcmp(rgba+4*p,expected,4));
+    vk_pool_span_info span;CHECK(vk_pool_span_query((uintptr_t)uniform,24,&span)==VK_POOL_SPAN_SINGLE);
+    CHECK(vk_test_pool_owned_properties((uintptr_t)uniform));
+    if(!k)initial_vbo=span;else CHECK(span.handle==initial_vbo.handle && span.backing_generation==initial_vbo.backing_generation);
+    vk_test_pool_owned_stats(&after_imports,&after_retirements);CHECK(after_imports==vi+1 && after_retirements==vr);
+  }
+  CALL(nvnProgramFinalize,&vbo_program);CALL(nvnMemoryPoolFinalize,&source);
+  // Force stricter driver requirements only. Never force support. Both the
+  // external DEDICATED_ONLY and buffer requiresDedicated paths must fall back
+  // with zero allocation/GUP and retain original byte/dirty semantics.
+  for(int rejection=1;rejection<=2;rejection++) {
+    memset(uniform,0,65536);borrowed_pool_init(&source,uniform,65536);*(float *)uniform=.75f;
+    vk_test_pool_import_dedicated_reject(rejection);vk_test_pool_owned_stats(&vi,&vr);
+    submit(borrowed_record(&f,uniform,0,0));borrowed_pixels(&f,.75f);
+    CHECK(!vk_test_pool_owned_properties((uintptr_t)uniform));
+    vk_test_pool_owned_stats(&after_imports,&after_retirements);CHECK(after_imports==vi && after_retirements==vr);
+    vk_test_pool_import_dedicated_reject(0);CALL(nvnMemoryPoolFinalize,&source);
+  }
+cleanup:
   vk_uniform_specialization_enabled(enabled);S=saved;vk_pipeline_state_changed();
   CALL(nvnCommandBufferFinalize,&f.commands);CALL(nvnTextureFinalize,&f.target);CALL(nvnProgramFinalize,&f.program);
   CALL(nvnMemoryPoolFinalize,&f.backing);free(f.storage);free(uniform);
-  LOG("[borrowed NVN fixture] original lease/UBO/draw/writer/image/command history/Finalize race/ABA/VMA hook passed; flags=%#x",properties);
+  if(properties)LOG("[borrowed NVN fixture] original lease/UBO/VBO/draw/writer/image/command history/Finalize race/ABA/VMA/dedicated fallback passed; flags=%#x",properties);
+  else LOG("[borrowed NVN fixture] async-unavailable mirror fallback suite complete; no shared import enabled");
 }

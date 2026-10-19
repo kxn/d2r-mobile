@@ -10,6 +10,14 @@ void vk_test_pool_borrow_enable(void) {
 }
 void mtl_pool_borrow_registered(const void *mem,uint64_t size) {
   if(!borrowed_fixture_requested || size!=65536 || (uintptr_t)mem%65536)return;
+  // The inline/reference fallback has no exclusive recording owner. Never
+  // establish a lease there; keep the original mirror rather than pretending
+  // that a TLS g_x_owner flag serialized concurrent callers.
+  if(!dm_gfx_borrow_async_ready()) {
+    static atomic_int warned;
+    if(!atomic_exchange(&warned,1))LOG("[borrowed NVN fixture] import disabled: dedicated asynchronous translation owner unavailable");
+    return;
+  }
   pthread_mutex_lock(&V.resources);pool *p=pool_find((uintptr_t)mem,size);
   if(p && p->guest==mem && p->size==size && p->nvn_flags_known &&
       p->nvn_flags==(NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED) &&
