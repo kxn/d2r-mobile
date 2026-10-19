@@ -37,3 +37,12 @@ GDB 读取当前宿主 DWARF 得到：range280B（旧104B，borrowed构建全409
 ## 尚不能外推
 
 没有真实游戏各 ptr/window 的完整历史证据，不能断言现游戏有多少可导入窗口或净收益。未知外部 VMA/protection owner、非 NVN 重映射、并发修改 GPU 正读的同一 byte 的快照语义、GPU 写共享，以及整个 PanVK 游戏运行/功耗/FPS，均未在本版验收。当前 NVN 合法 storage lifetime/原 mapping hooks 是前提，不是任意 host-pointer 可永久 pin 的证明。旧 mprotect 导致 stale bytes 的失败及 whole64KiB Mali 成功记录都保留；本版不能把前者写成驱动已普遍修复。
+
+## 独立审查修订
+
+`750bbbe` 冻结独审找到两项阻断，本树另分支修正，旧树和旧报告不变：
+
+- full-reference 原回退以 `base,1` 退整个 Pool，子窗可能都从非零偏移开始而无交叠，原有界循环4096次后报错。新增**原 NVN 多非零窗口 + 原 full-reference 切换**夹具，只加测试的 `4a9689a` 实际复现 `Vulkan whole-reference pool registry did not settle`（退出134）；修订在同一 registry snapshot 下携带完整 Pool size 给原退回函数，修后 GPU 像素/两次退休/whole backing 验证通过。不是延长重试或删断言。
+- `sync_page` 运行在翻译 owner，但原 guard 读取 `p->borrowed_windows`；其他 HLE 线程可在首次不相交 image/CPU-effect 声明时懒分配该历史指针。改为使用 owner 持有的原物理 span/import 标志作深层拒绝检查，不读该 lazy 指针、不增加全局锁或原子。其余 overlap caller 经逐点检查受 `V.resources` 或同一 owner 保护；不能笼统把 retained pool ref 说成 next 链不可变。此项是源代码并发闭包修正，没有声称 TSan 真机动态验收。
+
+这些修订不改变8-slot预算、实际0xf宿主/尚未0xb子窗真机的边界，也不提供全应用的全局 pinned-byte预算；后者仍是生产启用前需要明确的资源策略。

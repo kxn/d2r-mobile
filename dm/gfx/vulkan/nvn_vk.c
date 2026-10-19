@@ -2788,7 +2788,13 @@ static void sync_page(const void *memory, size_t length, void *context) {
 #endif
   uint64_t off = (const uint8_t *)memory - p->guest;
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
-  if(borrowed_windows_overlap(p,off,length))die("Vulkan borrowed import entered mirror upload");
+  if(borrowed_subwindows_requested) {
+    // Original upload runs on the single translation owner and retains p.
+    // Its physical node cannot be replaced concurrently. Do not read the
+    // alias thread's lazy history pointer just to enforce this deep guard.
+    pool_span_piece span=pool_span_require(p,off,length);
+    if(span.backing->buffer.owned_host_import)die("Vulkan borrowed import entered mirror upload");
+  }
 #endif
   while (length) {
     size_t size = length < 4096 ? length : 4096;

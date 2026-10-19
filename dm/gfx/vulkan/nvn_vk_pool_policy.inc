@@ -192,15 +192,15 @@ static void pool_window_before_submission(void) {
   // A reference transition is global, before begin creates a recording owner.
   // Even an unrelated partial pool must be whole before eager sync visits it.
   for(unsigned tries=0;tries<VK_POOL_RESERVE_MAX_REQUIREMENTS;tries++) {
-    uint64_t base=0,identity=0;int owned=0;pthread_mutex_lock(&V.resources);
+    uint64_t base=0,identity=0,owned_bytes=0;int owned=0;pthread_mutex_lock(&V.resources);
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
     for(pool *p=pools;p;p=p->next)if(p->owned_readonly && !p->owned_readonly->retired) {
-      base=(uintptr_t)p->guest;identity=p->identity;owned=1;break;
+      base=(uintptr_t)p->guest;identity=p->identity;owned_bytes=p->size;owned=1;break;
     }
 #endif
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
     if(!identity && borrowed_subwindows_requested)for(pool *p=pools;p;p=p->next)
-      if(borrowed_windows_overlap(p,0,p->size)) {base=(uintptr_t)p->guest;identity=p->identity;owned=1;break;}
+      if(borrowed_windows_overlap(p,0,p->size)) {base=(uintptr_t)p->guest;identity=p->identity;owned_bytes=p->size;owned=1;break;}
 #endif
     if(!identity)for(pool *p=pools;p;p=p->next)if(p->backings && !pool_window_whole(p)) {
       base=(uintptr_t)p->guest;identity=p->identity;break;
@@ -208,9 +208,9 @@ static void pool_window_before_submission(void) {
     pthread_mutex_unlock(&V.resources);
     if(!identity)return;
 #ifdef DM_VULKAN_OWNED_NVN_FIXTURE
-    if(owned) {if(owned_fixture_retire(base,1,identity)<0)die("Vulkan owned full-reference retirement");continue;}
+    if(owned) {if(owned_fixture_retire(base,owned_bytes,identity)<0)die("Vulkan owned full-reference retirement");continue;}
 #else
-    (void)owned;
+    (void)owned;(void)owned_bytes;
 #endif
     pool_policy_promote(base,identity,0,NULL);
   }
