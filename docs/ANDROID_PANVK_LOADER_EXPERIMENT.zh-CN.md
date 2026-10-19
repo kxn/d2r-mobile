@@ -28,6 +28,19 @@ PanVK 分支直接 `dlopen` ICD，再将 `vk_icdGetInstanceProcAddr`（或项目
 会明确失败，不能把它当作已经支持验证层或 RenderDoc 注入。系统和 Adreno 原路径保留。
 后续如需 loader/layer 组合，应另行实现并用原工具验证，不用空入口或伪报成功补齐。
 
+原应用内功能测试有独立的开发配置，默认仍请求 validation 和同步验证。
+直接 ICD 功能验收须显式传入 `vulkan_test_validation=false`，例如由测试负责人冷启动：
+
+```sh
+adb -s SERIAL shell am start -W -n com.d2rmobile.nativeport/.MainActivity \
+  --ez run_game false --ez run_vulkan_tests true --es vulkan_driver panvk \
+  --ez vulkan_test_validation false
+```
+
+这时 `vulkan-test.log` 先写出 `validation_layer=disabled_explicitly` 的 JSON 配置记录，
+保留原 byte/pixel 正确性断言；即使错误计数为零，也不表示做过 VUID/SYNC 验证。
+此选项仅用于功能测试入口，不改变普通游戏的验证选项或默认驱动。
+
 能够加载、具备函数入口和报告正确 driverID，只是初始化检查，不能证明 GPU 工作、
 Android 出图、游戏画面、稳定性或性能已经通过。测试顺序仍应是应用 UID 下已有的
 compute／离屏／AHB／WSI 测试，再运行真实游戏。此修改没有接入用户页导入，
