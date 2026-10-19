@@ -21,7 +21,45 @@ uint64_t nvn_dirty_change_epoch(void);
 typedef struct { uint32_t slot, reserved; uint64_t lifetime, changes; } nvn_dirty_range_proof;
 int nvn_dirty_range_observe(const void *addr, size_t len, nvn_dirty_range_proof *proof);
 int nvn_dirty_range_refresh(const nvn_dirty_range_proof *old, nvn_dirty_range_proof *proof);
+// Experimental fixed-envelope negative proof. Returned objects are opaque:
+// observe initializes them; pass unmodified to refresh with the SAME query.
+// Cached refresh uses one known slot, fixed atomic metadata and one interval;
+// it never finds/scans ranges or pages. No upload/fence/content authority proof.
+// A nonzero returned epoch is usable ONLY with this successful scope refresh,
+// before the caller's ordinary negative dirty test. Compare both epoch/changes
+// as in the original image cache; never advance the original upload stamp.
+// Old no-address/global and unscoped range APIs remain conservative for OWNED.
+typedef struct {
+    uint32_t slot,reserved;
+    uint64_t lifetime,changes,exclusion_version;
+    uintptr_t begin,end;
+} nvn_dirty_scope_proof;
+int nvn_dirty_scope_observe(const void *addr,size_t len,nvn_dirty_scope_proof *proof,uint64_t *epoch);
+int nvn_dirty_scope_refresh(const void *addr,size_t len,const nvn_dirty_scope_proof *old,
+                           nvn_dirty_scope_proof *proof,uint64_t *epoch);
+// Experimental Linux/Android OWNED-page contract; Apple begin is unsupported.
+// No production caller/default enable; Metal's legacy generation shortcuts
+// are outside this Vulkan-only experiment, never implicitly made volatile.
+// Caller proves this page-aligned allocation is its own, is registered once,
+// has no other VMA/remap/protection owner, and keeps it alive. Only writable
+// PG_NONE pages can be claimed: this NEVER unprotects pages to permit import.
+// While held, protect skips these pages. Old unscoped range/global proofs
+// are unavailable; fixed-envelope scopes and dirty visits preserve disjoint pages. One token/range.
+// Release only AFTER the caller proved every GPU/import reference quiescent
+// and removed the import. This API neither waits nor performs GPU operations.
+// Failed begin leaves the zero-initialized output unchanged. Repeated release
+// (including a copied stale token) returns 0; successful release clears token.
+typedef struct {
+    uint32_t slot, reserved;
+    uint64_t lifetime, identity;
+    uintptr_t base;
+    size_t size;
+} nvn_dirty_owned_exclusion;
+int nvn_dirty_owned_exclude(const void *addr, size_t len, nvn_dirty_owned_exclusion *token);
+int nvn_dirty_owned_release(nvn_dirty_owned_exclusion *token);
 #ifdef DM_DIRTY_RANGE_TEST_HOOKS
+typedef void (*nvn_dirty_owned_transition_hook)(const void *,int,void *);
+void nvn_dirty_test_owned_transition(nvn_dirty_owned_transition_hook hook,void *context);
 typedef void (*nvn_dirty_test_hook)(const void *, uint64_t, void *);
 void nvn_dirty_test_publication_hook(nvn_dirty_test_hook hook, void *context);
 void nvn_dirty_test_poison_range(const void *addr, int lifetime);
