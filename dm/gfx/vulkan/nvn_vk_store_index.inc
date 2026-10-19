@@ -14,7 +14,11 @@ typedef struct {
 } store_event;
 _Static_assert(sizeof(store_event)==16,"Vulkan store event compact layout");
 _Static_assert(IX_DS<8,"Vulkan store event kind width");
-typedef struct { tex_t texture;uint32_t begin,end,aliases,last_read; } store_bucket;
+// This index only consumes serial and memory overlap, never texture layout or
+// dimensions. Keep a value snapshot of that exact footprint; full_clear and
+// the independent reference scan continue to use the original tex_t.
+typedef struct { vk_texture_footprint texture;uint32_t begin,end,aliases,last_read; } store_bucket;
+_Static_assert(sizeof(store_bucket)==40,"Vulkan compact store dependency bucket");
 typedef struct { uint32_t other,next; } store_alias;
 static store_bucket buckets[4096];
 _Static_assert(sizeof buckets/sizeof *buckets<=UINT16_MAX,"Vulkan store event bucket width");
@@ -46,7 +50,7 @@ void vk_store_descriptor_stats(uint64_t *hits,uint64_t *misses,int *reference) {
 void vk_store_slot_stats(uint64_t *stages,uint64_t *skipped) {
   *stages=atomic_load(&slot_cache_stages);*skipped=atomic_load(&slot_cache_skipped_bindings);
 }
-static int bucket_for(const tex_t *t,int add) {
+static int bucket_for_footprint(const vk_texture_footprint *t,int add) {
   if(!t) return -1;
   if(!t->serial) { index_valid=0;return -1; }
   unsigned h=(unsigned)(t->serial*UINT64_C(0x9e3779b97f4a7c15)>>51);
@@ -62,6 +66,12 @@ static int bucket_for(const tex_t *t,int add) {
   }
   index_valid=0;return -1;
 }
+static int bucket_for(const tex_t *t,int add) {
+  if(!t)return -1;
+  if(!t->serial) { index_valid=0;return -1; }
+  vk_texture_footprint footprint={t->serial,(uintptr_t)t->mem,t->L.size};
+  return bucket_for_footprint(&footprint,add);
+}
 static int descriptor_bucket(unsigned id) {
   unsigned key=id+1,slot=(id*UINT32_C(2654435761))>>19;
   unsigned cache_slot=8192;
@@ -72,7 +82,8 @@ static int descriptor_bucket(unsigned id) {
     if(!descriptor_buckets[slot].key) { cache_slot=slot;break; }
   }
   build_descriptor_misses++;
-  tex_t texture;int bucket=vk_texture_descriptor(id,&texture)?bucket_for(&texture,1):-1;
+  vk_texture_footprint texture;
+  int bucket=vk_texture_descriptor_footprint(id,&texture)?bucket_for_footprint(&texture,1):-1;
   // Valid only within this index build. If descriptors change concurrently,
   // the existing epoch check discards the whole index, including this cache.
   // Cache failures too; a subsequent registration changes that same epoch.
@@ -116,7 +127,8 @@ static void event_add(unsigned seq,const tex_t *t,const view_t *v,unsigned kind,
 // One selected RT snapshot can participate in many draw events. Resolve each
 // slot lazily at its original first use so bucket creation/event order stays
 // unchanged. A hit is justified by the current serial, never slot/pointer alone.
-static void attachment_event_add(unsigned seq,int *cached,const tex_t *t,const view_t *v,
+// Preserve the original per-draw inline boundary after shrinking the bucket.
+static inline __attribute__((always_inline)) void attachment_event_add(unsigned seq,int *cached,const tex_t *t,const view_t *v,
                                  unsigned kind,unsigned bits,int full) {
   if(!index_valid || !t) return;
   int b=*cached;
@@ -133,9 +145,15 @@ static void alias_add(unsigned a,unsigned b) {
   aliases[alias_count]=(store_alias){b,buckets[a].aliases};buckets[a].aliases=alias_count++;
 }
 static int bucket_address_compare(const void *av,const void *bv) {
-  uintptr_t a=(uintptr_t)buckets[*(const uint32_t *)av].texture.mem;
-  uintptr_t b=(uintptr_t)buckets[*(const uint32_t *)bv].texture.mem;
+  uintptr_t a=buckets[*(const uint32_t *)av].texture.base;
+  uintptr_t b=buckets[*(const uint32_t *)bv].texture.base;
   return (a>b)-(a<b);
+}
+static int bucket_footprints_overlap(const vk_texture_footprint *a,const vk_texture_footprint *b) {
+  if(!a||!b)return 0;
+  if(a->serial==b->serial)return 1;
+  uintptr_t x=a->base,y=b->base;
+  return x&&y&&(x==y||(x<y?y-x<a->size:x-y<b->size));
 }
 static void store_index_build(void) {
   index_valid=1;built_epoch=vk_texture_descriptor_epoch();bucket_count=event_count=global_count=alias_count=0;
@@ -252,11 +270,11 @@ static void store_index_build(void) {
   for(unsigned i=0;i<event_count;i++) sorted_events[write[events[i].bucket]++]=events[i];
   qsort(order,bucket_count,sizeof *order,bucket_address_compare);
   for(unsigned i=0;i<bucket_count && index_valid;i++) {
-    unsigned b=order[i];const tex_t *t=&buckets[b].texture;uintptr_t x=(uintptr_t)t->mem;if(!x) continue;
+    unsigned b=order[i];const vk_texture_footprint *t=&buckets[b].texture;uintptr_t x=t->base;if(!x) continue;
     for(unsigned j=i+1;j<bucket_count && index_valid;j++) {
-      unsigned other=order[j];uintptr_t y=(uintptr_t)buckets[other].texture.mem;
-      if(y>x && y-x>=t->L.size) break;
-      if(overlaps(t,&buckets[other].texture)) { alias_add(b,other);alias_add(other,b); }
+      unsigned other=order[j];uintptr_t y=buckets[other].texture.base;
+      if(y>x && y-x>=t->size) break;
+      if(bucket_footprints_overlap(t,&buckets[other].texture)) { alias_add(b,other);alias_add(other,b); }
     }
   }
   if(index_valid) atomic_fetch_add(&index_stats.builds,1);

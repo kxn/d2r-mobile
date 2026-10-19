@@ -2022,6 +2022,15 @@ int vk_texture_descriptor(int id,tex_t *out) {
   if(ok) *out=texture_descriptors[id].texture;
   pthread_mutex_unlock(&V.resources);return ok;
 }
+int vk_texture_descriptor_footprint(int id,vk_texture_footprint *out) {
+  pthread_mutex_lock(&V.resources);
+  int ok=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
+  if(ok) {
+    const tex_t *t=&texture_descriptors[id].texture;
+    *out=(vk_texture_footprint){t->serial,(uintptr_t)t->mem,t->L.size};
+  }
+  pthread_mutex_unlock(&V.resources);return ok;
+}
 int vk_sampler_descriptor(int id,samp_par *out) {
   pthread_mutex_lock(&V.resources);
   int ok=id>=0 && id<sampler_capacity && sampler_descriptors[id].valid;

@@ -164,6 +164,11 @@ int vk_ghost_pool_ranges(vk_pool_requirement_sink sink,void *context);
 VkPipelineLayout vk_program_layout(vk_shader *const shaders[6]);
 VkImageView vk_texture_view(int id, int storage);
 int vk_texture_descriptor(int id,tex_t *out);
+// Dependency planning needs identity and the exact backing byte envelope,
+// not the full NVN texture object. Returned values never borrow the registry.
+typedef struct { uint64_t serial;uintptr_t base;uint64_t size; } vk_texture_footprint;
+_Static_assert(sizeof(vk_texture_footprint)==24,"Vulkan texture dependency footprint");
+int vk_texture_descriptor_footprint(int id,vk_texture_footprint *out);
 int vk_texture_descriptor_view(int id,tex_t *out,view_t *view,int *has_view);
 void vk_bloom_quarter_enabled(int enabled);
 void vk_bloom_quarter_clears(uint64_t *before_a,uint64_t *before_b1);
