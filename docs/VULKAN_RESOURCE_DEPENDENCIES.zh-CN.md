@@ -1599,4 +1599,30 @@ SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Bus
 
 额外成本为每个原有recipe槽一个`VkImageSubresourceRange`，无新查找表或计时器。官方功能窗约94%物理recipe命中不代表全为同一种拓扑，也不能把整个函数的采样份额视为可消除。独立冻结的两文件补丁通过异步21,790,147、同步21,690,743项原GPU检查及同步校验，包括真实DS数组采样、stencil保存、mip与格式升级、嵌套ghost和cache碰撞，零VUID/SYNC。证据`texture-range-recipe-v1-validation.json`与`q735-texture-redundancy-v1-readonly-review.json`；尚无这项修改的真机CPU/FPS/温度收益，不与并行中的内存窗口生产接入混算。
 
+### 生产内存窗口：高通实测未见 PSS 收益，先修额外回读
+
+后续 `69ca473`、`7910c80` 已接齐 draw/compute、传输、UBO/SSBO、typed texel、顶点/索引与延迟 ghost 的完整范围准入。借用物理句柄前完成预留；跨窗口单绑定在明确的提交完成边界迁移、重收集，旧 GPU 字节保持，未知枚举走有计数的保守整池回退。启动窗口默认仍为 0（原整池策略），不能热切换。最终冻结源的异步 21,809,890、同步 21,710,486 项检查通过，零 VUID/SYNC；这是 Lavapipe 实现验证。
+
+同一真实高通 Adreno 735、同 APK `79607c61…` / ELF `dc2d0d43…`、原游戏 ABI3 和兼容 Shader 链 `9328e25ef116`，固定原生 UI 2750×1260、3D 0.75、目标 60，执行原输入四段营地移动后，用系统 `dumpsys meminfo` 取单次内存报告；报告在官方 Perfetto 窗口外执行。三次均正常继续原游戏、完成原生命周期两次存档并停止进程。
+
+| 顺序 | 启动策略 | GPU 镜像 backing extent | 系统 PSS | 系统 RSS |
+| --- | --- | --- | --- | --- |
+| A1 | 整池 | 1,167,065,088 B | 2,612,624 KiB | 2,741,928 KiB |
+| B | 16 MiB 窗口 | 707,788,800 B | 2,625,196 KiB | 2,754,616 KiB |
+| A2 | 整池 | 1,167,065,088 B | 2,629,753 KiB | 2,759,252 KiB |
+
+**分配范围缩小不等于实际常驻内存下降。** 本次 B 的 PSS 落在两次 A 的波动范围内，没有测到实际 RAM 净收益，也不能据此宣称 6GB 启动成功。窗口累计一次整池升级、22 个新 span，未发生未知枚举回退；后续走动仍可能扩大 backing。
+
+还发现迁移后的保守正确性措施有额外带宽成本：现实现将已迁移池永久标为不能信任 CPU known-copy。Perfetto 采集前后原机制计数中，B 的 known-copy fallback 为 237,031,508 B，A2 为 21,120 B；对应实际 GPU 回读记录为 554,147,188 B 与 370,457,472 B。两个窗口工作量不完全相同，不能直接相减当等负载节省量，更不能称为 DRAM 总线测量；但它明确暴露了应修的保守路径。修复必须按范围、GPU 写入代数和实际发布证明恢复 CPU 数据有效性，不能仅凭 fence 完成就相信旧 shadow。
+
+官方 Perfetto 的 B / A2 replay 平均 Running 为 25.677 / 24.795 ms，所选 CPU 频率也不同；这里只作描述，不宣称精确 CPU 或 FPS 因果。A1 的 Uniform variant 从 31 增长到 33，不算完整预热对照；B/A2 都稳定为 226 个 pipeline、33 个 variant。首个窗口尝试在距离目标约 3.16 个单位、允许半径 3 时移动超时，游戏仍存活且正常存档；后续 B/A2 使用半径 4，不把脚本超时报成游戏崩溃。
+
+原报告 `pool-window-production-v1-q-comparison.json`、`pool-window-production-v1-q-frequency-comparison.json` 保留全部输入和失败尝试。待修复迁移后的额外回读，再核对 Mali 的真实内存；不能将高通的 extent/PSS 关系直接推广到不同驱动。
+
+### 带宽与发热的优先级
+
+外部 DRAM 未饱和只约束吞吐瓶颈判断，不排除访存的能耗成本。继续优先减少中间附件外存往返、不必要的上传/回读与复制，并分别记录逻辑工作量、原厂硬件外存流量、整帧表现和持续热状态。当前同像素 input attachment/subpass 的实际 renderer 与模块变体仍在隔离实现，尚未装机，不能提前计入上述内存候选的收益。源附件仍有后续使用时保留 STORE，实际 tile 合并与净流量变化须由真机工具验证。
+
+本轮内存短窗只有公有热 API 已报告 status 0，没有同步硬件能耗或持续发热对照；不据此声称过热已解决，也不通过 ADB 轮询温度。
+
 另新增通用启动期operation-mode诊断，默认docked不变，显式handheld重用原GetOperationMode/GetPerformanceMode/参数槽，不新写游戏规则；actual dm_opmode启动日志核验，禁止热切换。新13f0包两模式在同包720下对照；Handheld固定720高，game-res只影响手持宽高比。该模式可能影响原游戏分支，但尚不能仅由HLE断言阴影／后处理减少。源与独审见 `operation-mode-v1-source-ready.json`、`operation-mode-v1-root-review.json`。
