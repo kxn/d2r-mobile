@@ -1571,7 +1571,7 @@ Apple口径核对：上游`front_ios.m`默认UI原生，`hle_oe.c` iOS默认3D0.
 本轮已实现两项基础能力，尚未启用原游戏融合：
 
 - 离线通用像素坐标证明与实验性SubpassData变体。每个实际base/spec/pred/tssbo模块分别绑定内容哈希；分支中任何未知用途、邻像素读取或非零LOD均保守拒绝。实际draw还须证明几何、插值、viewport、sampler、LOD、mip/layer与图像身份。工具选项默认关闭，原模块不改写；当前部署器仍拒绝未接入验证的`.plocal.json`，不能直接推到手机。
-- 不可变RenderPass缓存支持最多两个subpass，并把input次序、第二段颜色/深度、preserve和dependency完整纳入扩展key。普通单subpass key与哈希保持原样，仅扩展路径增加额外存储。主机真实GPU用例验证三个混合格式input attachment的读取、输入置换、缓存复用与退休；首段使用loadOp clear，因此不能冒充已验证游戏MRT绘制、后加深度或实际tile合并。
+- 不可变RenderPass缓存支持最多两个subpass，并把input次序、第二段颜色/深度、preserve和dependency完整纳入扩展key。普通单subpass key与哈希保持原样；每个缓存对象增加一个8B指针，扩展路径另分配416B拓扑，acquire局部栈也增加拓扑对象。主机真实GPU用例验证三个混合格式input attachment的读取、输入置换、缓存复用与退休；首段使用loadOp clear，因此不能冒充已验证游戏MRT绘制、后加深度或实际tile合并。
 
 当前游戏仍以单subpass记录。完整接入还需在首段secondary录制前规划兼容拓扑，补齐PSO/subpass及持久化配方身份、资源INPUT_ATTACHMENT用途、描述符变体、运行时坐标证明与保守回退；不能把已经按单subpass继承信息录好的secondary直接塞进新双subpass。
 
