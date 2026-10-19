@@ -1,8 +1,52 @@
+diff --git a/include/drm-uapi/mali_kbase_ioctl.h b/include/drm-uapi/mali_kbase_ioctl.h
+index 3c6f4d2..800daf0 100644
+--- a/include/drm-uapi/mali_kbase_ioctl.h
++++ b/include/drm-uapi/mali_kbase_ioctl.h
+@@ -544,12 +544,31 @@ struct base_kcpu_command_cqs_wait_operation_info {
+    __u32 inherit_err_flags;
+ };
+ 
++struct kbase_ioctl_sticky_resource_unmap {
++   __u64 count;
++   __u64 address;
++};
++#define KBASE_IOCTL_STICKY_RESOURCE_UNMAP \
++   _IOW(KBASE_IOCTL_TYPE, 30, struct kbase_ioctl_sticky_resource_unmap)
++
++struct base_kcpu_command_cqs_set_info {
++   __u64 objs;
++   __u32 nr_objs;
++   __u32 padding;
++};
++
++struct base_kcpu_command_import_info {
++   __u64 handle;
++};
++
+ struct base_kcpu_command {
+    __u8 type;
+    __u8 padding[7];
+    union {
+       struct base_kcpu_command_fence_info fence;
+       struct base_kcpu_command_cqs_wait_operation_info cqs_wait_operation;
++      struct base_kcpu_command_cqs_set_info cqs_set;
++      struct base_kcpu_command_import_info import;
+       __u64 padding[2];
+    } info;
+ };
 diff --git a/src/panfrost/lib/kmod/kbase_kmod.c b/src/panfrost/lib/kmod/kbase_kmod.c
-index 35038be..12b5b66 100644
+index 35038be..cb62711 100644
 --- a/src/panfrost/lib/kmod/kbase_kmod.c
 +++ b/src/panfrost/lib/kmod/kbase_kmod.c
-@@ -151,6 +151,7 @@ struct kbase_kmod_dev {
+@@ -51,6 +51,7 @@
+ #include "util/u_atomic.h"
+ #include "util/u_math.h"
+ #include "util/log.h"
++#include "util/libsync.h"
+ #include "util/list.h"
+ #include "util/u_debug.h"
+ 
+@@ -151,6 +152,7 @@ struct kbase_kmod_dev {
  
     /* True for the CSF flavour of kbase (arch >= 10), false for JM. */
     bool is_csf;
@@ -10,15 +54,16 @@ index 35038be..12b5b66 100644
  
     /* CSF interface information (CSF only), queried from
      * KBASE_IOCTL_CS_GET_GLB_IFACE and stored in the panthor uAPI layout
-@@ -266,6 +267,7 @@ struct kbase_kmod_bo {
+@@ -266,6 +268,8 @@ struct kbase_kmod_bo {
     /* Whether this is a SAME_VA region (freed by munmap()) or a zone
      * region (freed by KBASE_IOCTL_MEM_FREE). */
     bool same_va;
 +   bool gpu_mapping_frees_region;
++   bool host_import_active;
  
     /* Whether the kernel reported BASE_MEM_COHERENT_SYSTEM for this region.
      * Coherent regions need no KBASE_IOCTL_MEM_SYNC (which this DDK rejects
-@@ -499,6 +501,8 @@ kbase_dev_query_props(struct kbase_kmod_dev *kbase_dev,
+@@ -499,6 +503,8 @@ kbase_dev_query_props(struct kbase_kmod_dev *kbase_dev,
      */
     uint32_t coherency_mode = (uint32_t)kbase_gpuprop_get(
        buf, buf_size, KBASE_GPUPROP_RAW_COHERENCY_MODE, 0);
@@ -27,7 +72,7 @@ index 35038be..12b5b66 100644
     props->is_io_coherent = false;
  
     /* Timestamp: expose if gpu_id is non-zero (safe assumption). */
-@@ -1911,7 +1915,7 @@ to_kbase_mem_flags(uint32_t kmod_flags)
+@@ -1911,7 +1917,7 @@ to_kbase_mem_flags(uint32_t kmod_flags)
        flags |= BASE_MEM_CACHED_CPU;
  
     if (kmod_flags & PAN_KMOD_BO_FLAG_IO_COHERENT)
@@ -36,7 +81,7 @@ index 35038be..12b5b66 100644
  
     if (kmod_flags & PAN_KMOD_BO_FLAG_ALLOC_ON_FAULT)
        flags |= BASE_MEM_GROW_ON_GPF;
-@@ -1924,73 +1928,171 @@ to_kbase_mem_flags(uint32_t kmod_flags)
+@@ -1924,73 +1930,309 @@ to_kbase_mem_flags(uint32_t kmod_flags)
     return flags;
  }
  
@@ -117,7 +162,124 @@ index 35038be..12b5b66 100644
 +{
 +   const struct kbase_kmod_dev *kd =
 +      container_of(dev, const struct kbase_kmod_dev, base);
-+   return kd->is_csf && kd->system_coherency <= 1;
++   return kd->is_csf && !p_atomic_read(&kd->csf_error) &&
++          (kd->system_coherency <= 1 || pan_kmod_can_sync_bo_map_from_userland((struct pan_kmod_dev *)dev));
++}
++
++static int
++kbase_host_import_unpin(struct pan_kmod_dev *dev, uint64_t gpu_va)
++{
++   struct kbase_ioctl_sticky_resource_unmap req = {
++      .count = 1,
++      .address = (uintptr_t)&gpu_va,
++   };
++   int ret;
++   do {
++      ret = ioctl(dev->fd, KBASE_IOCTL_STICKY_RESOURCE_UNMAP, &req);
++   } while (ret && errno == EINTR);
++   return ret;
++}
++
++static int
++kbase_host_import_pin(struct pan_kmod_dev *dev, uint64_t gpu_va, bool *retained)
++{
++   STATIC_ASSERT(sizeof(struct base_kcpu_command) == 24);
++   STATIC_ASSERT(sizeof(struct kbase_ioctl_sticky_resource_unmap) == 16);
++   *retained = false;
++   struct pan_kmod_bo *status_bo = NULL;
++   struct kbase_kmod_bo *status = NULL;
++   struct kbase_ioctl_kcpu_queue_new create = {0};
++   bool queue_created = false;
++   bool map_queued = false;
++   bool queue_drained = false;
++   int ret = -1;
++   struct base_fence fence = {.basep = {.fd = -1, .stream_fd = -1}};
++
++   status_bo = pan_kmod_bo_alloc(dev, NULL, kbase_kmod_page_size(),
++                                 PAN_KMOD_BO_FLAG_CSF_EVENT);
++   if (!status_bo)
++      return -1;
++   status = container_of(status_bo, struct kbase_kmod_bo, base);
++   volatile uint32_t *words = status->cpu_ptr;
++   words[0] = 0;
++   words[1] = 0;
++   util_post_flush_fence();
++
++   if (ioctl(dev->fd, KBASE_IOCTL_KCPU_QUEUE_CREATE, &create))
++      goto out;
++   queue_created = true;
++   uint64_t status_addr = status->gpu_va;
++   struct base_kcpu_command commands[] = {
++      {.type = BASE_KCPU_COMMAND_TYPE_MAP_IMPORT,
++       .info.import.handle = gpu_va},
++      {.type = BASE_KCPU_COMMAND_TYPE_CQS_SET,
++       .info.cqs_set = {.objs = (uintptr_t)&status_addr, .nr_objs = 1}},
++      {.type = BASE_KCPU_COMMAND_TYPE_FENCE_SIGNAL,
++       .info.fence.fence = (uintptr_t)&fence},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(commands); i++) {
++      struct kbase_ioctl_kcpu_queue_enqueue enqueue = {
++         .addr = (uintptr_t)&commands[i],
++         .nr_commands = 1,
++         .id = create.id,
++      };
++      if (ioctl(dev->fd, KBASE_IOCTL_KCPU_QUEUE_ENQUEUE, &enqueue))
++         goto out;
++      if (i == 0)
++         map_queued = true;
++   }
++   if (fence.basep.fd < 0 ||
++       kbase_kcpu_poll_fence(fence.basep.fd, 5000000000ll) != 1) {
++      errno = EIO;
++      goto out;
++   }
++   struct sync_file_info *file_info = sync_file_info(fence.basep.fd);
++   bool signalled = file_info && file_info->status == 1;
++   queue_drained = signalled;
++   if (file_info)
++      sync_file_info_free(file_info);
++   __atomic_thread_fence(__ATOMIC_ACQUIRE);
++   if (!signalled || words[0] != 1 || words[1] != 0) {
++      errno = EIO;
++      goto out;
++   }
++   ret = 0;
++
++out: {
++   int saved_errno = errno;
++   if (queue_created) {
++      struct kbase_ioctl_kcpu_queue_delete delete = {.id = create.id};
++      int deleted;
++      do {
++         deleted = ioctl(dev->fd, KBASE_IOCTL_KCPU_QUEUE_DELETE, &delete);
++      } while (deleted && errno == EINTR);
++      if (!deleted)
++         queue_drained = true;
++      else {
++         saved_errno = errno;
++         ret = -1;
++         struct kbase_kmod_dev *kd = container_of(dev, struct kbase_kmod_dev, base);
++         p_atomic_set(&kd->csf_error, 1);
++      }
++   }
++   if (fence.basep.fd >= 0)
++      close(fence.basep.fd);
++   if (map_queued && !queue_drained) {
++      mesa_loge("kbase: KCPU import queue did not drain; retaining import/status mappings until process restart");
++      *retained = true;
++      errno = saved_errno;
++      return -1;
++   }
++   if (ret && map_queued && kbase_host_import_unpin(dev, gpu_va) && errno != EINVAL) {
++      struct kbase_kmod_dev *kd = container_of(dev, struct kbase_kmod_dev, base);
++      p_atomic_set(&kd->csf_error, 1);
++      mesa_loge("kbase: failed import sticky release failed; retaining import until process restart");
++      *retained = true;
++   }
++   pan_kmod_bo_put(status_bo);
++   errno = saved_errno;
++   return ret;
++}
 +}
 +
  struct pan_kmod_bo *
@@ -153,14 +315,16 @@ index 35038be..12b5b66 100644
 -   } user_buf = { (uintptr_t)host_ptr, size };
 -
 +   bo->dmabuf_fd = -1;
++   bool coherent = kd->system_coherency <= 1;
 +   struct { uint64_t ptr, length; } user_buf = {(uintptr_t)host_ptr, size};
     union kbase_ioctl_mem_import req = {
        .in = {
           .flags = BASE_MEM_PROT_CPU_RD | BASE_MEM_PROT_CPU_WR |
 -                  BASE_MEM_PROT_GPU_RD | BASE_MEM_PROT_GPU_WR,
 +                  BASE_MEM_PROT_GPU_RD | BASE_MEM_PROT_GPU_WR |
-+                  BASE_MEM_CACHED_CPU | BASE_MEM_COHERENT_SYSTEM |
-+                  BASE_MEM_COHERENT_SYSTEM_REQUIRED,
++                  BASE_MEM_CACHED_CPU | BASE_MEM_COHERENT_LOCAL |
++                  (coherent ? BASE_MEM_COHERENT_SYSTEM |
++                              BASE_MEM_COHERENT_SYSTEM_REQUIRED : 0),
           .phandle = (uintptr_t)&user_buf,
           .type = BASE_MEM_IMPORT_TYPE_USER_BUFFER,
        },
@@ -175,7 +339,7 @@ index 35038be..12b5b66 100644
 +   if (req.out.va_pages != size / page_size || !req.out.gpu_va ||
 +       (req.out.gpu_va & (page_size - 1)) ||
 +       !(req.out.flags & BASE_MEM_CACHED_CPU) ||
-+       !(req.out.flags & BASE_MEM_COHERENT_SYSTEM)) {
++       (coherent && !(req.out.flags & BASE_MEM_COHERENT_SYSTEM))) {
 +      errno = ENOTSUP;
 +      goto free_import;
     }
@@ -231,11 +395,30 @@ index 35038be..12b5b66 100644
 +   }
 +   bo->cpu_ptr = host_ptr;
 +   bo->owns_cpu_mapping = false;
-+   bo->cpu_gpu_coherent = true;
++   bo->cpu_gpu_coherent = (req.out.flags & BASE_MEM_COHERENT_SYSTEM) != 0;
++   if (!bo->cpu_gpu_coherent) {
++      bool retained = false;
++      if (kbase_host_import_pin(dev, bo->gpu_va, &retained)) {
++         int saved_errno = errno;
++         if (retained)
++            goto fail;
++         if (bo->gpu_mapping) {
++            munmap(bo->gpu_mapping, size);
++            bo->gpu_mapping = NULL;
++         }
++         if (!bo->gpu_mapping_frees_region) {
++            struct kbase_ioctl_mem_free free_req = {.gpu_addr = bo->gpu_va};
++            ioctl(dev->fd, KBASE_IOCTL_MEM_FREE, &free_req);
++         }
++         errno = saved_errno;
++         goto fail;
++      }
++      bo->host_import_active = true;
++   }
 +   uint32_t handle = p_atomic_inc_return(&kd->next_handle);
 +   pan_kmod_bo_init(&bo->base, dev, NULL, size,
 +                    PAN_KMOD_BO_FLAG_IMPORTED | PAN_KMOD_BO_FLAG_WB_MMAP |
-+                    PAN_KMOD_BO_FLAG_IO_COHERENT, handle);
++                    (bo->cpu_gpu_coherent ? PAN_KMOD_BO_FLAG_IO_COHERENT : 0), handle);
 +   return &bo->base;
 +
 +free_import: {
@@ -246,7 +429,7 @@ index 35038be..12b5b66 100644
 +}
 +fail: {
 +   int saved_errno = errno;
-+   mesa_loge("kbase: coherent USER_BUFFER import failed: %s", strerror(saved_errno));
++   mesa_loge("kbase: USER_BUFFER import failed: %s", strerror(saved_errno));
 +   pan_kmod_dev_free(dev, bo);
 +   errno = saved_errno;
 +   return NULL;
@@ -254,7 +437,7 @@ index 35038be..12b5b66 100644
  }
  
  static struct pan_kmod_bo *
-@@ -2022,6 +2124,8 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
+@@ -2022,6 +2264,8 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
        import_flags |= BASE_MEM_UNCACHED_GPU;
     if (kmod_flags & PAN_KMOD_BO_FLAG_WB_MMAP)
        import_flags |= BASE_MEM_CACHED_CPU;
@@ -263,7 +446,7 @@ index 35038be..12b5b66 100644
  
     /* Bring-up escape hatch: PANVK_KBASE_IMPORT_CLEAR/SET adjust the
      * MEM_IMPORT flag word (hex masks) to probe DDK-specific import
-@@ -2042,62 +2146,7 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
+@@ -2042,62 +2286,7 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
        },
     };
  
@@ -327,7 +510,7 @@ index 35038be..12b5b66 100644
  
     if (ret) {
        mesa_loge("kbase: KBASE_IOCTL_MEM_IMPORT failed: %s", strerror(errno));
-@@ -2105,6 +2154,13 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
+@@ -2105,6 +2294,13 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
     }
  
     const uint64_t bo_size = req.out.va_pages * page_size;
@@ -341,7 +524,7 @@ index 35038be..12b5b66 100644
     /* SAME_VA and NEED_MMAP are different contracts (UAPI: SAME_VA regions
      * return a mmap cookie and the mmap return address becomes both VAs;
      * NEED_MMAP regions return a real GPU VA with a separate CPU mapping).
-@@ -2187,6 +2243,14 @@ err_free_bo:
+@@ -2187,6 +2383,14 @@ err_free_bo:
     return NULL;
  }
  
@@ -356,7 +539,7 @@ index 35038be..12b5b66 100644
  static struct pan_kmod_bo *
  kbase_kmod_bo_alloc_dmabuf(struct pan_kmod_dev *dev, uint64_t size,
                             uint32_t kmod_flags)
-@@ -2358,6 +2422,14 @@ kbase_kmod_bo_alloc(struct pan_kmod_dev *dev,
+@@ -2358,6 +2562,14 @@ kbase_kmod_bo_alloc(struct pan_kmod_dev *dev,
        alloc_gpu_va = req.out.gpu_va;
     }
  
@@ -371,7 +554,24 @@ index 35038be..12b5b66 100644
     kbase_bo->same_va = (alloc_flags & BASE_MEM_SAME_VA) != 0;
     kbase_bo->cpu_gpu_coherent =
        (alloc_flags & BASE_MEM_COHERENT_SYSTEM) != 0;
-@@ -2441,7 +2513,7 @@ kbase_kmod_bo_free(struct pan_kmod_bo *bo)
+@@ -2430,6 +2642,16 @@ kbase_kmod_bo_free(struct pan_kmod_bo *bo)
+ 
+    pan_kmod_bo_cleanup(bo);
+ 
++   if (kbase_bo->host_import_active) {
++      if (kbase_host_import_unpin(bo->dev, kbase_bo->gpu_va)) {
++         mesa_loge("kbase: USER_BUFFER sticky unmap failed: %s; retaining import until process restart", strerror(errno));
++         p_atomic_set(&kbase_dev->csf_error, 1);
++         pan_kmod_dev_free(bo->dev, kbase_bo);
++         return;
++      }
++      kbase_bo->host_import_active = false;
++   }
++
+    /* For SAME_VA regions, munmap() alone tears the whole region down
+     * (free-on-close); a MEM_FREE afterwards would hit a stale VA.  For
+     * zone regions (EXEC_VA), munmap() only drops the CPU mapping and the
+@@ -2441,7 +2663,7 @@ kbase_kmod_bo_free(struct pan_kmod_bo *bo)
     if (kbase_bo->gpu_mapping)
        munmap(kbase_bo->gpu_mapping, bo->size);
  
@@ -396,7 +596,7 @@ index 4020bcc..ce5bdc9 100644
                                              void *host_ptr, uint64_t size);
  
 diff --git a/src/panfrost/vulkan/panvk_device_memory.c b/src/panfrost/vulkan/panvk_device_memory.c
-index cf9f4c0..514e269 100644
+index cf9f4c0..fdc2efa 100644
 --- a/src/panfrost/vulkan/panvk_device_memory.c
 +++ b/src/panfrost/vulkan/panvk_device_memory.c
 @@ -94,6 +94,31 @@ panvk_AllocateMemory(VkDevice _device,
@@ -431,7 +631,7 @@ index cf9f4c0..514e269 100644
     mem = vk_device_memory_create(&device->vk, pAllocateInfo, pAllocator,
                                   sizeof(*mem));
     if (mem == NULL)
-@@ -105,12 +130,31 @@ panvk_AllocateMemory(VkDevice _device,
+@@ -105,12 +130,36 @@ panvk_AllocateMemory(VkDevice _device,
     if (fd_info && !fd_info->handleType)
        fd_info = NULL;
  
@@ -445,6 +645,10 @@ index cf9f4c0..514e269 100644
 +      mem->bo = NULL;
 +#endif
 +      if (!mem->bo) {
++#if defined(HAVE_PAN_KMOD_KBASE)
++         if (kbase_kmod_csf_has_error(device->kmod.dev))
++            vk_device_set_lost(&device->vk, "KCPU host import could not retire safely");
++#endif
 +         result = panvk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
 +         goto err_destroy_mem;
 +      }
@@ -455,8 +659,9 @@ index cf9f4c0..514e269 100644
  
 -      mem->bo = pan_kmod_bo_import(device->kmod.dev, fd_info->fd);
 +#if defined(HAVE_PAN_KMOD_KBASE)
-+      if (physical_device->host_import_type_bits &
-+          BITFIELD_BIT(pAllocateInfo->memoryTypeIndex))
++      if ((physical_device->host_import_type_bits &
++           BITFIELD_BIT(pAllocateInfo->memoryTypeIndex)) &&
++          (type->propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
 +         mem->bo = kbase_kmod_bo_import_coherent_fd(device->kmod.dev, fd_info->fd,
 +                                                   pAllocateInfo->allocationSize);
 +      else
@@ -465,17 +670,18 @@ index cf9f4c0..514e269 100644
        if (!mem->bo) {
           result = panvk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
           goto err_destroy_mem;
-@@ -132,6 +176,9 @@ panvk_AllocateMemory(VkDevice _device,
+@@ -132,6 +181,10 @@ panvk_AllocateMemory(VkDevice _device,
           (device->vk.enabled_features.memoryMapPlaced &&
            (type->propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT));
  
-+      if (physical_device->host_import_type_bits &
-+          BITFIELD_BIT(pAllocateInfo->memoryTypeIndex))
++      if ((physical_device->host_import_type_bits &
++           BITFIELD_BIT(pAllocateInfo->memoryTypeIndex)) &&
++          (type->propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
 +         bo_flags |= PAN_KMOD_BO_FLAG_WB_MMAP | PAN_KMOD_BO_FLAG_IO_COHERENT;
        bo_flags = panvk_device_adjust_bo_flags(device, bo_flags);
        mem->bo = pan_kmod_bo_alloc(device->kmod.dev,
                                    shareable ? NULL : device->kmod.vm,
-@@ -360,6 +407,9 @@ panvk_MapMemory2KHR(VkDevice _device, const VkMemoryMapInfoKHR *pMemoryMapInfo,
+@@ -360,6 +413,9 @@ panvk_MapMemory2KHR(VkDevice _device, const VkMemoryMapInfoKHR *pMemoryMapInfo,
     void *host_addr = NULL;
     int map_flags = MAP_SHARED;
  
@@ -485,7 +691,7 @@ index cf9f4c0..514e269 100644
     if (pMemoryMapInfo->flags & VK_MEMORY_MAP_PLACED_BIT_EXT) {
        const VkMemoryMapPlacedInfoEXT *placed_info = vk_find_struct_const(
           pMemoryMapInfo->pNext, MEMORY_MAP_PLACED_INFO_EXT);
-@@ -389,6 +439,9 @@ panvk_UnmapMemory2KHR(VkDevice _device,
+@@ -389,6 +445,9 @@ panvk_UnmapMemory2KHR(VkDevice _device,
     VK_FROM_HANDLE(panvk_device, device, _device);
     VK_FROM_HANDLE(panvk_device_memory, mem, pMemoryUnmapInfo->memory);
  
@@ -495,7 +701,26 @@ index cf9f4c0..514e269 100644
     if (pMemoryUnmapInfo->flags & VK_MEMORY_UNMAP_RESERVE_BIT_EXT) {
        void *reserved =
           os_mmap(mem->addr.host, pan_kmod_bo_size(mem->bo), PROT_NONE,
-@@ -573,3 +626,21 @@ panvk_SetDeviceMemoryPriorityEXT(VkDevice device, VkDeviceMemory memory,
+@@ -412,6 +471,7 @@ sync_memory_ranges(struct panvk_device *device, uint32_t memoryRangeCount,
+                    const VkMappedMemoryRange *pMemoryRanges,
+                    enum pan_kmod_bo_sync_type type)
+ {
++   bool flush_host_import = false;
+    for (uint32_t i = 0; i < memoryRangeCount; i++) {
+       const VkMappedMemoryRange *r = &pMemoryRanges[i];
+       if (r->size == 0)
+@@ -422,7 +482,10 @@ sync_memory_ranges(struct panvk_device *device, uint32_t memoryRangeCount,
+       pan_kmod_queue_bo_map_sync(
+          memory->bo, r->offset, (char *)memory->addr.host + r->offset,
+          vk_device_memory_range(&memory->vk, r->offset, r->size), type);
++      flush_host_import |= memory->vk.host_ptr != NULL;
+    }
++   if (flush_host_import)
++      pan_kmod_flush_bo_map_syncs(device->kmod.dev);
+ 
+    return VK_SUCCESS;
+ }
+@@ -573,3 +636,21 @@ panvk_SetDeviceMemoryPriorityEXT(VkDevice device, VkDeviceMemory memory,
                                   float priority)
  {
  }
@@ -518,7 +743,7 @@ index cf9f4c0..514e269 100644
 +   return VK_SUCCESS;
 +}
 diff --git a/src/panfrost/vulkan/panvk_physical_device.c b/src/panfrost/vulkan/panvk_physical_device.c
-index 6a79a73..de2e43a 100644
+index 6a79a73..6569a02 100644
 --- a/src/panfrost/vulkan/panvk_physical_device.c
 +++ b/src/panfrost/vulkan/panvk_physical_device.c
 @@ -505,6 +505,8 @@ get_core_masks(struct panvk_physical_device *device,
@@ -530,7 +755,7 @@ index 6a79a73..de2e43a 100644
  static VkResult
  get_device_heaps(struct panvk_physical_device *device,
                   struct panvk_instance *instance)
-@@ -588,6 +590,28 @@ get_device_heaps(struct panvk_physical_device *device,
+@@ -588,6 +590,39 @@ get_device_heaps(struct panvk_physical_device *device,
           host_cached_not_coherent_type;
     }
  
@@ -539,16 +764,27 @@ index 6a79a73..de2e43a 100644
 +       !PANVK_DEBUG(DUMP) &&
 +       debug_get_option_panvk_dm_host_import() &&
 +       kbase_kmod_supports_host_import(device->kmod.dev)) {
-+      assert(device->memory.type_count < ARRAY_SIZE(device->memory.types));
-+      device->host_import_type_bits = BITFIELD_BIT(device->memory.type_count);
-+      device->host_import_alignment = kbase_kmod_page_size();
-+      device->memory.types[device->memory.type_count++] = (VkMemoryType) {
-+         .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
-+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-+                          VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
-+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-+         .heapIndex = 0,
-+      };
++      device->host_import_alignment =
++         MAX2(kbase_kmod_page_size(), util_cache_granularity());
++      if (kbase_kmod_get_system_coherency(device->kmod.dev) <= 1) {
++         assert(device->memory.type_count < ARRAY_SIZE(device->memory.types));
++         device->host_import_type_bits = BITFIELD_BIT(device->memory.type_count);
++         device->memory.types[device->memory.type_count++] = (VkMemoryType) {
++            .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                             VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
++                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
++            .heapIndex = 0,
++         };
++      } else {
++         for (unsigned i = 0; i < device->memory.type_count; i++) {
++            VkMemoryPropertyFlags flags = device->memory.types[i].propertyFlags;
++            if ((flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
++                (flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) &&
++                !(flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
++               device->host_import_type_bits |= BITFIELD_BIT(i);
++         }
++      }
 +   }
 +   if (device->kbase_node_path[0] && debug_get_option_panvk_dm_host_import())
 +      mesa_logi("panvk: experimental host import type bits=0x%x, selected coherency=%u",
@@ -559,7 +795,7 @@ index 6a79a73..de2e43a 100644
     const uint64_t request_va =
        PANVK_DEBUG(NO_EXTENDED_VA_RANGE) ? 1ull << 32 : 1ull << 48;
     device->memory.max_supported_va =
-@@ -2883,6 +2907,19 @@ panvk_GetPhysicalDeviceExternalBufferProperties(
+@@ -2883,6 +2918,19 @@ panvk_GetPhysicalDeviceExternalBufferProperties(
     const VkPhysicalDeviceExternalBufferInfo *pExternalBufferInfo,
     VkExternalBufferProperties *pExternalBufferProperties)
  {

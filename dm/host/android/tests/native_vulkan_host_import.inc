@@ -15,6 +15,8 @@ typedef struct {
   uint64_t release_value;
   VkDebugUtilsMessengerEXT messenger;
   unsigned validation_errors;
+  VkBool32 imported_host_coherent;
+  VkDeviceSize noncoherent_atom;
 } host_import_context;
 
 static VkBool32 VKAPI_PTR host_import_validation(
@@ -38,12 +40,16 @@ static int host_import_extension(VkPhysicalDevice physical,const char *name) {
   free(items);return found;
 }
 static uint32_t host_import_memory_type(VkPhysicalDevice physical,uint32_t bits,
-                                        VkMemoryPropertyFlags required) {
+                                        VkMemoryPropertyFlags required,
+                                        VkBool32 prefer_coherent) {
   VkPhysicalDeviceMemoryProperties properties;
   vkGetPhysicalDeviceMemoryProperties(physical,&properties);
-  for(uint32_t i=0;i<properties.memoryTypeCount;i++)
-    if((bits&(1u<<i)) && (properties.memoryTypes[i].propertyFlags&required)==required)
-      return i;
+  for(unsigned pass=0;pass<(prefer_coherent?2u:1u);pass++)
+    for(uint32_t i=0;i<properties.memoryTypeCount;i++)
+      if((bits&(1u<<i)) && (properties.memoryTypes[i].propertyFlags&required)==required &&
+          (!prefer_coherent || pass ||
+           (properties.memoryTypes[i].propertyFlags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)))
+        return i;
   die("Host import fixture has no compatible memory type");
 }
 static void host_import_context_destroy(host_import_context *context) {
@@ -94,6 +100,15 @@ static void host_import_barrier(VkCommandBuffer command,VkPipelineStageFlags sou
     .srcAccessMask=writes,.dstAccessMask=reads};
   vkCmdPipelineBarrier(command,source,destination,0,1,&barrier,0,NULL,0,NULL);
 }
+static void host_import_cache_range(host_import_context *context,VkDeviceMemory memory,
+                                     VkDeviceSize offset,VkDeviceSize size,VkBool32 invalidate) {
+  if(context->imported_host_coherent)return;
+  CHECK(offset%context->noncoherent_atom==0 && size%context->noncoherent_atom==0);
+  VkMappedMemoryRange range={.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+    .memory=memory,.offset=offset,.size=size};
+  CHECK((invalidate?vkInvalidateMappedMemoryRanges(context->device,1,&range):
+    vkFlushMappedMemoryRanges(context->device,1,&range))==VK_SUCCESS);
+}
 static void host_import_round(host_import_context *context,VkDeviceSize alignment,unsigned round,
                                PFN_vkGetMemoryHostPointerPropertiesEXT properties) {
   const size_t extent=(size_t)alignment*2,mapping_size=(size_t)alignment*3;
@@ -122,7 +137,15 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
     .handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,.pHostPointer=host};
   VkMemoryAllocateInfo allocation={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.pNext=&import,
     .allocationSize=extent,.memoryTypeIndex=host_import_memory_type(context->physical,memory_bits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT,VK_TRUE)};
+  VkPhysicalDeviceMemoryProperties memory_properties;
+  vkGetPhysicalDeviceMemoryProperties(context->physical,&memory_properties);
+  context->imported_host_coherent=(memory_properties.memoryTypes[allocation.memoryTypeIndex].propertyFlags&
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)!=0;
+  CHECK(context->imported_host_coherent || alignment%context->noncoherent_atom==0);
+  LOG("[host import oracle] round=%u import_type=%u flags=%#x host_coherent=%u atom=%llu",round,
+    allocation.memoryTypeIndex,memory_properties.memoryTypes[allocation.memoryTypeIndex].propertyFlags,
+    context->imported_host_coherent,(unsigned long long)context->noncoherent_atom);
   VkDeviceMemory memory;
   CHECK(vkAllocateMemory(context->device,&allocation,NULL,&memory)==VK_SUCCESS);
   for(unsigned i=0;i<2;i++)
@@ -133,6 +156,8 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
   vkUnmapMemory(context->device,memory);
   // Original host memory must survive unmap and remains the sole test source.
   host[0]=UINT32_C(0x42b718e3);CHECK(host[0]==UINT32_C(0x42b718e3));
+  // Keep the imported Vulkan memory mapped while using standard mapped-range APIs.
+  CHECK(vkMapMemory(context->device,memory,0,extent,0,&alias)==VK_SUCCESS);
 
   VkBuffer readback;create.pNext=NULL;create.size=extent;
   CHECK(vkCreateBuffer(context->device,&create,NULL,&readback)==VK_SUCCESS);
@@ -140,7 +165,7 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
   vkGetBufferMemoryRequirements(context->device,readback,&read_requirements);
   allocation.pNext=NULL;allocation.allocationSize=read_requirements.size;
   allocation.memoryTypeIndex=host_import_memory_type(context->physical,read_requirements.memoryTypeBits,
-    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,VK_FALSE);
   VkDeviceMemory read_memory;
   CHECK(vkAllocateMemory(context->device,&allocation,NULL,&read_memory)==VK_SUCCESS);
   CHECK(vkBindBufferMemory(context->device,readback,read_memory,0)==VK_SUCCESS);
@@ -149,9 +174,11 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
   const size_t words=(size_t)alignment/sizeof(uint32_t);
   for(unsigned pass=0;pass<3;pass++) {
     // Every CPU edit occurs after import; an import-time flush cannot satisfy
-    // this repeated coherent publication check. Two submits precede any wait.
+    // repeated publication. Noncoherent memory uses standard range operations.
+    // Two submits precede any wait.
     for(unsigned slot=0;slot<2;slot++) {
       for(size_t i=0;i<words;i++)host[slot*words+i]=host_import_pattern(round*3+pass,slot,i);
+      host_import_cache_range(context,memory,alignment*slot,alignment,VK_FALSE);
       host_import_begin(context,slot);
       host_import_barrier(context->command[slot],VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -177,13 +204,16 @@ static void host_import_round(host_import_context *context,VkDeviceSize alignmen
       host_import_submit(context,slot);
     }
     host_import_wait(context);
+    host_import_cache_range(context,memory,0,extent,VK_TRUE);
     for(unsigned slot=0;slot<2;slot++)for(size_t i=0;i<words;i++)
       CHECK(host[slot*words+i]==(UINT32_C(0x75b00000)^round*256u^pass*4u^slot));
   }
   vkUnmapMemory(context->device,read_memory);
   vkDestroyBuffer(context->device,readback,NULL);vkFreeMemory(context->device,read_memory,NULL);
   for(unsigned slot=0;slot<2;slot++)vkDestroyBuffer(context->device,imported[slot],NULL);
+  vkUnmapMemory(context->device,memory);
   vkFreeMemory(context->device,memory,NULL);
+  CHECK(vkDeviceWaitIdle(context->device)==VK_SUCCESS);
   for(size_t i=0;i<extent/4;i++)host[i]=host_import_pattern(round,7,i);
   for(size_t i=0;i<extent/4;i++)CHECK(host[i]==host_import_pattern(round,7,i));
   CHECK(munmap(mapping,mapping_size)==0);
@@ -238,6 +268,8 @@ static int host_import_oracle(void) {
   context.physical=physical[0];free(physical);
   VkPhysicalDeviceProperties device_properties;
   vkGetPhysicalDeviceProperties(context.physical,&device_properties);
+  context.noncoherent_atom=device_properties.limits.nonCoherentAtomSize;
+  CHECK(context.noncoherent_atom && !(context.noncoherent_atom&(context.noncoherent_atom-1)));
   LOG("[host import oracle] uid=%lu device=%s turnip_opt_in=%s panvk_opt_in=%s validation=%d",
     (unsigned long)getuid(),device_properties.deviceName,getenv("TU_DM_HOST_IMPORT")?getenv("TU_DM_HOST_IMPORT"):"unset",
     getenv("PANVK_DM_HOST_IMPORT")?getenv("PANVK_DM_HOST_IMPORT"):"unset",validate);
@@ -263,7 +295,7 @@ static int host_import_oracle(void) {
   vkGetPhysicalDeviceExternalBufferProperties(context.physical,&query,&external);
   CHECK(external.externalMemoryProperties.externalMemoryFeatures&VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT);
   CHECK(external.externalMemoryProperties.compatibleHandleTypes&query.handleType);
-  if(strstr(device_properties.deviceName,"Turnip")) {
+  if(strstr(device_properties.deviceName,"Turnip") || strstr(device_properties.deviceName,"Mali")) {
     CHECK(!(external.externalMemoryProperties.externalMemoryFeatures&VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT));
     query.flags=VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
     vkGetPhysicalDeviceExternalBufferProperties(context.physical,&query,&external);
@@ -319,6 +351,8 @@ static int host_import_oracle(void) {
   VkFenceCreateInfo fence={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
   for(unsigned i=0;i<2;i++)CHECK(vkCreateFence(context.device,&fence,NULL,&context.fence[i])==VK_SUCCESS);
   for(unsigned round=0;round<4;round++)host_import_round(&context,alignment,round,get_properties);
+  printf("{\"test_details\":\"host-import-memory\",\"host_coherent\":%s,\"noncoherent_atom\":%llu}\n",
+    context.imported_host_coherent?"true":"false",(unsigned long long)context.noncoherent_atom);
   host_import_context_destroy(&context);CHECK(!V.device && !V.instance);
   printf("{\"test\":\"host-import-standard-api\",\"result\":\"passed\",\"checks\":%u,\"uid\":%lu,\"rounds\":4,\"submits_before_each_wait\":2,\"timeline_gate\":true,\"alignment\":%llu,\"import_bytes\":%llu,\"validation_requested\":%s}\n",
     checks,(unsigned long)getuid(),(unsigned long long)alignment,(unsigned long long)alignment*2,validate?"true":"false");

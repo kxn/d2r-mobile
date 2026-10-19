@@ -1,85 +1,102 @@
-# Experimental app-local PanVK host allocation import
+# Experimental PanVK host allocation import
 
-This isolated source package adds `VK_EXT_external_memory_host` buffer import to
-Zenithblue's Android kbase PanVK fork. It does not change the game allocator,
-import guest addresses, replace the system driver, or enable PanVK for gameplay.
-`PANVK_DM_HOST_IMPORT` defaults to false and is cached at physical-device setup.
+This source package adds buffer-only `VK_EXT_external_memory_host` to the fixed
+Android kbase PanVK fork. It is separate from the original native ARM64 game
+runtime and does not change game allocation, import guest memory, replace the
+system GPU driver, or enable PanVK for gameplay. `PANVK_DM_HOST_IMPORT` defaults
+to false and is cached during physical-device setup.
 
-The first implementation requires a CSF kbase context whose **selected** CPU/GPU
-coherency mode is ACE-Lite (0) or ACE (1). A missing property or NONE (31) does not
-advertise the extension. This is a restriction of this implementation; it is not
-a claim that all Mali systems cannot import user memory.
+## Current scope
 
-## Current evidence
+The coherent-only predecessor is frozen as project commit `43d509f`, with a
+separate cookie-release correction and build. Its actual PHP110/Mali-G710 test
+reported property60=31 and extension absent, including when explicitly enabled.
+It never submitted the host-import GPU oracle. The original baseline PanVK ICD
+has separately run the original GPU memory/DS-plane fixture successfully; that
+result is not inherited by this new extension or driver build.
 
-The fixed original ICD has already executed the existing Android app-UID GPU
-memory/DS-plane fixture on the PHP110 Mali-G710 MC10. That result does not test
-this extension, Android WSI, game rendering, or performance.
+The present candidate adds noncoherent USER_BUFFER support. Until its own
+Android app-UID oracle passes, it is source/build evidence only. It does not
+establish WSI, game rendering, performance, temperature or memory-use gains.
+No driver or application is installed by the build wrapper.
 
-On this same device, the first extension candidate reported RAW property 60 as
-31. Both explicit cold opt-in settings returned `extension_absent`. The enabled
-run logged memory type bits 0 and selected coherency 31. **No host import or GPU
-byte oracle was executed.** This is an unsupported result, not a passing import.
-The app APK, original driver directory and TLS file were restored, with no app
-process left running.
+## Implementation
 
-A later source correction separates mmap cookies, real GPU VAs, and region
-release ownership. It has a separate NDK-built ICD hash and has not been tested
-on hardware. Preserve the first candidate and its unsupported result separately.
-No FPS, thermal, memory reduction, or stutter improvement is established here.
+The extension reports host allocation buffer import only; foreign pointers,
+images, sparse/protected buffers, export and capture replay are unsupported.
+The standard host-pointer query, external buffer query, alignment property,
+device entrypoint, allocation, map/unmap and release paths agree on their types.
 
-## Import and lifetime
+For coherent CSF systems (selected mode0/1), the kernel must grant CPU-cached,
+system-coherent USER_BUFFER import. The separate cached/coherent Vulkan type
+also requires coherent allocation and opaque-fd import for its ordinary uses.
 
-The patch implements standard host-pointer properties, external buffer
-properties, extension dispatch and alignment properties, allocation, map/unmap,
-and release. Only `HOST_ALLOCATION` buffer import is advertised. Foreign host
-memory, image import, sparse/protected buffer flags, host-import export and
-capture replay are not advertised or accepted by this path.
+For noncoherent CSF systems, the existing HOST_VISIBLE|HOST_CACHED memory type
+is exposed accurately without HOST_COHERENT. This path requires the existing
+Mesa userspace cache-operations route. The compatibility override
+`PANVK_KBASE_USER_CACHE_SYNC=0` disables this path instead of sending USER_BUFFER
+cache synchronization to an unsupported ioctl. Host import alignment is the
+maximum of kernel page size and Mesa's cache granularity. The original PanVK
+`nonCoherentAtomSize` remains derived from `util_cache_granularity()`.
 
-The import requires CPU/GPU read/write access, CPU-cached memory, and
-`COHERENT_SYSTEM_REQUIRED`; the returned cached/coherent flags must also agree.
-The reference kernel pins coherent USER_BUFFER pages on import. There is no
-fallback shadow buffer or import-time copy presented as sharing. A separate
-cached/coherent memory type also requires coherent kbase allocation when used
-without host import, including its opaque-fd import path.
+Noncoherent import performs one kernel pin/map operation for the allocation:
 
-The original CPU pointer is retained; `vkUnmapMemory` and `vkFreeMemory` never
-unmap or free that application-owned allocation. Placed/reserving maps are
-rejected for imported host memory. The caller must keep all imported pages
-accessible and retain their contents/ownership until Vulkan memory destruction,
-and must complete GPU users before freeing that memory.
+1. Reserve the import's GPU VA using the kernel mmap-cookie contract.
+2. Allocate a temporary CSF_EVENT status page and a private KCPU queue.
+3. Enqueue MAP_IMPORT, CQS_SET and FENCE_SIGNAL as separate supported ioctls.
+4. Wait for the standard sync_file fence and check its successful status.
+   Independently check CQS value/error: a signaled fence alone does not propagate
+   `queue->has_error` from a failed MAP_IMPORT on the reference kernel.
+5. Delete/drain that temporary queue and release its status page. Retain the
+   kernel context's sticky import reference until Vulkan memory destruction.
 
-The fork's old `same_va` convention is not used to infer the new import's VA.
-The import separately records SAME_VA, whether mmap is required, whether the
-returned handle is in the kernel's page-sized cookie range, and whether closing
-the new driver mapping frees the region. Cookie mappings use the returned mmap
-address; NEED_MMAP with a real VA keeps that VA and needs explicit MEM_FREE.
-Failure cleanup preserves errno. Other existing dma-buf code is left intact.
+On VkFreeMemory, after the application's required GPU completion, the existing
+synchronous STICKY_RESOURCE_UNMAP ioctl releases the sticky reference, followed
+by GPU region cleanup. It is not issued during range synchronization.
 
-## Fixed sources and build
+The original CPU pointer is retained; Vulkan map/unmap/free never remap or free
+that application-owned mapping. Placed or reserving maps are rejected. The
+caller must keep the imported range accessible until memory destruction.
+Cookie handles and real GPU VAs are distinguished by the kernel cookie range;
+SAME_VA, NEED_MMAP and whether munmap frees the region are separate conditions.
+Real-VA mappings keep their GPU VA and require MEM_FREE.
 
-- Patch layer: `zenithblue-oss/panvk-kbase-android`, commit
+Flush/Invalidate reuse `pan_kmod_queue_bo_map_sync` and existing Mesa
+`util_flush*_range` operations; host-import calls complete their post-fence
+before returning. There is no shadow copy, page scan, byte comparison, new
+cache-maintenance instruction implementation, or PTE teardown in those calls.
+The original CSF HOST_WRITE dependency invalidates GPU caches, and HOST_READ
+cleans GPU L2/LS; the application still needs the proper GPU barrier and fence
+before CPU invalidation/read. This candidate does not make HOST_COHERENT claims
+for a noncoherent memory type.
+
+Queue-retirement failure is not accepted as success. If neither a successful
+fence nor queue deletion proves a queued import command has retired, its import
+and status mappings are retained until process restart, and the device is marked
+lost. Unexpected sticky-release failure likewise retains that import and records
+an error. This deliberate fatal-error quarantine prevents freeing memory which
+may still be referenced; it is an additional resource cost on failure, not a
+successful lifetime or leak-free result. Normal map/free must pass independently.
+
+## Fixed sources and reproduction
+
+- Patch-layer repository: `zenithblue-oss/panvk-kbase-android`, commit
   `5b87b74d3e2580d5816e7f2c629f6f016a462f28`.
-- Mesa: `5a07217f034b3e50d8c7c7794f97a2df1742613b`.
-- Original universal `g615-v11-csf` stack: 179 patches; computed original series
+- Mesa commit: `5a07217f034b3e50d8c7c7794f97a2df1742613b`.
+- Original universal profile `g615-v11-csf`:179 original patches,
   SHA-256 `2837740bc363fa778ae578ae856bc5040f3ed1924e01f35d78371cd072a71f90`.
-  This profile includes G710/v10; the profile name does not describe the device.
-- Apply `0000-original-builder-jobs.patch` only to the patch-layer checkout.
-  It limits the original host/target Ninja invocations to two jobs.
-- The extension patch applies **after** the complete original stack, including
-  JM overlays. `source-lock.json` binds its hash and the complete resulting
-  tracked diff/untracked overlay files.
-- Build with NDK 28.2.13676358, target compiler API29. Use the original project's
-  native host codegen tools and NDK-built libdrm/X11-header dependency prefixes;
-  their hashes and actual compiler dependencies are recorded by the builder.
-
-The wrapper invokes the original project's patch applicator, Android builder,
-and ELF validator. It does not download or run a prebuilt release. With a clean
-pinned Mesa checkout and the original dependency prefixes prepared:
+  The original profile includes G710/v10 and does not identify the test device.
+- Apply `0000-original-builder-jobs.patch` only to the patch-layer checkout;
+  it limits the original Ninja invocations to two jobs.
+- Apply `0001-csf-host-import-ext.patch` after the full original stack. Do not
+  also apply the predecessor's extension patch. `source-lock.json` binds the
+  full resulting tracked diff and untracked source overlays.
+- NDK28.2.13676358, compiler API29. Use the original native codegen tools,
+  target libdrm and Android/X11-header prefixes and host Meson dependencies.
 
 ```sh
 python3 scripts/dev/experimental-panvk-host-import/build-panvk-host-import.py \
-  --checkout /absolute/path/to/panvk-kbase-checkout \
+  --checkout /absolute/path/to/fixed-panvk-kbase-checkout \
   --mesa /absolute/path/to/clean-pinned-mesa \
   --host-tools /absolute/path/to/original/host-tools/bin \
   --ndk /absolute/path/to/ndk/28.2.13676358 \
@@ -88,53 +105,55 @@ python3 scripts/dev/experimental-panvk-host-import/build-panvk-host-import.py \
   --prepare
 ```
 
-Put Meson/Ninja, the original host-tools runtime dependencies and NDK toolchain
-on PATH as in the original project's builder setup. `--prepare` is used once;
-subsequent calls verify the exact prepared source instead of stacking patches.
-`--check-only` verifies sources without building or loading a driver.
-The output contains the ICD, ELF report, original Meson options, Ninja dependency
-metadata and hashes, compile commands and `build.json`. These are build evidence,
-not GPU execution results.
+Use the original build setup's PATH and host-tools runtime dependencies.
+The wrapper invokes the original patch applicator, Android builder and ELF
+validator. `--prepare` applies once to a clean Mesa checkout; later invocations
+verify rather than stack patches. `--check-only` verifies sources without loading
+a driver. Outputs include the ICD hash/build ID, Meson options, compiler and
+host-tool hashes, actual Ninja dependency metadata/hashes and compile commands.
 
-For the standard own-page oracle, reuse branch
-`codex/host-import-vulkan-oracle-v1`, commit `dfa05277286adb7cd65278df6658ce85c74c0604`.
-It returns before NVN/game initialization. Developer Intents are
+## Standard own-page oracle
+
+The existing native Vulkan fixture returns before NVN/game initialization. It
+prefers HOST_CACHED|HOST_COHERENT imported memory; when the queried import bits
+only allow HOST_CACHED noncoherent memory, it uses standard mapped-range
+Flush/Invalidate with atom-aligned ranges. The imported memory remains Vulkan
+mapped while invoking those APIs. The original CPU pointer is used for every
+comparison, including after Vulkan unmap/free.
+
+Each of four lifetimes repeats CPU writes after import, GPU Copy to independent
+readback, GPU Fill, HOST_READ barrier and standard Fence completion. Two submits
+remain pending behind a host-signaled timeline gate. Range operations do not
+replace GPU completion. Output records the selected coherence and atom size.
+A host Lavapipe/VVL result cannot prove the Android noncoherent path was executed.
+
+Use the existing developer entry with separate cold processes:
 `run_game=false`, `run_vulkan_tests=true`, `vulkan_driver=panvk`,
-`vulkan_test_validation=false`, `host_import_test=true`, and an explicit
-`host_import_opt_in=false` or `true` in separate cold processes. Direct-ICD
-validation composition is unavailable; zero error counters do not prove VVL or
-synchronization validation coverage. Device ownership/restoration is coordinated
-separately; this package does not install or run anything automatically.
+`vulkan_test_validation=false`, `host_import_test=true`, and explicit
+`host_import_opt_in=false`/`true`. Direct-ICD validation composition is unavailable;
+zero error counters are not Android VUID/synchronization-validation coverage.
+Physical-device access requires a separately coordinated lease and transactional
+restoration of the current stable APK/private directories, then process shutdown.
 
-## Kernel responsibility and next route
+## Kernel and cache-operation evidence
 
-The selected-coherency export chain is visible in Google's fixed kbase source:
+The device-family OEM source is pinned to
+[OnePlus Ace 2V Android16 commit63502090421af828a2f44715ff20ea116c24b28f](https://github.com/OnePlusOSS/android_kernel_modules_oneplus_mt6983/tree/63502090421af828a2f44715ff20ea116c24b28f/vendor/mediatek/kernel_modules/gpu/gpu_mali/mali_valhall/mali-r38p1/drivers/gpu/arm/midgard):
 
-- [selected mode written back to raw_props.coherency_mode](https://android.googlesource.com/kernel/google-modules/gpu/+/341562a4de3c72d7b9f732b079cbb6115a774ad3/mali_kbase/mali_kbase_core_linux.c#5480)
-- [property 60 exports that field](https://android.googlesource.com/kernel/google-modules/gpu/+/341562a4de3c72d7b9f732b079cbb6115a774ad3/mali_kbase/mali_kbase_gpuprops.c#764)
-- [coherent pin-on-import and import cookies](https://android.googlesource.com/kernel/google-modules/gpu/+/341562a4de3c72d7b9f732b079cbb6115a774ad3/mali_kbase/mali_kbase_mem_linux.c#1559)
-- [KCPU USER_BUFFER pin/map/unmap](https://android.googlesource.com/kernel/google-modules/gpu/+/341562a4de3c72d7b9f732b079cbb6115a774ad3/mali_kbase/csf/mali_kbase_csf_kcpu.c#47)
+- `mali_kbase_core_linux.c:5292` writes the selected coherency enum to the raw
+  property field; `mali_kbase_gpuprops.c:839` exports it as property60.
+- `mali_kbase_mem_linux.c:1158` accepts MEM_SYNC for UMM/dma-buf only; this
+  candidate never assumes that ioctl synchronizes USER_BUFFER.
+- `csf/mali_kbase_csf_kcpu.c` performs process-context pinning in MAP_IMPORT
+  preparation, propagates command errors through CQS_SET, and executes the
+  sticky-resource acquire. FENCE_SIGNAL alone does not propagate queue errors.
+- Common CSF ioctl handling in `mali_kbase_core_linux.c:2081` exposes synchronous
+  STICKY_RESOURCE_UNMAP; `mali_kbase_mem.c` releases the external mapping and pins.
+- Mesa's existing `src/util/cache_ops_aarch64.c` performs CVAC/CIVAC and DSB SY;
+  its own helpers define the cache granularity. Existing successful original
+  CSF GPU tests already exercise userspace cache instructions, but the imported
+  cached-page byte oracle must still establish the new path's visibility.
 
-The same writeback/export chain is also present in the device-family OEM
-[OnePlus Ace 2V Android16 source, fixed commit 63502090421af828a2f44715ff20ea116c24b28f](https://github.com/OnePlusOSS/android_kernel_modules_oneplus_mt6983/blob/63502090421af828a2f44715ff20ea116c24b28f/vendor/mediatek/kernel_modules/gpu/gpu_mali/mali_valhall/mali-r38p1/drivers/gpu/arm/midgard/mali_kbase_core_linux.c#L5292):
-selected mode is written back at lines5292–5293 and exported as property60 in
-`mali_kbase_gpuprops.c:839`. This source also retains the USER_BUFFER MEM_SYNC
-rejection at `mali_kbase_mem_linux.c:1158`. These fixed published sources do not
-establish byte identity with the installed OEM kernel; the captured raw value
-remains in the test record.
-
-Noncoherent USER_BUFFER needs additional work. In this reference kernel,
-`KBASE_IOCTL_MEM_SYNC` routes imported resources through
-`kbase_mem_do_sync_imported`, which rejects types other than dma-buf/UMM.
-Therefore copying the native-BO Flush/Invalidate implementation is insufficient.
-KCPU map/unmap does perform DMA cache maintenance but also changes pins and GPU
-PTEs; repeatedly unmapping an entire allocation cannot stand in for independent
-range flushes while other ranges are in flight.
-
-A possible next implementation can reuse Mesa's existing
-`util/cache_ops_aarch64.c` range cache maintenance, after proving its platform
-contract, together with a properly completed KCPU import mapping held for the
-allocation lifetime. It must expose noncoherent memory accurately, implement
-real range flush/invalidation and GPU completion/CPU visibility, detect KCPU
-errors, and leave the original allocation alive. None of that noncoherent path
-is enabled or claimed by the present patch.
+Published source-family matches do not establish byte identity with the running
+OEM kernel. No fixed-address guest mapping or previously rejected diagnostic is
+used by this candidate.

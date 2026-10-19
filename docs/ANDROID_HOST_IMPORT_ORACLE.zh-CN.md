@@ -59,3 +59,10 @@ DM_VULKAN_VALIDATE=1 DM_VULKAN_SYNC_VALIDATE=1 native_vulkan_test
 取得了进展。采集完成后由协调者关闭本次测试应用/工具。
 
 冷启动 host_import_opt_in 同时设置 TU_DM_HOST_IMPORT 和 PANVK_DM_HOST_IMPORT；只有选中驱动消费自身选项，测试仍仅调用标准 Vulkan API。开启 validation 时记录可见层和 vkCreateInstance 的实际 VkResult，不能把层加载失败误报为内核导入失败。
+
+非一致性内存候选也可使用同一标准 oracle：优先选择 HOST_CACHED|HOST_COHERENT，
+没有匹配项时才选 HOST_CACHED 非一致性类型。导入后会再次 vkMapMemory 并保持映射，
+以规范要求的 atom 对齐范围调用 vkFlushMappedMemoryRanges；GPU HOST_READ barrier
+和 Fence 后调用 vkInvalidateMappedMemoryRanges，再比较原 CPU 指针。日志单独记录
+host_coherent 和 noncoherent_atom。仅在该分支实际执行这些调用的设备结果才能算作
+非一致性路径证据；Lavapipe 的 coherent 路径不代替此验收。

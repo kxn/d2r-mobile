@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -53,7 +54,7 @@ args = parser.parse_args()
 for key, value in vars(args).items():
     if isinstance(value, pathlib.Path):
         setattr(args, key, value.resolve())
-require(sha(HERE / '0001-csf-coherent-host-import-ext.patch') == LOCK['host_import_patch_sha256'], 'Extension patch hash mismatch')
+require(sha(HERE / '0001-csf-host-import-ext.patch') == LOCK['host_import_patch_sha256'], 'Extension patch hash mismatch')
 require(sha(HERE / '0000-original-builder-jobs.patch') == LOCK['builder_jobs_patch_sha256'], 'Builder patch hash mismatch')
 require(git(args.checkout, 'rev-parse', 'HEAD').decode().strip() == LOCK['patch_layer_commit'], 'Patch-layer commit mismatch')
 require(git(args.checkout, 'diff', '--binary', 'HEAD') == (HERE / '0000-original-builder-jobs.patch').read_bytes(), 'Only declared original-builder -j2 changes are permitted')
@@ -64,8 +65,8 @@ if args.prepare:
     require(git(args.mesa, 'rev-parse', 'HEAD').decode().strip() == LOCK['mesa_commit'], 'Clean Mesa revision mismatch')
     require(not git(args.mesa, 'status', '--porcelain').strip(), 'Refusing to apply patches to a modified Mesa checkout')
     subprocess.run([str(args.checkout / 'scripts/apply-patches.sh'), '--profile', LOCK['profile'], '--mesa', str(args.mesa)], check=True)
-    subprocess.run(['git', '-C', str(args.mesa), 'apply', '--check', str(HERE / '0001-csf-coherent-host-import-ext.patch')], check=True)
-    subprocess.run(['git', '-C', str(args.mesa), 'apply', str(HERE / '0001-csf-coherent-host-import-ext.patch')], check=True)
+    subprocess.run(['git', '-C', str(args.mesa), 'apply', '--check', str(HERE / '0001-csf-host-import-ext.patch')], check=True)
+    subprocess.run(['git', '-C', str(args.mesa), 'apply', str(HERE / '0001-csf-host-import-ext.patch')], check=True)
 verify_mesa(args.mesa)
 if args.check_only:
     print('SOURCE-LOCK: PASS; no driver loaded, no GPU used')
@@ -97,6 +98,10 @@ inputs[str(args.build_dir / 'build.ninja')] = info(args.build_dir / 'build.ninja
 (args.dist_dir / 'observed-inputs.json').write_text(json.dumps(inputs, indent=2, sort_keys=True) + '\n')
 (args.dist_dir / 'compile-commands.json').write_bytes(run(['ninja', '-C', args.build_dir, '-t', 'compdb']))
 (args.dist_dir / 'meson-options.json').write_bytes(run(['meson', 'introspect', '--buildoptions', args.build_dir]))
-record = {'status': 'NDK built and ELF validated; no hardware/import/game/performance result implied', 'source_lock': info(HERE / 'source-lock.json'), 'extension_patch': info(HERE / '0001-csf-coherent-host-import-ext.patch'), 'builder_patch': info(HERE / '0000-original-builder-jobs.patch'), 'original_builder': info(args.checkout / 'scripts/build-android.sh'), 'api': LOCK['target_api'], 'parallelism': 2, 'profile': LOCK['profile'], 'ndk': info(args.ndk / 'source.properties'), 'compiler': info(llvm / 'clang'), 'compiler_version': run([llvm / 'aarch64-linux-android29-clang', '--version']).decode(), 'host_tools': [info(args.host_tools / name) for name in ['mesa_clc', 'vtn_bindgen2', 'panfrost_compile']], 'driver': info(so), 'build_id': re.findall(r'Build ID: ([0-9a-f]+)', elf), 'needed': re.findall(r'Shared library: \[([^\]]+)\]', elf), 'observed_inputs': info(args.dist_dir / 'observed-inputs.json'), 'options': info(args.dist_dir / 'meson-options.json'), 'default_enabled': False, 'runtime_opt_in': LOCK['runtime_env']}
+for source, frozen_name in [(HERE / 'source-lock.json', 'source-lock.json'),
+                            (HERE / '0001-csf-host-import-ext.patch', 'extension.patch'),
+                            (HERE / '0000-original-builder-jobs.patch', 'builder.patch')]:
+    shutil.copy2(source, args.dist_dir / frozen_name)
+record = {'status': 'NDK built and ELF validated; no hardware/import/game/performance result implied', 'source_lock': info(args.dist_dir / 'source-lock.json'), 'extension_patch': info(args.dist_dir / 'extension.patch'), 'builder_patch': info(args.dist_dir / 'builder.patch'), 'original_builder': info(args.checkout / 'scripts/build-android.sh'), 'api': LOCK['target_api'], 'parallelism': 2, 'profile': LOCK['profile'], 'ndk': info(args.ndk / 'source.properties'), 'compiler': info(llvm / 'clang'), 'compiler_version': run([llvm / 'aarch64-linux-android29-clang', '--version']).decode(), 'host_tools': [info(args.host_tools / name) for name in ['mesa_clc', 'vtn_bindgen2', 'panfrost_compile']], 'driver': info(so), 'build_id': re.findall(r'Build ID: ([0-9a-f]+)', elf), 'needed': re.findall(r'Shared library: \[([^\]]+)\]', elf), 'observed_inputs': info(args.dist_dir / 'observed-inputs.json'), 'options': info(args.dist_dir / 'meson-options.json'), 'default_enabled': False, 'runtime_opt_in': LOCK['runtime_env']}
 (args.dist_dir / 'build.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
 print(json.dumps({'driver': record['driver'], 'observed_input_count': len(inputs), 'report': str(args.dist_dir / 'build.json')}))
