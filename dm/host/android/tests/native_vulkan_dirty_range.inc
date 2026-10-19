@@ -84,6 +84,27 @@ static void texture_range_dirty_proof_test(void) {
   CHECK(nvn_dirty_range_refresh(&before,&after));CHECK(after.changes!=before.changes);
   dirty_range_pixels(&a.tex[0],order.value);dirty_range_pixels(&a.tex[1],red);
   nvn_dirty_test_lock_slots(1);CHECK(nvn_dirty_range_refresh(&before,&after));CHECK(!nvn_dirty_range_observe(a.data,4096,&after));nvn_dirty_test_lock_slots(0);
+  // Owned-only exclusion contract. No Vulkan import or GPU reference is
+  // created for the excluded bytes: before their FIRST image access the
+  // fixture explicitly releases at a known quiescent boundary. This tests
+  // proof invalidation/publication, not PanVK/COW or an automatic admission.
+  dirty_range_fixture owned;dirty_range_create(&owned);
+  nvn_dirty_owned_exclusion excluded={0};
+  CHECK(nvn_dirty_owned_exclude(owned.data,4096,&excluded));
+  CHECK(nvn_dirty_change_epoch()==0);
+  CHECK(!nvn_dirty_range_observe(owned.data,4096,&after));
+  CHECK(nvn_dirty_since(owned.data,4096,UINT64_MAX));
+  nvn_dirty_protect(owned.data,4096);dirty_range_fill(owned.data,4096,blue);
+  // An unrelated image must not reuse its old global-epoch shortcut while
+  // any exclusion is active. Its normal dirty/producer semantics remain live.
+  dm_guest_write_prepare(a.data,4096);dirty_range_fill(a.data,4096,red);
+  dirty_range_pixels(&a.tex[0],red);
+  CHECK(nvn_dirty_owned_release(&excluded));
+  CHECK(nvn_dirty_change_epoch()!=0);
+  dirty_range_pixels(&owned.tex[0],blue);
+  dirty_range_pixels(&owned.tex[0],blue);
+  dm_guest_write_prepare(owned.data,4096);dirty_range_fill(owned.data,4096,green);
+  dirty_range_pixels(&owned.tex[0],green);dirty_range_destroy(&owned);
   CHECK(!nvn_dirty_range_observe((void *)(UINTPTR_MAX-7),16,&after));
   CHECK(!nvn_dirty_range_observe(a.data+(1<<20)-8,16,&after));
   CHECK(!nvn_dirty_range_observe(a.data,0,&after));
