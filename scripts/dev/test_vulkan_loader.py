@@ -18,6 +18,11 @@ DRIVER = r'''
 #include <vulkan/vulkan.h>
 #include <stdlib.h>
 #include <string.h>
+__attribute__((constructor)) static void check_cache_at_load(void) {
+  const char *expected=getenv("FIXTURE_EXPECT_CACHE_DIR");
+  const char *actual=getenv("MESA_SHADER_CACHE_DIR");
+  if(expected && (!actual || strcmp(expected,actual))) _Exit(82);
+}
 static void inert(void) {}
 static void properties(VkPhysicalDevice physical,VkPhysicalDeviceProperties2 *out) {
   (void)physical;
@@ -68,11 +73,14 @@ int main(int argc,char **argv) {
   vk_loader_set_driver(strcmp(argv[1],"legacy")?argv[1]:NULL,
       strcmp(argv[2],"-")?argv[2]:NULL,strcmp(argv[3],"-")?argv[3]:NULL);
   vk_loader_initialize();
+  if(getenv("FIXTURE_ASSERT_NO_CACHE") && getenv("MESA_SHADER_CACHE_DIR")) return 83;
   if(!strcmp(argv[4],"surface")) vk_loader_check_instance((VkInstance)1,1);
   if(!strcmp(argv[4],"identity")) vk_loader_check_device((VkPhysicalDevice)1,1);
   setenv("DM_VULKAN_DRIVER_KIND","invalid-after-initialize",1);
+  if(getenv("FIXTURE_CHANGE_CACHE")) setenv("MESA_SHADER_CACHE_DIR","after-initialize",1);
   vk_loader_set_driver("invalid-after-initialize",NULL,NULL);
   vk_loader_initialize();
+  if(getenv("FIXTURE_CHANGE_CACHE") && strcmp(getenv("MESA_SHADER_CACHE_DIR"),"after-initialize")) return 84;
   puts("STARTUP_HELD");
   return 0;
 }
@@ -108,7 +116,8 @@ class VulkanLoaderTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def run_loader(self, provider='panvk', directory=None, hooks='-', stage='-', env=None):
-        values = {k: v for k, v in os.environ.items() if not k.startswith('DM_VULKAN_')}
+        values = {k: v for k, v in os.environ.items()
+                  if not k.startswith('DM_VULKAN_') and k != 'MESA_SHADER_CACHE_DIR'}
         values.update(env or {})
         result = subprocess.run([str(self.runner), provider, str(directory or self.driver),
                                  str(hooks), stage], env=values, text=True, capture_output=True,
@@ -182,6 +191,35 @@ class VulkanLoaderTests(unittest.TestCase):
         result = self.run_loader(directory=directory, stage='surface')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('SYSTEM', result.stdout)
+
+    def test_panvk_cache_is_private_before_dlopen_and_not_reconfigured(self):
+        directory = self.base / 'cache-default'; directory.mkdir()
+        shutil.copy2(self.driver / 'libvulkan_panfrost.so', directory / 'libvulkan_panfrost.so')
+        cache = directory / 'shader-cache'
+        result = self.run_loader(directory=directory, env={
+            'FIXTURE_EXPECT_CACHE_DIR': str(cache), 'FIXTURE_CHANGE_CACHE': '1'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(cache.is_dir())
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(result.stderr.count('PanVK shader cache'), 1)
+
+    def test_panvk_cache_respects_explicit_value_including_empty(self):
+        for index, value in enumerate((str(self.base / 'explicit-cache'), '')):
+            directory = self.base / ('cache-explicit-' + str(index)); directory.mkdir()
+            shutil.copy2(self.driver / 'libvulkan_panfrost.so', directory / 'libvulkan_panfrost.so')
+            result = self.run_loader(directory=directory, env={
+                'MESA_SHADER_CACHE_DIR': value, 'FIXTURE_EXPECT_CACHE_DIR': value})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((directory / 'shader-cache').exists())
+            self.assertIn('PanVK shader cache explicit=' + value, result.stderr)
+
+    def test_other_providers_do_not_set_mesa_cache_directory(self):
+        for provider, directory, hooks in (('system', '-', '-'),
+                                            ('adreno', self.driver, self.hooks)):
+            result = self.run_loader(provider, directory=directory, hooks=hooks,
+                                     env={'FIXTURE_ASSERT_NO_CACHE': '1'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('PanVK shader cache', result.stderr)
 
 
 if __name__ == '__main__':
