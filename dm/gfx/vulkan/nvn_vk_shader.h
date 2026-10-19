@@ -92,6 +92,8 @@ void vk_shader_end(vk_shader_submission *submission);
 void vk_shader_recycle(vk_shader_submission *submission);
 void vk_shader_trim_idle_arenas(void);
 void vk_shader_destroy(vk_shader_submission *submission);
+// Only offsets[0..count) are initialized/observable. Consumers must not compare
+// or copy the complete struct: unused tail words are not part of binding state.
 typedef struct { uint32_t count,offsets[VK_UNIFORM_OFFSET_CAPACITY]; } vk_uniform_offsets;
 VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection);

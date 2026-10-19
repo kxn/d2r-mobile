@@ -1012,7 +1012,9 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
     if(error)die("Vulkan readonly quad source contract: %s (%s)",error,list[1]->key);
   }
   int dynamic_uniforms=vk_program_dynamic_uniforms(list);
-  vk_uniform_offsets uniform_offsets[6]={{0}};
+  // Each active stage fills count and exactly its live offsets below. Absent
+  // stages have no ordered descriptor set and never read this local slot.
+  vk_uniform_offsets uniform_offsets[6];
   if (!list[0])
     die("Vulkan draw without vertex shader");
   VkShaderModule fragment_module=no_fxaa_fragment(list[1]);
@@ -1807,7 +1809,9 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
     }
     int changed[6]={0};
     for(unsigned i=0;i<6;i++)changed[i]=ordered[i] && (ordered[i]!=j->bound_sets[i] ||
-      memcmp(&uniform_offsets[i],&j->bound_uniform_offsets[i],sizeof uniform_offsets[i]));
+      uniform_offsets[i].count!=j->bound_uniform_offsets[i].count ||
+      memcmp(uniform_offsets[i].offsets,j->bound_uniform_offsets[i].offsets,
+             uniform_offsets[i].count*sizeof *uniform_offsets[i].offsets));
     for(unsigned first=0;first<6;) {
       if(!changed[first]) { first++;continue; }
       unsigned end=first+1;
@@ -1820,7 +1824,11 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
       vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,j->layout,
                               first,end-first,ordered+first,count,offsets);
       memcpy(j->bound_sets+first,ordered+first,(end-first)*sizeof *ordered);
-      memcpy(j->bound_uniform_offsets+first,uniform_offsets+first,(end-first)*sizeof *uniform_offsets);
+      for(unsigned i=first;i<end;i++) {
+        j->bound_uniform_offsets[i].count=uniform_offsets[i].count;
+        memcpy(j->bound_uniform_offsets[i].offsets,uniform_offsets[i].offsets,
+               uniform_offsets[i].count*sizeof *uniform_offsets[i].offsets);
+      }
       first=end;
     }
   }

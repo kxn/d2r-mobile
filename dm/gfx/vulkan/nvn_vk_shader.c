@@ -1204,7 +1204,9 @@ void vk_shader_prepare_images(vk_shader *const list[6],int compute) {
 }
 static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection,const VkImageView *local_views,const VkImageLayout *local_layouts) {
-  if(offsets)memset(offsets,0,sizeof *offsets);
+  // The immutable dynamic schema assigns every ordinal 0..count-1 once.
+  // Only that live prefix is observable; do not clear the unused array tail.
+  if(offsets)offsets->count=0;
   if(dynamic && s->dynamic_uniform_count[dynamic-1] && !offsets)die("Vulkan missing dynamic Uniform offsets");
   VkDescriptorSetLayout layout=dynamic?s->dynamic_descriptors[dynamic-1]:s->descriptors;
   if(offsets && dynamic)offsets->count=s->dynamic_uniform_count[dynamic-1];
