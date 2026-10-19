@@ -1593,4 +1593,10 @@ SDP按官方REALTIME/BOOTTIME投影到相同8秒，每项158样本：Shaders Bus
 
 当前CPU调用栈补充：另一个同APK/链、始终0.75/目标60的7.978秒窗口，用官方simpleperf `cpu-clock:u`/DWARF采样940次、零丢失，严格匹配已安装ELF的BuildID。replay线程470样本的Self DSO份额为宿主63.404%、vendor驱动22.979%、libc12.979%；驱动混淆符号不能进一步断言为忙等。官方inclusive/self分别有`vk_draw`61.91/5.96%、`vk_shader_bindings_selected`24.89/3.40%、commit16.60/2.55%、`vk_texture_view_binding`10.21/1.91%、`sync_page`8.09/4.26%，memmove Self5.11%。这些inclusive有重叠，不能相加；部分调用链止于中途，也不能拿另一次Perfetto的毫秒直接乘成精确函数耗时。该证据支持下一步优先减少真实绘制资源处理、脏页/复制与描述符工作，同时继续GPU带宽/能效候选，而不是只按旧满比例GPU结论排序。本次公有热API日志为空，不借用上一SDP窗口的thermal0；结束fresh save2/281.4ms，游戏及本次工具已核实退出。见`q735-aligned-cpu-53fbef1/summary.json`和官方报告。
 
+### CPU：复用纹理视图的不可变访问范围
+
+官方NDK `annotate.py` 使用匹配ELF与冻结源码解析上述样本后，重复范围校验有明确代码证据：同一物理view在layout路径和image request路径分别调用`image_access_range`。已有recipe缓存保存view描述，却未保存深度/模板耦合、3D层映射与边界校验后的访问范围。本轮将该结果加入原recipe，命中沿用既有descriptor epoch、owner lifetime和physical handle保护；MISS仍按原规则校验一次。Vulkan view范围与依赖范围分别保存，避免把depth-only view扩成DS view，或把3D slice视图改成dependency layer0。布局、反馈、CPU上传、hazard和实际reader记录仍逐次执行；raw入口保留原检查，不跨draw预测当前资源状态。
+
+额外成本为每个原有recipe槽一个`VkImageSubresourceRange`，无新查找表或计时器。官方功能窗约94%物理recipe命中不代表全为同一种拓扑，也不能把整个函数的采样份额视为可消除。独立冻结的两文件补丁通过异步21,790,147、同步21,690,743项原GPU检查及同步校验，包括真实DS数组采样、stencil保存、mip与格式升级、嵌套ghost和cache碰撞，零VUID/SYNC。证据`texture-range-recipe-v1-validation.json`与`q735-texture-redundancy-v1-readonly-review.json`；尚无这项修改的真机CPU/FPS/温度收益，不与并行中的内存窗口生产接入混算。
+
 另新增通用启动期operation-mode诊断，默认docked不变，显式handheld重用原GetOperationMode/GetPerformanceMode/参数槽，不新写游戏规则；actual dm_opmode启动日志核验，禁止热切换。新13f0包两模式在同包720下对照；Handheld固定720高，game-res只影响手持宽高比。该模式可能影响原游戏分支，但尚不能仅由HLE断言阴影／后处理减少。源与独审见 `operation-mode-v1-source-ready.json`、`operation-mode-v1-root-review.json`。

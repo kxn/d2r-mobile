@@ -276,10 +276,9 @@ static void image_whole_layout_access(image *i,VkImageLayout next,
       }
   image_layout_recorded.transitions++;
 }
-static void image_range_layout_access(image *i,VkImageSubresourceRange r,VkImageLayout next,
+static void image_range_layout_access_normalized(image *i,VkImageSubresourceRange r,VkImageLayout next,
     VkPipelineStageFlags dst_stage,VkAccessFlags dst_access) {
   if(!image_mip_tracked(i)) { image_whole_layout_access(i,next,dst_stage,dst_access);return; }
-  r=image_access_range(i,r);
   // A concrete whole-image layout summarizes every mip; mixed layouts use
   // MAX_ENUM. Repeated bindings need no per-mip scan when that proof matches.
   // Access dependencies still run separately for every operation.
@@ -321,6 +320,11 @@ static void image_range_layout_access(image *i,VkImageSubresourceRange r,VkImage
   for(unsigned level=1;level<i->levels;level++)
     if(image_cell(i,0,level,0)->mip_layout!=i->layout) { i->layout=VK_IMAGE_LAYOUT_MAX_ENUM;break; }
 }
+static void image_range_layout_access(image *i,VkImageSubresourceRange r,VkImageLayout next,
+    VkPipelineStageFlags stages,VkAccessFlags access) {
+  if(image_mip_tracked(i))r=image_access_range(i,r);
+  image_range_layout_access_normalized(i,r,next,stages,access);
+}
 static void image_layout_access(image *i,VkImageLayout next,
     VkPipelineStageFlags stages,VkAccessFlags access) {
   image_range_layout_access(i,(VkImageSubresourceRange){i->aspect,0,i->levels,0,i->layers},
@@ -342,7 +346,7 @@ static void image_general_transfer(image *i) {
   image_general_access(i,VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT);
 }
-static VkImageLayout image_use_range(image *i,VkImageSubresourceRange r,VkImageLayout preferred,
+static VkImageLayout image_use_range_normalized(image *i,VkImageSubresourceRange r,VkImageLayout preferred,
                                     VkPipelineStageFlags shader_stages) {
   int sampled_array=image_sampled_array_layout(i);
   // Transfer-source requests use image_use rather than image_general_transfer.
@@ -376,7 +380,7 @@ static VkImageLayout image_use_range(image *i,VkImageSubresourceRange r,VkImageL
   // mip_layout fields are intentionally unused; do not route through the
   // single-layer per-mip representation even when the view selects one cell.
   if(sampled_array) image_whole_layout_access(i,next,stages,access);
-  else image_range_layout_access(i,r,next,stages,access);
+  else image_range_layout_access_normalized(i,r,next,stages,access);
   if(safe && shader_stages==VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT && !color && !transfer)
     image_layout_recorded.compute++;
   if(safe && i->aspect!=VK_IMAGE_ASPECT_COLOR_BIT) {
@@ -385,6 +389,11 @@ static VkImageLayout image_use_range(image *i,VkImageSubresourceRange r,VkImageL
   }
   if(safe)image_layout_recorded.safe++;else image_layout_recorded.fallback++;
   return next;
+}
+static VkImageLayout image_use_range(image *i,VkImageSubresourceRange r,VkImageLayout preferred,
+    VkPipelineStageFlags stages) {
+  if(image_mip_tracked(i))r=image_access_range(i,r);
+  return image_use_range_normalized(i,r,preferred,stages);
 }
 static void image_use(image *i,VkImageLayout preferred) {
   image_use_range(i,(VkImageSubresourceRange){i->aspect,0,i->levels,0,i->layers},preferred,0);
@@ -1459,6 +1468,7 @@ typedef struct {
   image *owner;
   view_t view;
   VkImageViewCreateInfo description;
+  VkImageSubresourceRange access_range;
   VkImageView handle;
 } texture_binding_recipe;
 struct vk_texture_submission {
@@ -1953,12 +1963,14 @@ VkImageView vk_texture_view_binding(int id, int storage,VkShaderStageFlagBits st
   texture_binding_recipe *cached=texture_binding_find(id,storage);
   image *i;view_t view;int has_view;VkImageView handle=VK_NULL_HANDLE;
   VkImageViewCreateInfo ci={.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  VkImageSubresourceRange access_range;
   if(cached) {
     // Copy immutable metadata before any callback can perform nested draws
     // and replace a colliding cache slot. Layouts and dependencies are NEVER
     // cached: uploads, alias tests and every actual consuming stage follow.
     i=cached->owner;view=cached->view;has_view=cached->has_view;
-    ci=cached->description;handle=cached->handle;epoch=cached->epoch;
+    ci=cached->description;access_range=cached->access_range;
+    handle=cached->handle;epoch=cached->epoch;
     texture_binding_hits++;
     i->last_use=vk_recording_serial();
     // With neither deferred mip work nor an NVN barrier this callback is an
@@ -2023,7 +2035,10 @@ VkImageView vk_texture_view_binding(int id, int storage,VkShaderStageFlagBits st
         effective_format==NVN_FORMAT_BGRX8 || effective_format==NVN_FORMAT_BGRX8_SRGB)
       ci.components.a=VK_COMPONENT_SWIZZLE_ONE;
   }
-  VkImageSubresourceRange r=ci.subresourceRange;
+  // Owner topology and the view are immutable under the recipe's descriptor,
+  // lifetime and physical-handle guards. Normalize once on MISS, not twice
+  // per binding. Uploads, current layouts, feedback and hazards still run.
+  if(!cached)access_range=image_access_range(i,ci.subresourceRange);
   // Simultaneous attachment sampling and raw-handle callers retain GENERAL.
   // Shader image descriptors must agree across all stages and attachments.
   // Graphics stages share one prepared descriptor batch; vertex/unknown
@@ -2040,10 +2055,10 @@ VkImageView vk_texture_view_binding(int id, int storage,VkShaderStageFlagBits st
         (storage?VK_ACCESS_SHADER_WRITE_BIT:0));
     else image_general(i);
   }
-  VkImageLayout binding_layout=image_use_range(i,r,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+  VkImageLayout binding_layout=image_use_range_normalized(i,access_range,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       image_shader_stages(stage));
   if(layout) *layout=binding_layout;
-  image_request_add(i,r,image_shader_stages(stage),
+  image_request_add_normalized(i,access_range,image_shader_stages(stage),
       VK_ACCESS_SHADER_READ_BIT|(storage?VK_ACCESS_SHADER_WRITE_BIT:0));
   if(!handle || ci.image!=i->handle) {
     ci.image=i->handle;
@@ -2070,7 +2085,7 @@ VkImageView vk_texture_view_binding(int id, int storage,VkShaderStageFlagBits st
           !(v && v->set_format && v->format!=i->tex.d.format) &&
           !(i->tex.d.levels>1 && i->tex.d.levels<=16 &&
             i->tex.d.target==NVN_TEXTURE_TARGET_2D && i->tex.L.layers==1 && i->tex.d.samples<=1),
-        .owner=i,.view=view,.description=ci,.handle=handle};
+        .owner=i,.view=view,.description=ci,.access_range=access_range,.handle=handle};
   }
   return handle;
 }

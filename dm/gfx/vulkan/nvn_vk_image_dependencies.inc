@@ -289,7 +289,11 @@ void vk_texture_shader_begin(void) {
   image_binding_active++;
   if(image_binding_count) die("Vulkan unfinished image operation");
 }
-static void image_request_add(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,VkAccessFlags access) {
+// Only immutable physical-view recipes may bypass normalization here. The
+// stored access range is separate from the VkImageView's range: coupled DS
+// aspects and a 3D slice's dependency layer zero must not change that view.
+static void image_request_add_normalized(image *i,VkImageSubresourceRange r,
+    VkPipelineStageFlags stages,VkAccessFlags access) {
   if(!image_binding_active || !stages) { image_unknown(i);return; }
   if(image_binding_count==image_binding_capacity) {
     size_t capacity=image_binding_capacity?image_binding_capacity*2:32;
@@ -301,8 +305,12 @@ static void image_request_add(image *i,VkImageSubresourceRange r,VkPipelineStage
   // aspect/topology/range check, without packing a second 40-byte request.
   image_request *request=&image_bindings[image_binding_count++];
   request->owner=i;
-  request->range=image_access_range(i,r);
+  request->range=r;
   request->stages=stages;request->access=access;request->attachment=0;
+}
+static void image_request_add(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,VkAccessFlags access) {
+  if(!image_binding_active || !stages) { image_unknown(i);return; }
+  image_request_add_normalized(i,image_access_range(i,r),stages,access);
 }
 static VkPipelineStageFlags image_shader_stages(VkShaderStageFlagBits stage) {
   switch(stage) {
