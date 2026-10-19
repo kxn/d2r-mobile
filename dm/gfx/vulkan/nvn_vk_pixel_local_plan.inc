@@ -206,6 +206,23 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
       p->draw_op=op;p->second=scan;break;
     }
     if(h.op==OP_CLEAR_COLOR && changed) {if(!pl_clear(p,&scan,&h,op))return NULL;continue;}
+    if(h.op==OP_BARRIER && changed) {
+      // Only this closed producer->consumer boundary may represent primitive
+      // and fragment ordering by the real subpass dependency. All producers
+      // and the eventual consumer must have no programmable resource writes;
+      // query/transfer/unknown commands still reject the plan, and consumer
+      // resources/geometry are checked again at their actual draw. Their only
+      // observable producer results are the color/depth-stencil writes covered
+      // by that dependency. Keep pre-target ordering and indirect/other flags
+      // on the ordinary path. Replay still executes vk_nvn_barrier unchanged:
+      // no NVN flags or dynamic buffer/VS dependencies are consumed here.
+      if(!pl_payload(&h,8))return NULL;
+      uint64_t flags;memcpy(&flags,op+8,sizeof flags);
+      const uint64_t local_order=NVN_BARRIER_ORDER_PRIMITIVES_BIT|
+          NVN_BARRIER_ORDER_FRAGMENTS_BIT|NVN_BARRIER_INVALIDATE_TEXTURE_BIT;
+      if(flags&~local_order)return NULL;
+      continue;
+    }
     if(!pl_shadow(&scan,op))return NULL;
   }
   if(!p->draw_op || p->second.targets.n<1 || p->second.targets.n>8)return NULL;

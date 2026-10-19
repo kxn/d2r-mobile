@@ -31,6 +31,10 @@ items.append((187,1,items[2][2].replace('void main()', 'layout(location=2)in vec
 # Conservative metadata resource: legal extra VS sampled schema remains subject
 # to runtime alias checks even when this module does not use the resource.
 items.append((188,0,items[0][2].replace('void main()', 'layout(set=0,binding=1)uniform sampler2D source;\nvoid main()'),[(3,1,0,0,0,1,0,2)],0,0))
+# Programmable-writer negative controls. Their pixel output is unchanged;
+# the distinct SSBO atomic is independently checked by the NVN fixture.
+items.append((189,1,items[1][2].replace('void main()', 'layout(set=1,binding=5,std430)buffer W{uint value;}w;\nvoid main()').replace('void main(){','void main(){atomicAdd(w.value,1);'),[(2,5,0,0,1,1,0,0)],-1,7))
+items.append((190,1,items[2][2].replace('void main()', 'layout(set=1,binding=5,std430)buffer W{uint value;}w;\nvoid main()').replace('void main(){','void main(){atomicAdd(w.value,1);'),items[2][3]+[(2,5,0,0,1,1,0,0)],-1,1))
 for marker,stage,text,bindings,pos,colors in items:
  key=hashlib.sha256(bytes([marker])*0x880).hexdigest()[:16]
  source=root/(key+('.vert'if stage==0 else'.frag'));source.write_text(text)

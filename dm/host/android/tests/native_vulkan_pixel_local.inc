@@ -33,7 +33,7 @@ static int pixel_local_render_test(void) {
     CALL(nvnTextureBuilderSetFormat,&b,k==6?NVN_FORMAT_RGBX8:k==5?NVN_FORMAT_DEPTH24_STENCIL8:(k==0 || k==7)?NVN_FORMAT_RGBA16F:k==2?NVN_FORMAT_R11G11B10F:NVN_FORMAT_RGBA8);CALL(nvnTextureBuilderSetStorage,&b,&pool,(k<7?k:k+3)*65536);
     CHECK(CALL(nvnTextureInitialize,&textures[k],&b));
   }
-  NVNprogram producer,consumer,single,neighbor,alpha,vertex_alias,vertex_schema;uint8_t controls[9][0x880];for(unsigned k=0;k<9;k++)memset(controls[k],180+k,0x880);
+  NVNprogram producer,consumer,single,neighbor,alpha,vertex_alias,vertex_schema,producer_writer,consumer_writer;uint8_t controls[11][0x880];for(unsigned k=0;k<11;k++)memset(controls[k],180+k,0x880);
   NVNshaderData shaders[]={{.control=controls[0]},{.control=controls[1]}};
   CHECK(CALL(nvnProgramInitialize,&producer,&device));CHECK(CALL(nvnProgramSetShaders,&producer,2,shaders));
   shaders[1].control=controls[2];CHECK(CALL(nvnProgramInitialize,&consumer,&device));CHECK(CALL(nvnProgramSetShaders,&consumer,2,shaders));
@@ -44,6 +44,9 @@ static int pixel_local_render_test(void) {
   CHECK(CALL(nvnProgramInitialize,&vertex_alias,&device));CHECK(CALL(nvnProgramSetShaders,&vertex_alias,2,shaders));
   shaders[0].control=controls[8];shaders[1].control=controls[2];
   CHECK(CALL(nvnProgramInitialize,&vertex_schema,&device));CHECK(CALL(nvnProgramSetShaders,&vertex_schema,2,shaders));
+  shaders[0].control=controls[0];shaders[1].control=controls[9];
+  CHECK(CALL(nvnProgramInitialize,&producer_writer,&device));CHECK(CALL(nvnProgramSetShaders,&producer_writer,2,shaders));
+  shaders[1].control=controls[10];CHECK(CALL(nvnProgramInitialize,&consumer_writer,&device));CHECK(CALL(nvnProgramSetShaders,&consumer_writer,2,shaders));
   NVNcommandBuffer local;CHECK(CALL(nvnCommandBufferInitialize,&local,&device));
   CALL(nvnCommandBufferAddCommandMemory,&local,&pool,1<<20,1<<20);
   NVNvertexAttribState attrs[2];for(unsigned k=0;k<2;k++)CALL(nvnVertexAttribStateSetDefaults,&attrs[k]);
@@ -75,7 +78,11 @@ static int pixel_local_render_test(void) {
   }
   vk_internal_wait(vk_internal_commit());
   const float blue[]={0,0,1,1},history[]={16/255.f,16/255.f,16/255.f,1},black[]={0,0,0,0};
-  for(unsigned test=0;test<17;test++) {
+  for(unsigned test=0;test<25;test++) {
+    if(test>=23 && !V.features.fragmentStoresAndAtomics) {
+      LOG("[pixel-local render fixture] case=%u not executed: fragmentStoresAndAtomics unavailable",test);continue;
+    }
+    if(test>=23)memset(storage+0xd0000,0,4);
     // Each change is made through the original CPU data/registry APIs.
     vertices[3]=test==7?.125f:0;
     unsigned first_source=test==10?6:(test==13 || test==15 || test==16)?7:0;
@@ -107,13 +114,17 @@ static int pixel_local_render_test(void) {
     CALL(nvnCommandBufferBindColorState,&local,&cs);CALL(nvnCommandBufferBindChannelMaskState,&local,&mask);
     CALL(nvnCommandBufferBindVertexAttribState,&local,2,attrs);CALL(nvnCommandBufferBindVertexStreamState,&local,1,&stream);
     CALL(nvnCommandBufferBindVertexBuffers,&local,0,1,&vb);
-    if(test==3)CALL(nvnCommandBufferResetCounter,&local,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    if(test==3 || test==20)CALL(nvnCommandBufferResetCounter,&local,NVN_COUNTER_TYPE_SAMPLES_PASSED);
     CALL(nvnCommandBufferSetRenderTargets,&local,3,source,NULL,NULL,NULL);
-    CALL(nvnCommandBufferBindProgram,&local,test==10?&alpha:&producer,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+    CALL(nvnCommandBufferBindProgram,&local,test==10?&alpha:test==23?&producer_writer:&producer,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+    if(test>=23)CALL(nvnCommandBufferBindStorageBuffer,&local,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)storage+0xd0000,4);
     CALL(nvnCommandBufferDrawArrays,&local,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
     if(test==4)CALL(nvnCommandBufferDrawArrays,&local,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
     if(test==1)CALL(nvnCommandBufferBarrier,&local,NVN_BARRIER_ORDER_PRIMITIVES_BIT);
     CALL(nvnCommandBufferSetRenderTargets,&local,1,output,NULL,test==5?&textures[5]:NULL,NULL);
+    if(test>=17)CALL(nvnCommandBufferBarrier,&local,
+        test==18?NVN_BARRIER_ORDER_INDIRECT_DATA_BIT:test==19?NVN_BARRIER_INVALIDATE_SHADER_BIT:
+        NVN_BARRIER_ORDER_PRIMITIVES_BIT|NVN_BARRIER_ORDER_FRAGMENTS_BIT|NVN_BARRIER_INVALIDATE_TEXTURE_BIT);
     CALL(nvnCommandBufferClearColor,&local,0,black,15);
     if(test==5) {
       CALL(nvnCommandBufferBindDepthStencilState,&local,&readonly);
@@ -122,17 +133,17 @@ static int pixel_local_render_test(void) {
       CALL(nvnCommandBufferSetStencilRef,&local,NVN_FACE_FRONT_AND_BACK,0);
     }
     if(test==2)CALL(nvnCommandBufferSetScissor,&local,0,0,8,16);
-    CALL(nvnCommandBufferBindProgram,&local,(test==4 || test==10 || test==16)?&single:test==9?&neighbor:test==11?&vertex_alias:test==12?&vertex_schema:&consumer,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+    CALL(nvnCommandBufferBindProgram,&local,(test==4 || test==10 || test==16)?&single:(test==9 || test==21)?&neighbor:test==11?&vertex_alias:(test==12 || test==22)?&vertex_schema:test==24?&consumer_writer:&consumer,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
     CALL(nvnCommandBufferBindSeparateTextures,&local,NVN_SHADER_STAGE_FRAGMENT,0,4,handles);
     CALL(nvnCommandBufferBindSeparateSamplers,&local,NVN_SHADER_STAGE_FRAGMENT,0,1,&sh);
-    if(test==9)CALL(nvnCommandBufferBindSeparateTextures,&local,NVN_SHADER_STAGE_FRAGMENT,4,1,&handles[0]);
-    if(test==11 || test==12) {
+    if(test==9 || test==21)CALL(nvnCommandBufferBindSeparateTextures,&local,NVN_SHADER_STAGE_FRAGMENT,4,1,&handles[0]);
+    if(test==11 || test==12 || test==22) {
       CALL(nvnCommandBufferBindSeparateTextures,&local,NVN_SHADER_STAGE_VERTEX,0,1,&handles[0]);
       CALL(nvnCommandBufferBindSeparateSamplers,&local,NVN_SHADER_STAGE_VERTEX,0,1,&sh);
     }
     CALL(nvnCommandBufferDrawArrays,&local,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
-    if(test>=4)CALL(nvnCommandBufferResetCounter,&local,NVN_COUNTER_TYPE_SAMPLES_PASSED);
-    if(test==3)CALL(nvnCommandBufferReportCounter,&local,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)storage+0x90000);
+    if(test>=4 && test!=20)CALL(nvnCommandBufferResetCounter,&local,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    if(test==3 || test==20)CALL(nvnCommandBufferReportCounter,&local,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)storage+0x90000);
     if(inject && !test) {
       CHECK(!pixel_local_create_original);pixel_local_create_original=vkCreateGraphicsPipelines;
       CHECK(pixel_local_create_original!=NULL);pixel_local_create_failures=1;
@@ -147,18 +158,22 @@ static int pixel_local_render_test(void) {
       int operation=vk_pool_operation_begin_ranges(NULL,0);CHECK(operation==1);
       vk_pool_operation_end(operation);
     }
-    if(test==3) {uint64_t samples;memcpy(&samples,storage+0x90000,8);CHECK(samples==512);}
+    if(test==3 || test==20) {uint64_t samples;memcpy(&samples,storage+0x90000,8);CHECK(samples==512);}
     LOG("[pixel-local render fixture] case=%u enabled=%d passes=%llu",test,vk_pixel_local_enabled(),(unsigned long long)(V.passes-passes));
-    CHECK(V.passes-passes==(inject && !test?2:vk_pixel_local_enabled() && (!test || test==4 || test==5 || test>=13)?1:test==11 || (!vk_pixel_local_enabled() && test==12)?3:2));
+    CHECK(V.passes-passes==(inject && !test?2:vk_pixel_local_enabled() && (!test || test==4 || test==5 || (test>=13 && test<=17))?1:test==11 || test==24 || (!vk_pixel_local_enabled() && (test==12 || test==22))?3:2));
     uint64_t plans,draws,aborts;vk_pixel_local_stats(&plans,&draws,&aborts);
-    if(vk_pixel_local_enabled() && (test==9 || test==12)) {CHECK(plans>before_plans);CHECK(aborts>before_aborts);CHECK(draws==before_draws);}
+    if(vk_pixel_local_enabled() && (test==9 || test==12 || test==21 || test==22)) {CHECK(plans>before_plans);CHECK(aborts>before_aborts);CHECK(draws==before_draws);}
     if(inject && !test) {CHECK(plans==before_plans+1);CHECK(aborts==before_aborts+1);CHECK(draws==before_draws);}
-    if(vk_pixel_local_enabled() && test>=13) {CHECK(plans==before_plans+1);CHECK(draws==before_draws+1);CHECK(aborts==before_aborts);}
+    if(vk_pixel_local_enabled() && test>=13 && test<=17) {CHECK(plans==before_plans+1);CHECK(draws==before_draws+1);CHECK(aborts==before_aborts);}
+    if(vk_pixel_local_enabled() && ((test>=18 && test<=20) || test>=23)) {
+      CHECK(plans==before_plans);CHECK(draws==before_draws);CHECK(aborts==before_aborts);
+    }
     NVNcopyRegion region={0,0,0,16,16,1};uint8_t pixels[1024];CALL(nvnTextureReadTexels,&textures[4],NULL,&region,pixels);
     for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++)for(unsigned c=0;c<4;c++) {
       unsigned expected=test==2&&x>=8?0:c==3?255:(test==4 || test==10 || test==16)?(c==0?64:0):
-        test==6?(c==0?16:c==1?80:255):test==8?(c==0?144:c==1?16:80):(test==9 || test==11)?(c==0?144:80):80;CHECK(abs((int)pixels[(y*16+x)*4+c]-(int)expected)<=1);
+        test==6?(c==0?16:c==1?80:255):test==8?(c==0?144:c==1?16:80):(test==9 || test==11 || test==21)?(c==0?144:80):80;CHECK(abs((int)pixels[(y*16+x)*4+c]-(int)expected)<=1);
     }
+    if(test>=23) {uint32_t writes;memcpy(&writes,storage+0xd0000,4);CHECK(writes==256);}
     // These are later consumers outside the fused command stream. Tile-only
     // success cannot hide an accidentally discarded source STORE or sibling.
     if(test!=10) {
@@ -182,7 +197,7 @@ static int pixel_local_render_test(void) {
   }
   if(inject)LOG("[pixel-local render fixture] injected subpass1 PSO rejection: ordinary GPU pixels and operation lifetime passed");
   for(unsigned k=0;k<9;k++)CALL(nvnTextureFinalize,&textures[k]);
-  CALL(nvnProgramFinalize,&producer);CALL(nvnProgramFinalize,&consumer);CALL(nvnProgramFinalize,&single);CALL(nvnProgramFinalize,&neighbor);CALL(nvnProgramFinalize,&alpha);CALL(nvnProgramFinalize,&vertex_alias);CALL(nvnProgramFinalize,&vertex_schema);CALL(nvnCommandBufferFinalize,&local);
+  CALL(nvnProgramFinalize,&producer);CALL(nvnProgramFinalize,&consumer);CALL(nvnProgramFinalize,&single);CALL(nvnProgramFinalize,&neighbor);CALL(nvnProgramFinalize,&alpha);CALL(nvnProgramFinalize,&vertex_alias);CALL(nvnProgramFinalize,&vertex_schema);CALL(nvnProgramFinalize,&producer_writer);CALL(nvnProgramFinalize,&consumer_writer);CALL(nvnCommandBufferFinalize,&local);
   CALL(nvnMemoryPoolFinalize,&pool);free(storage);S=saved;vk_pipeline_state_changed();
   CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pixel-local-render\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
 }
