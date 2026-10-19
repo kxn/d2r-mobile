@@ -449,6 +449,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_buffer_visibility.inc"
 #include "native_vulkan_initialized_span.inc"
 #include "native_vulkan_pool_span.inc"
+#include "native_vulkan_upload_dual.inc"
 #include "native_vulkan_pool_window.inc"
 #include "native_vulkan_pool_ranges.inc"
 #include "native_vulkan_buffer_scope.inc"
@@ -509,6 +510,7 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
   if (getenv("DM_VULKAN_ACQUIRE_TEST")) return acquire_sync_scope_test();
+  int old_upload_dual=upload_dual_fixture_begin();
   if (getenv("DM_VULKAN_MEMORY_TEST")) {
     memory_suballocation_test();
     // Exercise memory visibility independently of graphics-format/shader
@@ -524,6 +526,7 @@ int dm_vulkan_test_main(void) {
     grouped_upload_ranges_test();
     pool_upload_hazard_test();
     CHECK(vk_validation_error_count() == 0);
+    vk_test_upload_dual_enable(old_upload_dual);
     printf("{\"backend\":\"vulkan\",\"test\":\"memory-pool-visibility\",\"checks\":%u,\"result\":\"passed\"}\n", checks);
     fflush(NULL);
     _exit(0);
@@ -1995,6 +1998,7 @@ int dm_vulkan_test_main(void) {
   LOG("[vulkan image layout fixture] reference=%d transitions=%llu safe_uses=%llu fallbacks=%llu; GPU pixel regressions passed",
       image_reference,(unsigned long long)image_transitions,(unsigned long long)image_safe,(unsigned long long)image_fallback);
   pipeline_cache_test();
+  vk_test_upload_dual_enable(old_upload_dual);
   printf("{\"backend\":\"vulkan\",\"original_nvn\":true,\"checks\":%u,"
          "\"result\":\"passed\"}\n",
          checks);

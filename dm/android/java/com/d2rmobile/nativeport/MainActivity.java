@@ -41,6 +41,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativePixelLocal(boolean enabled);
+    private static native void nativeUploadDualStore(boolean enabled);
     private static native void nativePerformanceHintReference(boolean reference);
     private static native void nativeImageLayoutReference(boolean reference);
     private static native void nativeSampledArrayLayoutReference(boolean reference);
@@ -131,6 +132,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", false));
+            nativeUploadDualStore(getIntent().getBooleanExtra("upload_dual_store", false));
             // Native pool backing is selected before Vulkan initialization only.
             // No extra leaves the C startup environment/default unchanged.
             if (getIntent().hasExtra("pool_window_bytes")) {
@@ -278,6 +280,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent.hasExtra("upload_dual_store")) {
+            android.util.Log.w("D2RUpload", "upload_dual_store is startup-only; cold restart required");
+            intent.removeExtra("upload_dual_store");
+        }
         if (intent.hasExtra("pool_window_bytes")) {
             android.util.Log.w("D2RPool", "pool_window_bytes is startup-only; cold restart required");
             intent.removeExtra("pool_window_bytes");

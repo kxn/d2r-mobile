@@ -90,6 +90,25 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertIn('startup-only', stderr.getvalue())
             adb.assert_not_called()
 
+    def test_dual_upload_is_an_exact_startup_boolean(self):
+        for options, value in (([], 'false'), (['--upload-dual-store'], 'true'),
+                               (['--no-upload-dual-store'], 'false')):
+            with self.subTest(options=options):
+                command = self.launch_command(options)
+                index = command.index('upload_dual_store')
+                self.assertEqual(command[index - 1:index + 2], ['--ez', 'upload_dual_store', value])
+
+    def test_attach_cannot_change_dual_upload_policy(self):
+        for option in ('--upload-dual-store', '--no-upload-dual-store'):
+            with self.subTest(option=option), \
+                    patch('sys.argv', [str(LAUNCHER), '--attach', option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER), run_name='__main__')
+            self.assertEqual(caught.exception.code, 2)
+            adb.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -340,6 +340,20 @@ static int lifecycle_suspended;
 static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup;
+static int upload_dual_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeUploadDualStore(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"upload_dual_store is fixed before native startup");
+    return;
+  }
+  upload_dual_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePixelLocal(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;
@@ -473,6 +487,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   // recreation and later Intents must never change established PSO identities.
   if(setenv("DM_VULKAN_PIXEL_LOCAL",pixel_local_startup?"1":"0",1))
     die("Android pixel-local startup environment");
+  if(setenv("DM_VULKAN_UPLOAD_DUAL_STORE",upload_dual_startup?"1":"0",1))
+    die("Android dual upload startup environment");
   extern int vk_pixel_local_enabled(void);
   if(vk_pixel_local_enabled()!=pixel_local_startup)
     die("Android pixel-local policy initialized before startup selection");

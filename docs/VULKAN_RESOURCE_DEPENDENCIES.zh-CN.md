@@ -1661,3 +1661,20 @@ Mali 同包整池/16 MiB 窗口/整池的 PSS 为 4,015,898 / 4,310,244 / 4,076,
 完整包各有 6,609 份严格空 DPL 和 318 份非空 DPL。空记录不会授权任何 Shader 替换，运行期保持普通路径；部署器对其严格检查 192 B extent、头部、stage/set、五成员 SHA、实际 base/spec/pred/tssbo 模块集合与 SHA，以及反射 sidecar 闭包，不再重复 eligibility 分析来证明“未采用可选优化”。stage5 同时是原分析拒绝哨兵，按原包实际语义验证，不能误认成可用 compute 证明。非空记录仍按原 emit/build 重生成全部证明及变体并逐字节比较；原 dkey/spec/paired/metadata 与 baseline SPIR-V 检查不变，未修改编译工具或链指纹。
 
 10 项新增离线测试检查闭包/头部/模块篡改、伪装空记录拒绝和非空重证明；两机现成包各 6,609 份空闭包实际通过，独立原 41 项证明测试保持通过。主线新增测试复验通过。原慢路径高通全量 6,931 已通过并确认基础 SPIR-V 与原已部署链完全相同；Mali 原慢路径仍在执行。新部署报告分别统计 empty_fallback/regenerated，不能把闭包验证记成重做了全部 eligibility 证明。见 `deploy-empty-dpl-v1-source-ready.json`。
+
+
+### 真实游戏附件合并：先定位拒绝，再测带宽
+
+Android 已部署完整可选证明链：高通 `9507875007c6`、Mali `38da72e80a08`，基础 SPIR-V 与各自上一完整链相同，所有 45,312 个部署文件回读哈希通过。旧包实际游戏两次三 MRT、mip0、indexed3 的规划在 SET_RT 后第六条命令因 `0x13` 被拒绝，尚未到 consumer 证明；这是官方 LLDB 的功能诊断，不是 GPU 计时。
+
+`c16445e` 仅在已改变的 SET_RT 与首个 consumer 之间接受 primitive/fragment 排序及 texture invalidate 的已知组合。所有生产者和 consumer 必须没有 programmable writer；查询、转移、未知标志、普通 VS/FS 别名和实际资源依赖保留拒绝/回退。原 barrier 仍逐条执行，flags 不被清除；需要更广同步时结束 dual pass，仅重试尚未执行的 consumer。独立审查确认旧 GPU write→consumer 独有 VS UBO 的静态回退闭环，但该组合没有冒充新增专用 GPU 用例。25 用例包括实际 SSBO atomic 生产者/消费者、PSO 故障、窗口及 reference 路径；全套 async 21,811,196 / sync 21,711,784 检查通过，零 VUID/SYNC。
+
+同 APK `b9de5ea6…` / ELF `1fad3575…`、原始 NSO 一次重建 ABI3 模块，在高通验证层与 Mali 普通运行均完成营地移动、原生命周期两次存档并停机。但两台 planned/draws/aborts 均为 0；本轮不能宣称融合、带宽或 FPS 收益。高通仍有此前已见的 R16_UNORM Dref VUID 06479，不能称整轮零验证错误。继续使用 LLDB 找下一处拒绝，候选未命中时不重复做性能 A/B。见 `pixel-local-boundary-order-v1-{q,mali}-assessment.json` 和独立审查报告。
+
+### CPU 上传：一次源读取写入两个目的
+
+直接 changed-run 上传原来分别把 guest 数据复制到 mapped buffer 和 shadow。新可选路径在没有 pending publication / GPU access 时，一次源读取供两份目的写入；原四字节差异范围、脏页代数、物理 span、publication lock 与 submission-begin authority cutoff 不变。存在在途 GPU 使用时仍走原 staging，serial/global/reference 路径不变。它减少复制阶段的逻辑源读取及独立复制调用，不代表同等数量 DRAM 流量被消除；比较扫描和两份目的写入仍保留。
+
+NDK O3 中 64B 循环为两次 LDPq 和四次 STPq，sync_page 文本增加 640B，并增加一个缓存启动布尔与选择分支。简单循环与 bionic 流水复制的实际吞吐仍须用官方 CPU Profile 验证。默认实验关闭，Android 冷启动参数 `--upload-dual-store` / `--no-upload-dual-store` 选定；已启动进程拒绝修改，未增加热路径 getenv。
+
+Mali ARM64 CLI 的真实 Vulkan memory-pool oracle 400,453 项通过，含非对齐/guard tails、两个物理 backing、GPU-only 邻字和录制后 CPU 修改。官方 LLDB 另确认调用来自 commit→sync_page→pool_spans_copy_dual→upload_copy_dual，并命中 128B 向量循环入口；调试轮在首 LDP 前主动结束，功能完成证据来自前述完整 CLI。Android standalone 无法发现验证层，不能称其 VVL 通过；Lavapipe 独立完整 async 21,813,081 / sync 21,713,669 项零 VUID/SYNC，合入主线 async 21,813,081 及 memory 400,453 项也通过。没有实际游戏 CPU/FPS/温度收益结论。见 `direct-upload-dual-store-v1-mali-production-proof.json`。

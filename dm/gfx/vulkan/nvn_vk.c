@@ -61,6 +61,7 @@ typedef struct pool {
 enum { GPU_ACCESS_SHIFT = 12 };
 static VkResult buffer_try_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback);
 #include "nvn_vk_pool_spans.inc"
+#include "nvn_vk_upload_dual.inc"
 static const VkPipelineStageFlags pool_stages[]={
   VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -1055,6 +1056,10 @@ static void init_options(void) {
   if(o->pool_window_bytes && (o->pool_window_bytes<4096 || (o->pool_window_bytes&(o->pool_window_bytes-1))))
     die("Vulkan pool window size must be a power of two >=4096");
   LOG("[vulkan] pool backing policy: %s window_bytes=%llu",o->pool_window_bytes?"canonical windows":"whole",(unsigned long long)o->pool_window_bytes);
+  const char *dual=getenv("DM_VULKAN_UPLOAD_DUAL_STORE");
+  if(dual && strcmp(dual,"0") && strcmp(dual,"1"))die("DM_VULKAN_UPLOAD_DUAL_STORE expects 0 or 1");
+  upload_dual_enabled=dual && !strcmp(dual,"1"); // startup-only, experimental OFF
+  LOG("[vulkan] direct upload dual store experimental=%d",upload_dual_enabled);
   o->defer_mip_clears=option_one("DM_VULKAN_DEFER_MIP_CLEARS");
   o->stats=!external_profile && getenv("DM_VULKAN_STATS")!=NULL;
   o->validate=getenv("DM_VULKAN_VALIDATE")!=NULL;
@@ -2405,6 +2410,12 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
       vk_buffer *snapshot=vk_temp_buffer(snapshot_capacity);
       memcpy(snapshot->map,p->guest+off+snapshot_offset,snapshot_size);
       queue_pool_page_upload(p,off,size,snapshot,snapshot_offset,regions,count);
+    } else if(upload_dual_enabled && !recording_resources->upload_scan_reference) {
+      for(unsigned i=0;i<count;i++) {
+        pool_spans_copy_dual(p,regions[i].dstOffset,regions[i].size);
+        pool_cpu_synced(p,regions[i].dstOffset,regions[i].size,recording_resources->cpu_authority_begin);
+      }
+      pthread_mutex_unlock(&pool_publication_mu);return;
     } else {
       for(unsigned i=0;i<count;i++)
         pool_spans_copy_from_guest(p,regions[i].dstOffset,regions[i].size);
