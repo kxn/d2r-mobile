@@ -15,9 +15,22 @@ It never submitted the host-import GPU oracle. The original baseline PanVK ICD
 has separately run the original GPU memory/DS-plane fixture successfully; that
 result is not inherited by this new extension or driver build.
 
-The present candidate adds noncoherent USER_BUFFER support. Until its own
-Android app-UID oracle passes, it is source/build evidence only. It does not
-establish WSI, game rendering, performance, temperature or memory-use gains.
+The noncoherent USER_BUFFER candidate at project commit `07ec8d8` passed the
+standard own-page oracle on the PHP110/Mali-G710 under ordinary application
+UID10174:57,819 checks, four independent8KiB imports,4096-byte alignment,
+noncoherent HOST_CACHED type2(flags0xb) and64-byte atom. The explicit disabled
+cold process did not advertise the extension. CPU edits after import, mapped
+Flush/Invalidate, GPU Copy/Fill, pending timeline-gated submissions and release
+were exercised. No failed page pinning was retried. Android validation layers
+were explicitly disabled for this direct-ICD path; host Lavapipe plus official
+validation/synchronization layers separately passed57,746 checks using coherent
+memory. Neither result establishes behavior with the game's dirty-page
+protection or game allocations. The driver SHA-256 was
+`bdd9df32c38f7c82fb58d815d6a021e8641a545f9fdb1b401416d6908d265d5d`.
+
+These bounded byte/lifetime results do not establish WSI, game rendering,
+performance, temperature, memory-use gains or complete leak coverage. The
+original game APK and private files were restored and the app process stopped.
 No driver or application is installed by the build wrapper.
 
 ## Implementation
