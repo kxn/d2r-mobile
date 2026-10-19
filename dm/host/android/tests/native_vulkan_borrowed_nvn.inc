@@ -56,7 +56,7 @@ static void borrowed_pixels(borrowed_gpu_fixture *f,float value) {
 static void *borrowed_finalize_thread(void *pool) {
   crash_thread_init();CALL(nvnMemoryPoolFinalize,pool);return NULL;
 }
-static void borrowed_nvn_buffer_test(void) {
+static int borrowed_nvn_buffer_test(void) {
   mtl_init();CHECK(vk_test_pool_owned_supported());
   borrowed_gpu_fixture f={0};uint8_t vertex[0x880]={0},fragment[0x880];memset(fragment,39,sizeof fragment);
   NVNshaderData shaders[]={{.control=vertex},{.control=fragment}};
@@ -108,6 +108,9 @@ static void borrowed_nvn_buffer_test(void) {
     }
     uint64_t now_imports,now_retirements;vk_test_pool_owned_stats(&now_imports,&now_retirements);
     CHECK(now_imports==imports+1 && now_retirements==retirements+(iteration==3));
+    printf("{\"test_details\":\"borrowed-nvn-ubo-cycle\",\"iteration\":%u,\"flags\":%d,"
+      "\"same_import\":%s,\"retired\":%s,\"pixels_live_CPU_shadow_verified\":true}\n",
+      iteration,properties,iteration<3?"true":"false",iteration==3?"true":"false");
   }
   // Original dirty protection/fault is back after writer demotion, not a test
   // mprotect workaround. Retirement remains sticky for this lease.
@@ -127,6 +130,7 @@ static void borrowed_nvn_buffer_test(void) {
   dm_guest_write_prepare(uniform,4);*(float *)uniform=.75f;
   submit(borrowed_record(&f,uniform,0,0));borrowed_pixels(&f,.75f);
   vk_test_pool_owned_stats(&after_imports,&after_retirements);CHECK(after_imports==imports); // no retry
+  printf("{\"test_details\":\"borrowed-nvn-initial-prot\",\"vk_import_allocation_attempts\":0,\"unprotect_retry\":false,\"pixels_verified\":true}\n");
   CALL(nvnMemoryPoolFinalize,&source);
   // A finalized logical image still poisons historical eligibility BEFORE
   // first physical image creation. Then the ordinary UBO path stays mirrored.
@@ -170,6 +174,7 @@ static void borrowed_nvn_buffer_test(void) {
   NVNpackagedTextureLayout packaged={{0}};CALL(nvnTextureBuilderSetPackagedTextureLayout,&tb,&packaged);
   CHECK(CALL(nvnTextureInitialize,&alias,&tb));CHECK(!vk_test_pool_owned_properties((uintptr_t)uniform));
   dirty_range_pixels(&alias,pixel);CALL(nvnTextureFinalize,&alias);CALL(nvnMemoryPoolFinalize,&source);
+  printf("{\"test_details\":\"borrowed-nvn-late-image\",\"retired_before_image\":true,\"image_GPU_bytes_verified\":true}\n");
   // Original command memory admission blocks a lease even when that recorder
   // is discarded; do not guess purity from only submitted draws.
   memset(uniform,0,65536);borrowed_pool_init(&source,uniform,65536);
@@ -190,6 +195,7 @@ static void borrowed_nvn_buffer_test(void) {
   CHECK(vk_test_pool_borrow_state((uintptr_t)uniform)&4);vk_test_pool_borrow_gate(0,1);
   CHECK(!pthread_join(finalizer,NULL));CHECK(!vk_test_pool_borrow_state((uintptr_t)uniform));borrowed_pixels(&f,.75f);
   vk_test_pool_owned_stats(&after_imports,&after_retirements);CHECK(after_imports==imports && after_retirements==retirements);
+  printf("{\"test_details\":\"borrowed-nvn-closing\",\"late_import_allocations\":0,\"pool_removed\":true,\"prior_GPU_pixels_verified\":true}\n");
   // A new pool at the same address imports normally, then Finalize itself
   // must retire it (not merely the writer/image side entrances above).
   memset(uniform,0,65536);borrowed_pool_init(&source,uniform,65536);*(float *)uniform=.125f;
@@ -225,6 +231,8 @@ static void borrowed_nvn_buffer_test(void) {
     CHECK(vk_test_pool_owned_properties((uintptr_t)uniform));
     if(!k)initial_vbo=span;else CHECK(span.handle==initial_vbo.handle && span.backing_generation==initial_vbo.backing_generation);
     vk_test_pool_owned_stats(&after_imports,&after_retirements);CHECK(after_imports==vi+1 && after_retirements==vr);
+    printf("{\"test_details\":\"borrowed-nvn-vbo-cycle\",\"iteration\":%u,\"flags\":%d,\"same_import\":true,\"coverage_verified\":\"%s\"}\n",
+      k,vk_test_pool_owned_properties((uintptr_t)uniform),k==1?"clipped":"full");
   }
   CALL(nvnProgramFinalize,&vbo_program);CALL(nvnMemoryPoolFinalize,&source);
   // Force stricter driver requirements only. Never force support. Both the
@@ -236,6 +244,7 @@ static void borrowed_nvn_buffer_test(void) {
     submit(borrowed_record(&f,uniform,0,0));borrowed_pixels(&f,.75f);
     CHECK(!vk_test_pool_owned_properties((uintptr_t)uniform));
     vk_test_pool_owned_stats(&after_imports,&after_retirements);CHECK(after_imports==vi && after_retirements==vr);
+    printf("{\"test_details\":\"borrowed-nvn-dedicated-reject\",\"strict_injection\":%d,\"vk_import_allocation_attempts\":0,\"mirror_GPU_pixels_verified\":true}\n",rejection);
     vk_test_pool_import_dedicated_reject(0);CALL(nvnMemoryPoolFinalize,&source);
   }
 cleanup:
@@ -244,4 +253,5 @@ cleanup:
   CALL(nvnMemoryPoolFinalize,&f.backing);free(f.storage);free(uniform);
   if(properties)LOG("[borrowed NVN fixture] original lease/UBO/VBO/draw/writer/image/command history/Finalize race/ABA/VMA/dedicated fallback passed; flags=%#x",properties);
   else LOG("[borrowed NVN fixture] async-unavailable mirror fallback suite complete; no shared import enabled");
+  return properties;
 }

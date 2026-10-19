@@ -19,6 +19,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOperationMode(int mode);
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
+    private static native boolean nativeBorrowedNvnFixture();
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -233,6 +234,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeQueryPerDrawReference(getIntent().getBooleanExtra("query_per_draw_reference", false));
         nativePipelinePrepareMode(getIntent().getBooleanExtra("validate", false) ? 2 :
                 getIntent().getBooleanExtra("pipeline_prepare_reference", false) ? 1 : 0);
+        if (getIntent().getBooleanExtra("borrowed_nvn_buffer_test", false)) {
+            if (!getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                    getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().getBooleanExtra("async_submit", false) || !panvkDriver)
+                throw new IllegalArgumentException("Borrowed NVN fixture requires tests, PanVK, async_submit and run_game=false");
+            if (!nativeBorrowedNvnFixture())
+                throw new IllegalStateException("Borrowed NVN fixture unavailable or already selected in this process");
+        }
         if (getIntent().getBooleanExtra("run_vulkan_tests", false)) {
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),

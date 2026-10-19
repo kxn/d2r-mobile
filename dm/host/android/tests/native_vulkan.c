@@ -557,8 +557,12 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
   if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
-    borrowed_nvn_buffer_test();CHECK(vk_validation_error_count()==0);
-    printf("{\"test\":\"borrowed-nvn-buffer\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
+    int imported_flags=borrowed_nvn_buffer_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"borrowed-nvn-buffer\",\"checks\":%u,\"result\":\"passed\","
+      "\"uid\":%u,\"flags\":%d,\"host_coherent\":%s,\"atom\":%llu,"
+      "\"borrowed_pool_bytes\":65536,\"original_nvn\":true,\"game_modules_executed\":false,\"dedicated_async_only\":true}\n",
+      checks,(unsigned)getuid(),imported_flags,imported_flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT?"true":"false",
+      (unsigned long long)V.props.limits.nonCoherentAtomSize);return 0;
   }
 #endif
   if(getenv("DM_BUFFER_HISTORY_FIXTURE")) {

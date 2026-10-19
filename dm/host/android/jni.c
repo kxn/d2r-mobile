@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <math.h>
+#include <stdatomic.h>
 extern int dm_android_main(int argc, char **argv);
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRenderdocCapture(
     JNIEnv *env, jclass klass, jstring directory) {
@@ -706,6 +707,22 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
   dm_gfx_suspend(1);
   window = surface ? ANativeWindow_fromSurface(env, surface) : NULL;
   vk_android_window(window, refresh);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeBorrowedNvnFixture(
+    JNIEnv *env,jclass klass) {
+  (void)env;(void)klass;
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  static atomic_int selected;
+  if(atomic_exchange(&selected,1))return JNI_FALSE;
+  // No pointer/provenance from Java: original native fixture allocates storage,
+  // lends it through NVN Initialize, and retains it through original Finalize.
+  if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
+      setenv("DM_BORROWED_NVN_BUFFER_FIXTURE","1",1))return JNI_FALSE;
+  return JNI_TRUE;
+#else
+  return JNI_FALSE;
+#endif
 }
 
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(

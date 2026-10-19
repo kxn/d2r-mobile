@@ -134,6 +134,11 @@ static void owned_fixture_flush(pool *p,uint64_t first,uint64_t end) {
   if(limit>b->size)die("Vulkan owned flush extent");
   VkMappedMemoryRange range={.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,.memory=b->memory,.offset=offset,.size=limit-offset};
   VK_CHECK(vkFlushMappedMemoryRanges(V.device,1,&range));
+#ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
+  if(borrowed_fixture_requested)printf("{\"test_details\":\"borrowed-nvn-flush\",\"pool_identity\":%llu,\"offset\":%llu,\"bytes\":%llu,\"atom\":%llu,\"flags\":%u}\n",
+    (unsigned long long)p->identity,(unsigned long long)offset,(unsigned long long)(limit-offset),
+    (unsigned long long)atom,b->properties);
+#endif
 }
 // Explicit owner maintenance only, before any physical borrow. Readonly GPU
 // use cannot make guest contents stale. Allocate privately first, retire ALL
