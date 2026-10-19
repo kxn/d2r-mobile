@@ -66,8 +66,14 @@ typedef struct image {
   uint64_t access_generation;
   image_read_proof read_proofs[2];
   unsigned read_proof_next;
-  int mip_tracked;
+  unsigned physical_traits;
 } image;
+enum {
+  IMAGE_MIP_TRACKED=1u<<0,
+  IMAGE_LAYOUT_COLOR=1u<<1,
+  IMAGE_LAYOUT_SAMPLED_ARRAY=1u<<2,
+  IMAGE_LAYOUT_DEPTH=1u<<3,
+};
 // Recording-owner identity generation for logical image destruction and real
 // physical replacement. Reject freed owners and handle-reuse ABA before any
 // cached pointer dereference. Completion only frees already-invalidated copies.
@@ -89,7 +95,7 @@ static unsigned zero_channels(const image *i) {
 // Keep complex arrays, depth/stencil and multisampling on the existing
 // conservative path. Tracked mip layouts remain valid across policy switches.
 static int image_mip_tracked(const image *i) {
-  return i->mip_tracked;
+  return !!(i->physical_traits&IMAGE_MIP_TRACKED);
 }
 #include "nvn_vk_image_dependencies.inc"
 static _Atomic int layout_requested=-1,layout_active=0;
@@ -213,24 +219,36 @@ void vk_image_layout_stats(uint64_t *transitions,uint64_t *safe,uint64_t *fallba
 // This bounded policy only changes the whole-image sampling layout. Arrays
 // keep per-cell access hazards and must never enter single-layer mip tracking.
 // A later real storage/attachment use promotes physical usage and exits it.
-static int image_sampled_array_layout(const image *i) {
+// Physical properties change only at image_allocate, including a promotion.
+// Policy switches and this submit's GENERAL requirement stay live below.
+static unsigned image_physical_traits(const image *i) {
+  unsigned traits=0;
+  if(i->description.imageType==VK_IMAGE_TYPE_2D && i->description.samples==VK_SAMPLE_COUNT_1_BIT) {
+    if(i->aspect==VK_IMAGE_ASPECT_COLOR_BIT) {
+      if(i->levels<=16 && i->layers==1)traits|=IMAGE_LAYOUT_COLOR;
+      if(i->levels>1 && i->levels<=16 && i->layers==1)traits|=IMAGE_MIP_TRACKED;
+    } else if(i->levels==1 && (i->layers==1 ||
+        ((i->aspect&VK_IMAGE_ASPECT_DEPTH_BIT) && i->layers>1 && i->layers<=16)))traits|=IMAGE_LAYOUT_DEPTH;
+  }
   const VkImageUsageFlags writers=VK_IMAGE_USAGE_STORAGE_BIT |
       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  return i->tex.d.target==NVN_TEXTURE_TARGET_2D_ARRAY &&
+  if(i->tex.d.target==NVN_TEXTURE_TARGET_2D_ARRAY &&
       i->description.imageType==VK_IMAGE_TYPE_2D &&
       i->description.samples==VK_SAMPLE_COUNT_1_BIT &&
       i->aspect==VK_IMAGE_ASPECT_COLOR_BIT && i->levels && i->levels<=16 &&
       i->layers>1 && i->layers<=256 &&
       (i->description.usage&VK_IMAGE_USAGE_SAMPLED_BIT) &&
-      !(i->description.usage&writers);
+      !(i->description.usage&writers))traits|=IMAGE_LAYOUT_SAMPLED_ARRAY;
+  return traits;
+}
+static int image_sampled_array_layout(const image *i) {
+  return !!(i->physical_traits&IMAGE_LAYOUT_SAMPLED_ARRAY);
 }
 static int image_safe_layouts(const image *i) {
   return !layout_reference &&
-      i->description.imageType==VK_IMAGE_TYPE_2D && i->description.samples==VK_SAMPLE_COUNT_1_BIT &&
-      (i->aspect==VK_IMAGE_ASPECT_COLOR_BIT ? i->levels<=16 &&
-       (i->layers==1 || (!sampled_array_layout_reference && image_sampled_array_layout(i))) :
-       !depth_layout_reference && i->levels==1 &&
-       (i->layers==1 || ((i->aspect&VK_IMAGE_ASPECT_DEPTH_BIT) && i->layers>1 && i->layers<=16)));
+      ((i->physical_traits&IMAGE_LAYOUT_COLOR) ||
+       (!sampled_array_layout_reference && (i->physical_traits&IMAGE_LAYOUT_SAMPLED_ARRAY)) ||
+       (!depth_layout_reference && (i->physical_traits&IMAGE_LAYOUT_DEPTH)));
 }
 static void image_whole_layout_access(image *i,VkImageLayout next,
     VkPipelineStageFlags dst_stage,VkAccessFlags dst_access) {
@@ -523,10 +541,7 @@ static VkFormat decoded_format(int f) {
 static void image_allocate(image *i) {
   // These physical properties are immutable until a new allocation. Cache
   // the predicate here, including after storage/mutable-format promotion.
-  i->mip_tracked=i->levels>1 && i->levels<=16 && i->layers==1 &&
-      i->description.imageType==VK_IMAGE_TYPE_2D &&
-      i->description.samples==VK_SAMPLE_COUNT_1_BIT &&
-      i->aspect==VK_IMAGE_ASPECT_COLOR_BIT;
+  i->physical_traits=image_physical_traits(i);
   size_t cells=(size_t)i->levels*i->layers*3;
   if(!cells || cells>SIZE_MAX/sizeof *i->access) die("Vulkan image access capacity");
   i->access=calloc(cells,sizeof *i->access);
