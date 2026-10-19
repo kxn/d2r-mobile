@@ -480,8 +480,10 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_retained_update.inc"
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
+#include "native_vulkan_host_import.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+  if(getenv("DM_VULKAN_HOST_IMPORT_TEST")) return host_import_oracle();
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
     extern void nvn_test_idle_trim_cold_poll(void);
     CHECK(!V.device);dm_gfx_trim_memory_request();

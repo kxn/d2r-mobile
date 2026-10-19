@@ -693,8 +693,15 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
 
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
-    jboolean acquire_scope, jboolean memory_only, jboolean validation) {
+    jboolean acquire_scope, jboolean memory_only, jboolean validation,
+    jboolean host_import, jboolean host_import_opt_in) {
   (void)klass;
+  if (host_import) {
+    setenv("DM_VULKAN_HOST_IMPORT_TEST", "1", 1);
+    setenv("TU_DM_HOST_IMPORT", host_import_opt_in ? "true" : "false", 1);
+  } else {
+    unsetenv("DM_VULKAN_HOST_IMPORT_TEST");
+  }
   if (async_submit) setenv("DM_VULKAN_ASYNC", "1", 1);
   if (acquire_scope) setenv("DM_VULKAN_ACQUIRE_TEST", "1", 1);
   if (memory_only) setenv("DM_VULKAN_MEMORY_TEST", "1", 1);
