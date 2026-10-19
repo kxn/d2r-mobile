@@ -4,6 +4,8 @@
 `DM_VULKAN_ASTC_DECODE_UNORM8=1`，Android 冷启动 Intent 设置
 `astc_decode_unorm8=true`。设备必须实际公布并启用
 `VK_EXT_astc_decode_mode`；不支持时保持原行为。开关不支持进程内切换。
+原启动工具可使用 `--astc-decode-unorm8`／`--no-astc-decode-unorm8`
+进行冷启动对照；`--attach` 拒绝这两个选项，未指定时保持关闭。
 
 Vulkan 原来的线性 ASTC LDR 解码中间表示为 RGBA FP16。
 该扩展允许通过 Image View 选择 RGBA UNORM8。Arm 说明它可以降低解码后纹理
@@ -65,6 +67,13 @@ description/recipe 不含栈指针。旧两类 view 按原图像生命周期保�
 新的 GPU 解码路径正确或更快。候选必须等待实际 Android GPU 夹具、普通游戏
 外观与官方 Arm 计数器对照，之后才能讨论默认开启。工具数据需要区分纹理缓存
 读取、外部纹理读取、整机 GPU 工作变化与整帧表现，不能用单 draw 时间归因。
+
+Mali-G710 的独立 Android 包已完成 OFF／ON 原 NVN GPU 检查，分别
+16,725／16,727 项，包含实际 4×4、6×6 采样及上述撤证、回退条件，
+Khronos 同步验证未报告 VUID／SYNC 错误。首版夹具错误地用无 stage 的
+裸访问接口触发 sticky escape，保持原断言失败；后仅将夹具改为原 typed
+shader scope，生产实现未改以通过检查。此结果仍不证明普通游戏画面、
+带宽、FPS 或持续散热收益；默认继续关闭。
 
 依据：
 

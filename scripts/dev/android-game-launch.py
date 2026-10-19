@@ -33,6 +33,7 @@ parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,defaul
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
 parser.add_argument('--pool-copy-accounting',action=argparse.BooleanOptionalAction,default=None,help='startup-only optional logical pool copy bytes, not bandwidth or timing (default off)')
 parser.add_argument('--upload-dual-store',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental direct upload: one guest load feeds map and shadow (default off)')
+parser.add_argument('--astc-decode-unorm8',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental ASTC LDR decode mode, content proof required (default off)')
 parser.add_argument('--general-depth-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for depth/stencil, preserving optimized color layouts')
 parser.add_argument('--general-compute-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for readonly compute image sampling')
 parser.add_argument('--general-sampled-array-layouts-reference',action='store_true',help='comparison: retain GENERAL for sampled-only color arrays; other image layouts remain optimized')
@@ -129,6 +130,8 @@ if args.attach and args.pool_copy_accounting is not None:
     parser.error('--pool-copy-accounting/--no-pool-copy-accounting are startup-only and cannot be used with --attach')
 if args.attach and args.upload_dual_store is not None:
     parser.error('--upload-dual-store/--no-upload-dual-store are startup-only and cannot be used with --attach')
+if args.attach and args.astc_decode_unorm8 is not None:
+    parser.error('--astc-decode-unorm8/--no-astc-decode-unorm8 are startup-only and cannot be used with --attach')
 if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
         args.pool_window_bytes > (1 << 63) - 1 or
         (args.pool_window_bytes != 0 and (args.pool_window_bytes < 4096 or
@@ -199,6 +202,7 @@ if not args.attach:
     if args.pixel_local_shared_ds is not None:
         launch += ['--ez', 'pixel_local_shared_ds', str(args.pixel_local_shared_ds).lower()]
     launch += ['--ez', 'upload_dual_store', str(bool(args.upload_dual_store)).lower()]
+    launch += ['--ez', 'astc_decode_unorm8', str(bool(args.astc_decode_unorm8)).lower()]
     launch += ['--ez', 'pool_copy_accounting', str(bool(args.pool_copy_accounting)).lower()]
     launch += ['--ez', 'defer_pool_publication', str(bool(args.defer_pool_publication)).lower()]
     if args.bright_k is not None:
@@ -354,6 +358,7 @@ while time.monotonic() < deadline:
                               'requested_defer_pool_publication':args.defer_pool_publication,
                               'actual_defer_pool_publication':state.get('pool_publication',{}).get('deferred',False),
                               'requested_pool_copy_accounting':args.pool_copy_accounting,
+                              'requested_astc_decode_unorm8':args.astc_decode_unorm8,
                               'actual_pool_copy_accounting':state.get('pool_copy_accounting',{}).get('enabled',False),
                               'requested_pixel_local':args.pixel_local,
                               'actual_pixel_local':state.get('pixel_local',{}).get('enabled'),
