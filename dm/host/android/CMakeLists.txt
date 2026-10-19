@@ -18,7 +18,7 @@ set(HOST "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(SHA "${HOST}/../third_party/runtime-codecs")
 set(NATIVE_CORE
   platform_elf.c headless.c display.c
-  "${HOST}/loader.c" "${HOST}/hle.c" "${HOST}/entry.S"
+  "${HOST}/loader.c" "${HOST}/hle.c" "${HOST}/entry.S" "${HOST}/guest_address_space.c"
   "${HOST}/thread.c" "${HOST}/hle_os.c" "${HOST}/hle_svc.c"
   "${HOST}/hle_thread.c" "${HOST}/hle_sdkinit.c" "${HOST}/hle_table.c"
   "${HOST}/hle_count.c" "${SHA}/sha256.c" "${SHA}/sha1.c")

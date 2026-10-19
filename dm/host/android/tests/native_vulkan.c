@@ -447,6 +447,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_target_match.inc"
 #include "native_vulkan_metadata_reuse.inc"
 #include "native_vulkan_guest_memory.inc"
+#include "native_vulkan_guest_as.inc"
 #include "native_vulkan_driver_key.inc"
 #include "native_vulkan_buffer_visibility.inc"
 #include "native_vulkan_initialized_span.inc"
@@ -534,6 +535,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_GUEST_AS_FIXTURE")) {guest_as_test();printf("{\"test\":\"guest-as-shared-slice\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_GUEST_MEMORY_FIXTURE")) {guest_memory_test();printf("{\"test\":\"guest-memory\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}

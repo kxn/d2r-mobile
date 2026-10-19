@@ -30,7 +30,8 @@ endforeach()
 file(GLOB BACKEND CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 add_executable(vulkan_host_test tests/host.c ${BACKEND} "${GFX}/../third_party/volk/volk.c"
   "${GFX}/nvn/nvn_platform.c" "${GFX}/nvn/nvn_dirty.c" "${GFX}/nvn/nvn_tex.c"
-  "${GFX}/tex/nvn_deswizzle.c" "${GFX}/tex/nvn_bcdec.c" "${SHA}/sha256.c")
+  "${GFX}/tex/nvn_deswizzle.c" "${GFX}/tex/nvn_bcdec.c" "${SHA}/sha256.c"
+  "${HOST}/guest_address_space.c")
 target_include_directories(vulkan_host_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${HOST}" "${SHA}" "${GFX}/nvn/include" ${Vulkan_INCLUDE_DIRS})
 target_compile_definitions(vulkan_host_test PRIVATE _GNU_SOURCE DM_STRICT_HLE=1 DM_HEADLESS=1 DM_VULKAN_TEST_EMBED=1 MBEDTLS_CONFIG_FILE="dm_sha_config.h")
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SUBPASS_TEST_SHADERS=1 DM_DIRTY_RANGE_TEST_HOOKS=1 DM_VULKAN_SCAN_PAIR_ORACLE=1)
@@ -41,3 +42,9 @@ target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_VERTEX_REQUIRE_WRA
 target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_buffer_vertex_require")
 add_dependencies(vulkan_host_test dm_vulkan_builtins)
 add_dependencies(vulkan_host_test dm_vulkan_subpass_test_shader)
+
+# Owned OS rollback/protection fixture; never reserves the actual game AS.
+add_executable(guest_as_os_test "${HOST}/guest_address_space.c" "${HOST}/tests/t_guest_address_space.c")
+target_compile_definitions(guest_as_os_test PRIVATE _GNU_SOURCE)
+target_compile_options(guest_as_os_test PRIVATE -g -O2 -Wall -Wextra -Werror)
+target_link_options(guest_as_os_test PRIVATE -Wl,--wrap=mmap -Wl,--wrap=munmap -Wl,--wrap=mprotect)
