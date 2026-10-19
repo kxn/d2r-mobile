@@ -226,3 +226,11 @@ add_custom_target(dm_original_assets
   COMMAND bash "${HOST}/../../scripts/dev/build-original-assets.sh"
   VERBATIM)
 add_dependencies(dm_original_features dm_original_assets)
+
+# Explicit standalone/independent-fixture builds only. No production selector.
+option(DM_VULKAN_OWNED_NVN_FIXTURE "Build explicit self-owned readonly NVN import fixture" OFF)
+if(DM_VULKAN_OWNED_NVN_FIXTURE)
+  foreach(target native_vulkan_test dmhost_android)
+    target_compile_definitions(${target} PRIVATE DM_VULKAN_OWNED_NVN_FIXTURE=1)
+  endforeach()
+endif()

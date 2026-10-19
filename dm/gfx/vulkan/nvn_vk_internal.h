@@ -27,6 +27,9 @@ typedef struct vk_buffer {
   VkDeviceSize size;
   VkMemoryPropertyFlags properties;
   int readback;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  int owned_host_import,owned_host_mapped;
+#endif
 } vk_buffer;
 typedef struct vk_effect {
   struct vk_effect *next;
@@ -57,6 +60,9 @@ typedef struct {
 } vk_startup_options;
 typedef struct {
   vk_startup_options options;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  int owned_fixture_active;
+#endif
   VkInstance instance;
   VkSurfaceKHR surface;
   VkPhysicalDevice physical;
@@ -93,6 +99,12 @@ typedef struct {
   uint32_t nvn_barrier;
 } vk_context;
 extern vk_context V;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+#define VK_OWNED_FIXTURE_ACTIVE (V.owned_fixture_active)
+void vk_test_pool_owned_destination_check(uint64_t address,uint64_t size);
+#else
+#define VK_OWNED_FIXTURE_ACTIVE 0
+#endif
 int vk_tbdr_enabled(void);
 void vk_tbdr_reference(int reference);
 int vk_load_probe_mode(void);

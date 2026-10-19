@@ -8,14 +8,26 @@ int vk_pool_cpu_unknown(uint64_t address,uint64_t size) {
   pthread_mutex_unlock(&V.resources);return unknown;
 }
 uint64_t mtl_pool_cpu_access_needed(uint64_t address,uint64_t size,uint64_t *begin,uint64_t *bytes) {
-  if(!atomic_load_explicit(&pool_defer_publication_enabled,memory_order_acquire) || !size)return 0;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  int owned=owned_fixture_requested;
+#else
+  int owned=0;
+#endif
+  if((!atomic_load_explicit(&pool_defer_publication_enabled,memory_order_acquire) && !owned) || !size)return 0;
   if(size>UINT64_MAX-address)die("Vulkan CPU exposure address overflow");
   uint64_t end=address+size,identity=0,best=UINT64_MAX,length=0;
   pthread_mutex_lock(&V.resources);
-  for(pool *p=pools;p;p=p->next)if(pool_publication_candidate(p)) {
+  for(pool *p=pools;p;p=p->next)if(pool_publication_candidate(p)
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+      || (owned && p->owned_readonly && !p->owned_readonly->retired)
+#endif
+      ) {
     uint64_t base=(uintptr_t)p->guest,lo=address>base?address:base;
     uint64_t hi=end<base+p->size?end:base+p->size;
     if(lo>=hi || lo>=best)continue;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    if(!p->owned_readonly || p->owned_readonly->retired)
+#endif
     if(pool_cpu_fully_exposed(p,lo-base,hi-lo) && pool_cpu_copy_proven(p,lo-base,hi-lo))continue;
     identity=p->identity;best=lo;length=hi-lo;
   }
@@ -46,6 +58,13 @@ void mtl_pool_defer_publication_disable(void) {
   V.options.pool_defer_publication=0;
 }
 static int pool_cpu_prepare_identity(uint64_t address,uint64_t size,uint64_t expected) {
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(owned_fixture_requested && size) {
+    int changed=0,retired;
+    do {retired=owned_fixture_retire(address,size,expected);if(retired<0)return retired;changed|=retired;}while(retired);
+    if(changed && !V.options.pool_defer_publication)return 1;
+  }
+#endif
   if(!V.options.pool_defer_publication || !size)return 0;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);
   if(!p || (expected && p->identity!=expected)) {

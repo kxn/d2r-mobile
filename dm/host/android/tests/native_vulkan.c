@@ -425,6 +425,9 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_bloom.inc"
 #include "native_vulkan_specialization.inc"
 #include "native_vulkan_dynamic.inc"
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+#include "native_vulkan_owned_nvn.inc"
+#endif
 #include "native_vulkan_store.inc"
 #include "native_vulkan_cover.inc"
 #include "native_vulkan_mip_cover.inc"
@@ -484,6 +487,11 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_ds_plane_store.inc"
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(getenv("DM_OWNED_NVN_BUFFER_FIXTURE")) {
+    vk_test_pool_owned_enable();CHECK(!setenv("DM_VULKAN_POOL_WINDOW_BYTES","65536",1));
+  }
+#endif
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
     extern void nvn_test_idle_trim_cold_poll(void);
     CHECK(!V.device);dm_gfx_trim_memory_request();
@@ -537,6 +545,12 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(getenv("DM_OWNED_NVN_BUFFER_FIXTURE")) {
+    owned_nvn_buffer_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"owned-nvn-buffer\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
+  }
+#endif
   if(getenv("DM_IMAGE_PRESSURE_TRIM_FIXTURE")) {image_pressure_trim_test();printf("{\"test\":\"image-pressure-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}

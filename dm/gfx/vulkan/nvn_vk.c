@@ -26,6 +26,14 @@ vk_context V = {.resources = PTHREAD_MUTEX_INITIALIZER,
 typedef struct pool_gpu_access pool_gpu_access;
 typedef struct pool_cpu_authority pool_cpu_authority;
 typedef struct pool_cpu_exposure pool_cpu_exposure;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+struct pool;
+typedef struct {nvn_dirty_owned_exclusion exclusion;int retired;} pool_owned_readonly;
+static int owned_fixture_requested,owned_fixture_supported;
+static uint64_t owned_fixture_alignment,owned_fixture_imports,owned_fixture_retirements;
+static int owned_fixture_retire(uint64_t address,uint64_t size,uint64_t expected);
+static void owned_fixture_flush(struct pool *p,uint64_t first,uint64_t end);
+#endif
 typedef struct pool_backing_span {
   struct pool_backing_span *next;
   uint64_t begin,end,generation;
@@ -62,6 +70,9 @@ typedef struct pool {
   uint32_t nvn_flags;
   int nvn_flags_known;
   pool_cpu_exposure *cpu_exposure; // experiment-only, lazy bounded range exclusions
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  pool_owned_readonly *owned_readonly; // only explicit self-owned fixture certificate
+#endif
   int cpu_exposure_full; // metadata OOM/size fallback, never drops excluded pages
 } pool;
 #include "nvn_vk_cpu_authority.inc"
@@ -986,6 +997,12 @@ void vk_buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) { buf
 void vk_buffer_destroy(vk_buffer *b) {
   if (b->handle)
     vkDestroyBuffer(V.device, b->handle, NULL);
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(b->owned_host_import) {
+    if(b->owned_host_mapped)vkUnmapMemory(V.device,b->memory);
+    if(b->memory)vkFreeMemory(V.device,b->memory,NULL);
+  } else
+#endif
   vk_memory_free(b->allocation);
   memset(b, 0, sizeof *b);
 }
@@ -1373,7 +1390,7 @@ static void init_device(void) {
                            .queueCreateInfoCount = 1,
                            .pQueueCreateInfos = &q,
                            .pEnabledFeatures = &V.features};
-  const char *device_extensions[8];
+  const char *device_extensions[9];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
@@ -1412,6 +1429,15 @@ static void init_device(void) {
         available[i].specVersion >= 3)
       have_divisor = 1;
   }
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(owned_fixture_requested)for(uint32_t i=0;i<extension_count_device;i++)
+    if(!strcmp(available[i].extensionName,VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
+      owned_fixture_supported=1;
+      VkPhysicalDeviceExternalMemoryHostPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+      VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&host};
+      vkGetPhysicalDeviceProperties2(V.physical,&properties);owned_fixture_alignment=host.minImportedHostPointerAlignment;
+    }
+#endif
   free(available);
   if (have_divisor) {
     VkPhysicalDeviceFeatures2 query = {
@@ -1473,6 +1499,10 @@ static void init_device(void) {
     device_extensions[dc.enabledExtensionCount++] = VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME;
   if(V.shader_float16)
     device_extensions[dc.enabledExtensionCount++]=VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(owned_fixture_supported)device_extensions[dc.enabledExtensionCount++]=VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+#endif
+  if(dc.enabledExtensionCount>sizeof device_extensions/sizeof *device_extensions)die("Vulkan extension list overflow");
   LOG("[vulkan] shader stencil export: %s",V.stencil_export?"enabled":"unavailable");
   LOG("[vulkan] read-only attachment store NONE: %s",V.load_store_op_none?"VK_EXT_load_store_op_none":"unavailable (STORE fallback)");
   VK_CHECK(vkCreateDevice(V.physical, &dc, NULL, &V.device));
@@ -1508,6 +1538,14 @@ void mtl_init(void) { pthread_once(&init_once, init_device); }
 // initial copy. This does not infer ownership from dirty generations.
 static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
   if(!size) return;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(p->owned_readonly && !p->owned_readonly->retired) {
+    if(p->backings!=&p->whole || !p->whole.buffer.owned_host_import)die("Vulkan owned whole backing invariant");
+    // No CPU shadow snapshot is an authority for this volatile shared node.
+    // Every actual submission read flushes its mapped import instead.
+    return;
+  }
+#endif
   uint64_t first=off>>GPU_ACCESS_SHIFT,last=(off+size-1)>>GPU_ACCESS_SHIFT;
   uint64_t end_page=last+1;
   // Every completed scan below initialized all requested pages. These bits
@@ -1619,6 +1657,10 @@ void mtl_pool_del(const void *mem) {
   if(atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release)==UINT64_MAX)
     die("Vulkan pool registry epoch overflow");
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(p->owned_readonly && !p->owned_readonly->retired)die("Vulkan owned pool finalized before owner retirement");
+  free(p->owned_readonly);
+#endif
   pool_spans_destroy(p);
   free(p->cpu_exposure);
   free(p->cpu_authority);
@@ -1725,6 +1767,10 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
         die("Vulkan pool range requires operation preflight: identity=%llu offset=%llu bytes=%llu",
             (unsigned long long)p->identity,(unsigned long long)logical,(unsigned long long)len);
       }
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+      if(span.backing->buffer.owned_host_import && (!pool_operation_depth || !initial_contents))
+        die("Vulkan owned import borrowed outside readonly operation");
+#endif
       r->pool_lookups[k].span_hint=span.backing;
       pool_initialize_range(p,logical,len);
       *buf=&span.backing->buffer;*off=span.offset;
@@ -1755,6 +1801,10 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       pool_materialize(p);
       span=pool_span_require_locked(p,logical,len);
     }
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    if(span.backing->buffer.owned_host_import && (!pool_operation_depth || !initial_contents))
+      die("Vulkan owned import borrowed outside readonly operation");
+#endif
     pool_initialize_range(p,logical,len);
     *buf=&span.backing->buffer;*off=span.offset;
     pool_gpu_access *use=record_pool_use(p,logical,len,stages,initial_contents);
@@ -2682,6 +2732,9 @@ static void sync_queued_page(pool *p,uint64_t off,size_t size) {
 }
 static void sync_page(const void *memory, size_t length, void *context) {
   pool *p = context;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(p->owned_readonly && !p->owned_readonly->retired)die("Vulkan owned import entered mirror upload");
+#endif
   uint64_t off = (const uint8_t *)memory - p->guest;
   while (length) {
     size_t size = length < 4096 ? length : 4096;
@@ -2799,6 +2852,9 @@ static void sync_used_changed_pages(const void *memory,size_t length,void *conte
   }
 }
 static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(p->owned_readonly && !p->owned_readonly->retired) {owned_fixture_flush(p,first,end);return;}
+#endif
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
   if(limit>p->size) limit=p->size;
   uint64_t stamp=UINT64_MAX;
@@ -3007,6 +3063,9 @@ static void begin_submission(int pool_migration) {
 void mtl_sub_begin(void) { begin_submission(0); }
 
 static void effect_copy_kind(void *dst,const void *src,size_t size,uint32_t kind) {
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  vk_test_pool_owned_destination_check((uintptr_t)dst,size);
+#endif
   vk_effect *e = calloc(1, sizeof *e);
   if (!e)
     die("Vulkan completion allocation");
@@ -3029,6 +3088,9 @@ static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *kn
   pool *p = pool_find(dst, size);
   if (!p)
     die("Vulkan writeback outside a pool");
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  if(p->owned_readonly && !p->owned_readonly->retired)die("Vulkan owned writeback missed retirement");
+#endif
   pool_materialize(p);
   uint64_t off = dst - (uintptr_t)p->guest;
   pool_initialize_range(p,off,size);
@@ -3225,7 +3287,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
   vk_pool_operation_end(operation);
 }
 void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v) {
-  if(V.options.pool_defer_publication)vk_pool_cpu_prepare((uintptr_t)val,sizeof *val);
+  if(V.options.pool_defer_publication || VK_OWNED_FIXTURE_ACTIVE)vk_pool_cpu_prepare((uintptr_t)val,sizeof *val);
   if (mode > 1)
     die("Vulkan unsupported event mode %u", mode);
   vk_effect *e = calloc(1, sizeof *e);
@@ -3450,6 +3512,9 @@ void mtl_finish(void) {
 }
 #include "nvn_vk_pool_migration.inc"
 #include "nvn_vk_pool_policy.inc"
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+#include "nvn_vk_owned_fixture.inc"
+#endif
 void mtl_drain(void) { mtl_finish(); }
 #ifdef DM_VULKAN_TEST_EMBED
 // Deterministic ownership-gap fixture only. These expose logical readiness,

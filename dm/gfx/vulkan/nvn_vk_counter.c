@@ -4,6 +4,9 @@
 #include "nvn_vk_internal.h"
 #include <stdatomic.h>
 static void completion_add(void (*fn)(void *), void *context, void *dst, size_t size) {
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  vk_test_pool_owned_destination_check((uintptr_t)dst,size);
+#endif
   vk_effect *e = calloc(1, sizeof *e);
   if (!e)
     die("Vulkan completion allocation");
@@ -249,7 +252,7 @@ void vk_counter_reset(uint32_t type) {
   }
 }
 void mtl_sub_counter(uint64_t address, uint32_t type) {
-  if(V.options.pool_defer_publication)vk_pool_cpu_prepare(address,2*sizeof(uint64_t));
+  if(V.options.pool_defer_publication || VK_OWNED_FIXTURE_ACTIVE)vk_pool_cpu_prepare(address,2*sizeof(uint64_t));
   // TOP 时间戳必须保留此前 NVN 顺序请求；BOTTOM 与采样结果已有命令位置保证。
   // A TOP timestamp must honor preceding NVN ordering. BOTTOM timestamps and
   // sample snapshots already retain their command-position semantics.

@@ -6,6 +6,9 @@ typedef struct {
   vk_pool_requirement ranges[VK_POOL_RESERVE_MAX_REQUIREMENTS];
   pool *pins[VK_POOL_RESERVE_MAX_REQUIREMENTS];
   size_t count,pin_count;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+  uint64_t owned_address,owned_size,owned_identity;
+#endif
 } pool_operation_plan;
 static pool_operation_plan *pool_operation_plans[POOL_OPERATION_DEPTH];
 static uint64_t pool_operation_fallbacks;
@@ -13,10 +16,16 @@ static int pool_operation_add(void *context,const vk_pool_requirement *range) {
   pool_operation_plan *plan=context;
   if(!range || !range->address || !range->size || range->size>UINT64_MAX-range->address ||
       plan->count==VK_POOL_RESERVE_MAX_REQUIREMENTS)return 0;
-  // Exact duplicates need only one physical reservation; keep access semantics
-  // in the original consumers rather than modifying their dependency records.
+  // Exact duplicates need one physical reservation. Retain the union of
+  // permissions so a later writer/unknown kind cannot inherit readonly admission.
   for(size_t k=0;k<plan->count;k++)if(plan->ranges[k].address==range->address &&
-      plan->ranges[k].size==range->size && plan->ranges[k].prefix_alignment==range->prefix_alignment)return 1;
+      plan->ranges[k].size==range->size && plan->ranges[k].prefix_alignment==range->prefix_alignment) {
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    plan->ranges[k].writable|=range->writable;plan->ranges[k].stages|=range->stages;
+    if(plan->ranges[k].binding_kind!=range->binding_kind)plan->ranges[k].binding_kind=0;
+#endif
+    return 1;
+  }
   plan->ranges[plan->count++]=*range;return 1;
 }
 static void pool_operation_unpin(pool_operation_plan *plan) {
@@ -87,6 +96,12 @@ static int pool_operation_pin(pool_operation_plan *plan) {
     if(!p)p=pool_find(r->address,r->size);
     pool_span_piece span;
     if(!p || !pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span)) {good=0;break;}
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    if(p->owned_readonly && !p->owned_readonly->retired &&
+        (r->writable || (r->binding_kind!=1 && r->binding_kind!=VK_POOL_REQUIRE_VERTEX))) {
+      plan->owned_address=r->address;plan->owned_size=r->size;plan->owned_identity=p->identity;good=0;break;
+    }
+#endif
     if(j==plan->pin_count) {p->references++;plan->pins[plan->pin_count++]=p;}
   }
   pthread_mutex_unlock(&V.resources);
@@ -148,12 +163,22 @@ static void pool_window_before_submission(void) {
   // A reference transition is global, before begin creates a recording owner.
   // Even an unrelated partial pool must be whole before eager sync visits it.
   for(unsigned tries=0;tries<VK_POOL_RESERVE_MAX_REQUIREMENTS;tries++) {
-    uint64_t base=0,identity=0;pthread_mutex_lock(&V.resources);
-    for(pool *p=pools;p;p=p->next)if(p->backings && !pool_window_whole(p)) {
+    uint64_t base=0,identity=0;int owned=0;pthread_mutex_lock(&V.resources);
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    for(pool *p=pools;p;p=p->next)if(p->owned_readonly && !p->owned_readonly->retired) {
+      base=(uintptr_t)p->guest;identity=p->identity;owned=1;break;
+    }
+#endif
+    if(!identity)for(pool *p=pools;p;p=p->next)if(p->backings && !pool_window_whole(p)) {
       base=(uintptr_t)p->guest;identity=p->identity;break;
     }
     pthread_mutex_unlock(&V.resources);
     if(!identity)return;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    if(owned) {if(owned_fixture_retire(base,1,identity)<0)die("Vulkan owned full-reference retirement");continue;}
+#else
+    (void)owned;
+#endif
     pool_policy_promote(base,identity,0,NULL);
   }
   die("Vulkan whole-reference pool registry did not settle");
@@ -168,6 +193,9 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
   for(unsigned tries=0;tries<VK_POOL_RESERVE_MAX_REQUIREMENTS;tries++) {
     if(plan->pin_count)die("Vulkan stale operation plan pins");
     plan->count=0;
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    plan->owned_identity=0;
+#endif
     uint64_t descriptors=vk_texture_descriptor_epoch();
     if(!collect(context,pool_operation_add,plan))pool_operation_whole_plan(plan,"operation enumeration");
     else if(!vk_ghost_pool_ranges(pool_operation_add,plan))pool_operation_whole_plan(plan,"pending ghost enumeration");
@@ -180,6 +208,13 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
       }
       pool_operation_unpin(plan);continue;
     }
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+    if(plan->owned_identity) {
+      if(owned_fixture_retire(plan->owned_address,plan->owned_size,plan->owned_identity)<0)
+        die("Vulkan owned operation retirement identity changed");
+      continue;
+    }
+#endif
     pool_operation_bound_nodes(plan);
     vk_pool_reserve_result result;
     int reserved=vk_pool_reserve_ranges(plan->ranges,plan->count,V.options.pool_window_bytes,&result);
@@ -193,7 +228,14 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
     if(reserved!=VK_POOL_RESERVE_OK)
       die("Vulkan pool operation reservation failed status=%d VkResult=%d; old storage retained",reserved,result.allocation_error);
     pool_window_added_bytes+=result.added_buffer_bytes;pool_window_added_spans+=result.added_spans;
-    if(descriptors!=vk_texture_descriptor_epoch() || !pool_operation_pin(plan))continue;
+    if(descriptors!=vk_texture_descriptor_epoch())continue;
+    if(!pool_operation_pin(plan)) {
+#ifdef DM_VULKAN_OWNED_NVN_FIXTURE
+      if(plan->owned_identity && owned_fixture_retire(plan->owned_address,plan->owned_size,plan->owned_identity)<0)
+        die("Vulkan owned reserved retirement identity changed");
+#endif
+      continue;
+    }
     if(descriptors!=vk_texture_descriptor_epoch()) {pool_operation_unpin(plan);continue;}
     pool_window_admissions++;
     return (int)++pool_operation_depth;
