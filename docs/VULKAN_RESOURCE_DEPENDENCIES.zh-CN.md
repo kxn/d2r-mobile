@@ -1733,3 +1733,11 @@ DS 入场修复已实际部署：Mali 普通游戏3秒窗口+236 plans/+236 draw
 真实GPU夹具包含完整大SSBO图形绑定的256像素oracle、GPU-only旧页/外邻字、CPU脏页/冷洞、非零origin/prefix、尾193B、外邻handle保留、OOM回滚、实际同址重建和copy前追加外段。刻意省略GPU保留copy的负控由实际GPU回读memcmp失败，而非只看计数。独立完整async21,823,961/sync21,724,549零VUID/SYNC；合入subset+DS后的owned522项、pixel-local/window16/PSO故障263,762项和完整async21,823,959项也通过零VUID/SYNC。旧257-writer夹具补齐原operation admission，未放宽生产missing-admission保护；早期错误夹具目录的缺shader失败保留，不能算通过。Android真机实际backing/PSS和稳定性待测。见 `pool-finite-consolidation-v1-source-ready.json`。
 
 补正Mali原厂计数解释：DS修复对照下降约3.4%的是 `ITER_FRAG_TASK_COMPLETED`，PA pixels由此派生；真正 `FRAG_PTILES` 上升约0.142%，外部流量+0.804%、GPU周期+3.10%，没有物理pass合并或净提速证据。旧capture未选择可用的 `ITER_FRAG_JOB_COMPLETED`，其APC不能补出job拓扑；后续必要的新候选采集将选择该官方counter。见 `pixel-local-ds-preflight-v1-hardware-merge-evidence.json`。
+
+### Android 默认采用16MiB窗口：两厂实机内存结果
+
+同一1bc包、原shader链、.75固定3D、Bloom开、pixel-local/dual-upload关，两厂都完成原营地5点步行、一次官方meminfo及freshsave2后停机。Q whole/window VkBuffer backing1113→435MiB，PSS2,658,182→2,577,068KiB（−79.21MiB），Graphics−12.37MiB；Mali backing1113→419MiB，PSS4,092,956→3,333,864KiB（−741.30MiB），Graphics−747.20MiB。登记guest pool大小不变，采集前后backing/init快照稳定；实际分配、PSS和Graphics口径分开，不把预留减少当作等量DRAM收益。
+
+这是短营地顺序对照，镜头差1单位、PSO/variant与driver cache不完全相同；Mali后轮public thermal LIGHT使原策略target60→30，不能作为FPS/等温比较或发热改善结论。静态截图无明显黑块/缺几何/HUD问题，尚无长游玩或真实6GB设备启动证明。原控制器过严检查一条native.log重定向前的JNI日志而失败的轮次保留、未取meminfo并正常存档停机；修复控制器只改用launcher固定请求及逐state实际.75，不伪称观察到了state未暴露的dynamic标志。报告 `pool-finite-v1-{q,mali}-actual-memory-comparison.json`。
+
+基于通用范围/生命周期证明及两厂实际内存下降，Android Activity冷启动未显式设置时选择16MiB，`--pool-window-bytes 0`保留整池参考，明确intent覆盖优先；不允许hot intent换策略。原生CLI/Linux的环境默认保持原状。该默认减少分配，不宣称已经解决持续发热。

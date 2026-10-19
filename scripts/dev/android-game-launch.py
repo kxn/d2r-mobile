@@ -28,7 +28,7 @@ present_modes.add_argument('--shader-present',dest='shader_present',action='stor
 present_modes.add_argument('--reference-present',dest='shader_present',action='store_false',help='use the original Vulkan blit presentation')
 parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
-parser.add_argument('--pool-window-bytes',type=int,help='startup-only experimental pool backing window: 0 (whole pool) or power of two >= 4096 bytes; default whole unless the native startup environment overrides it')
+parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental source-proved pixel-local subpasses; requires matching shader sidecars (default off)')
 parser.add_argument('--upload-dual-store',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental direct upload: one guest load feeds map and shadow (default off)')
 parser.add_argument('--general-depth-layouts-reference',action='store_true',help='startup-only comparison: retain GENERAL for depth/stencil, preserving optimized color layouts')

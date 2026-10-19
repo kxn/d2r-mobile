@@ -133,8 +133,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!hostStarted) {
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", false));
             nativeUploadDualStore(getIntent().getBooleanExtra("upload_dual_store", false));
-            // Native pool backing is selected before Vulkan initialization only.
-            // No extra leaves the C startup environment/default unchanged.
+            // Select backing before Vulkan initialization. Finite maintenance
+            // keeps a complete binding contiguous without expanding every pool.
             if (getIntent().hasExtra("pool_window_bytes")) {
                 Object value = getIntent().getExtras().get("pool_window_bytes");
                 if (!(value instanceof Long))
@@ -143,7 +143,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 if (bytes < 0 || (bytes != 0 && (bytes < 4096 || (bytes & (bytes - 1)) != 0)))
                     throw new IllegalArgumentException("pool_window_bytes must be 0 or a power of two >= 4096");
                 nativePoolWindowBytes(bytes);
-            }
+            } else nativePoolWindowBytes(16L << 20);
             boolean shadow = getIntent().getBooleanExtra("opus_shadow", false);
             boolean nativeOpus = getIntent().getBooleanExtra("native_opus", !shadow);
             if (shadow && nativeOpus) throw new IllegalArgumentException("Opus modes are mutually exclusive");
