@@ -303,6 +303,13 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
     if(op==p->set_op)break;
     if(h.op==OP_DRAW || h.op==OP_DRAW_IDX) {
       if(!pl_no_writers(&scan))return NULL;
+      // A writable producer DS that aliases the consumer's read-only DS
+      // needs an intra-pass writable->readonly layout/store and LOAD-history
+      // proof not supplied by this two-subpass path. Keep real split passes;
+      // do not hide the dependency by eliding an untouched store plane.
+      if(scan.targets.depth && p->second.targets.depth &&
+          pl_tex_alias(scan.targets.depth,p->second.targets.depth) &&
+          !pl_no_ds_writes(&scan))return NULL;
       // With no logical producer DS, adding a physical format can affect
       // depth bias (including FS-visible z). Do not change original bias.
       if(vk_pixel_local_shared_ds_enabled() && !p->first.targets.depth &&

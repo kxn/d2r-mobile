@@ -86,6 +86,11 @@ Running 为 25.5545 → 25.3338 ms，wall 为 27.9586 → 27.8674 ms。
 CPU 时间、整帧和散热收益仍待候选对照。功能测试包含真实 GPU 字节、非零物理
 起点、同地址重建和 admission 失败前不初始化；这些检查不代替真实游戏验收。
 
+随后两台真机均通过真实游戏执行和原生命周期存档。Adreno 官方 CPU 顺序对照
+Running 为 25.3338 → 25.2002 ms，OS 所选频率近乎相同，但变体和场景仍有差异，
+不作隔离净收益结论。实际 ARM64 栈帧 144 → 192 字节，新增 spill 是额外成本；
+原重复 query → address 的调用链在新采样中未观察到。
+
 ## 实验：两个子 Pass 使用同一个只读深度附件
 
 `--pixel-local --pixel-local-shared-ds` 是独立实验，两个开关均默认关闭。
@@ -139,3 +144,46 @@ tiles 仅变动约 −0.10%，总 GPU 周期增加约 1.98%。这支持局部访
 PA pixels 由 fragment tasks × 1024 派生，不是独立的片元 Shader invocation。
 单个 draw 区间时间也不能作为 TBDR shader 成本分摊依据。完整本地报告为
 `.local/logs/shared-ds-v3-mali-arm-three-phase-official-comparison-v1.json`。
+
+当前 16 MiB 窗口的额外 Mali CPU 对照中，OFF/ON 均为 238 个完整 replay，
+Running 为 25.2247 → 27.6931 ms；PSO/变体为 182/33 与 178/31，热状态也不同，
+开启段后续目标由 30 变为 20。不能把这个差值全部归因于 planner，也不能忽略
+CPU 成本。实现保留，当前仍默认关闭，继续分开记录带宽节省与 CPU／整帧代价。
+
+## 普通 Pass 分别处理深度与模板 Store
+
+普通物理 Pass 记录不可逆的逐平面 may-write，覆盖 load CLEAR、中途 clear 和
+实际 draw 的深度写入／模板操作。支持 `VK_EXT_load_store_op_none` 时，若深度与
+模板只有一方可能写入，另一方保持 LOAD、布局不变且原本 STORE，可将未写一方
+改为 NONE。保留原布局与保守 hazard，不用 DONT_CARE 代替需要保留的内容。
+已有的全只读 NONE、未来完整覆写的逐平面 DONT_CARE 继续使用原逻辑。
+
+这项新增优化不扩展双 subpass 的拓扑。另修复一项既存融合边界：producer
+实际写入的 DS 与 consumer 只读 DS 相同时，缺少内部布局／LOAD 历史证明，
+保守回原分 Pass。此前已执行的 clear 会留在普通 Pass 或先完成物化；未来
+clear 不能越过前瞻证明。真实 GPU 回归同时检查 CLEAR 前后、颜色和两个 DS 平面。
+
+当前 Mali-G710 驱动 1.1.177 没有 NONE 扩展，仍使用 STORE；Adreno 735 驱动
+1.3.128 提供该扩展，可能适用。不可将此候选算作 Mali 带宽或发热改善。
+普通／共享只读、PSO 失败、无扩展回退的实际 API 参数及 GPU 内容检查通过，
+Android 真机带宽收益仍待验证。
+
+## 初始共享分配的独立功能验证
+
+上游 Metal 在游戏原内存上建立 `newBufferWithBytesNoCopy`。当前 Vulkan 使用
+独立 backing 与 shadow，CPU 脏页比较、实际更新、GPU 写回的工作量需要分别统计。
+`pool_uploads.used_bytes/protected_bytes` 不是实际扫描量或上传量；GPU 回读的
+internal/cached 字节是总回读的子集，不能相加。已录制的逻辑 copy 也不等于
+已完成的两个 CPU 目的地复制，更不等于硬件 DRAM 总线流量。
+
+两台驱动均无 `VK_EXT_external_memory_host`，但从分配之初共享仍有可能。
+独立 ARM64 小程序分别验证普通 HOST_VISIBLE Buffer 与 AHardwareBuffer BLOB
+导入，CPU 写入、GPU copy/fill、fence 后 invalidate／CPU 校验均通过，没有 AHB
+lock 或游戏模块执行。Mali 两条路径均得到 Cached、非 Coherent 类型；高通普通
+分配可用 Cached+Coherent，AHB 导入在该测试中只提供未标记 Cached 的 Host-visible
+类型。因此 AHB 不是必然更适合游戏 CPU 堆的入口。
+
+测试声明 1 MiB、仅检查其中 16 KiB，运行于 shell UID，没有请求验证层。
+它不证明实际 app 分配、Shader 读取、多 GiB 驻留、固定 guest 地址、mprotect、
+在飞版本或游戏性能。源码与结果保存在本机
+`.local/logs/ahb-shared-allocation-probe-v1-both-summary.json`。

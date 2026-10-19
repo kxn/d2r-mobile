@@ -53,6 +53,9 @@ typedef struct render_job {
   VkIndexType bound_index_type;
   uint16_t bound_vertex_valid;
   uint8_t bound_index_valid;
+  // Irreversible physical-pass may-write proof, separately for DS planes.
+  // Uses existing struct tail padding; no per-descriptor state or counter.
+  uint8_t ds_written;
 } render_job;
 struct vk_graphics_submission {
   render_job *jobs;
@@ -147,6 +150,15 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
   memcpy(j->colors,colors,color_count*sizeof *colors);
   if(depth) j->depth=*depth;
   if(clears) memcpy(j->clears,clears,count*sizeof *clears);
+  for(unsigned n=0;n<count;n++) {
+    VkFormat f=attachments[n].format;
+    if(f==VK_FORMAT_D16_UNORM || f==VK_FORMAT_X8_D24_UNORM_PACK32 || f==VK_FORMAT_D32_SFLOAT ||
+        f==VK_FORMAT_D16_UNORM_S8_UINT || f==VK_FORMAT_D24_UNORM_S8_UINT || f==VK_FORMAT_D32_SFLOAT_S8_UINT) {
+      if(attachments[n].loadOp==VK_ATTACHMENT_LOAD_OP_CLEAR)j->ds_written|=VK_IMAGE_ASPECT_DEPTH_BIT;
+      if(attachments[n].stencilLoadOp==VK_ATTACHMENT_LOAD_OP_CLEAR)j->ds_written|=VK_IMAGE_ASPECT_STENCIL_BIT;
+    } else if(f==VK_FORMAT_S8_UINT && attachments[n].stencilLoadOp==VK_ATTACHMENT_LOAD_OP_CLEAR)
+      j->ds_written|=VK_IMAGE_ASPECT_STENCIL_BIT;
+  }
   j->secondary = vk_command_buffer(VK_COMMAND_BUFFER_LEVEL_SECONDARY);
   VkCommandBufferInheritanceInfo inherit={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO,
     .renderPass=j->pass,.framebuffer=j->framebuffer};
@@ -155,6 +167,33 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
     .pInheritanceInfo=&inherit};
   VK_CHECK(vkBeginCommandBuffer(j->secondary,&bi));V.cmd=j->secondary;
   render_binding_reset(j);
+}
+// NONE preserves the untouched plane even when the other plane is writable.
+// Keep LOAD and coupled layouts/history unchanged. Never use DONT_CARE for
+// preserved guest-visible contents; a later writer/clear irrevocably rejects.
+static int render_ds_plane_stores(render_job *j) {
+  if(!V.load_store_op_none || !j->ds_written ||
+      (j->ds_written&(VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT))==
+      (VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT))return 0;
+  int changed=0;
+  for(unsigned n=0;n<j->attachment_count;n++) {
+    VkAttachmentDescription *a=&j->attachments[n];
+    if(a->format!=VK_FORMAT_D16_UNORM_S8_UINT && a->format!=VK_FORMAT_D24_UNORM_S8_UINT &&
+        a->format!=VK_FORMAT_D32_SFLOAT_S8_UINT)continue;
+    if(a->initialLayout!=a->finalLayout ||
+        (a->initialLayout!=VK_IMAGE_LAYOUT_GENERAL &&
+         a->initialLayout!=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
+         a->initialLayout!=VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL))continue;
+    if(!(j->ds_written&VK_IMAGE_ASPECT_DEPTH_BIT) && a->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD &&
+        a->storeOp==VK_ATTACHMENT_STORE_OP_STORE) {
+      a->storeOp=VK_ATTACHMENT_STORE_OP_NONE_EXT;changed=1;
+    }
+    if(!(j->ds_written&VK_IMAGE_ASPECT_STENCIL_BIT) && a->stencilLoadOp==VK_ATTACHMENT_LOAD_OP_LOAD &&
+        a->stencilStoreOp==VK_ATTACHMENT_STORE_OP_STORE) {
+      a->stencilStoreOp=VK_ATTACHMENT_STORE_OP_NONE_EXT;changed=1;
+    }
+  }
+  return changed;
 }
 static VkRect2D draw_area(uint32_t width, uint32_t height, int primitive) {
   VkRect2D area = {{0, 0}, {width, height}};
@@ -423,6 +462,7 @@ int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
     }
   }
   active_writes |= 1u << (index < 0 ? 8 : index);
+  if(index<0) job->ds_written |= aspect&(VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT);
   // Load/store operations access every included attachment, not just the one
   // explicitly cleared. Include those accesses in later transfer hazards.
   for(int k=0;k<=rt->n;k++) {
@@ -550,7 +590,8 @@ void vk_render_end_at(const char *file, unsigned line) {
       if(n<=8 || (V.options.stats && n%600<j->load_elisions))
         LOG("[vulkan pass] omitted fully overwritten attachment loads total=%llu",(unsigned long long)n);
     }
-    if(dead||j->load_elisions||readonly_none) {
+    int plane_none=render_ds_plane_stores(j);
+    if(dead||j->load_elisions||readonly_none||plane_none) {
       VkSubpassDescription sub={.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount=j->color_count,.pColorAttachments=j->colors,
         .pDepthStencilAttachment=j->has_depth?&j->depth:NULL};
@@ -1732,6 +1773,8 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
   if ((ds.depthTestEnable && ds.depthWriteEnable) ||
       stencil_writing)
     active_writes |= 1u << 8;
+  if(ds.depthTestEnable && ds.depthWriteEnable) j->ds_written |= VK_IMAGE_ASPECT_DEPTH_BIT;
+  if(stencil_writing) j->ds_written |= VK_IMAGE_ASPECT_STENCIL_BIT;
   vk_pass_plan_done(draw?(const void *)draw:(const void *)idx);
   vk_texture_shader_record();
   vk_shader_writebacks();
