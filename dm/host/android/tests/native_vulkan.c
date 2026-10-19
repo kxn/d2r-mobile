@@ -453,6 +453,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_upload_dual.inc"
 #include "native_vulkan_pool_window.inc"
 #include "native_vulkan_pool_ranges.inc"
+#include "native_vulkan_pool_binding_mask.inc"
 #include "native_vulkan_buffer_scope.inc"
 #include "native_vulkan_present.inc"
 #include "native_vulkan_sampled_array.inc"
@@ -540,6 +541,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_UPLOAD_PAGE_SPAN_FIXTURE")) {upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-page-span\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {idle_cache_trim_test();printf("{\"test\":\"idle-cache-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_PUBLICATION_FIXTURE")) {pool_publication_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-publication\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+  if(getenv("DM_POOL_BINDING_MASK_FIXTURE")) {shader_pool_ranges_test();pool_binding_mask_gpu_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-binding-mask\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_FLAGS_FIXTURE")) {pool_flags_test();printf("{\"test\":\"pool-flags\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   ds_plane_store_test();
   if(getenv("DM_DS_PLANE_STORE_FIXTURE")) {CHECK(vk_validation_error_count()==0);printf("{\"test\":\"ds-plane-store\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
@@ -1956,6 +1958,7 @@ int dm_vulkan_test_main(void) {
   pool_window_reservation_test();
   pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);
   shader_pool_ranges_test();
+  pool_binding_mask_gpu_test();
   shader_present_test();
   sampled_color_array_layout_test(controls[3],controls[4]);
   texel_storage_test(controls[0]);

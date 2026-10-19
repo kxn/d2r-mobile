@@ -63,6 +63,50 @@ static void shader_pool_ranges_test(void) {
     CHECK(out.ranges[i].stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
     CHECK(out.ranges[i].writable==(i==4));
   }
+#ifdef DM_VULKAN_TEST_EMBED
+  // Mocks begin uninitialized and must retain the original scan. Once the
+  // actual cold builder runs, the same literal range oracle still applies.
+  void vk_test_shader_pool_binding_mask_build(vk_shader *);
+  CHECK(!vertex.pool_binding_mask_ready && !fragment.pool_binding_mask_ready);
+  vk_test_shader_pool_binding_mask_build(&vertex);
+  vk_test_shader_pool_binding_mask_build(&fragment);
+  CHECK(vertex.pool_binding_mask_ready && fragment.pool_binding_mask_ready);
+  pool_range_fixture masked={.capacity=32};
+  CHECK(vk_shader_pool_ranges(list,0,pool_range_collect,&masked));CHECK(masked.count==5);
+  for(unsigned k=0;k<5;k++) {
+    CHECK(masked.ranges[k].address==out.ranges[k].address && masked.ranges[k].size==out.ranges[k].size);
+    CHECK(masked.ranges[k].prefix_alignment==out.ranges[k].prefix_alignment);
+    CHECK(masked.ranges[k].stages==out.ranges[k].stages && masked.ranges[k].writable==out.ranges[k].writable);
+    CHECK(masked.ranges[k].binding_kind==out.ranges[k].binding_kind);
+  }
+  // Real Vulkan device limits need not allow128 simultaneous descriptors.
+  // Exercise immutable index boundaries through the same cold builder, then
+  // validate its observable logical ranges, not the mask's implementation bits.
+  vk_binding wide[128];for(unsigned k=0;k<128;k++)wide[k]=(vk_binding){.count=1};
+  wide[0]=vb[0];wide[63]=vb[1];wide[64]=fb[0];wide[127]=fb[1];
+  vk_shader boundary={.stage=1,.nb=128,.bindings=wide,.storage_bias_mask=1u<<18};
+  vk_shader *wide_list[6]={NULL,&boundary};
+  S.ubo[1][0]=(p_bind_buf){.addr=0x100040,.size=131072};
+  S.ssbo[1][1]=(p_bind_buf){.addr=0x200003,.size=19570000};
+  vk_test_shader_pool_binding_mask_build(&boundary);CHECK(boundary.pool_binding_mask_ready);
+  masked=(pool_range_fixture){.capacity=32};
+  CHECK(vk_shader_pool_ranges(wide_list,0,pool_range_collect,&masked));CHECK(masked.count==4);
+  CHECK(masked.ranges[0].address==0x100040 && masked.ranges[0].size==131072);
+  CHECK(masked.ranges[1].address==0x200003 && masked.ranges[1].size==19570000 && masked.ranges[1].writable);
+  CHECK(masked.ranges[2].address==0x300003 && masked.ranges[2].size==72 && masked.ranges[2].writable);
+  CHECK(masked.ranges[3].address==(uintptr_t)descriptor.mem && masked.ranges[3].binding_kind==7);
+  // Unsupported metadata cannot silently discard an earlier valid range or
+  // use a copied old mask. Exact old partial-sink/error behavior is retained.
+  wide[64].count=2;vk_test_shader_pool_binding_mask_build(&boundary);
+  CHECK(!boundary.pool_binding_mask_ready);masked.count=0;
+  CHECK(!vk_shader_pool_ranges(wide_list,0,pool_range_collect,&masked));CHECK(masked.count==2);
+  wide[64]=(vk_binding){.kind=10,.reg=0,.count=1};vk_test_shader_pool_binding_mask_build(&boundary);
+  CHECK(!boundary.pool_binding_mask_ready);masked.count=0;
+  CHECK(!vk_shader_pool_ranges(wide_list,0,pool_range_collect,&masked));CHECK(masked.count==2);
+  wide[64]=(vk_binding){.count=1};wide[0]=wide[63]=wide[127]=wide[64];
+  vk_test_shader_pool_binding_mask_build(&boundary);CHECK(boundary.pool_binding_mask_ready);
+  masked.count=0;CHECK(vk_shader_pool_ranges(wide_list,0,pool_range_collect,&masked));CHECK(!masked.count);
+#endif
   vertex.input_mask=15;
   vk_state captured=S;
   captured.attr[0]=(va_st){.fmt=NVN_FORMAT_RGBA32F,.stream=5};

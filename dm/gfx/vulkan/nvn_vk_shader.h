@@ -36,6 +36,8 @@ typedef struct vk_shader {
   vk_binding *bindings;
   uint32_t image_read_count,storage_descriptor_count;
   int *image_read_slots;
+  uint64_t pool_binding_mask[2]; // final-schema indices, never current resource contents
+  uint32_t pool_binding_mask_ready; // zero retains the original full scan
   uint8_t *c1;
   vk_buffer c1_buffer;
   VkShaderModule module;

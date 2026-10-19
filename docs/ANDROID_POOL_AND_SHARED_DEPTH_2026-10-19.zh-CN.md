@@ -513,3 +513,30 @@ VMA 现成统计显示用例 allocation 从 3 降至 1、逻辑 bytes 从 524800
 物理释放。普通异步 job 增加缓存标志读取，真正回收时销毁成本及未来重新
 分配可能增加 CPU 工作；未新增生产计时器、采样器或逐帧环境变量判断。
 源码与有限测试记录在本机 `android-idle-cache-trim-v1-source-ready.json`。
+
+
+## 不可变 Pool binding 筛选
+
+Shader 的最终资源表构造时生成两个 64 位 eligibility mask。每次逻辑范围收集只
+遍历确实可能读取 NVN Pool 的绑定；host c0/c1/c2、普通图像和采样器不再重复
+经过 count/kind/register 分类。仍逐次读取当前地址、完整长度、偏移、writable、
+texel descriptor 和 alignment，并保留原 pin、迁移、上传、RAW 与回退流程。
+它不缓存动态资源，也不跳过 CPU 修改或 GPU 依赖。
+
+Base、texel alternative 和 pixel-local alternative 都在最终 schema 的同一构造点
+重新生成 mask。未知 kind、数组、非法 register、未完成构造的对象保留原完整扫描，
+包括遇到后续错误前已产生的 sink 结果；空表及索引 0/63/64/127 已覆盖。
+
+当前地牢日志有 158 个已加载 shader；其中 54 个能以日志 active nb 与离线表完全
+对应，980 个绑定中有 637 个可排除。这是未按实际调用加权的 schema 计数，不能写
+成 CPU 降低 65%。旧官方 CPU 样本中该收集函数 self 为 9/625，且早于后续优化；
+只能支持这是一个有实际适用对象的局部减负，不能预报明显整帧或散热收益。
+
+新增 owned GPU 用例 async/sync 各 856 项，验证 sampled→SSBO→compute RAW、跨 Pool、
+descriptor retarget 和随后 CPU 编辑；完整 async/sync 分别 22,031,792/21,929,813 项，
+官方 VVL/SYNC 均无错误。相同 NDK 编译中每 shader 增加 24B，范围收集栈增加 16B；
+被保留绑定增加 set-bit 选择成本，全部都是 Pool 的 schema 没有排除收益。保留此
+优化基于减少已证明多余分类的机制，并不声称已经测出 Android FPS 或温度净收益。
+
+冻结源码、指令与测试：本机 `.local/logs/pool-binding-mask-v1-source-ready.json`；
+独立源码审查：`.local/logs/pool-binding-mask-v1-root-review.json`。

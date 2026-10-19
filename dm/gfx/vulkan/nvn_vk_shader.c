@@ -392,7 +392,39 @@ static VkDescriptorUpdateTemplate descriptor_template_create(const vk_shader *s,
   VkDescriptorUpdateTemplate result;VK_CHECK(vkCreateDescriptorUpdateTemplate(V.device,&ci,NULL,&result));return result;
 }
 #include "nvn_vk_layout_cache.inc"
+// Classify only immutable schema eligibility. Dynamic addresses, sizes, texel
+// descriptors, alignment and access/ownership checks remain operation-local.
+// Invalid/unknown schemas retain the original scan and its exact failure path.
+static void shader_pool_binding_mask_build(vk_shader *s) {
+  s->pool_binding_mask[0]=s->pool_binding_mask[1]=0;
+  s->pool_binding_mask_ready=0;
+  if(s->nb>128 || (s->nb&&!s->bindings))return;
+  for(unsigned k=0;k<s->nb;k++) {
+    const vk_binding *b=&s->bindings[k];int eligible=0;
+    if(b->count!=1)return;
+    if(b->kind==1) {
+      if(b->reg<0 || b->reg>=19)return;
+      eligible=b->reg>=3;
+    } else if(b->kind==2 || b->kind==8) {
+      if(b->reg<0 || b->reg>=16)return;
+      eligible=1;
+    } else if(b->kind==7 || b->kind==9) {
+      if(b->reg<0 || b->reg>=(b->kind==9?32:128))return;
+      eligible=1;
+    } else if(b->kind!=0 && (b->kind<3 || b->kind>6))return;
+    if(eligible)s->pool_binding_mask[k/64]|=UINT64_C(1)<<(k%64);
+  }
+  s->pool_binding_mask_ready=1;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+// Cold functional boundary coverage only; no observer or counter on the draw.
+void vk_test_shader_pool_binding_mask_build(vk_shader *s) {shader_pool_binding_mask_build(s);}
+#endif
 static void shader_descriptor_layouts(vk_shader *s) {
+  // Base active-binding compaction and every texel/pixel alternative conversion
+  // finish before this shared constructor. Never inherit a different schema's
+  // index mask through the alternatives' struct copies.
+  shader_pool_binding_mask_build(s);
   s->storage_descriptor_count=0;
   s->has_writable_buffers=0;
   VkDescriptorSetLayoutBinding bindings[128];

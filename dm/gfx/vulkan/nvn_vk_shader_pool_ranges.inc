@@ -18,7 +18,26 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
     if(s->stage!=stage || s->nb>128 || (s->nb&&!s->bindings))return pool_range_fail("shader stage/binding table");
-    for(unsigned k=0;k<s->nb;k++) {
+    if(!s->nb)continue;
+    // Snapshot only immutable eligibility, never current addresses or ranges.
+    // Consume each mask word locally instead of reloading/shifting it for
+    // every selected binding. Mocks/unproved schemas keep the original scan.
+    int masked=s->pool_binding_mask_ready;
+    uint64_t remaining=masked?s->pool_binding_mask[0]:0;
+    unsigned base=0,cursor=0;
+    for(;;) {
+      unsigned k;
+      if(masked) {
+        if(!remaining) {
+          if(base)break;
+          base=64;remaining=s->pool_binding_mask[1];
+          if(!remaining)break;
+        }
+        k=base+(unsigned)__builtin_ctzll(remaining);remaining&=remaining-1;
+      } else {
+        if(cursor>=s->nb)break;
+        k=cursor++;
+      }
       const vk_binding *b=&s->bindings[k];
       if(b->count!=1)return pool_range_fail("descriptor array count");
       const p_bind_buf *buffer=NULL;uint64_t prefix=0;
