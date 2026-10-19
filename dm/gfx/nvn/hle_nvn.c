@@ -1,3 +1,11 @@
+#ifdef DM_VULKAN_SHARED_POOLS
+#include <stdint.h>
+#include <stddef.h>
+extern int vk_pool_shared_mode(void);
+extern void vk_pool_shared_publish(uint64_t,size_t,int);
+static void x_shared_close(const void *);
+static void x_shared_cache(uint64_t,size_t,int);
+#endif
 // NVN 接口层：接管 main 导入的 nvnBootstrapLoader，sdk 里的 NVN 驱动整块不执行。
 // 523 个 NVN 名字一律返回计数跳板（nvn_thunks.S），跳板再转到这里的实现：
 //   · 有语义的（设备 / 内存池 / 贴图与采样器 / 队列 / 窗口 / 同步 / 事件 / 命令缓冲内存）按 NVN 语义实现，对象是真的；
@@ -219,13 +227,36 @@ NVN(nvnMemoryPoolBuilderSetFlags, void, NVNmemoryPoolBuilder *b, int f) { ((pool
 NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBuilder *b) {
     const pool_builder_t *s = (const pool_builder_t *)b; pool_t *o = (pool_t *)p;
     o->magic = MAGIC('P', 'O', 'O', 'L'); o->flags = s->flags; o->mem = s->mem; o->size = s->size;
-    if (o->mem) { mtl_pool_add_flags(o->mem, o->size, (int)o->flags); nvn_dirty_add_range(o->mem, o->size); }
+    if (o->mem) { mtl_pool_add_flags(o->mem, o->size, (int)o->flags);
+#ifdef DM_VULKAN_SHARED_POOLS
+      if(!vk_pool_shared_mode())
+#endif
+      nvn_dirty_add_range(o->mem, o->size); }
     if (!o->mem && !(o->flags & 0x200)) LOG("【红】MemoryPoolInitialize 非虚拟池没有存储 flags=%#x size=%#llx", o->flags, o->size);
     OLOG("MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, o->size, o->flags);
     return 1;
 }
-NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) { if (((pool_t *)p)->mem) { x_cpu_exposure((uintptr_t)((pool_t *)p)->mem,((pool_t *)p)->size); nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
-NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) { (void)p; (void)off; (void)n; }
+NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) {
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(vk_pool_shared_mode()) {if(((pool_t *)p)->mem)x_shared_close(((pool_t *)p)->mem);((pool_t *)p)->magic=0;return;}
+#endif
+    if (((pool_t *)p)->mem) { x_cpu_exposure((uintptr_t)((pool_t *)p)->mem,((pool_t *)p)->size); nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
+NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(vk_pool_shared_mode()) {const pool_t *pool=(const pool_t *)p;
+      if(off<0 || (uint64_t)off>pool->size || n>pool->size-(uint64_t)off)die("Shared NVN mapped flush range");
+      if(n)x_shared_cache((uintptr_t)pool->mem+(uint64_t)off,n,0);return;}
+#endif
+    (void)p;(void)off;(void)n;
+}
+#ifdef DM_VULKAN_SHARED_POOLS
+NVN(nvnMemoryPoolInvalidateMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
+    if(!vk_pool_shared_mode()) {LOG("【红】MemoryPoolInvalidateMappedRange legacy unsupported");return;}
+    const pool_t *pool=(const pool_t *)p;
+    if(off<0 || (uint64_t)off>pool->size || n>pool->size-(uint64_t)off)die("Shared NVN mapped invalidate range");
+    if(n)x_shared_cache((uintptr_t)pool->mem+(uint64_t)off,n,1);
+}
+#endif
 NVN(nvnMemoryPoolGetBufferAddress, NVNbufferAddress, const NVNmemoryPool *p) { return (NVNbufferAddress)((const pool_t *)p)->mem; }
 
 // ---------- 描述符池 ----------
@@ -933,7 +964,11 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 // completes, so waiting for fence f means waiting until "f is translated and the GPU is done"; by the time the game reclaims command memory or rewrites objects by fence, the translation thread has long finished reading them.
 // Present tickets become this queue's job numbers: acquire first waits for that job to run, then waits on the present thread ticket it was swapped for. Setting the frame number is queued too: replay resets bloom sampling and other state by frame number,
 // which must not be changed by the game thread in the middle of translation. DM_NVN_SYNC=1: jobs run in place on the calling thread (the same execution function), as the control and measurement baseline.
-enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_CPU_EXPOSURE, XJ_READ_TEXELS, XJ_IDLE_TRIM };
+enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_CPU_EXPOSURE, XJ_READ_TEXELS, XJ_IDLE_TRIM
+#ifdef DM_VULKAN_SHARED_POOLS
+, XJ_SHARED_CLOSE, XJ_SHARED_CACHE
+#endif
+};
 typedef struct {tex_t texture;unsigned level,layer;NVNcopyRegion region;uint8_t *dest;size_t row,image;} x_texels;
 typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; int *cpu_access_result; const x_texels *read_texels; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
 #define XQ 32
@@ -986,6 +1021,10 @@ static void x_run(const xjob *j, uint64_t job) {
     // tail FRAME outside the suspend API gate). Never trim on that path.
     if(!g_x_sync)x_trim_idle_requested();
     if(j->kind==XJ_IDLE_TRIM) {g_x_owner=prior_owner;return;}
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(j->kind==XJ_SHARED_CLOSE) {mtl_pool_del(j->h);g_x_owner=prior_owner;return;}
+    if(j->kind==XJ_SHARED_CACHE) {vk_pool_shared_publish((uintptr_t)j->h,j->frame,(int)j->host);g_x_owner=prior_owner;return;}
+#endif
     if(j->kind==XJ_READ_TEXELS) {
         const x_texels *r=j->read_texels;
         mtl_read_texels(&r->texture,r->level,r->layer,&r->region,r->dest,r->row,r->image);
@@ -1033,6 +1072,9 @@ static void *x_thread(void *a) {
     }
     return NULL;
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+static pthread_once_t g_shared_start_once=PTHREAD_ONCE_INIT;
+#endif
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
     if (g_x_sync) { mtl_pool_defer_publication_disable(); LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); atomic_store_explicit(&g_x_started,1,memory_order_release);return; }
@@ -1045,8 +1087,15 @@ static void x_start(void) {
     pthread_attr_destroy(&at);
     atomic_store_explicit(&g_x_started,1,memory_order_release);
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+int dm_gfx_shared_owner_ready(void) {pthread_once(&g_shared_start_once,x_start);return !g_x_sync;}
+#endif
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
+#ifdef DM_VULKAN_SHARED_POOLS
+    pthread_once(&g_shared_start_once,x_start);
+#else
     static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, x_start);
+#endif
     pthread_mutex_lock(&g_xmu);
     while (g_xq_in - g_xq_done >= XQ) pthread_cond_wait(&g_xcv, &g_xmu);
     if (j->kind == XJ_SUBMIT) j->sub = atomic_fetch_add(&g_x_subs, 1) + 1;
@@ -1102,6 +1151,17 @@ static void x_cpu_exposure(uint64_t address,uint64_t size) {
         cursor=begin+bytes; // progress even if authority metadata OOM remains conservative
     }
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+static void x_shared_close(const void *address) {
+    if(g_x_owner) {mtl_pool_del(address);return;}
+    gfx_enter();xjob job={.kind=XJ_SHARED_CLOSE,.h=(void *)address};x_wait(x_push(&job));gfx_leave();
+}
+static void x_shared_cache(uint64_t address,size_t bytes,int invalidate) {
+    if(g_x_owner) {vk_pool_shared_publish(address,bytes,invalidate);return;}
+    gfx_enter();xjob job={.kind=XJ_SHARED_CACHE,.h=(void *)(uintptr_t)address,.frame=bytes,.host=(uint64_t)invalidate};
+    x_wait(x_push(&job));gfx_leave();
+}
+#endif
 static void x_read_texels(const tex_t *texture,unsigned level,unsigned layer,
                           const NVNcopyRegion *region,uint8_t *dest,size_t row,size_t image) {
     x_texels request={*texture,level,layer,*region,dest,row,image};

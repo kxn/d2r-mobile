@@ -56,6 +56,9 @@ typedef struct pool {
   // Tracking starts with window-mode pool creation, before any buffer writer.
   // The legacy flag is only a fail-closed fallback for untracked migration/OOM.
   int cpu_copy_requires_gpu,cpu_authority_tracking;
+#ifdef DM_VULKAN_SHARED_POOLS
+  int shared,shared_closing;
+#endif
   pool_cpu_authority *cpu_authority;
   // Original NVN intent only; never interpreted as VkMemoryPropertyFlags.
   // Known zero flags and unknown legacy callers remain distinguishable.
@@ -64,6 +67,13 @@ typedef struct pool {
   pool_cpu_exposure *cpu_exposure; // experiment-only, lazy bounded range exclusions
   int cpu_exposure_full; // metadata OOM/size fallback, never drops excluded pages
 } pool;
+#ifdef DM_VULKAN_SHARED_POOLS
+static int shared_requested,shared_active,shared_extension;
+static uint64_t shared_alignment;
+static void shared_device_probe(void);
+static void shared_pool_materialize(pool *);
+static void shared_cache(vk_buffer *,uint64_t,uint64_t,int);
+#endif
 #include "nvn_vk_cpu_authority.inc"
 #include "nvn_vk_cpu_exposure.inc"
 // 上传按最多 4 KiB 的连续段复制，GPU 使用也按页保守记录；不扫描每次绑定的字节区间链。
@@ -309,6 +319,9 @@ typedef struct submit_resources {
   vk_graphics_submission *graphics;
   vk_texture_submission *texture;
   pool_writeback *writebacks;
+#ifdef DM_VULKAN_SHARED_POOLS
+  pool_writeback *shared_publishes;
+#endif
   pending_cpu_copy *cpu_copies;
   pool_gpu_access *gpu_accesses;
   pool_gpu_access *cached_gpu_accesses;
@@ -986,6 +999,10 @@ void vk_buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) { buf
 void vk_buffer_destroy(vk_buffer *b) {
   if (b->handle)
     vkDestroyBuffer(V.device, b->handle, NULL);
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(b->shared_import) {if(b->map)vkUnmapMemory(V.device,b->memory);vkFreeMemory(V.device,b->memory,NULL);}
+  else
+#endif
   vk_memory_free(b->allocation);
   memset(b, 0, sizeof *b);
 }
@@ -1015,6 +1032,16 @@ static void *completion_thread(void *unused) {
     if (waited != VK_SUCCESS)
       die("Vulkan GPU fence wait: %d", waited);
     vk_system_trace_async_end("Vulkan submit to observed fence",s->queue_serial,s->system_trace);
+#ifdef DM_VULKAN_SHARED_POOLS
+    // These writes are already in the original host allocation. Make caches
+    // visible BEFORE any original completion event/callback/waiter is released.
+    while(s->resources->shared_publishes) {
+      pool_writeback *w=s->resources->shared_publishes;s->resources->shared_publishes=w->next;
+      while(w->ranges) {writeback_range *r=w->ranges;w->ranges=r->next;
+        shared_cache(&w->owner->whole.buffer,r->offset,r->end-r->offset,1);free(r);}
+      free(w);
+    }
+#endif
     int publish_trace=vk_system_trace_begin("Vulkan CPU publish");
     vk_profile_end(VK_TIME_GPU_WAIT, started);
     // Non-coherent CPU caches become valid only after the real GPU fence.
@@ -1374,6 +1401,11 @@ static void init_device(void) {
                            .queueCreateInfoCount = 1,
                            .pQueueCreateInfos = &q,
                            .pEnabledFeatures = &V.features};
+#ifdef DM_VULKAN_SHARED_POOLS
+  const char *shared=getenv("DM_VULKAN_SHARED_POOLS");
+  if(shared && strcmp(shared,"0") && strcmp(shared,"1"))die("DM_VULKAN_SHARED_POOLS expects0or1");
+  shared_requested=shared && !strcmp(shared,"1");
+#endif
   const char *device_extensions[16];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
@@ -1392,6 +1424,9 @@ static void init_device(void) {
   VK_CHECK(vkEnumerateDeviceExtensionProperties(
       V.physical, NULL, &extension_count_device, available));
   for (uint32_t i = 0; i < extension_count_device; i++) {
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(shared_requested && !strcmp(available[i].extensionName,VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME))shared_extension=1;
+#endif
     if (V.options.astc_decode_unorm8 &&
         !strcmp(available[i].extensionName,VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME))
       V.astc_decode_mode=1;
@@ -1416,6 +1451,9 @@ static void init_device(void) {
         available[i].specVersion >= 3)
       have_divisor = 1;
   }
+#if defined(DM_VULKAN_SHARED_POOLS) && defined(DM_VULKAN_TEST_EMBED)
+  if(getenv("DM_FIXED_SHARED_CAPABILITY_DENY"))shared_extension=0; // strict negative only
+#endif
   free(available);
   if (have_divisor) {
     VkPhysicalDeviceFeatures2 query = {
@@ -1483,6 +1521,9 @@ static void init_device(void) {
     device_extensions[dc.enabledExtensionCount++]=VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME;
   LOG("[vulkan] shader stencil export: %s",V.stencil_export?"enabled":"unavailable");
   LOG("[vulkan] read-only attachment store NONE: %s",V.load_store_op_none?"VK_EXT_load_store_op_none":"unavailable (STORE fallback)");
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_extension)device_extensions[dc.enabledExtensionCount++]=VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+#endif
   VK_CHECK(vkCreateDevice(V.physical, &dc, NULL, &V.device));
   volkLoadDevice(V.device);
   LOG("[vulkan] explicit Float16 arithmetic: %s (32-bit interfaces)",V.shader_float16?"enabled":"unavailable");
@@ -1496,6 +1537,9 @@ static void init_device(void) {
   V.present_queue=V.queue;
   if(V.queue_count>1)vkGetDeviceQueue(V.device,V.queue_family,1,&V.present_queue);
   LOG("[vulkan] queue family=%u queues=%u dedicated WSI worker=%s present queue=%s",V.queue_family,V.queue_count,V.present_worker?"enabled":"reference/unavailable",V.present_queue==V.queue?"render":"separate");
+#ifdef DM_VULKAN_SHARED_POOLS
+  shared_device_probe(); // once, before any NVN registration or worker
+#endif
   vk_pipeline_cache_init();
   pthread_t t;
   if (pthread_create(&t, NULL, completion_thread, NULL))
@@ -1516,6 +1560,9 @@ void mtl_init(void) { pthread_once(&init_once, init_device); }
 // initial copy. This does not infer ownership from dirty generations.
 static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
   if(!size) return;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared)return;
+#endif
   uint64_t first=off>>GPU_ACCESS_SHIFT,last=(off+size-1)>>GPU_ACCESS_SHIFT;
   uint64_t end_page=last+1;
   // Every completed scan below initialized all requested pages. These bits
@@ -1557,17 +1604,26 @@ static void pool_initialize_range(pool *p,uint64_t off,uint64_t size) {
   }
 }
 static void pool_materialize_metadata(pool *p) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared && p->page_upload_stamps)return;
+#endif
   if(p->shadow)return;
   uint64_t size=p->size;
   p->page_upload_stamps=calloc(((size-1)>>GPU_ACCESS_SHIFT)+1,sizeof(uint64_t));
   if(!p->page_upload_stamps) die("Vulkan pool page upload generations");
   p->initialized_pages=calloc(((size-1)>>(GPU_ACCESS_SHIFT+6))+1,sizeof(uint64_t));
   if(!p->initialized_pages) die("Vulkan pool initial page ownership");
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared)return; // hazard bitmaps stay; no shadow allocation/content scan
+#endif
   p->shadow = calloc(1, size);
   if (!p->shadow)
     die("Vulkan pool shadow allocation: %llu", (unsigned long long)size);
 }
 static void pool_materialize(pool *p) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared) {shared_pool_materialize(p);return;}
+#endif
   // Explicit range reservation may create physical buffers without exposing
   // CPU pages. Initialize this metadata only at the first actual lookup.
   pool_materialize_metadata(p);
@@ -1584,6 +1640,11 @@ static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, in
   if (!p || !size) die("Vulkan pool allocation");
   p->guest = (uint8_t *)mem;p->size = size;
   p->nvn_flags=flags;p->nvn_flags_known=known;
+#ifdef DM_VULKAN_SHARED_POOLS
+  p->shared=shared_active;
+  if(p->shared && (!known || (uintptr_t)mem%shared_alignment || size%shared_alignment || nvn_dirty_tracked(mem,size)))
+    die("Shared Pool invalid host range: no online legacy fallback");
+#endif
   p->cpu_authority_tracking=V.options.pool_window_bytes!=0 ||
       (V.options.pool_defer_publication && known && (flags&7u)==NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS);
   pthread_mutex_lock(&V.resources);
@@ -1591,6 +1652,9 @@ static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, in
     if ((uintptr_t)mem < (uintptr_t)v->guest + v->size &&
         (uintptr_t)mem + size > (uintptr_t)v->guest)
       die("Vulkan overlapping pools");
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(!p->shared)
+#endif
   if(V.options.pool_mirror_reference) pool_materialize(p);
   p->next = pools;
   pools = p;
@@ -1614,7 +1678,17 @@ int vk_test_pool_flags(uint64_t address,uint32_t *flags,int *known,uint64_t *ide
 }
 #endif
 
+#if defined(DM_VULKAN_SHARED_POOLS) && defined(DM_VULKAN_TEST_EMBED)
+static pthread_mutex_t shared_close_test_mu=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t shared_close_test_cv=PTHREAD_COND_INITIALIZER;
+static int shared_close_test_armed,shared_close_test_entered;
+void vk_test_shared_close_arm(void) {pthread_mutex_lock(&shared_close_test_mu);shared_close_test_armed=1;shared_close_test_entered=0;pthread_mutex_unlock(&shared_close_test_mu);}
+void vk_test_shared_close_wait(void) {pthread_mutex_lock(&shared_close_test_mu);while(!shared_close_test_entered)pthread_cond_wait(&shared_close_test_cv,&shared_close_test_mu);pthread_mutex_unlock(&shared_close_test_mu);}
+#endif
 void mtl_pool_del(const void *mem) {
+#if defined(DM_VULKAN_SHARED_POOLS) && defined(DM_VULKAN_TEST_EMBED)
+  if(shared_active) {pthread_mutex_lock(&shared_close_test_mu);if(shared_close_test_armed) {shared_close_test_armed=0;shared_close_test_entered=1;pthread_cond_broadcast(&shared_close_test_cv);}pthread_mutex_unlock(&shared_close_test_mu);}
+#endif
   mtl_finish();
   pthread_mutex_lock(&V.resources);
   pool **pp = &pools;
@@ -1623,6 +1697,9 @@ void mtl_pool_del(const void *mem) {
   if (!*pp)
     die("Vulkan deleting unknown pool");
   pool *p = *pp;
+#ifdef DM_VULKAN_SHARED_POOLS
+  p->shared_closing=1;
+#endif
   *pp = p->next;
   if(atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release)==UINT64_MAX)
     die("Vulkan pool registry epoch overflow");
@@ -2776,6 +2853,9 @@ static void sync_page(const void *memory, size_t length, void *context) {
   }
 }
 void vk_pool_sync(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active)die("Legacy whole-sync reference incompatible with fixed shared mode");
+#endif
   uint64_t started = vk_profile_start();
   pthread_mutex_lock(&V.resources);
   size_t count = 0;
@@ -2844,6 +2924,10 @@ static void sync_used_changed_pages(const void *memory,size_t length,void *conte
   }
 }
 static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared) {uint64_t off=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
+    if(limit>p->size)limit=p->size;shared_cache(&p->whole.buffer,off,limit-off,0);return;}
+#endif
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
   if(limit>p->size) limit=p->size;
   uint64_t stamp=UINT64_MAX;
@@ -2869,11 +2953,18 @@ static void sync_used_pools(void) {
   uint64_t started=vk_profile_start();
   for(pool_gpu_access *use=recording_resources->gpu_accesses;use;use=use->next) {
     pool *p=use->owner;
-    int tracked=nvn_dirty_tracked(p->guest,p->size);
+    int tracked;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared)tracked=0;else
+#endif
+    tracked=nvn_dirty_tracked(p->guest,p->size);
     uint64_t words=((p->size-1)>>(GPU_ACCESS_SHIFT+6))+1;
     uint64_t first=0,end=0,skipped=0;
     for(uint64_t word=0;word<words;word++) {
       uint64_t bits=use->upload_pages[word];
+#ifdef DM_VULKAN_SHARED_POOLS
+      if(p->shared)bits=use->pages[word]; // clean CPU cache before GPU writers too
+#endif
       skipped+=__builtin_popcountll(use->pages[word]&~bits);
       while(bits) {
         uint64_t page=word*64+__builtin_ctzll(bits);bits&=bits-1;
@@ -3167,6 +3258,18 @@ void vk_buffer_writebacks_flush(void) {
   while (list) {
     pool_writeback *w = list;
     list = w->next;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(w->owner->shared) {
+      for(writeback_range *r=w->ranges;r;r=r->next) {
+        VkBufferMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+          .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+          .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+          .buffer=w->owner->whole.buffer.handle,.offset=r->offset,.size=r->end-r->offset};
+        vkCmdPipelineBarrier(V.cmd,r->producers,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);
+      }
+      w->next=recording_resources->shared_publishes;recording_resources->shared_publishes=w;continue;
+    }
+#endif
     writeback_range **range_at=&w->ranges;
     while(*range_at) {
       writeback_range *r=*range_at;
@@ -3327,6 +3430,10 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   s->resources = r;
   for (vk_effect *e = s->effects; e; e = e->next)
     if (e->dst && e->size) r->cpu_write_count++;
+#ifdef DM_VULKAN_SHARED_POOLS
+  for(pool_writeback *w=r->shared_publishes;w;w=w->next)
+    for(writeback_range *range=w->ranges;range;range=range->next)r->cpu_write_count++;
+#endif
   if (r->cpu_write_count) {
     r->cpu_writes = malloc(r->cpu_write_count * sizeof *r->cpu_writes);
     if (!r->cpu_writes) die("Vulkan CPU-write range snapshot allocation");
@@ -3334,6 +3441,11 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
     for (vk_effect *e = s->effects; e; e = e->next)
       if (e->dst && e->size)
         r->cpu_writes[i++] = (cpu_write_range){(uintptr_t)e->dst, e->size};
+#ifdef DM_VULKAN_SHARED_POOLS
+    for(pool_writeback *w=r->shared_publishes;w;w=w->next)
+      for(writeback_range *range=w->ranges;range;range=range->next)
+        r->cpu_writes[i++]=(cpu_write_range){(uintptr_t)w->owner->guest+range->offset,range->end-range->offset};
+#endif
   }
   VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
                      .waitSemaphoreCount = wait != VK_NULL_HANDLE,
@@ -3549,3 +3661,7 @@ void mtl_res_counts(uint32_t tick, const char *why) {
   LOG("[vulkan] resources tick=%u %s pools=%u total=%llu", tick, why, c.pools,
       (unsigned long long)c.pool_adds);
 }
+
+#ifdef DM_VULKAN_SHARED_POOLS
+#include "nvn_vk_shared_pool.inc"
+#endif

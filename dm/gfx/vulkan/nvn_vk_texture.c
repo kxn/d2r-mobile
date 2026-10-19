@@ -938,6 +938,9 @@ static void image_upload(image *i) {
     die("Vulkan CPU texture source missing ordered initialization exposure");
   const tex_t *t = &i->tex;
   if(!t->has_layout) return;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(vk_pool_shared_mode())die("Fixed shared packaged image freshness contract not implemented; no silent clean proof or perdraw reupload");
+#endif
   vk_mip_clear_texture_access(t,NULL,0);
   if(i->initialized) {
     // Take the publication sequence BEFORE checking pages. A later edit

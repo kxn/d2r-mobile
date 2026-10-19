@@ -43,3 +43,8 @@ target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_VERTEX_REQUIRE_WRA
 target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_buffer_vertex_require")
 add_dependencies(vulkan_host_test dm_vulkan_builtins)
 add_dependencies(vulkan_host_test dm_vulkan_subpass_test_shader)
+
+option(DM_VULKAN_SHARED_POOLS "Build fixed lazy whole shared-pool experiment" OFF)
+if(DM_VULKAN_SHARED_POOLS)
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SHARED_POOLS=1)
+endif()
