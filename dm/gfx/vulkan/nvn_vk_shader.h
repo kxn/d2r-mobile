@@ -106,6 +106,7 @@ VkDescriptorSet vk_shader_bindings_mode(vk_shader *s,int dynamic,vk_uniform_offs
 VkPipelineLayout vk_program_layout_mode(vk_shader *const shaders[6],int dynamic);
 VkDescriptorSet vk_shader_bindings(vk_shader *s);
 void vk_shader_operation_begin(void);
+void vk_shader_operation_abandon(void);
 void vk_shader_prepare_images(vk_shader *const shaders[6],int compute);
 const char *vk_shader_pool_range_error(void);
 int vk_shader_pool_ranges(vk_shader *const shaders[6],int compute,
@@ -216,6 +217,7 @@ VkCommandBuffer vk_render_pending_primary(void);
 void vk_render_view_retired(VkImageView view);
 int vk_texture_shader_collecting(void);
 void vk_texture_shader_record(void);
+void vk_texture_shader_abandon(void);
 void vk_texture_attachment_record(const tex_t *texture,const view_t *view,VkImageAspectFlags aspect);
 void vk_texture_attachment_read(const tex_t *texture,const view_t *view);
 void vk_texture_attachment_store(const tex_t *texture,const view_t *view,int preserve_zero);

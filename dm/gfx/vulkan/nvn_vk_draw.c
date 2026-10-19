@@ -1111,7 +1111,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   for (int i = 0; i < 5; i++)
     if (list[i]) {
       if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
-        vk_texture_binding_scope_end();vk_texture_shader_record();vk_shader_writebacks();
+        vk_texture_binding_scope_end();vk_texture_shader_abandon();vk_shader_operation_abandon();
         free(local_ready);vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
       }
       stages[ns++] = (VkPipelineShaderStageCreateInfo){
@@ -1160,9 +1160,9 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   }
   if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() ||
       local_pass_number!=V.passes || (ds.depthTestEnable && ds.depthWriteEnable) || stencil_writing || !pl_enter(local_job))) {
-    // No consumer command has been emitted. Retire the descriptor batch and
+    // No consumer command has been emitted. Abandon the descriptor batch and
     // redo the ordinary draw, preserving already-executed producer commands.
-    vk_texture_shader_record();vk_shader_writebacks();vk_render_end();
+    vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
     free(local_ready);vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
   }
   VkAttachmentDescription descriptions[9];
@@ -1240,7 +1240,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
   if(precise_dependencies && pass_before_query && !vk_render_active())
     vk_texture_graphics_barrier();
   if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {
-    vk_texture_shader_record();vk_shader_writebacks();free(local_ready);
+    vk_texture_shader_abandon();vk_shader_operation_abandon();free(local_ready);
     vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
   }
   render_job *j = active_job;
@@ -1488,7 +1488,7 @@ void vk_draw(const p_draw *draw, const p_draw_idx *idx) {
     if(compiled!=VK_SUCCESS && local_consumer) {
       if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
       render_pass_release(cached->local_object);free(cached);
-      vk_texture_shader_record();vk_shader_writebacks();vk_render_end();
+      vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
       vk_pool_operation_end(pool_operation);vk_draw(draw,idx);return;
     }
     if(compiled==VK_ERROR_UNKNOWN && list[1] &&

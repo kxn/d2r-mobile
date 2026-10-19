@@ -35,12 +35,23 @@ items.append((188,0,items[0][2].replace('void main()', 'layout(set=0,binding=1)u
 # the distinct SSBO atomic is independently checked by the NVN fixture.
 items.append((189,1,items[1][2].replace('void main()', 'layout(set=1,binding=5,std430)buffer W{uint value;}w;\nvoid main()').replace('void main(){','void main(){atomicAdd(w.value,1);'),[(2,5,0,0,1,1,0,0)],-1,7))
 items.append((190,1,items[2][2].replace('void main()', 'layout(set=1,binding=5,std430)buffer W{uint value;}w;\nvoid main()').replace('void main(){','void main(){atomicAdd(w.value,1);'),items[2][3]+[(2,5,0,0,1,1,0,0)],-1,1))
+# Two ordinary, non-local samples exercise descriptor-preparation callbacks.
+# Their offset UVs intentionally keep them out of the input-attachment proof.
+items.append((191,1,items[2][2].replace('void main()',
+ 'layout(set=1,binding=5)uniform sampler2D x;layout(set=1,binding=6)uniform sampler2D y;\nvoid main()').replace(
+ 'textureLod(h,uv,0);','textureLod(h,uv,0)+textureLod(x,uv+vec2(.01,0),0)+textureLod(y,uv+vec2(.01,0),0);'),
+ items[2][3]+[(3,5,4,0,0,1,0,2),(3,6,5,0,0,1,0,2)],-1,1))
+items.append((192,5,'''#version 450
+layout(local_size_x=1,local_size_y=1)in;
+layout(rgba8,set=2,binding=1)writeonly uniform image2D x;
+void main(){imageStore(x,ivec2(gl_GlobalInvocationID.xy),vec4(32./255.,32./255.,32./255.,1));}
+''',[(4,1,0,-1,4,1,2,3)],-1,0))
 for marker,stage,text,bindings,pos,colors in items:
  key=hashlib.sha256(bytes([marker])*0x880).hexdigest()[:16]
- source=root/(key+('.vert'if stage==0 else'.frag'));source.write_text(text)
+ source=root/(key+('.vert'if stage==0 else'.comp'if stage==5 else'.frag'));source.write_text(text)
  path=root/(key+'.spv');subprocess.run(['glslangValidator','-V','--target-env','vulkan1.1',str(source),'-o',str(path)],check=True)
- blobs={'spv':path.read_bytes(),'meta':struct.pack('<12I',0x324b5644,stage,stage,len(bindings),0,1,1,1,pos&0xffffffff,int(pos>=0),colors,1)+b''.join(struct.pack('<8i',*b)for b in bindings)}
+ blobs={'spv':path.read_bytes(),'meta':struct.pack('<12I',0x324b5644,stage,2 if stage==5 else stage,len(bindings),0,1,1,1,pos&0xffffffff,int(pos>=0),colors,1)+b''.join(struct.pack('<8i',*b)for b in bindings)}
  for suffix,data in blobs.items():(root/(key+'.'+suffix)).write_bytes(data)
- payload,proof=wire.build(blobs,{'descriptor_set':stage})
+ payload,proof=wire.build(blobs,{'descriptor_set':2 if stage==5 else stage})
  (root/(key+'.plocal')).write_bytes(payload)
  print(marker,key,proof['records'])

@@ -258,6 +258,17 @@ void vk_shader_operation_begin(void) {
   // unused copy slots must not cost a multi-kilobyte memset on every draw.
 }
 
+void vk_shader_operation_abandon(void) {
+  if(!shader_operation_depth) die("Vulkan shader operation underflow");
+  // Actual alignment uploads/copies retain their independently recorded
+  // effects. An unexecuted shader must not copy back prospective writable
+  // storage or publish a shader-buffer producer/epoch during a draw retry.
+  current_operation.storage_copy_count=0;
+  current_operation.shader_buffer_writes=0;
+  current_operation.precise_compute_outputs=0;
+  shader_operation_depth--;
+}
+
 static VkPipelineStageFlags producer_stage(unsigned stage) {
   static const VkPipelineStageFlags stages[]={VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT,

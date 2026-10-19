@@ -1678,3 +1678,10 @@ Android 已部署完整可选证明链：高通 `9507875007c6`、Mali `38da72e80
 NDK O3 中 64B 循环为两次 LDPq 和四次 STPq，sync_page 文本增加 640B，并增加一个缓存启动布尔与选择分支。简单循环与 bionic 流水复制的实际吞吐仍须用官方 CPU Profile 验证。默认实验关闭，Android 冷启动参数 `--upload-dual-store` / `--no-upload-dual-store` 选定；已启动进程拒绝修改，未增加热路径 getenv。
 
 Mali ARM64 CLI 的真实 Vulkan memory-pool oracle 400,453 项通过，含非对齐/guard tails、两个物理 backing、GPU-only 邻字和录制后 CPU 修改。官方 LLDB 另确认调用来自 commit→sync_page→pool_spans_copy_dual→upload_copy_dual，并命中 128B 向量循环入口；调试轮在首 LDP 前主动结束，功能完成证据来自前述完整 CLI。Android standalone 无法发现验证层，不能称其 VVL 通过；Lavapipe 独立完整 async 21,813,081 / sync 21,713,669 项零 VUID/SYNC，合入主线 async 21,813,081 及 memory 400,453 项也通过。没有实际游戏 CPU/FPS/温度收益结论。见 `direct-upload-dual-store-v1-mali-production-proof.json`。
+
+
+### 未执行 draw 的重试不发布可见性
+
+附件合并的四处消费者重试原先使用正常 record/writeback 结束 descriptor batch；如果后面的 Y 上传结束 pass，之前已收集但尚未消费的 X 会被错误记录为已满足 shader-read visibility。新代码取消 prospective image/shader operation，不记录未执行的读写、不复制回尚未写入的 storage；实际执行的 upload/copy/producer/clear 历史保留。PSO 故障等晚回退也保守取消，允许重试重新同步。
+
+实际 GPU 负例在 compute imageStore X 后，通过 Y 首次上传触发 dual abort；旧路径在最终消费者前缺少 COMPUTE→FS write/read 依赖，契约断言失败，而普通 OFF 路径和修复路径有正确依赖、正确像素及后续 STORE/history。Khronos SYNC 验证在旧路径上未报告该缺失，不能把自有 API 契约检查说成原厂错误报告。修复独立 async/serial/window/PSO-fault 用例及完整 async 21,811,196 / sync 21,711,784 检查通过，最终零 VUID/SYNC。没有真机融合或 FPS 收益结论；报告 `pixel-local-batch-abandon-v1-source-ready.json`。

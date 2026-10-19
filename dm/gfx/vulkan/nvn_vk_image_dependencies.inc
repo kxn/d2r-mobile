@@ -337,6 +337,14 @@ void vk_texture_graphics_barrier(void) {
 int vk_texture_shader_collecting(void) {
   return image_binding_active!=0;
 }
+void vk_texture_shader_abandon(void) {
+  if(!image_binding_active) die("Vulkan image operation not begun");
+  // Binding preparation may execute uploads/copies and end a physical pass.
+  // Those commands publish their own histories immediately. The collected
+  // shader requests are only prospective: no draw/dispatch consumed them, so
+  // neither access nor visibility may be published while discarding a retry.
+  image_binding_count=0;image_binding_active--;
+}
 void vk_texture_shader_record(void) {
   if(!image_binding_active) die("Vulkan image operation not begun");
   // Query all old histories before recording any part of this operation.
