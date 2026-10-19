@@ -709,7 +709,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
 
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
-    jboolean acquire_scope, jboolean memory_only) {
+    jboolean acquire_scope, jboolean memory_only, jboolean validation) {
   (void)klass;
   if(setenv("DM_VULKAN_ASTC_DECODE_UNORM8",astc_decode_startup?"1":"0",1) ||
       (astc_decode_fixture?setenv("DM_ASTC_DECODE_FIXTURE","1",1):unsetenv("DM_ASTC_DECODE_FIXTURE")))
@@ -724,8 +724,13 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   snprintf(file, sizeof file, "%s/vulkan-fixture", path);
   setenv("DM_VULKAN_SHADERS", file, 1);
   setenv("DM_CAPTURE_TEST_DIR", path, 1);
-  setenv("DM_VULKAN_VALIDATE", "1", 1);
-  setenv("DM_VULKAN_SYNC_VALIDATE", "1", 1);
+  if(validation) {
+    setenv("DM_VULKAN_VALIDATE", "1", 1);
+    setenv("DM_VULKAN_SYNC_VALIDATE", "1", 1);
+  } else {
+    unsetenv("DM_VULKAN_VALIDATE");
+    unsetenv("DM_VULKAN_SYNC_VALIDATE");
+  }
   snprintf(file, sizeof file, "%s/vulkan-test.log", path);
   if (!freopen(file, "w", stderr))
     _exit(90);
@@ -736,6 +741,12 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   // stderr flush cannot overwrite stdout's appended JSON result.
   setvbuf(stderr, NULL, _IONBF, 0);
   setvbuf(stdout, NULL, _IONBF, 0);
+  printf("{\"test_configuration\":\"vulkan\",\"validation_layer\":\"%s\","
+         "\"synchronization_validation\":\"%s\","
+         "\"zero_error_counter_does_not_imply_validation\":true}\n",
+         validation?"requested":"disabled_explicitly",
+         validation?"requested":"disabled_explicitly");
+  if(!validation) LOG("[vulkan fixture] validation layers explicitly disabled; byte/pixel assertions retained; zero counters are not VUID/SYNC coverage");
   (*env)->ReleaseStringUTFChars(env, directory, path);
   int dm_vulkan_test_main(void);
   dm_vulkan_test_main();
