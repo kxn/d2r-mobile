@@ -2450,11 +2450,16 @@ static inline uint32_t changed_word_mask(const uint8_t *guest,const uint8_t *sha
     uint32x4_t equal2=vceqq_u32(vreinterpretq_u32_u8(vld1q_u8(guest+32)),vreinterpretq_u32_u8(vld1q_u8(shadow+32)));
     uint32x4_t equal3=vceqq_u32(vreinterpretq_u32_u8(vld1q_u8(guest+48)),vreinterpretq_u32_u8(vld1q_u8(shadow+48)));
     if(vminvq_u32(vandq_u32(vandq_u32(equal0,equal1),vandq_u32(equal2,equal3)))==UINT32_MAX)return 0;
-    const uint32x4_t weights={1,2,4,8};
-    return vaddvq_u32(vbicq_u32(weights,equal0)) |
-      (vaddvq_u32(vbicq_u32(weights,equal1))<<4) |
-      (vaddvq_u32(vbicq_u32(weights,equal2))<<8) |
-      (vaddvq_u32(vbicq_u32(weights,equal3))<<12);
+    // Equality lanes are all-zero/all-one, so narrowing retains the entire
+    // comparison. Each word then owns a distinct bit in the horizontal sum;
+    // its maximum is65535, with no carries between bits or uint16 overflow.
+    // Equal blocks keep the original early return.
+    uint16x8_t equal_low=vcombine_u16(vmovn_u32(equal0),vmovn_u32(equal1));
+    uint16x8_t equal_high=vcombine_u16(vmovn_u32(equal2),vmovn_u32(equal3));
+    const uint16x8_t weights={1,2,4,8,16,32,64,128};
+    uint16x8_t low=vbicq_u16(weights,equal_low);
+    uint16x8_t high=vshlq_n_u16(vbicq_u16(weights,equal_high),8);
+    return vaddvq_u16(vorrq_u16(low,high));
   }
 #endif
   uint32_t changed=0;unsigned word=0;
