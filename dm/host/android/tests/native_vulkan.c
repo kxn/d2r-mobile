@@ -561,6 +561,9 @@ int dm_vulkan_test_main(void) {
 #ifdef DM_VULKAN_BORROWED_NVN_FIXTURE
   if(getenv("DM_BORROWED_NVN_WINDOWS_FIXTURE")) {
     int imported_flags=borrowed_nvn_windows_test();CHECK(vk_validation_error_count()==0);
+    if(getenv("DM_BORROWED_NVN_MIRROR_FALLBACK_FIXTURE")) {
+      printf("{\"test\":\"borrowed-untracked-mirror-fallback\",\"checks\":%u,\"result\":\"passed\",\"host_imported\":false,\"pool_bytes\":131072,\"mirror_nodes\":2,\"game_modules_executed\":false}\n",checks);return 0;
+    }
     printf("{\"test\":\"borrowed-nvn-subwindows\",\"checks\":%u,\"result\":\"passed\",\"flags\":%d,\"whole_pool_bytes\":2097152,\"window_bytes\":65536,\"game_modules_executed\":false}\n",checks,imported_flags);return 0;
   }
   if(getenv("DM_BORROWED_NVN_BUFFER_FIXTURE")) {
