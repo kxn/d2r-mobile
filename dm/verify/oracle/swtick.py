@@ -40,8 +40,11 @@ def units(r, game):
     for t, base in enumerate(TBASE):
         for b in range(NB):
             u = struct.unpack_from('<Q', tab, base - TBASE[0] + 8 * b)[0]
-            k = 0
+            k = 0; seen = set()
             while u and k < 4096:
+                if u in seen:
+                    bad += 1; break
+                seen.add(u)
                 hd = r.rd(u, NEXT + 8)
                 if hd is None: bad += 1; break
                 ty, cls, uid, mode = struct.unpack_from('<IIII', hd, 0)
@@ -63,6 +66,7 @@ def units(r, game):
                 if ty != t: bad += 1
                 out.append(x); k += 1
                 u = struct.unpack_from('<Q', hd, NEXT)[0]
+            if u and k == 4096: bad += 1
     return out, bad
 
 def tick_line(r, game):

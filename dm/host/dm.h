@@ -27,6 +27,8 @@ typedef struct {
     char name[16];
     uint8_t *base;             // 映像（含补丁区）在宿主地址空间的首址 | Start address of the image (including the patch area) in the host address space
     size_t size;
+    unsigned host_abi; /* 0 Darwin, 1 ELF, 2 TLSDESC, 3 TLSDESC with process gate */
+    unsigned host_gate_idx; /* ABI3 only: independent read-only process gate entry */
     uint64_t text_end, ro_off, data_off, patch_off, key_page_off, key_page_size;   // 来自改写器 fixups 头 | From the rewriter fixups header
     unsigned key_idx[8];
     const Elf64_Dyn *dyn;
@@ -52,10 +54,13 @@ module_t *module_of(const void *p);
 // 门分派：改写后的 svc / 计时器读经公共入口进来，ret_addr = 该门块返回点，regs 指向保存的 x0..x30
 // Gate dispatch: rewritten svc / timer reads come in through the common entry, ret_addr = the return point of that gate block, regs points to the saved x0..x30
 uint64_t gate_dispatch(uint64_t ret_addr, uint64_t *regs);
+void dm_gate(void); // Native assembly host entry; the address is process-wide.
 // 观测门（改写器 OBS 表；编号与 patch_nso.py 一致）：只读回调，挂上即在门命中时调用
 // Observation gates (rewriter OBS table; numbering matches patch_nso.py): read-only callbacks, called on a gate hit once attached
 enum { OBS_UIMSG = 1, OBS_TICK = 2, OBS_C2S = 3, OBS_C2S_SYS = 4, OBS_SETLANG = 5, OBS_TARGET_RANK = 7, OBS_UI_PROJECT = 8, OBS_FREEZE_WORLD = 10, OBS_FREEZE_CLIENT = 11, OBS_FREEZE_ANIM = 12, OBS_FREEZE_RENDER = 13, OBS_TEXTBOX = 14, OBS_EVENT_MSG = 15, OBS_LEVEL_WARP = 16, OBS_QUEST_KILL = 17, OBS_NOTICE_INPUT = 18, OBS_ERR_SMOOTH = 19, OBS_MODEL_YAW = 20, OBS_TOOLTIP = 21, OBS_PRESET_SPAWN = 22, OBS_MAX = 23 };   // 6 = iOS 绑定读取（dm_touch_game_bridge.c） | 6 = iOS binding read (dm_touch_game_bridge.c)
 void gate_obs_set(int id, void (*fn)(const uint64_t *regs));
+// 在启动游戏线程前登记附加只读观测者。 | Register additional read-only observers before starting guest threads.
+void gate_obs_add(int id, void (*fn)(const uint64_t *regs));
 int gate_obs_present(int id);
 void dm_quiet_difficulty_msg(int on);   // 秘境局里拦原版「游戏难度设为 N」提示（观测门 15，diag.c） | In a rift run, block the original game's 「游戏难度设为 N」(Game difficulty set to N) message (observation gate 15, diag.c)
 int gate_svc_present(int num);   // 产物里有没有这个 svc 号的门（剪口引入的宿主调用号用）   // 产物里有没有这个观测门（gates.tsv 登记过） | Whether the build output has a gate for this svc number (for host call numbers introduced by cuts)   // whether the build output has this observation gate (registered in gates.tsv)

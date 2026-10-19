@@ -43,8 +43,12 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <CommonCrypto/CommonDigest.h>
+#include "crypto.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#else
+#include "platform.h"
+#endif
 
 static const struct { uint32_t off; const char *pad, *touch; } k_pfx[] = {
     { 0x1d21db5, "Controller/Console/Switch/", "0touch_console_switch_lay/" },

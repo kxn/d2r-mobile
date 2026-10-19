@@ -11,8 +11,11 @@
 // within a tier the original scores still decide, across tiers the higher tier wins; the eligibility checks are not touched at all (a rejected high-tier monster is still rejected).
 // Tiers: Boss = classes with boss=1 in monstats.txt (3.3 data, see BOSS_CLASS); elite = monster data TypeFlag includes super unique/champion/unique.
 #include "dm.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <mach/mach.h>
+#endif
+#include "platform.h"
 #include <math.h>
 
 enum { UNIT_MONSTER = 1, TF_SUPERUNIQUE = 0x02, TF_CHAMPION = 0x04, TF_UNIQUE = 0x08 };
@@ -24,10 +27,14 @@ static const float RANK_BONUS[3] = {0, 1000, 2000};
 static const uint16_t BOSS_CLASS[] = {156, 211, 229, 242, 243, 250, 256, 267, 333, 365, 526, 544, 546, 547, 548, 549, 550,
                                       559, 570, 704, 705, 706, 707, 708, 709, 745, 746, 747};
 
-static int read_live(uint64_t a, void *out, size_t n) {
-    vm_size_t got = 0;
-    return a >= 0x1000 && a <= UINT64_MAX - n &&
-           vm_read_overwrite(mach_task_self(), a, n, (vm_address_t)out, &got) == KERN_SUCCESS && got == n;
+static int read_live(uint64_t address, void *out, size_t bytes) {
+    if (address < 0x1000 || address > UINT64_MAX - bytes) return 0;
+#ifdef __APPLE__
+    vm_size_t n = 0;
+    return vm_read_overwrite(mach_task_self(), address, bytes, (vm_address_t)out, &n) == KERN_SUCCESS && n == bytes;
+#else
+    return dm_self_read(out, (const void *)(uintptr_t)address, bytes) == (long)bytes;
+#endif
 }
 
 // 返回 0 普通 / 1 精英 / 2 Boss；读不到或不是怪物 = -1（不动分数）

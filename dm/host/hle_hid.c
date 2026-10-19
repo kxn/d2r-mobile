@@ -335,9 +335,9 @@ static uint64_t keys_now(void) {
 }
 
 // 可选实际GetNpadState返回收样；状态变化+最多每秒一次活动见证，sampling单独变化不刷屏。
-// 1024条后明确limit_reached，截断日志不作完整手势证据；不开环境变量不写文件。
+// 32768条后明确limit_reached，截断日志不作完整手势证据；不开环境变量不写文件。
 // Optional sampling of actual GetNpadState returns; state changes + an activity witness at most once per second, a change in sampling alone does not flood the log.
-// After 1024 entries limit_reached is stated explicitly, a truncated log does not count as complete gesture evidence; without the environment variable no file is written.
+// After 32768 entries limit_reached is stated explicitly, a truncated log does not count as complete gesture evidence; without the environment variable no file is written.
 static FILE *g_receipt_file;
 static pthread_once_t g_receipt_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t g_receipt_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -357,8 +357,8 @@ static void receipt(const NpadState *s, uint32_t id, uint32_t style, uint64_t km
     if (truncated || (have && id == last_id && style == last_style && km == last_km && !memcmp(&state, &last, sizeof state) && t - last_ns < 1000000000ull)) {
         pthread_mutex_unlock(&g_receipt_lock); return;
     }
-    if (count == 1024) {
-        fprintf(g_receipt_file, "{\"event\":\"limit_reached\",\"limit\":1024}\n"); truncated = 1;
+    if (count == 32768) {
+        fprintf(g_receipt_file, "{\"event\":\"limit_reached\",\"limit\":32768}\n"); truncated = 1;
     } else {
         fprintf(g_receipt_file, "{\"event\":\"npad_return\",\"read_start_ns\":%llu,\"time_ns\":%llu,\"sampling\":%lld,\"id\":%u,\"style\":%u,\"buttons\":%llu,\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d,\"attributes\":%u,\"script_mask\":%llu}\n",
                 (unsigned long long)read_start_ns, (unsigned long long)t, (long long)s->sampling, id, style, (unsigned long long)s->buttons,
@@ -371,6 +371,28 @@ static void receipt(const NpadState *s, uint32_t id, uint32_t style, uint64_t km
 
 void (*dm_pad_hook)(uint64_t, uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *);
 static void fill(NpadState *s, uint32_t id, uint32_t style) {
+#if defined(DM_HEADLESS) && !defined(DM_NATIVE_FEATURES)
+  #ifdef DM_NATIVE_WORLD_CORE
+    { void dm_world_pump(void); dm_world_pump(); }
+    { void dm_aim_cone_pump(void); dm_aim_cone_pump(); }
+  #endif
+    // 无图形宿主只转交原输入状态，不调用尚未接入的界面自动操作。
+    // The headless host forwards original input state without unported UI automation.
+    pthread_once(&g_receipt_once, receipt_init);
+    uint64_t read_start_ns = g_receipt_file ? now_ns() : 0;
+    memset(s,0,sizeof(*s));s->sampling=++g_sampling;
+    if(!(style_of(id)&style)) { receipt(s,id,style,0,read_start_ns); return; }
+    s->buttons=g_in.buttons|atomic_exchange(&g_press_latch,0)|atomic_load(&g_pad_btn)|atomic_exchange(&g_pad_latch,0);
+    s->lx=g_in.lx;s->ly=g_in.ly;s->rx=g_in.rx;s->ry=g_in.ry;
+    uint64_t axes=atomic_load(&g_pad_axes);
+    if(!(s->lx||s->ly)) {s->lx=(int16_t)axes;s->ly=(int16_t)(axes>>16);}
+    if(!(s->rx||s->ry)) {s->rx=(int16_t)(axes>>32);s->ry=(int16_t)(axes>>48);}
+    if(dm_pad_hook) dm_pad_hook(guest_ns(),&s->buttons,&s->lx,&s->ly,&s->rx,&s->ry);
+    s->attributes=ATTR_CONNECTED;
+    if (s->lx || s->ly) atomic_store(&g_stick_ns, now_ns());
+    atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
+    receipt(s,id,style,0,read_start_ns);
+#else
     pthread_once(&g_receipt_once, receipt_init);
     DM_PROF(0, "taps", ui_taps_step());
     DM_PROF(0, "ui_frontend", dm_ui_frontend_pump());
@@ -419,6 +441,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     s->attributes = ATTR_CONNECTED;
     atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
     receipt(s, id, style, km, read_start_ns);
+#endif
 }
 
 HLE_FORCE("_ZN2nn3hid14InitializeNpadEv", "连 hid 服务；宿主从 dm_input 取输入", void, h_hid_InitNpad, void) {}

@@ -93,6 +93,9 @@ static class SwshXlate
                 false /* 不做 Y 取反 | no Y flip */, true /* 原点左上 | origin upper-left */, false);
         }
         public bool QueryHostSupportsTextureShadowLod() => true;
+        // Vulkan 作业须记录设备实测 subgroup 宽度；原 Metal 作业保持原缺省 32。
+        // Vulkan jobs record the measured device subgroup width; original Metal jobs retain their default of 32.
+        public int QueryHostSubgroupSize() => _job["host_subgroup_size"] is JsonNode size ? (int)size : 32;
         // 作业 reduced = true：放宽精度——翻译器只给强制精确的运算打 NoContraction（缺省全部打：保持 Maxwell 分开舍入的逐位结果，代价是 MSL 里大量禁优化的 spvFMul 等）
         // Job reduced = true: relaxed precision - the translator marks NoContraction only on operations that must be exact (the default marks all: keeps the bit-exact results of Maxwell's separate rounding, at the cost of many optimization-disabled spvFMul etc. in the MSL)
         public bool QueryHostReducedPrecision() => _job["reduced"] is JsonNode n && (bool)n;

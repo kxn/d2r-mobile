@@ -3,3 +3,21 @@
 .iosdd_mac/
 .iosdd_*/
 .DS_Store
+
+# Local Linux/Android toolchains, emulator builds and private game inputs.
+/.local/
+/work/
+__pycache__/
+
+# Private console keys may be supplied at the repository root.
+/prod.keys
+/title.keys
+
+# Local vendor profiler installer.
+/Snapdragon_Profiler.*.gz
+
+# Local crash reports, captured frames and temporary pipeline-cache fixtures.
+/hs_err_pid*.log
+/frame-dump*.ppm
+/vulkan-capture-fixture.png
+/pso-fixture-*/

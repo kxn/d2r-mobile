@@ -20,7 +20,11 @@
 #include <stdio.h>
 #include <stdatomic.h>
 #include <pthread.h>
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#else
+#include "platform.h"
+#endif
 
 static int g_own = -1; static void (*g_on_select)(void), (*g_on_click)(void);
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static struct { int build, urgent; char note[160]; } g_offer;   // g_mu 护 g_offer | g_mu guards g_offer

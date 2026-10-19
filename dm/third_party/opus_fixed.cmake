@@ -1,0 +1,46 @@
+# Fixed, source-verified libopus, used only by the opt-in correctness mirror.
+function(dm_add_fixed_opus)
+  if(TARGET opus)
+    message(FATAL_ERROR "Unexpected preexisting opus target")
+  endif()
+  set(opus_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/opus")
+  file(STRINGS "${opus_root}/SHA256SUMS" opus_sums)
+  foreach(line IN LISTS opus_sums)
+    string(SUBSTRING "${line}" 0 64 expected)
+    string(SUBSTRING "${line}" 66 -1 name)
+    file(SHA256 "${opus_root}/${name}" actual)
+    if(NOT actual STREQUAL expected)
+      message(FATAL_ERROR "Modified Opus upstream source: ${name}")
+    endif()
+  endforeach()
+  set(BUILD_SHARED_LIBS OFF)
+  set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+  set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+  set(OPUS_FIXED_POINT ON CACHE BOOL "" FORCE)
+  set(OPUS_ENABLE_FLOAT_API OFF CACHE BOOL "" FORCE)
+  set(OPUS_DRED OFF CACHE BOOL "" FORCE)
+  set(OPUS_OSCE OFF CACHE BOOL "" FORCE)
+  set(OPUS_DEEP_PLC OFF CACHE BOOL "" FORCE)
+  set(OPUS_NONTHREADSAFE_PSEUDOSTACK OFF CACHE BOOL "" FORCE)
+  # Upstream 1.5.2's fixed-point x86 AVX2 source list includes an FLP file
+  # without its include directory; use its supported SSE4.1/C paths on host.
+  set(OPUS_X86_MAY_HAVE_AVX2 OFF CACHE BOOL "" FORCE)
+  set(OPUS_X86_PRESUME_AVX2 OFF CACHE BOOL "" FORCE)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  add_subdirectory("${opus_root}" "${CMAKE_CURRENT_BINARY_DIR}/dm-opus")
+  set_target_properties(opus PROPERTIES C_VISIBILITY_PRESET hidden)
+  # The APK uses a Debug CMake config with per-runtime -O3. Do not accidentally
+  # compile the independent codec dependency at -O0 in that same config.
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(opus PRIVATE -O3 -fno-omit-frame-pointer)
+  endif()
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    # 1.5.2 CMake incorrectly also advertises the ARM32 assembly pitch kernel
+    # on AArch64, but only builds the portable NEON-intrinsics kernels. Keep
+    # the _INTR capabilities (mandatory ARM64 SIMD), omit ARM32 asm aliases.
+    get_target_property(opus_defines opus COMPILE_DEFINITIONS)
+    list(REMOVE_ITEM opus_defines OPUS_ARM_MAY_HAVE_NEON OPUS_ARM_PRESUME_NEON)
+    set_property(TARGET opus PROPERTY COMPILE_DEFINITIONS "${opus_defines}")
+  endif()
+endfunction()

@@ -25,7 +25,11 @@
 #include "dm_hud.h"
 #include "dm_uiscreen.h"
 #include <math.h>
+#ifdef __APPLE__
 #include <mach/mach.h>
+#else
+#include "platform.h"
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -34,7 +38,13 @@ static const struct { uint16_t lv; uint8_t act, drlg; int8_t varies; } k_lv[] = 
 #include "dm_bright_levels.inc"
 };
 
-static int rd(uint64_t a, void *buf, size_t n) { vm_size_t got = 0; return a && !vm_read_overwrite(mach_task_self(), a, n, (vm_address_t)buf, &got) && got == n; }
+static int rd(uint64_t a, void *buf, size_t n) {
+#ifdef __APPLE__
+    vm_size_t got = 0; return a && !vm_read_overwrite(mach_task_self(), a, n, (vm_address_t)buf, &got) && got == n;
+#else
+    return a && a <= UINT64_MAX - n && dm_self_read(buf, (const void *)(uintptr_t)a, n) == (long)n;
+#endif
+}
 static uint64_t main_base(void) { static uint64_t b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint64_t)g_mod[i].base; return b; }
 static uint64_t env_ptr(void) { uint64_t act = 0, env = 0, mb = main_base(); return mb && rd(mb + 0x2d20bd0, &act, 8) && rd(act + 8, &env, 8) ? env : 0; }
 

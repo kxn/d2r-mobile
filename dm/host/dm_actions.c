@@ -23,7 +23,11 @@
 #include "dm_custom.h"
 #include "dm_input.h"
 #include "dm_hud.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#else
+#include "platform.h"
+#endif
 #include <unistd.h>
 #include "dm_uiscreen.h"
 #include "hle.h"

@@ -18,7 +18,9 @@
 #include "dm_unit.h"
 #include "dm_hud.h"
 #include "dm_prof.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#endif
 
 static uint8_t *wb(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
 static uint64_t w_player(void) { uint8_t *b = wb(); return b ? ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)) : 0; }
@@ -50,7 +52,12 @@ static void w_interaction_poll(uint64_t pl, uint64_t fr) {
     static const uint64_t at[] = { 3, 30, 120 };
     if (lv == g_it.last_lv && (g_it.stage >= 3 || age < at[g_it.stage])) return;
     while (g_it.stage < 3 && age >= at[g_it.stage]) g_it.stage++;
-    int x = 0, y = 0; w_unit_xy(pl, &x, &y); dm_hud_info hi; dm_hud_get(&hi);
+    int x = 0, y = 0; w_unit_xy(pl, &x, &y); dm_hud_info hi = {0};
+#ifdef DM_NATIVE_WORLD_CORE
+    void dm_native_world_snapshot(int *, int *); dm_native_world_snapshot(&hi.area, &hi.valid);
+#else
+    dm_hud_get(&hi);
+#endif
     LOG("物件交互诊断：序号 %llu 后 %llu 帧 客户端关卡 %d 坐标 %d,%d 模式 %u 服务端最近快照 %d 有效 %d（样本非换图成功判据）", (unsigned long long)g_it.seq, (unsigned long long)age, lv, x, y, *(uint32_t *)(pl + 0xc), hi.area, hi.valid);
     g_it.last_lv = lv; if (age >= 120) g_it.active = 0;
 }
@@ -189,6 +196,39 @@ static int w_needs_room(uint64_t u) { uint8_t *b = wb(); if (*(uint32_t *)u != 2
     return *(uint8_t *)(*(uint64_t *)(t + 0x1548) + (uint64_t)cls * 0x168 + 0x15e) == 16; }
 static struct { uint32_t id; uint64_t lv, at; int x, y, tries; } g_tile_retry;   // 对出口砖交互过、等着看换没换关卡（见 w_arrive） | interacted with the exit tile and waiting to see whether the level changed (see w_arrive)
 static uint64_t w_level(uint64_t pl) { uint64_t pp = pl ? *(uint64_t *)(pl + 0x38) : 0, r1 = pp ? *(uint64_t *)(pp + 0x20) : 0, r2 = r1 ? *(uint64_t *)(r1 + 0x18) : 0; return r2 ? *(uint64_t *)(r2 + 0x90) : 0; }
+#ifdef DM_NATIVE_WORLD_CORE
+static _Atomic uint64_t g_near_level;
+static _Atomic int g_client_area;
+int dm_world_client_area(void) { return atomic_load(&g_client_area); }
+int dm_world_near_level(int *area, int *x, int *y) {
+    uint64_t v = atomic_load(&g_near_level);
+    if (!(v >> 63)) return 0;
+    *area = (int)((v >> 32) & 0xffff); *x = (int)((v >> 16) & 0xffff); *y = (int)(v & 0xffff); return 1;
+}
+static void w_near_level_step(void) {
+    // 直接复用原 wp_rooms 的已载入房间遍历；不初始化房间、不传送、不发移动。
+    // Reuse original loaded-room traversal without loading, teleporting or
+    // issuing movement. A room boundary reference may still be obstructed.
+    uint64_t pl = w_player(), lv = pl ? w_level(pl) : 0;
+    int px = 0, py = 0; uint64_t result = 0; long best = -1;
+    atomic_store(&g_client_area, lv ? *(int *)(lv + 0x1f8) : 0);
+    if (lv && dm_ingame_now() && w_unit_xy(pl, &px, &py)) {
+        uint64_t path = *(uint64_t *)(pl + 0x38);
+        wp_rooms(path ? *(uint64_t *)(path + 0x20) : 0);
+        for (int i = 0; i < g_wp_nroom; i++) {
+            uint64_t r = g_wp_room[i], r2 = *(uint64_t *)(r + 0x18), other = r2 ? *(uint64_t *)(r2 + 0x90) : 0;
+            if (!other || other == lv) continue;
+            int id = *(int *)(other + 0x1f8), x = *(int *)(r + 0x80), y = *(int *)(r + 0x84), w = *(int *)(r + 0x88), h = *(int *)(r + 0x8c);
+            if (id <= 0 || id > 0xffff || w < 5 || h < 5) continue;
+            int nx = px < x + 2 ? x + 2 : px > x + w - 3 ? x + w - 3 : px;
+            int ny = py < y + 2 ? y + 2 : py > y + h - 3 ? y + h - 3 : py;
+            long dx = nx - px, dy = ny - py, d = dx * dx + dy * dy;
+            if (best < 0 || d < best) { best = d; result = 1ull << 63 | (uint64_t)id << 32 | (uint64_t)(uint16_t)nx << 16 | (uint16_t)ny; }
+        }
+    }
+    atomic_store(&g_near_level, result);
+}
+#endif
 static void w_tile_retry_step(void) {
     if (!g_tile_retry.at || dm_guest_frame() < g_tile_retry.at) return; g_tile_retry.at = 0; uint8_t *b = wb(); uint64_t pl = w_player(); int px = 0, py = 0;
     if (!b || !pl || g_go.on || w_level(pl) != g_tile_retry.lv || !w_unit_xy(pl, &px, &py) || abs(px - g_tile_retry.x) > W_FAR || abs(py - g_tile_retry.y) > W_FAR) return;   // 换了关卡 / 人走开了 / 又点了别的：不管 | level changed / player walked away / something else was tapped: ignore
@@ -397,8 +437,10 @@ unsigned dm_world_tap(float nx, float ny) { if (nx < 0) nx = 0; if (nx > 1) nx =
     unsigned seq = atomic_fetch_add(&g_tap_seq, 1) + 1; atomic_store(&g_tap, (uint64_t)seq << 32 | (uint64_t)(uint32_t)(nx * 65535) << 16 | (uint32_t)(ny * 65535)); return seq; }
 int dm_world_tap_result(unsigned seq) { return atomic_load(&g_tap_done) == seq ? atomic_load(&g_tap_res) : -1; }   // -1 还没执行；0 没有目标（什么都没发）；1 物品 2 NPC 3 物件 4 出口 | -1 not executed yet; 0 no target (nothing sent); 1 item 2 NPC 3 object 4 exit
 int dm_world_has_target(void) { return atomic_load(&g_has_target); }   // 按主键会去交互的目标存在（游戏手柄版自己的选择，main+0x2f7a0c）；任意线程读 | a target that the primary button would interact with exists (the game's own controller-version selection, main+0x2f7a0c); read from any thread
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || defined(DM_NATIVE_WORLD_CORE)
 static int w_hostile(uint8_t *b, uint64_t u) { if (*(uint32_t *)u != 1) return 0; uint64_t pl = w_player(); int c = pl ? ((int (*)(int, uint64_t, uint64_t))(b + 0x2f7b7c))(0x165, pl, u) : 0; return c == 1 || c == 0xa; }
+#endif
+#if TARGET_OS_OSX
 static void w_attack(uint64_t u, const char *how) { if (g_go.on) g_go.on = 0; int r = w_interact(u); static int lg; if (lg++ < 300) LOG("鼠标攻击：%s 类型 1 cls %u id %u → 点击入口 %d", how, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8), r); }
 static void w_walk_step(uint8_t *b) {
     uint64_t t = atomic_exchange(&g_walk, 0); if (!t) return; uint64_t dm_stick_last_ns(void); uint64_t pl = w_player(), scene = *(uint64_t *)(b + 0x2e2a698); int W = 0, H = 0, px = 0, py = 0; float f[2];
@@ -450,20 +492,38 @@ static void w_tap_step(uint8_t *b) {
 // Test probe (touch point script tap_unit): watch one kind of unit; every frame the main thread publishes the screen position of its body box center (normalized to the rendered picture), and the script thread reads it to drop a real touch point.
 // Walking NPCs stand in different places every run, so scripts with fixed screen coordinates miss them (Charsi 0/2 in two consecutive passes).
 static _Atomic uint32_t g_watch; static _Atomic uint64_t g_watch_pos;
-void dm_world_watch(int type, uint32_t cls) { atomic_store(&g_watch_pos, 0); atomic_store(&g_watch, type < 0 ? 0 : 0x80000000u | (uint32_t)type << 24 | (cls & 0xffffff)); }
+static _Atomic uint64_t g_watch_cells;
+int dm_world_watch_cells(int *x, int *y) {
+    uint64_t position = atomic_load(&g_watch_cells);
+    if (!(position >> 32)) return 0;
+    *x = (int)((position >> 16) & 0xffff); *y = (int)(position & 0xffff); return 1;
+}
+void dm_world_watch(int type, uint32_t cls) { atomic_store(&g_watch_pos, 0); atomic_store(&g_watch_cells, 0); atomic_store(&g_watch, type < 0 ? 0 : 0x80000000u | (uint32_t)type << 24 | (cls & 0xffffff)); }
 int dm_world_watch_pos(float *nx, float *ny) { uint64_t v = atomic_load(&g_watch_pos); if (!v) return 0; *nx = ((v >> 16) & 0xffff) / 65535.0f; *ny = (v & 0xffff) / 65535.0f; return 1; }
 static void w_watch_step(uint8_t *b) {
     uint32_t w = atomic_load(&g_watch); if (!w) return; int t = (w >> 24) & 0x7f; uint32_t cls = w & 0xffffff; uint64_t scene = *(uint64_t *)(b + 0x2e2a698), v = 0;
+    uint64_t cells = 0;
     int W = 0, H = 0; dm_screen_real(&W, &H);
     for (int k = 0; scene && W > 0 && H > 0 && t <= 5 && k < 128 && !v; k++) for (uint64_t u = *(uint64_t *)(b + 0x2d603a0 + t * 0x400 + k * 8); u; u = *(uint64_t *)(u + 0x158)) {
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || defined(DM_NATIVE_WORLD_CORE)
         if (cls == 0xfffffe) { if (!(((int (*)(uint64_t, int, int, int, int))(b + 0x464a70))(u, 0, 0, -1, -1) & 1) || !w_hostile(b, u)) continue; } else   // 类号 0xfffffe（Mac 合成鼠标脚本的 unit 1,hostile）= 敌对且可选中的怪 | class 0xfffffe (unit 1,hostile in the Mac synthetic mouse script) = hostile and selectable monster
 #endif
         if (cls != 0xffffff ? *(uint32_t *)(u + 4) != cls : (t == 4 && *(uint32_t *)(u + 0xc) != 3)) continue;   // 类号 0xffffff（开关里写 any）= 这一类里任意一个；物品只认在地上的 | class number 0xffffff (written as any in the switch) = any one of this type; items only count when on the ground
+        // 只读格坐标也可报告已载入但屏幕外的单位；屏幕落点仍只认真实投影。
+        // Report loaded offscreen cells separately; a touch still requires
+        // a real visible projection, never a fabricated screen position.
+        int cell_x = 0, cell_y = 0;
+        uint64_t candidate = w_unit_xy(u, &cell_x, &cell_y) ?
+            1ull << 32 | (uint64_t)(uint16_t)cell_x << 16 | (uint16_t)cell_y : 0;
+        if (!cells) cells = candidate;
         float f[2], h[2]; if (!w_project(b, scene, u, f, 0)) continue;
         if (!w_project(b, scene, u, h, 1)) { h[0] = f[0]; h[1] = f[1]; }
         float cx = (f[0] + h[0]) / 2 / W, cy = (f[1] + h[1]) / 2 / H; if (cx < 0 || cx > 1 || cy < 0 || cy > 1) continue;
+        if (atomic_load(&g_watch) != w) return;
+        cells = candidate;
         v = 1ull << 32 | (uint64_t)(uint32_t)(cx * 65535) << 16 | (uint32_t)(cy * 65535); break; }
+    if (atomic_load(&g_watch) != w) return;
+    atomic_store(&g_watch_cells, cells);
     atomic_store(&g_watch_pos, v);
 }
 // 测试开关（造现场用，走不到的地方先走过去）：DM_TEST_WORLD_XY="<拍>:<x>,<y>[;…]" 到拍后按格坐标走过去（同一套路线规划，逐段发游戏的「跑到点」；到 2 格内或 12 秒没到就换下一条）；
@@ -501,6 +561,7 @@ static void w_test_xy_step(void) {
 // An exit tile is type 5, class number = the exit number in the levels table leading to the target level (Canyon of the Magi -> 66..72 is 38..44). DM_TEST_SEEK_BIAS=x,y: jump first to rooms close to this point (used when the target's rough location is known).
 // DM_TEST_LEVEL_INFO="<tick>[,...]": print the current level id, room count and extent, and the true tomb level id. Level structure is only read from game memory: the player's room +0x18 = level room, its +0x90 = level; level +0x10 = first level room, level room +0x48 = next one (including unloaded ones),
 // +0x60 / +0x64 / +0x68 / +0x6c = x / y / width / height (x5 = walk cell coordinates), +0x58 = the room when loaded; level +0x1f8 = level id, level +0x1c8 = act-level object, its +0x120 = level id of the true tomb hiding the staff holder in this run (act 2).
+#if !defined(DM_NATIVE_WORLD_CORE) || defined(DM_NATIVE_FEATURES)
 static void w_test_seek_step(void) {
     extern _Atomic int g_dm_seek_tp; extern int g_dm_seek_tp_x, g_dm_seek_tp_y;
     static struct { uint32_t at, type, cls, lvl; int st; } q[8]; static int n = -1, cur = -1; static uint32_t it[6]; static int ni = -1; static uint64_t lv0, settle;
@@ -524,6 +585,18 @@ static void w_test_seek_step(void) {
         LOG("探路：找到了 类型 %u 类号 %u 在 %d,%d（玩家 %d,%d）→ 走过去交互", q[cur].type, q[cur].cls, x, y, px, py); w_go(c); q[cur].st = 2; cur = -1; return; }
     if (!atomic_load(&g_dm_seek_tp)) { LOG("探路：跳得到的房间都去过了，没找到 类型 %u 类号 %u", q[cur].type, q[cur].cls); q[cur].st = 2; cur = -1; }
 }
+#else
+static void w_test_seek_step(void) {
+    static int checked;
+    if (!checked) {
+        checked = 1;
+        if (getenv("DM_TEST_WORLD_SEEK") || getenv("DM_TEST_LEVEL_INFO"))
+            die("Native world core: server seek diagnostics are not linked");
+        if (getenv("DM_PUMP_PROF"))
+            die("Native world core: Darwin instruction profiling is unavailable");
+    }
+}
+#endif
 _Atomic int g_dm_dur_sync_n; uint32_t g_dm_dur_sync[16][2];   // DM_TEST_DUR：服务端一侧设完耐久后，请这里把客户端那份物品的属性 72 也写成同值（{物品 id, 值}） | DM_TEST_DUR: after the server side sets the durability, it asks here to write stat 72 of the client copy of the item to the same value ({item id, value})
 // 小地图进图即标出小站与出入口（只标洞口、楼梯、门、传送门这类真实的出入口，加上小站；野外图之间走过去的边界不标）。自定义页 map_mark 缺省开；DM_MAP_MARK 强制。
 // 用的全是原版自己的函数、原版自己的顺序——预设关卡「整关揭示」那段（main+0x553270–0x553298）对每间房做的就是这两步：
@@ -540,11 +613,31 @@ _Atomic int g_dm_dur_sync_n; uint32_t g_dm_dur_sync[16][2];   // DM_TEST_DUR：�
 // Rooms initialized early need not be unloaded by us: the game unloads them itself after about 37 ticks and reloads them as usual when the player gets close (measured 3 round trips); the initialization goes through the client-side objects and spawns no monsters (server monster count unchanged before and after the reveal).
 // Towns (1 / 40 / 75 / 103 / 109) are revealed whole by the original game on entry, so nothing is done. Done once per level entered (after waiting 30 frames to let the map's own loading finish first).
 _Atomic int g_dm_game_ver = -1;
+// 核心桥尚未带自定义设置页；地图增强仅允许显式诊断开关。
+// The core bridge has no custom settings page yet; map enhancements require an
+// explicit diagnostic switch until that original module is connected.
+static int w_map_mark_enabled(void) {
+    static int env = -2;
+    if (env == -2) { const char *e = getenv("DM_MAP_MARK"); env = e ? e[0] != '0' : -1; }
+    if (env >= 0) return env;
+#if defined(DM_NATIVE_WORLD_CORE) && !defined(DM_NATIVE_FEATURES)
+    return 0;
+#else
+    int dm_custom_get(const char *); return dm_custom_get("map_mark");
+#endif
+}
+static void w_test_shot_at(long frame, const char *path) {
+#if defined(DM_NATIVE_WORLD_CORE) && !defined(DM_NATIVE_FEATURES)
+    (void)frame; (void)path; die("Native world core: world-tap screenshot diagnostic is unavailable");
+#else
+    dm_gfx_shot_at(frame, path);
+#endif
+}
 static void w_map_mark_step(void) {
     // 开关：环境变量 DM_MAP_MARK（测试强制，0 关 / 其余开）优先，否则读自定义页 map_mark（运行中即时生效；关掉只是不再标新进的图，已标的迷雾不收回）
     // Switch: the environment variable DM_MAP_MARK (forced for tests, 0 off / anything else on) takes priority, otherwise read map_mark from the custom page (takes effect immediately at run time; turning it off only stops marking newly entered maps, fog already marked is not taken back)
-    static int env = -2; static uint64_t lv_seen, lv_done, at; if (env == -2) { const char *e = getenv("DM_MAP_MARK"); env = e ? e[0] != '0' : -1; }
-    int dm_custom_get(const char *key); if (!(env >= 0 ? env : dm_custom_get("map_mark"))) return;
+    static uint64_t lv_seen, lv_done, at;
+    if (!w_map_mark_enabled()) return;
     uint8_t *b = wb(); uint64_t pl = b ? w_player() : 0, lv = pl ? w_level(pl) : 0; int ver = atomic_load(&g_dm_game_ver); if (!lv || ver < 0) return;
     if (lv != lv_seen) { lv_seen = lv; at = dm_guest_frame() + 30; return; } if (lv == lv_done || dm_guest_frame() < at) return; lv_done = lv;
     uint32_t lvno = *(uint32_t *)(lv + 0x1f8); if (lvno == 1 || lvno == 40 || lvno == 75 || lvno == 103 || lvno == 109) return;
@@ -632,8 +725,7 @@ static void mg_scan_room(uint64_t lv, uint64_t r) {
     }
 }
 static void w_map_goal_step(void) {
-    static int env = -2; if (env == -2) { const char *e = getenv("DM_MAP_MARK"); env = e ? e[0] != '0' : -1; }
-    int dm_custom_get(const char *key); int on = env >= 0 ? env : dm_custom_get("map_mark");
+    int on = w_map_mark_enabled();
     uint8_t *b = wb(); uint64_t pl = on && b ? w_player() : 0, lv = pl ? w_level(pl) : 0; int ver = atomic_load(&g_dm_game_ver);
     if (lv != g_mg.lv) { memset(&g_mg, 0, sizeof g_mg); g_mg.lv = lv; if (lv) { g_mg.lvno = *(uint32_t *)(lv + 0x1f8); g_mg.room = mg_wanted(g_mg.lvno) ? *(uint64_t *)(lv + 0x10) : 0; } }
     if (g_mg.room && ver >= 0) {
@@ -654,17 +746,30 @@ int dm_map_goals(dm_map_goal_view *v) {
     v->n = 0; return 0;
 }
 void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at the controller poll
+#if !defined(DM_NATIVE_WORLD_CORE) || defined(DM_NATIVE_FEATURES)
     { void dm_rift_client_pump(uint8_t *); DM_PROF(0, "w.rift_client", dm_rift_client_pump(wb())); }   // 秘境爬塔：认击杀（dm_rift.c） | rift tower climb: recognize kills (dm_rift.c)
+#endif
     { int nd = atomic_load(&g_dm_dur_sync_n); uint8_t *b0 = nd ? wb() : NULL; if (b0) { atomic_store(&g_dm_dur_sync_n, 0); for (int i = 0; i < nd && i < 16; i++) { uint64_t c = w_find(4, g_dm_dur_sync[i][0]); if (c) ((void (*)(uint64_t, int, int, int))(b0 + 0x5bc1f0))(c, 72, (int)g_dm_dur_sync[i][1], 0); } } }   // DM_TEST_DUR 的客户端一半（diag.c） | client half of DM_TEST_DUR (diag.c)
     DM_PROF(0, "w.test_seek", w_test_seek_step());
     w_test_xy_step();
     uint8_t *b = wb(); if (!b) return;
+#ifdef DM_NATIVE_WORLD_CORE
+    w_near_level_step();
+#endif
     if (g_it.active) w_interaction_poll(w_player(), dm_guest_frame());
     DM_PROF(0, "w.watch", w_watch_step(b));
+#if !defined(DM_NATIVE_WORLD_CORE) || defined(DM_NATIVE_FEATURES)
     { void dm_potpick_step(uint8_t *); DM_PROF(0, "w.potpick", dm_potpick_step(b)); }   // 药水自动拾取（dm_potpick.c） | automatic potion pickup (dm_potpick.c)
+#endif
+#if !defined(DM_NATIVE_WORLD_CORE) || defined(DM_NATIVE_FEATURES)
     { void dm_padmode_step(uint8_t *, uint64_t); DM_PROF(0, "w.padmode", dm_padmode_step(b, dm_guest_frame())); }   // 手柄 / 触屏布局切换（dm_padmode.c） | Controller / touch layout switching (dm_padmode.c)
+#endif
+#if !defined(DM_NATIVE_WORLD_CORE) || defined(DM_NATIVE_FEATURES)
     { void dm_beltauto_step(uint8_t *); DM_PROF(0, "w.beltauto", dm_beltauto_step(b)); }   // 开背包自动补腰带（dm_beltauto.c） | Auto-refill the belt when the inventory opens (dm_beltauto.c)
+#endif
+#if !defined(DM_NATIVE_WORLD_CORE) || defined(DM_NATIVE_FEATURES)
     { void dm_pouch_step(uint8_t *); DM_PROF(0, "w.pouch", dm_pouch_step(b)); }   // 百宝囊 / 存放（dm_pouch.c） | pouch / deposit (dm_pouch.c)
+#endif
     if (g_release_at && dm_guest_frame() >= g_release_at) { g_release_at = 0; uint64_t pl = w_player(); if (pl) { atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 500000000ull); ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, 2, g_rel_x, g_rel_y, 0); } }
     DM_PROF(0, "w.go", w_go_step());
     DM_PROF(0, "w.tile_retry", w_tile_retry_step());
@@ -680,7 +785,7 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
         uint32_t now = dm_cur_tick(); if (now < (uint32_t)at) continue;
         if (!st[tk]) { if (atomic_load(&g_watch)) continue; dm_world_watch(ty, cl); st[tk] = 1; t0[tk] = now; continue; }   // 一次只盯一个：前一个没完就等 | watch only one at a time: wait if the previous one is not finished
         float nx, ny; if (dm_world_watch_pos(&nx, &ny)) { dm_world_watch(-1, 0); st[tk] = 2; LOG("世界目标：%s %s → 在画面 (%.3f,%.3f) 落点按", tn[tk], e, nx, ny); dm_world_tap(nx, ny);
-            const char *sp = getenv("DM_TEST_WORLD_TAP_SHOT"); if (sp) { void dm_gfx_shot_at(long, const char *); char pth[512]; snprintf(pth, sizeof pth, "%s%d.png", sp, tk + 1); dm_gfx_shot_at(1, pth); } }   // 同时截一张（路径前缀 + 序号），和候选框日志对照 | also take a screenshot (path prefix + sequence number) to compare against the candidate-box log
+            const char *sp = getenv("DM_TEST_WORLD_TAP_SHOT"); if (sp) { void dm_gfx_shot_at(long, const char *); char pth[512]; snprintf(pth, sizeof pth, "%s%d.png", sp, tk + 1); w_test_shot_at(1, pth); } }   // 同时截一张（路径前缀 + 序号），和候选框日志对照 | also take a screenshot (path prefix + sequence number) to compare against the candidate-box log
         else if (now - t0[tk] > 125) { dm_world_watch(-1, 0); st[tk] = 2; LOG("世界目标：%s %s → 5 秒内这类单位没进画面，放弃", tn[tk], e); } }
     // 测试开关 DM_TEST_WORLD_GO（及同语法的 DM_TEST_WORLD_GO2 / 3 / 4，给多步场景）=<类型>:<id>[@拍] 或 <类型>:c<类号>[@拍]：进局第 200 拍（或指定拍）对该单位发一次「走过去交互」（验商人页等要先走到 NPC 的场景）。
     // 前缀 near:（如 near:1:c155；near2: = 2 格）= 只走到目标 4 格（或指定格数）内就停、不交互。另两种写法：monster[@拍] = 走到最近的敌对怪旁边（5 格内停下，不交互、不攻击）；exit[@拍] = 走到最近的出口并交互（进洞 / 换层）。只在客户端已载入的附近房间里找。

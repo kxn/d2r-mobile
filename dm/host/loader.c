@@ -3,13 +3,18 @@
 // Multi-module loading (playing the role of Horizon's rtld): mapping, claiming thread slots, gate registration, cross-module relocation, take-over by name, segment permissions.
 // The code area (original text and patch area) is set to read-only+execute as soon as it is copied in, and from then on the loader only writes data: on iOS these two blocks must be embedded as is as signed code segments.
 #include "dm.h"
+#include "platform.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#endif
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#endif
 #include "hle.h"
 
 module_t g_mod[MAX_MOD];
@@ -19,8 +24,10 @@ pthread_key_t g_keyres[2], g_keyaspect, g_keyaspectui;   // g_keyaspect：宽高
 enum { KEY_K18, KEY_KTLS, KEY_KTLR, KEY_KGATE, KEY_KRES0, KEY_KRES1, KEY_KASPECT, KEY_KASPECTUI, KEY_N };
 
 uint64_t resolve_import(module_t *m, const char *name);
+uint64_t resolve_weak_import(module_t *m, const char *name);
 void gate_register(uint64_t ret_addr, const char *kind, int arg, uint64_t orig);
 
+#ifndef DM_TLS_DESC
 static pthread_key_t key_value(unsigned i) {
     switch (i) {
     case KEY_K18: return g_key18; case KEY_KTLS: return g_keytls; case KEY_KTLR: return g_keytlr;
@@ -28,6 +35,7 @@ static pthread_key_t key_value(unsigned i) {
     case KEY_KASPECT: return g_keyaspect; default: return g_keyaspectui;
     }
 }
+#endif
 static void create_keys(void) {
     if (pthread_key_create(&g_key18, NULL) || pthread_key_create(&g_keytls, NULL) ||
         pthread_key_create(&g_keytlr, NULL) || pthread_key_create(&g_keygate, NULL)) die("创建宿主键失败");
@@ -36,17 +44,32 @@ static void create_keys(void) {
     if (pthread_key_create(&g_keyres[0], NULL) || pthread_key_create(&g_keyres[1], NULL) ||
         pthread_key_create(&g_keyaspect, NULL) || pthread_key_create(&g_keyaspectui, NULL)) die("创建参数位键失败");
     LOG("键号 K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu KRES0=%lu KRES1=%lu KASPECT=%lu KASPECTUI=%lu",
-        g_key18, g_keytls, g_keytlr, g_keygate, g_keyres[0], g_keyres[1], g_keyaspect, g_keyaspectui);
+        (unsigned long)g_key18, (unsigned long)g_keytls, (unsigned long)g_keytlr,
+        (unsigned long)g_keygate, (unsigned long)g_keyres[0], (unsigned long)g_keyres[1],
+        (unsigned long)g_keyaspect, (unsigned long)g_keyaspectui);
 }
 
 // K 槽校验：pthread TSD 布局固定，槽 = tpidrro_el0 + 8*key
 // K slot check: the pthread TSD layout is fixed, slot = tpidrro_el0 + 8*key
 static void tsd_check(void) {
+#ifndef __APPLE__
+    dm_tsd_set(g_key18, (void *)0x1234);
+#ifdef DM_TLS_DESC
+    dm_tsd_check();
+    if (dm_tsd_get(g_key18) != (void *)0x1234) die("ELF TLSDESC slot mismatch");
+#else
+    uint64_t base = (uint64_t)__builtin_thread_pointer();
+    int64_t off; memcpy(&off, g_mod[0].base + g_mod[0].key_page_off + g_mod[0].key_idx[KEY_K18] * 8, 8);
+    if (*(uintptr_t *)(base + off) != 0x1234) die("ELF TLS layout mismatch");
+#endif
+    dm_tsd_set(g_key18, 0);
+#else
     pthread_setspecific(g_key18, (void *)0x1234);
     uint64_t base; __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(base));
     uint64_t off = *(uint64_t *)(g_mod[0].base + g_mod[0].key_page_off + g_mod[0].key_idx[KEY_K18] * 8);
     if (((uint64_t *)(base & ~7ull))[off / 8] != 0x1234) die("TSD 布局不符");
     pthread_setspecific(g_key18, 0);
+#endif
 }
 
 static void build_symhash(module_t *m);
@@ -115,16 +138,21 @@ module_t *module_of(const void *p) {
 
 // 跨模块符号解析：先在已装模块里找定义，找不到再交给 HLE / 桩
 // Cross-module symbol resolution: first look for a definition in the loaded modules, and only if not found hand over to HLE / stubs
-static uint64_t resolve_sym(module_t *m, const char *name) {
+static uint64_t resolve_sym(module_t *m, const char *name, int weak) {
     for (int i = 0; i < g_nmod; i++) { void *p = module_sym(&g_mod[i], name); if (p) return (uint64_t)p; }
-    return resolve_import(m, name);
+    return weak ? resolve_weak_import(m,name) : resolve_import(m, name);
 }
 
 // 强制接管表（hle.h HLE_FORCE，__DATA,swforce 段）：命中即覆盖模块内定义
 // Forced take-over table (hle.h HLE_FORCE, the __DATA,swforce section): a hit overrides the definition inside the module
 static const hle_force_ent *g_force; static unsigned g_nforce; static unsigned *g_force_hits;
 static void force_init(void) {
-    unsigned long sz; g_force = (const hle_force_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swforce", &sz);
+    unsigned long sz;
+#ifdef __APPLE__
+    g_force = (const hle_force_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swforce", &sz);
+#else
+    g_force = (const hle_force_ent *)__start_swforce; sz = __stop_swforce - __start_swforce;
+#endif
     g_nforce = g_force ? (unsigned)(sz / sizeof *g_force) : 0;
     g_force_hits = calloc(g_nforce + 1, sizeof *g_force_hits);
     for (unsigned i = 0; i < g_nforce; i++)
@@ -154,10 +182,18 @@ static void read_layout(module_t *m, const char *dir) {
     FILE *f = fopen(path, "r");
     if (!f) die("open %s", path);
     static const char *kn[8] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI"};
-    char line[256], key[32]; unsigned long v; unsigned seen = 0;
+    char line[256], key[32]; unsigned long v; unsigned seen = 0; int seen_gate = 0;
     while (fgets(line, sizeof line, f)) {
         if (sscanf(line, "# %31s %lx", key, &v) != 2) die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
-        if (!strcmp(key, "PATCH_OFF")) m->patch_off = v;
+        if (!strcmp(key, "HOST_ABI")) {
+            if (v > 3) die("%s: unsupported host ABI", path);
+            m->host_abi = (unsigned)v;
+        }
+        else if (!strcmp(key, "HOST_GATE_IDX")) {
+            if (v != 8 || seen_gate) die("%s: invalid process gate index", path);
+            m->host_gate_idx = (unsigned)v; seen_gate = 1;
+        }
+        else if (!strcmp(key, "PATCH_OFF")) m->patch_off = v;
         else if (!strcmp(key, "KEY_PAGE_OFF")) m->key_page_off = v;
         else if (!strcmp(key, "KEY_PAGE_SIZE")) m->key_page_size = v;
         else if (!strcmp(key, "TEXT_END")) m->text_end = v;
@@ -171,17 +207,45 @@ static void read_layout(module_t *m, const char *dir) {
         }
     }
     fclose(f);
+#ifdef __APPLE__
+    if (m->host_abi != 0) die("ELF rewrite cannot execute on Darwin");
+#else
+#ifdef DM_TLS_DESC
+    if (m->host_abi != 2 && m->host_abi != 3)
+        die("TLSDESC host requires DM_HOST_ABI=elfdesc or elfdesc-gate rewrite output");
+#else
+    if (m->host_abi != 1) die("ELF host requires DM_HOST_ABI=elf rewrite output");
+#endif
+#endif
     if (!m->patch_off || m->key_page_off % 0x4000 || m->key_page_size != 0x4000 || seen != 0xff)
         die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
+    if ((m->host_abi == 3) != seen_gate)
+        die("%s: process gate metadata does not match host ABI", path);
+    for (unsigned k = 0; k < 8; k++) {
+        if (m->key_idx[k] >= m->key_page_size / 8 ||
+            (seen_gate && m->key_idx[k] == m->host_gate_idx))
+            die("%s: invalid TLS key index", path);
+        for (unsigned j = 0; j < k; j++)
+            if (m->key_idx[k] == m->key_idx[j]) die("%s: duplicate TLS key index", path);
+    }
 }
 
 static void install_key_page(module_t *m) {
     if (m->key_page_off + m->key_page_size > m->size) die("%s: 键页越界", m->name);
     uint64_t *page = (uint64_t *)(m->base + m->key_page_off);
     memset(page, 0, m->key_page_size);
+#ifdef __APPLE__
     for (unsigned i = 0; i < 4; i++) page[m->key_idx[i]] = (uint64_t)key_value(i) * 8;
     page[m->key_idx[KEY_KRES0]] = (uint64_t)g_keyres[0] * 8; page[m->key_idx[KEY_KRES1]] = (uint64_t)g_keyres[1] * 8;
     page[m->key_idx[KEY_KASPECT]] = (uint64_t)g_keyaspect * 8; page[m->key_idx[KEY_KASPECTUI]] = (uint64_t)g_keyaspectui * 8;
+#else
+#ifdef DM_TLS_DESC
+    for (unsigned i=0;i<8;i++) page[m->key_idx[i]] = dm_tsd_descriptor();
+    if (m->host_abi == 3) page[m->host_gate_idx] = (uintptr_t)dm_gate;
+#else
+    for (unsigned i=0;i<8;i++) page[m->key_idx[i]] = (uint64_t)dm_tsd_offset(key_value(i));
+#endif
+#endif
     for (int k = 0; k < 8; k++) if (!page[m->key_idx[k]]) die("%s: 键页第 %d 项为 0（宿主键没建）——游戏会读到 TSD 0 号槽", m->name, k);
     if (mprotect(m->base + m->key_page_off, m->key_page_size, PROT_READ)) die("%s 键页 mprotect", m->name);
 }
@@ -196,7 +260,8 @@ static void register_gates(module_t *m, const char *dir) {
             if (sscanf(line, "%lx %15s %d %lx", &ret, kind, &arg, &orig) == 4) { gate_register((uint64_t)m->base + ret, kind, arg, orig); ng++; }
         fclose(f);
     }
-    LOG("%s: gates %d patch_off %#llx keys %lu/%lu/%lu/%lu", m->name, ng, m->patch_off, g_key18, g_keytls, g_keytlr, g_keygate);
+    LOG("%s: gates %d patch_off %#llx keys %lu/%lu/%lu/%lu", m->name, ng, m->patch_off,
+        (unsigned long)g_key18, (unsigned long)g_keytls, (unsigned long)g_keytlr, (unsigned long)g_keygate);
 }
 
 static void relocate(module_t *m) {
@@ -218,7 +283,11 @@ static void relocate(module_t *m) {
             if (type == R_AARCH64_RELATIVE) { *where = (uint64_t)m->base + r->r_addend; cnt[0]++; continue; }
             const Elf64_Sym *s = &m->symtab[si];
             uint64_t v = (uint64_t)force_lookup(m->strtab + s->st_name);
-            if (!v) v = s->st_shndx ? (uint64_t)m->base + s->st_value : resolve_sym(m, m->strtab + s->st_name);
+            int weak=0;
+#ifdef DM_STRICT_HLE
+            weak=(s->st_info>>4)==2;
+#endif
+            if (!v) v = s->st_shndx ? (uint64_t)m->base + s->st_value : resolve_sym(m, m->strtab + s->st_name, weak);
             if (type == R_AARCH64_JUMP_SLOT) { *where = v; cnt[2]++; }
             else { *where = v + r->r_addend; cnt[1]++; }       // ABS64 / GLOB_DAT
         }
@@ -231,7 +300,8 @@ static void relocate(module_t *m) {
 // DM_LOADHASH=1 (diagnostics): after loading, output an address-independent sha256 per module, to prove that the load results of "early start / no early start" are byte-identical.
 // Module base addresses and host ASLR differ every run, and only the values of the relocation slots change with them: copy the image and, using the same relocation table, replace every slot with an address-independent token --
 // RELATIVE → (0, addend); symbol target falls in some module → (1 + module number, offset within the module); otherwise (host forced take-over / host symbol) → (name FNV, addend); all other bytes as is.
-#include <CommonCrypto/CommonDigest.h>
+#include "crypto.h"
+
 void loader_hash_log(void) {
     if (!getenv("DM_LOADHASH")) return;
     for (int k = 0; k < g_nmod; k++) {
@@ -344,7 +414,11 @@ static void map_image(module_t *m, const char *dir) {
     m->size = (sz + 0x3FFF) & ~0x3FFFull;
     m->base = mmap(NULL, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
-    memcpy(m->base, raw, sz); free(raw); install_key_page(m);
+    memcpy(m->base, raw, sz); free(raw);
+#ifndef __APPLE__
+    __builtin___clear_cache((char *)m->base, (char *)m->base + m->size);
+#endif
+    install_key_page(m);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
     uint64_t po = m->patch_off & ~0x3FFFull;

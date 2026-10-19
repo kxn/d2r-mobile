@@ -1,0 +1,114 @@
+.text
+.globl native_host_stack_abi
+.p2align 2
+.type native_host_stack_abi,%function
+native_host_stack_abi:
+    .cfi_startproc
+    hint #34
+    stp x29,x30,[sp,#-192]!
+    .cfi_def_cfa_offset 192
+    .cfi_offset x29,-192
+    .cfi_offset x30,-184
+    mov x29,sp
+    .cfi_def_cfa x29,192
+    stp x19,x20,[sp,#16]
+    stp x21,x22,[sp,#32]
+    stp x23,x24,[sp,#48]
+    stp x25,x26,[sp,#64]
+    stp x27,x28,[sp,#80]
+    stp d8,d9,[sp,#96]
+    stp d10,d11,[sp,#112]
+    stp d12,d13,[sp,#128]
+    stp d14,d15,[sp,#144]
+    str x18,[sp,#160]
+    mov x19,#19
+    mov x20,#20
+    mov x21,#21
+    mov x22,#22
+    mov x23,#23
+    mov x24,#24
+    mov x25,#25
+    mov x26,#26
+    mov x27,#27
+    mov x28,#28
+    fmov d8,x19
+    fmov d9,x20
+    fmov d10,x21
+    fmov d11,x22
+    fmov d12,x23
+    fmov d13,x24
+    fmov d14,x25
+    fmov d15,x26
+    bl dm_thread_host_call
+    cmp w0,#1
+    b.ne 1f
+    cmp x19,#19
+    b.ne 1f
+    cmp x20,#20
+    b.ne 1f
+    cmp x21,#21
+    b.ne 1f
+    cmp x22,#22
+    b.ne 1f
+    cmp x23,#23
+    b.ne 1f
+    cmp x24,#24
+    b.ne 1f
+    cmp x25,#25
+    b.ne 1f
+    cmp x26,#26
+    b.ne 1f
+    cmp x27,#27
+    b.ne 1f
+    cmp x28,#28
+    b.ne 1f
+    fmov x9,d8
+    cmp x9,#19
+    b.ne 1f
+    fmov x9,d9
+    cmp x9,#20
+    b.ne 1f
+    fmov x9,d10
+    cmp x9,#21
+    b.ne 1f
+    fmov x9,d11
+    cmp x9,#22
+    b.ne 1f
+    fmov x9,d12
+    cmp x9,#23
+    b.ne 1f
+    fmov x9,d13
+    cmp x9,#24
+    b.ne 1f
+    fmov x9,d14
+    cmp x9,#25
+    b.ne 1f
+    fmov x9,d15
+    cmp x9,#26
+    b.ne 1f
+    ldr x9,[sp,#160]
+    cmp x9,x18
+    b.ne 1f
+    mov x9,sp
+    cmp x9,x29
+    b.ne 1f
+    mov w0,#1
+    b 2f
+1:  mov w0,#0
+2:  ldp x19,x20,[sp,#16]
+    ldp x21,x22,[sp,#32]
+    ldp x23,x24,[sp,#48]
+    ldp x25,x26,[sp,#64]
+    ldp x27,x28,[sp,#80]
+    ldp d8,d9,[sp,#96]
+    ldp d10,d11,[sp,#112]
+    ldp d12,d13,[sp,#128]
+    ldp d14,d15,[sp,#144]
+    ldp x29,x30,[sp],#192
+    .cfi_def_cfa sp,0
+    .cfi_restore x29
+    .cfi_restore x30
+    ret
+    .cfi_endproc
+.size native_host_stack_abi,.-native_host_stack_abi
+.section .note.GNU-stack,"",%progbits

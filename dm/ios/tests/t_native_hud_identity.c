@@ -40,5 +40,5 @@ int main(void){
  put32(widget[0]+0xb18,1);regs[19]=1;CHECK(!dm_tg_hud_identity(&c,regs,base,1,3,dm_tg_vm_read,&caller,&hud));CHECK(c.seen==1 && !c.widget[1]);put32(widget[0]+0xb18,0);
  CHECK(!dm_tg_vm_read(1,&caller,8));CHECK(!dm_tg_vm_read(UINT64_MAX,&caller,8));
  CHECK(!memcmp(widget,original,6*sizeof widget[0])); // 原six widget无写入；第七是测试替身。 | no writes to the original six widgets; the seventh is a test double.
- printf("PASS native Mach FramePointer/HUD cohort/cache/world negative %d/%d checks; %d/%d calls regs read-only\n",checks,checks,readonly_calls,readonly_calls);return 0;
+ printf("PASS native process FramePointer/HUD cohort/cache/world negative %d/%d checks; %d/%d calls regs read-only\n",checks,checks,readonly_calls,readonly_calls);return 0;
 }

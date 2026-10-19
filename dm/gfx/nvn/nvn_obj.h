@@ -164,6 +164,10 @@ double mtl_presented_time(uint64_t n);
 // 贴图释放（Finalize 时）
 // Texture release (at Finalize)
 void mtl_tex_release(tex_t *t);
+// 与原对象快照退役共用已入队提交数，GPU 后端不能按翻译线程进度提前销毁。
+// Share the original snapshot retirement clock: queued submissions, rather
+// than translation progress, determine when GPU resources can retire.
+uint64_t nvn_submissions_enqueued(void);
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads);
 uint64_t mtl_pkg_miss(void);
 uint64_t mtl_upload_ns_take(void);   // 取走并清零：上次以来提交线程上预排布贴图上传耗时   // DM_NVN_DIRTYCHECK 诊断：漏检次数   // 预排布贴图：首传次数、因池内容变化而重传次数 | Take and zero: time spent uploading packaged textures on the submit thread since last time   // DM_NVN_DIRTYCHECK diagnostic: number of missed detections   // Packaged textures: number of first uploads, number of re-uploads due to pool content changes

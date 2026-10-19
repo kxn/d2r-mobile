@@ -21,6 +21,7 @@ run: \
 	$(B)/t_hid_receipt \
 	$(B)/t_hid_script \
 	$(B)/t_hud_dead \
+	$(B)/t_guest_player \
 	$(B)/t_i18n \
 	$(B)/t_modetx \
 	$(B)/t_movie \
@@ -76,6 +77,7 @@ run: \
 	$(B)/t_condvar_old
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
+	$(B)/t_guest_player
 	$(B)/t_namegen
 	$(B)/t_modetx
 	$(B)/t_padmap
@@ -90,6 +92,8 @@ $(B)/t_i18n: t_i18n.c ../dm_i18n.c ../dm_i18n.h ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_i18n.c ../dm_i18n.c
 $(B)/t_hud_dead: t_hud_dead.c ../dm_hud.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_hud_dead.c
+$(B)/t_guest_player: t_guest_player.c ../dm_guest_player.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_guest_player.c
 $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
 $(B)/t_rwlv: t_rwlv.c ../dm_rwlv_core.c ../dm_rwlv_core.h | $(B)

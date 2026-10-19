@@ -1,0 +1,278 @@
+diff --git a/src/Ryujinx.HLE/Debugger/Debugger.Control.cs b/src/Ryujinx.HLE/Debugger/Debugger.Control.cs
+new file mode 100644
+index 00000000..0b2702ec
+--- /dev/null
++++ b/src/Ryujinx.HLE/Debugger/Debugger.Control.cs
+@@ -0,0 +1,106 @@
++using Ryujinx.Graphics.GAL;
++using Ryujinx.Graphics.GAL.Multithreading;
++using System;
++using System.Globalization;
++using System.IO;
++using System.Text.Json;
++
++namespace Ryujinx.HLE.Debugger
++{
++    public partial class Debugger
++    {
++        private readonly object _captureLock = new();
++        private EventHandler<ScreenCaptureImageInfo> _captureHandler;
++        private object _captureStatus = new { status = "idle" };
++
++        private void CancelD2rCapture()
++        {
++            lock (_captureLock)
++            {
++                if (_captureHandler != null)
++                    Device.Gpu.Renderer.ScreenCaptured -= _captureHandler;
++                _captureHandler = null;
++                _captureStatus = new { status = "idle" };
++            }
++        }
++
++        private string D2rControl(string arguments)
++        {
++            try
++            {
++                string[] args = arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries);
++                if (args.Length == 0) throw new ArgumentException("Missing command");
++                object result;
++                switch (args[0])
++                {
++                    case "info" when args.Length == 1:
++                        result = new { protocol = 1, input = "player1-procontroller", screenshot = "next-presented-frame-rgba", deterministicClock = false };
++                        break;
++                    case "input" when args.Length == 6:
++                        ulong buttons = ulong.Parse(args[1].Replace("0x", ""), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
++                        int Axis(int i) => int.Parse(args[i], CultureInfo.InvariantCulture);
++                        result = new { generation = Device.Hid.Npads.SetScriptInput(buttons, Axis(2), Axis(3), Axis(4), Axis(5)) };
++                        break;
++                    case "input-state" when args.Length == 1:
++                        result = Device.Hid.Npads.GetScriptInputStatus();
++                        break;
++                    case "release" when args.Length == 1:
++                        Device.Hid.Npads.ClearScriptInput();
++                        result = new { released = true };
++                        break;
++                    case "shot-cancel" when args.Length == 1:
++                        CancelD2rCapture();
++                        result = new { status = "idle" };
++                        break;
++                    case "shot-status" when args.Length == 1:
++                        lock (_captureLock) { result = _captureStatus; }
++                        break;
++                    case "screenshot" when args.Length == 1:
++                        lock (_captureLock)
++                        {
++                            IRenderer renderer = Device.Gpu.Renderer;
++                            if (renderer is ThreadedRenderer threaded) renderer = threaded.BaseRenderer;
++                            if (renderer.Window == null)
++                            {
++                                result = new { status = "not-ready" };
++                                break;
++                            }
++                            if (_captureHandler != null) throw new InvalidOperationException("A capture is already pending");
++                            string id = Guid.NewGuid().ToString("N");
++                            _captureStatus = new { status = "pending", id };
++                            EventHandler<ScreenCaptureImageInfo> handler = null;
++                            handler = (_, frame) =>
++                            {
++                                lock (_captureLock)
++                                {
++                                    if (_captureHandler != handler) return;
++                                    Device.Gpu.Renderer.ScreenCaptured -= handler;
++                                    _captureHandler = null;
++                                    try
++                                    {
++                                        if (frame.Width <= 0 || frame.Height <= 0 || frame.Data.Length != checked(frame.Width * frame.Height * 4))
++                                            throw new InvalidDataException("Invalid capture size");
++                                        string dir = Path.Combine(Path.GetTempPath(), "d2r-ryujinx-" + Environment.ProcessId);
++                                        Directory.CreateDirectory(dir);
++                                        string path = Path.Combine(dir, id + ".rgba");
++                                        File.WriteAllBytes(path, frame.Data);
++                                        _captureStatus = new { status = "ready", id, path, width = frame.Width, height = frame.Height,
++                                            bgra = frame.IsBgra, flipX = frame.FlipX, flipY = frame.FlipY };
++                                    }
++                                    catch (Exception e) { _captureStatus = new { status = "error", error = e.Message }; }
++                                }
++                            };
++                            _captureHandler = handler;
++                            Device.Gpu.Renderer.ScreenCaptured += handler;
++                            Device.Gpu.Renderer.Screenshot();
++                            result = _captureStatus;
++                        }
++                        break;
++                    default: throw new ArgumentException("Invalid d2r command or argument count");
++                }
++                return JsonSerializer.Serialize(result) + "\n";
++            }
++            catch (Exception e) { return JsonSerializer.Serialize(new { error = e.Message }) + "\n"; }
++        }
++    }
++}
+diff --git a/src/Ryujinx.HLE/Debugger/Debugger.MainThread.cs b/src/Ryujinx.HLE/Debugger/Debugger.MainThread.cs
+index 144fb65b..e2128279 100644
+--- a/src/Ryujinx.HLE/Debugger/Debugger.MainThread.cs
++++ b/src/Ryujinx.HLE/Debugger/Debugger.MainThread.cs
+@@ -12,7 +12,7 @@ namespace Ryujinx.HLE.Debugger
+     {
+         private void MainLoop()
+         {
+-            IPEndPoint endpoint = new(IPAddress.Any, GdbStubPort);
++            IPEndPoint endpoint = new(IPAddress.Loopback, GdbStubPort);
+             _listenerSocket = new TcpListener(endpoint);
+             
+             try
+@@ -120,6 +120,8 @@ namespace Ryujinx.HLE.Debugger
+                 _clientSocket = null;
+                 _commands = null;
+ 
++                Device.Hid.Npads.ClearScriptInput();
++                CancelD2rCapture();
+                 BreakpointManager.ClearAll();
+             }
+         }
+diff --git a/src/Ryujinx.HLE/Debugger/Debugger.Rcmd.cs b/src/Ryujinx.HLE/Debugger/Debugger.Rcmd.cs
+index 0fb70c6b..9aaa51f1 100644
+--- a/src/Ryujinx.HLE/Debugger/Debugger.Rcmd.cs
++++ b/src/Ryujinx.HLE/Debugger/Debugger.Rcmd.cs
+@@ -51,6 +51,8 @@ namespace Ryujinx.HLE.Debugger
+                     .JoinToString('\n') + '\n',
+                 Array.Empty<string>()));
+ 
++            _rcmdDelegates.Add(new RcmdEntry(["d2r"], (dbgr, args) => dbgr.D2rControl(args),
++                ["d2r info|input <buttons hex> <lx> <ly> <rx> <ry>|input-state|release|screenshot|shot-status|shot-cancel"]));
+             _rcmdDelegates.Add(new RcmdEntry(["get info"], (dbgr, _) => dbgr.GetProcessInfo(), ["get info"]));
+             _rcmdDelegates.Add(new RcmdEntry(["backtrace", "bt"], (dbgr, _) => dbgr.GetStackTrace(), ["backtrace", "bt"]));
+             _rcmdDelegates.Add(new RcmdEntry(["registers", "reg"], (dbgr, _) => dbgr.GetRegisters(), ["registers", "reg"]));
+diff --git a/src/Ryujinx.HLE/HOS/Services/Hid/HidDevices/NpadDevices.Script.cs b/src/Ryujinx.HLE/HOS/Services/Hid/HidDevices/NpadDevices.Script.cs
+new file mode 100644
+index 00000000..bf7b03cd
+--- /dev/null
++++ b/src/Ryujinx.HLE/HOS/Services/Hid/HidDevices/NpadDevices.Script.cs
+@@ -0,0 +1,51 @@
++using System;
++
++namespace Ryujinx.HLE.HOS.Services.Hid
++{
++    public partial class NpadDevices
++    {
++        private readonly object _scriptLock = new();
++        private GamepadInput? _scriptInput;
++        private long _scriptGeneration;
++        private long _scriptApplied;
++
++        public long SetScriptInput(ulong buttons, int lx, int ly, int rx, int ry)
++        {
++            foreach (int axis in new[] { lx, ly, rx, ry })
++                if (axis < -32768 || axis > 32767)
++                    throw new ArgumentOutOfRangeException(nameof(axis));
++            lock (_scriptLock)
++            {
++                var left = new JoystickPosition { Dx = lx, Dy = ly };
++                var right = new JoystickPosition { Dx = rx, Dy = ry };
++                _scriptInput = new GamepadInput
++                {
++                    PlayerId = PlayerIndex.Player1,
++                    Buttons = (ControllerKeys)buttons | _device.Hid.UpdateStickButtons(left, right),
++                    LStick = left, RStick = right,
++                };
++                return ++_scriptGeneration;
++            }
++        }
++
++        public void ClearScriptInput()
++        {
++            lock (_scriptLock) { _scriptInput = null; }
++        }
++
++        // Read back the shared-memory ring consumed by the guest, not the requested input.
++        public object GetScriptInputStatus()
++        {
++            lock (_scriptLock)
++            {
++                ref var pad = ref _device.Hid.SharedMemory.Npads[(int)PlayerIndex.Player1].InternalState;
++                ref var sample = ref pad.SystemExt.GetCurrentEntryRef();
++                return new { active = _scriptInput.HasValue, requested = _scriptGeneration,
++                    applied = _scriptApplied, style = (uint)pad.StyleSet,
++                    sample = sample.SamplingNumber, buttons = (ulong)sample.Buttons,
++                    lx = sample.AnalogStickL.X, ly = sample.AnalogStickL.Y,
++                    rx = sample.AnalogStickR.X, ry = sample.AnalogStickR.Y };
++            }
++        }
++    }
++}
+diff --git a/src/Ryujinx.HLE/HOS/Services/Hid/HidDevices/NpadDevices.cs b/src/Ryujinx.HLE/HOS/Services/Hid/HidDevices/NpadDevices.cs
+index 21a4222a..1d010bbb 100644
+--- a/src/Ryujinx.HLE/HOS/Services/Hid/HidDevices/NpadDevices.cs
++++ b/src/Ryujinx.HLE/HOS/Services/Hid/HidDevices/NpadDevices.cs
+@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
+ 
+ namespace Ryujinx.HLE.HOS.Services.Hid
+ {
+-    public class NpadDevices : BaseDevice
++    public partial class NpadDevices : BaseDevice
+     {
+         private const int NoMatchNotifyFrequencyMs = 2000;
+         private int _activeCount;
+@@ -153,25 +153,37 @@ namespace Ryujinx.HLE.HOS.Services.Hid
+ 
+         public void Update(IList<GamepadInput> states)
+         {
+-            Remap();
++            lock (_scriptLock)
++            {
++                Remap();
+ 
+-            Span<bool> updated = stackalloc bool[10];
++                Span<bool> updated = stackalloc bool[10];
+ 
+-            // Update configured inputs
+-            for (int i = 0; i < states.Count; ++i)
+-            {
+-                GamepadInput state = states[i];
++                // Update configured inputs
++                for (int i = 0; i < states.Count; ++i)
++                {
++                    GamepadInput state = states[i];
++                    if (_scriptInput.HasValue && state.PlayerId == PlayerIndex.Player1)
++                        continue;
+ 
+-                updated[(int)state.PlayerId] = true;
++                    updated[(int)state.PlayerId] = true;
+ 
+-                UpdateInput(state);
+-            }
++                    UpdateInput(state);
++                }
+ 
+-            for (int i = 0; i < updated.Length; i++)
+-            {
+-                if (!updated[i])
++                if (_scriptInput is GamepadInput scripted)
+                 {
+-                    UpdateDisconnectedInput((PlayerIndex)i);
++                    UpdateInput(scripted);
++                    updated[(int)PlayerIndex.Player1] = true;
++                    _scriptApplied = _scriptGeneration;
++                }
++
++                for (int i = 0; i < updated.Length; i++)
++                {
++                    if (!updated[i])
++                    {
++                        UpdateDisconnectedInput((PlayerIndex)i);
++                    }
+                 }
+             }
+         }
+@@ -181,7 +193,8 @@ namespace Ryujinx.HLE.HOS.Services.Hid
+             // Remap/Init if necessary
+             for (int i = 0; i < MaxControllers; ++i)
+             {
+-                ControllerType config = _configuredTypes[i];
++                ControllerType config = _scriptInput.HasValue && i == (int)PlayerIndex.Player1
++                    ? ControllerType.ProController : _configuredTypes[i];
+ 
+                 // Remove Handheld config when Docked
+                 if (config == ControllerType.Handheld && _device.System.State.DockedMode)

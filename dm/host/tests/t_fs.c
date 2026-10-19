@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 static ssize_t fake_pwrite(int fd, const void *buf, size_t n, off_t off);
 #define pwrite fake_pwrite
 #include "../hle_fs.c"
@@ -57,7 +58,7 @@ static int test_holes(void) {
     enum { N = 100000 }; static uint8_t orig[N], got[N]; const long hole[3][2] = {{0, 1000}, {30000, 25000}, {99000, 1000}};   // 开头、中间、结尾各一个零段 | one zero run each at the start, middle and end
     for (long i = 0; i < N; i++) orig[i] = (uint8_t)(i * 131 + (i >> 8) * 7 + 1);
     for (int h = 0; h < 3; h++) memset(orig + hole[h][0], 0, (size_t)hole[h][1]);
-    char path[] = "/tmp/dm-holes.XXXXXX"; int tfd = mkstemp(path); if (tfd < 0) return 1; char hp[64]; snprintf(hp, sizeof hp, "%s.holes", path);
+    char path[1024]; snprintf(path,sizeof path,"%s/dm-holes.XXXXXX",getenv("TMPDIR")?getenv("TMPDIR"):"/tmp"); int tfd = mkstemp(path); if (tfd < 0) return 1; char hp[1100]; snprintf(hp, sizeof hp, "%s.holes", path);
     long pos = 0; for (int h = 0; h <= 3; h++) { long end = h < 3 ? hole[h][0] : N; if (end > pos && write(tfd, orig + pos, (size_t)(end - pos)) != end - pos) return 1; if (h < 3) pos = hole[h][0] + hole[h][1]; }
     close(tfd); FILE *f = fopen(hp, "w"); fprintf(f, "size %d\n", N); for (int h = 0; h < 3; h++) fprintf(f, "%ld %ld\n", hole[h][0], hole[h][1]); fclose(f);
     int fd = open(path, O_RDONLY); dm_data_note_fd(fd, path); int bad = 0;

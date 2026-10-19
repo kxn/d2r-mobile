@@ -452,16 +452,18 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             SpvInstruction vec4FloatType = context.TypeVector(context.TypeFP32(), 4);
             SpvInstruction floatType = context.TypeFP32();
             SpvInstruction array8FloatType = context.TypeArray(context.TypeFP32(), context.Constant(context.TypeU32(), 8));
-            SpvInstruction array1FloatType = context.TypeArray(context.TypeFP32(), context.Constant(context.TypeU32(), 1));
-
-            SpvInstruction perVertexStructType = context.TypeStruct(true, vec4FloatType, floatType, array8FloatType, array1FloatType);
+            // NVN 翻译器只生成 Position / PointSize / ClipDistance，未使用的
+            // CullDistance 占位会令合计声明变成 8+1，超过移动端常见的 8。
+            // This translator emits only Position, PointSize and ClipDistance.
+            // An unused CullDistance placeholder incorrectly declares 8+1
+            // distances on devices whose combined limit is eight.
+            SpvInstruction perVertexStructType = context.TypeStruct(true, vec4FloatType, floatType, array8FloatType);
 
             context.Name(perVertexStructType, "gl_PerVertex");
 
             context.MemberName(perVertexStructType, 0, "gl_Position");
             context.MemberName(perVertexStructType, 1, "gl_PointSize");
             context.MemberName(perVertexStructType, 2, "gl_ClipDistance");
-            context.MemberName(perVertexStructType, 3, "gl_CullDistance");
 
             context.Decorate(perVertexStructType, Decoration.Block);
 
@@ -473,7 +475,6 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             context.MemberDecorate(perVertexStructType, 0, Decoration.BuiltIn, (LiteralInteger)BuiltIn.Position);
             context.MemberDecorate(perVertexStructType, 1, Decoration.BuiltIn, (LiteralInteger)BuiltIn.PointSize);
             context.MemberDecorate(perVertexStructType, 2, Decoration.BuiltIn, (LiteralInteger)BuiltIn.ClipDistance);
-            context.MemberDecorate(perVertexStructType, 3, Decoration.BuiltIn, (LiteralInteger)BuiltIn.CullDistance);
 
             return perVertexStructType;
         }

@@ -155,12 +155,29 @@ HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "前后台
 // Switches: DM_3D_SCALE_DYN=0 disables it; DM_THERMAL_NOFALLBACK=1 (power / frame-time measurement) also disables it, since the scale must be pinned during measurement.
 // DM_3D_SCALE_DYN_INJECT=start frame-end frame (counted by dm_nvn_frame_count): diagnostics; within that frame range every interval fed to the controller is treated as two periods (dropped), outside it as one period
 // (the Mac has no present timestamps, so this verifies the whole downgrade / recovery chain). Active only in-game (no judging outside a game); the first level drops after a full 10 s (5 windows).
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#endif
 // 3D 比例的档位表：0 档 = 配置值（iPhone 0.75），往下每档一个比例；下限由 DM_3D_SCALE_FLOOR（缺省见 S3_FLOOR_DEF）截断。只动 3D 渲染比例，界面和文字不降
 // 3D scale level table: level 0 = configured value (iPhone 0.75), one scale per level going down; the floor is clamped by DM_3D_SCALE_FLOOR (default: see S3_FLOOR_DEF). Only the 3D render scale changes; UI and text are not lowered
 static const float g_s3_levels[] = {0.70f, 0.65f, 0.60f, 0.55f, 0.50f};   // 1 档起 | Starting from level 1
 #define S3_NLV ((int)(sizeof g_s3_levels / sizeof g_s3_levels[0]))
 #define S3_FLOOR_DEF 0.60f   // 待真机扫档（热机稳态最后 30 秒掉帧 ≤ 1%）定 | To be set by a device level sweep (dropped frames ≤ 1% in the last 30 s of warm steady state)
+// Platform thermal pressure constrains the existing adaptive levels only.
+// A lower presentation target alone must not be mistaken for thermal headroom.
+static inline int scale3d_thermal_level(int level, int limit, int max_level, int quality) {
+    if (max_level < 0 || quality == 1) return level;
+    int minimum = limit == 20 ? 3 : limit == 30 ? 2 : 0;
+    if (minimum > max_level) minimum = max_level;
+    return level > minimum ? level : minimum;
+}
+#ifdef __ANDROID__
+static _Atomic int g_scale3d_thermal_limit;
+static _Atomic int g_scale3d_thermal_max = -1; // disabled until the adaptive options are latched
+void dm_android_3d_thermal_limit(int limit) {
+    atomic_store(&g_scale3d_thermal_limit, limit == 20 || limit == 30 ? limit : 0);
+}
+#endif
 // 纯函数控制器（单测 t_oe.c 直接喂序列）：level 0 = 配置值，越大越低。判据只认实际上屏：
 //   掉帧 = 上屏间隔 > 1.5 × 目标周期（60 帧时 25 ms），或被系统丢弃（−1）；每 2 秒一个窗，记窗内帧数与掉帧数，留最近 30 窗（60 秒）。
 //   降：最近 5 窗（10 秒）掉帧率 > 5%（快：重场景一来就降），或最近 30 窗（60 秒）掉帧率 > 1.5%（慢：长期小掉帧也降）→ 降一档，停判 3 秒、窗记录清空。
@@ -215,6 +232,9 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
         if (j) { inj0 = atol(j); inj1 = strchr(j, '-') ? atol(strchr(j, '-') + 1) : inj0; }
         const char *fe = getenv("DM_3D_SCALE_FLOOR"); float fl = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
         for (int k = 0; k < S3_NLV; k++) if (g_s3_levels[k] >= fl - 1e-4f) c.max_level = k + 1;
+#ifdef __ANDROID__
+        atomic_store(&g_scale3d_thermal_max, on ? c.max_level : -1);
+#endif
         LOG("3D 比例控制：%s，下限 %.2f（第 %d 档）", on ? "开" : "关", c.max_level ? g_s3_levels[c.max_level - 1] : 0.0f, c.max_level); }
     if (!on) return;
     if (atomic_load(&g_3d_quality_mode) == 1) { if (c.level) { c.level = 0; LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); return; }
@@ -224,7 +244,8 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
       if (!in) { was = 0; scale3d_ctl_hold(&c, now, S3_SEC); return; }
       if (!was) { was = 1; if (inj0 < 0) scale3d_ctl_hold(&c, now, 20 * S3_SEC); } }
     { int mtl_fps_target(void); double mtl_display_refresh(void), dm_pace_hz(double, double), r = mtl_display_refresh(), hz = dm_pace_hz(r, 60);
-      double p = mtl_fps_target() == 30 ? 1000.0 / dm_pace_hz(r, 30) : hz != 60 ? 1000.0 / hz : 0; if (p != c.period_ms) { c.period_ms = p; scale3d_ctl_hold(&c, now, 2 * S3_SEC); } }   // 目标周期跟着出图帧率换（省电 30 帧、非 60 倍数的屏取整除档，如 144 Hz 屏 72），切换后停判 2 秒 | The target period follows the present frame rate (power saving 30 fps; screens not a multiple of 60 take the evenly dividing tier, e.g. 72 on a 144 Hz screen); checking pauses for 2 seconds after a switch
+      int target = mtl_fps_target();
+      double p = target != 60 ? 1000.0 / dm_pace_hz(r, target) : hz != 60 ? 1000.0 / hz : 0; if (p != c.period_ms) { c.period_ms = p; scale3d_ctl_hold(&c, now, 2 * S3_SEC); } }   // 原60/30策略不变；Android严重热压的20档也须以实际目标判掉帧。 | Preserve60/30 behavior; Android thermal20 also uses its actual target.
     if (inj0 >= 0) { long f = (long)dm_nvn_frame_count(); double per = c.period_ms > 0 ? c.period_ms : 1000.0 / 60; iv_ms = f >= inj0 && f <= inj1 ? 2 * per : per; }   // 注入：段内每帧当掉一帧（两个周期） | Injection: every frame within the segment counts as a dropped frame (two periods)
     int was = c.level, lv = scale3d_ctl_step(&c, iv_ms, now);
     if (lv != was) LOG("3D 比例控制：最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → %s到第 %d 档（3D 比例 %.2f）%s", c.last_r10 * 100, c.last_r60 * 100, lv > was ? "降" : "升", lv,
@@ -237,11 +258,22 @@ float dm_3d_scale_cur(void) { return atomic_load(&g_scale3d_cur); }
 static void scale3d_tick(void) {
     static float want_cfg = -1, cur = 1.0f; static module_t *main;
     if (want_cfg < 0) {
-        const char *e = getenv("DM_3D_SCALE"); want_cfg = TARGET_OS_IPHONE ? 0.75f : 1.0f;
+        const char *e = getenv("DM_3D_SCALE");
+#ifdef __ANDROID__
+        want_cfg = 0.75f;   // 沿用原移动端默认值；界面不缩放。 | Keep the original mobile default; UI remains full size.
+#else
+        want_cfg = TARGET_OS_IPHONE ? 0.75f : 1.0f;
+#endif
         if (e) { char *end; float v = strtof(e, &end); if (end == e || *end || !(v >= 0.5f && v <= 1.0f)) die("DM_3D_SCALE 非法：%s（要求 0.5–1.0）", e); want_cfg = v; }
         for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
     }
     int lv = atomic_load(&g_scale3d_level);   // 动态档：0 = 配置值，k = g_s3_levels[k − 1]（都不高于配置值） | Dynamic level: 0 = configured value, k = g_s3_levels[k − 1] (none higher than the configured value)
+#ifdef __ANDROID__
+    // Read platform policy only on the original guest owner. The frontend never
+    // touches the renderer, controller history or game memory during callbacks.
+    lv = scale3d_thermal_level(lv, atomic_load(&g_scale3d_thermal_limit),
+                              atomic_load(&g_scale3d_thermal_max), atomic_load(&g_3d_quality_mode));
+#endif
     float dyn = lv <= 0 ? want_cfg : g_s3_levels[(lv > S3_NLV ? S3_NLV : lv) - 1]; if (dyn > want_cfg) dyn = want_cfg;
     float want = dm_nvn_ruler_truth() ? 1.0f : dyn;
     if (want == cur || !main || dm_nvn_frame_count() < 30) return;
@@ -255,7 +287,9 @@ static void scale3d_tick(void) {
         *(uint32_t *)(renderer + 0xee88), *(uint32_t *)(renderer + 0xee8c), (unsigned long long)dm_nvn_frame_count());
 }
 HLE_FORCE("_ZN2nn2oe25TryPopNotificationMessageEPj", "系统通知队列；前端状态变化入队", unsigned, h_oe_TryPopMsg, uint32_t *msg) {
+#if !defined(DM_HEADLESS) || defined(DM_NATIVE_GRAPHICS)
     scale3d_tick();
+#endif
     pthread_once(&g_oe_once, oe_script_start);
     pthread_mutex_lock(&g_mq_lock);
     int ok = g_mqn > 0;
@@ -267,10 +301,14 @@ HLE_FORCE("_ZN2nn2oe25TryPopNotificationMessageEPj", "系统通知队列；前�
     // The resolution parameter bits live in the thread slot, and the game reads them on the thread that fetches notifications to change the render size (on receiving 31 "performance mode changed", from main+0xe10ddc; 30 only updates a flag).
     // When they are read: each time the handler is entered, once after the first notification is fetched (0xe10d5c / 0xe10d60), and notifications fetched later in the loop still use the values from that read. So every time one is taken, the value due at this moment is written into the current thread's slot --
     // writing only when 31 is taken is not enough: when 31 is queued behind another notification (e.g. focus 15), the parameter bits have already been read after fetching 15 (iOS app: the front end did not switch to 16:9, in the Mac host run 31 happened to be queued first).
-    if (ok) for (int i = 0; i < 2; i++) if (g_keyres[i]) pthread_setspecific(g_keyres[i], (void *)dm_game_res(i));
+    if (ok) for (int i = 0; i < 2; i++) if (g_keyres[i]) dm_tsd_set(g_keyres[i], (void *)dm_game_res(i));
+#ifndef DM_HEADLESS
     if (ok && *msg == MSG_PERFMODE) dm_uiscreen_res_reread();
+#endif
     if (ok) LOG("oe 通知被游戏取走：%u", *msg);   // 状态变化很少，逐条打不刷屏 | state changes are rare, printing each one does not flood the log
+#ifndef DM_HEADLESS
     if (ok && (*msg == MSG_OPMODE || *msg == MSG_PERFMODE)) dm_ui_gen_bump(*msg == MSG_OPMODE ? DM_UIGEN_OPMODE : DM_UIGEN_PERFMODE);   // 界面代号（dm_cursor.h） | UI generation (dm_cursor.h)
+#endif
     return ok;
 }
 // bool 参数：Switch 调用方不扩展，声明成 unsigned 只看低 8 位

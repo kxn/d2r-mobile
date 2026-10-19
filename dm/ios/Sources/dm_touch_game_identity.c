@@ -1,8 +1,14 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "dm_touch_game_identity.h"
 #include <string.h>
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/vm_map.h>
+#elif defined(__linux__)
+#include <sys/uio.h>
+#include <unistd.h>
 #endif
 int dm_tg_vm_read(uint64_t address,void *out,size_t bytes) {
     if(!out || !bytes || !address || address>UINT64_MAX-bytes)return 0;
@@ -10,6 +16,12 @@ int dm_tg_vm_read(uint64_t address,void *out,size_t bytes) {
     vm_size_t copied=0;
     kern_return_t rc=vm_read_overwrite(mach_task_self(),(vm_address_t)address,(vm_size_t)bytes,(vm_address_t)out,&copied);
     return rc==KERN_SUCCESS && copied==bytes;
+#elif defined(__linux__)
+    // 真正读取本进程，包含坏地址失败路径；不是测试身份或无条件成功。
+    // Real process reads, including invalid-address failure, never a
+    // synthetic identity or unconditional-success reader.
+    struct iovec dst = {out, bytes}, src = {(void *)(uintptr_t)address, bytes};
+    return process_vm_readv(getpid(), &dst, 1, &src, 1, 0) == (ssize_t)bytes;
 #else
     (void)address;return 0;
 #endif

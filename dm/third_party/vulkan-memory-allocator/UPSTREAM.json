@@ -1,0 +1,14 @@
+{
+  "project": "Vulkan Memory Allocator",
+  "version": "v3.3.0",
+  "files": {
+    "vk_mem_alloc.h": {
+      "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.3.0/include/vk_mem_alloc.h",
+      "sha256": "90ce12fc4a2466235a09ae02905dd0c13aee80c1bbf11b331ab61230c2ceb112"
+    },
+    "LICENSE.txt": {
+      "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.3.0/LICENSE.txt",
+      "sha256": "8d70e4cf2a9941f6454da71cd60e38484dd3e34810c824760d550e982af6d97a"
+    }
+  }
+}

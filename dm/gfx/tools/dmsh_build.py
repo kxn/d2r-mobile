@@ -18,12 +18,17 @@
 import ast, inspect, os, re, sys, json, struct, hashlib, shutil, subprocess, tempfile, collections, threading, concurrent.futures as cf
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
 HOME = os.path.expanduser('~')
+VULKAN = os.environ.get('DMSH_TARGET') == 'vulkan'
 dm_dir, out = sys.argv[1:3]; want = set(sys.argv[3:]); cache_root = out
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import dmsh_chain, dmsh_fetch, dmsh_facts   # 翻译链版本：先核工具与锁文件，产物进 b-<V>/ | translation chain version: verify the tools against the lock file first; build output goes into b-<V>/
-_bad = dmsh_chain.check_tools()
+_bad = [] if VULKAN else dmsh_chain.check_tools()
 if _bad: sys.exit('\n'.join('【红】翻译链工具与锁文件不符：' + b for b in _bad) + '\n（换了工具就 dmsh_chain.py --update-lock 并入仓；只是没重编翻译器就重编）')
-CHAIN = dmsh_chain.version(); out = os.path.join(out, 'b-' + CHAIN)
-if f'"{CHAIN}"' not in open(dmsh_chain.HEADER).read(): sys.exit(f'【红】nvn/dmsh_chain.h 不是当前翻译链版本 {CHAIN}：先跑 dmsh_chain.py --header（否则宿主找不到这批库）')
+CHAIN = dmsh_chain.version()
+if VULKAN:
+    import dmsh_vulkan
+    CHAIN = dmsh_vulkan.version(CHAIN, os.environ.get('XLATE', f'{DM_ROOT}/build/gfx/dmsh_xlate/dmsh_xlate'))
+out = os.path.join(out, ('vk-' if VULKAN else 'b-') + CHAIN)
+if not VULKAN and f'"{CHAIN}"' not in open(dmsh_chain.HEADER).read(): sys.exit(f'【红】nvn/dmsh_chain.h 不是当前翻译链版本 {CHAIN}：先跑 dmsh_chain.py --header（否则宿主找不到这批库）')
 XLATE = os.environ.get('XLATE', f'{DM_ROOT}/build/gfx/dmsh_xlate/dmsh_xlate')
 FACTS = dmsh_facts.load()
 if not FACTS: sys.exit('【红】没有作答表 nvn/shader_facts.tsv（随仓库；维护者用 dmsh_facts.py --freeze 重出）')
@@ -414,6 +419,12 @@ def finish(key, w, j, c1):
     write_refl(key, refl)
     fetch_finish(key, src, refl)
     return 'ok', '', refl
+
+# Vulkan 直接保留 SPIR-V；代码提取、配对事实和 c1 全部沿用上面的原实现。
+# Vulkan retains SPIR-V directly; code extraction, paired facts and c1 reuse the original implementation above.
+if VULKAN:
+    import dmsh_vulkan
+    sys.exit(dmsh_vulkan.build(globals()))
 
 keys = sorted(want) if want else sorted(loc)
 NJ = int(os.environ.get('J', '8'))

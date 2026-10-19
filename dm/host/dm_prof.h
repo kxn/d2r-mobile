@@ -10,4 +10,11 @@ int dm_ipf_on(void);
 uint64_t dm_ipf_instr(void);
 void dm_ipf_add(int table, const char *name, uint64_t instr);
 void dm_ipf_frame(int table);   // table 0 = 主线程每帧（取手柄处），1 = 服务端每拍 | table 0 = main thread per frame (where the gamepad is read), 1 = server per tick
+#ifdef DM_NATIVE_WORLD_CORE
+// 核心 Android 桥不带 Darwin 指令计数器；请求该诊断时由入口明确拒绝。
+// The Android core bridge has no Darwin instruction counter; its entry rejects
+// this diagnostic explicitly rather than report invented counts.
+#define DM_PROF(table, name, stmt) do { stmt; } while (0)
+#else
 #define DM_PROF(table, name, stmt) do { if (dm_ipf_on()) { uint64_t _p0 = dm_ipf_instr(); stmt; dm_ipf_add(table, name, dm_ipf_instr() - _p0); } else { stmt; } } while (0)
+#endif

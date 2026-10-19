@@ -24,8 +24,14 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
+#ifdef __APPLE__
 #include <mach/mach.h>
 #include <pthread/qos.h>
+#else
+#include "platform.h"
+typedef unsigned mach_port_t;
+#define QOS_CLASS_UNSPECIFIED 0
+#endif
 #include <dlfcn.h>
 
 #define R_TIMEOUT     0xEA01u   // 内核模块 1，描述 117 | Kernel module 1, description 117
@@ -55,6 +61,13 @@ typedef struct thr {
     uint64_t nsvc;             // SVC 次数（现场导出用） | SVC count (for the state dump)
     mach_port_t mport;         // 宿主线程端口（取 CPU 时间） | Host thread port (to get CPU time)
     uint32_t qos;
+#ifdef __ANDROID__
+    // Saved before switching to the SDK stack. ExitThread's libc/TSD cleanup
+    // needs the original pthread stack, not a possibly tiny guest stack.
+    uint64_t host_stack[3];    // SP, FP, LR; zero for the unswitched main thread
+    uintptr_t host_low,host_high;
+    unsigned host_call_depth; // owning pthread only; never a guest TLS slot
+#endif
 } thr_t;
 static thr_t *g_all;
 
@@ -62,6 +75,9 @@ static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
 #define MAX_H 4096
 static struct { int type; void *obj; } g_h[MAX_H];
 static pthread_key_t g_keythr;
+#ifdef __ANDROID__
+static int g_thread_key_ready;
+#endif
 static uint64_t g_next_id = 0x51;
 static thr_t *g_wait;          // 全部在等的线程（锁 / 条件 / 地址 / 同步） | All waiting threads (lock / condition / address / synchronization)
 
@@ -166,31 +182,78 @@ static void lock_acquire_for(thr_t *t, uint64_t addr, uint32_t tag) {
 // ---------- 线程 ----------
 // ---------- Threads ----------
 extern void dm_thread_enter(uint64_t entry, uint64_t arg, uint64_t sp);   // entry.S
+#ifdef __ANDROID__
+extern _Noreturn void dm_thread_enter_host(uint64_t entry,uint64_t arg,uint64_t sp,uint64_t host_stack[3]);
+extern _Noreturn void dm_thread_exit_host(const uint64_t host_stack[3],void *arg,void (*cleanup)(void *));
+#endif
+#ifdef __ANDROID__
+#include "host_stack.h"
+extern void dm_call_host_stack(uintptr_t sp,void (*fn)(void *),void *argument);
+static void thread_host_bounds(thr_t *t) {
+    pthread_attr_t attr;void *base=NULL;size_t size=0;
+    if(pthread_getattr_np(pthread_self(),&attr))return;
+    int result=pthread_attr_getstack(&attr,&base,&size);
+    pthread_attr_destroy(&attr);
+    if(!result && base && size>=256*1024 && (uintptr_t)base<=UINTPTR_MAX-size) {
+        t->host_low=(uintptr_t)base;t->host_high=t->host_low+size;
+    }
+}
+int dm_thread_host_call(void (*fn)(void *),void *argument) {
+    if(!fn || !__atomic_load_n(&g_thread_key_ready,__ATOMIC_ACQUIRE))return 0;
+    thr_t *t=pthread_getspecific(g_keythr);if(!t || !t->host_low)return 0;
+    uintptr_t sp;__asm__ volatile("mov %0,sp":"=r"(sp));
+    const uintptr_t reserve=256*1024;
+    if(sp>=t->host_low && sp<t->host_high) {
+        if(sp-t->host_low<reserve)return 0;
+        t->host_call_depth++;fn(argument);t->host_call_depth--;return 1;
+    }
+    // No recursive switch back to the parked top: it would overwrite the
+    // active outer host frames. A normal nested callback takes the arm above.
+    uintptr_t parked=t->host_stack[0];
+    if(t->host_call_depth || (parked&15) || parked<t->host_low ||
+       parked>=t->host_high || parked-t->host_low<reserve)return 0;
+    t->host_call_depth++;
+    dm_call_host_stack(parked,fn,argument);
+    t->host_call_depth--;return 1;
+}
+#endif
 uint32_t (*dm_thread_tick_fn)(void);   // 取当前游戏拍；diag.c 初始化时登记（单测不登记，拍号记 0） | Gets the current game tick; registered when diag.c initializes (unit tests do not register it, the tick number is recorded as 0)
 void crash_thread_init(void);
 void guest_thread_init(void);   // thread.c：每线程 TSD 槽（门、x18、TLS、TLR）唯一设置点 | thread.c: the single place that sets the per-thread TSD slots (gate, x18, TLS, TLR)
 static void *thread_main(void *p) {
     thr_t *t = p;
     pthread_setspecific(g_keythr, t);
+#ifdef __ANDROID__
+    thread_host_bounds(t);
+#endif
+#ifdef __APPLE__
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
     qos_class_t qc = QOS_CLASS_UNSPECIFIED; int rp = 0;
     pthread_get_qos_class_np(pthread_self(), &qc, &rp); t->qos = (uint32_t)qc;
     t->mport = pthread_mach_thread_np(pthread_self());
+#endif
     crash_thread_init();
     guest_thread_init();
     pthread_mutex_lock(&G); while (!t->started) pthread_cond_wait(&t->cv, &G); pthread_mutex_unlock(&G);
+#ifdef __ANDROID__
+    dm_thread_enter_host(t->entry,t->arg,t->stack_top,t->host_stack);
+#else
     dm_thread_enter(t->entry, t->arg, t->stack_top);   // 不返回：客体须经 ExitThread 退出 | Does not return: the guest must exit through ExitThread
     die("客体线程入口返回");
+#endif
 }
 static void thr_free(thr_t *t) {   // 持 G；从全部线程链摘下并释放 | Holding G; unlink from the all-threads chain and free
     for (thr_t **p = &g_all; *p; p = &(*p)->all) if (*p == t) { *p = t->all; break; }
     pthread_cond_destroy(&t->cv); free(t);
 }
 static const char *thr_name(thr_t *t, char *buf, size_t n);
-static void thread_exit(thr_t *t) {
+static _Noreturn void thread_exit_cleanup(void *arg) {
+    thr_t *t=arg;
     t->exit_ns = now_ns(); t->exit_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
-    // 这里不打日志：退出发生在客体线程自己的栈上（有的只有十几 KiB），带浮点的 printf 会把栈撑爆（真机冒烟：LibcurlResolver 退出时 SIGBUS，回溯 fprintf → __dtoa）。时刻只记下来，现场导出时再打
-    // No logging here: the exit happens on the guest thread's own stack (some are only a dozen or so KiB), and a printf with floating point would blow the stack (real-device smoke test: SIGBUS when LibcurlResolver exits, backtrace fprintf → __dtoa). Only the time is recorded, and it is printed later in the state dump
+    // 非 Android 路径仍可能在十几 KiB 客体栈上退出；这里保留原有的无日志清理。
+    // Android 已先恢复宿主栈；libc allocator/TSD cleanup 同样可能需要大栈。
+    // Keep cleanup log-free: other hosts may still use a tiny guest stack.
+    // Android restores its pthread stack first, including for allocator/TSD work.
     pthread_mutex_lock(&G);
     t->exited = 1;
     for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; if (w->wkind == 4) wake(w, -1); w = n; }   // 同步等待者重查 | Synchronization waiters re-check
@@ -199,19 +262,40 @@ static void thread_exit(thr_t *t) {
     pthread_mutex_unlock(&G);
     pthread_exit(NULL);
 }
+static _Noreturn void thread_exit(thr_t *t) {
+#ifdef __ANDROID__
+    // The assembly loads the complete continuation before cleanup may free t.
+    // It preserves x18 and native TLS and never returns to abandoned guest
+    // frames. Main-thread registration did not switch stacks, so it keeps the
+    // existing native-stack path instead of using an absent continuation.
+    if(t->host_stack[0])dm_thread_exit_host(t->host_stack,t,thread_exit_cleanup);
+#endif
+    thread_exit_cleanup(t);
+}
 void dm_thread_returned(void) { die("客体线程入口函数返回（Horizon 要求 ExitThread）"); }
 
 // 主线程登记，返回其句柄（交给 nnosInitialize 作主线程句柄）
 // Register the main thread and return its handle (passed to nnosInitialize as the main thread handle)
 uint32_t svc_thread_main_init(void) {
     pthread_key_create(&g_keythr, NULL);
+#ifdef __ANDROID__
+    __atomic_store_n(&g_thread_key_ready,1,__ATOMIC_RELEASE);
+#endif
     thr_t *t = calloc(1, sizeof *t);
     pthread_cond_init(&t->cv, NULL);
-    t->started = 1; t->prio = 44; t->core = 0; t->mask = 7; t->pt = pthread_self(); t->mport = pthread_mach_thread_np(t->pt);
+    t->started = 1; t->prio = 44; t->core = 0; t->mask = 7; t->pt = pthread_self();
+#ifdef __APPLE__
+    t->mport = pthread_mach_thread_np(t->pt);
+#endif
     pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
     pthread_setspecific(g_keythr, t);
+#ifdef __ANDROID__
+    thread_host_bounds(t);
+#endif
+#ifdef __APPLE__
     qos_class_t qc = QOS_CLASS_UNSPECIFIED; int rp = 0;
     pthread_get_qos_class_np(pthread_self(), &qc, &rp); t->qos = (uint32_t)qc;
+#endif
     return t->handle;
 }
 
@@ -258,10 +342,18 @@ void dm_guest_clock_advanced(void) {
 // Handle thread / synchronization SVCs; returns 1 = handled
 static const char *thr_name(thr_t *t, char *nb, size_t n) {   // SDK ThreadType+0x1a0 = 名字指针 | SDK ThreadType+0x1a0 = name pointer
     if (!t->arg) return t->handle == 0x1001 ? "主线程" : "?";
+#ifdef __APPLE__
     uint64_t np = 0; vm_size_t got = 0;
     if (vm_read_overwrite(mach_task_self(), t->arg + 0x1a0, 8, (vm_address_t)&np, &got) || !np ||
         vm_read_overwrite(mach_task_self(), np, n - 1, (vm_address_t)nb, &got)) return "?";
     nb[got] = 0; return nb;
+#else
+    uint64_t np=0;
+    if (dm_self_read(&np,(const void *)(uintptr_t)(t->arg+0x1a0),8)!=8 || !np) return "?";
+    long got=dm_self_read(nb,(const void *)(uintptr_t)np,n-1);
+    if(got<0) return "?";
+    nb[got]=0; return nb;
+#endif
 }
 // 全部活着的客体线程（采样器 DM_SAMPLE=毫秒:* 用）：把 pthread 填进 out，返回个数
 // All live guest threads (used by the sampler DM_SAMPLE=ms:*): fill the pthreads into out, return the count
@@ -305,6 +397,7 @@ int thr_find_by_name(const char *name, pthread_t *out) {
 // 现场导出时取别的客体线程的回溯：暂停 → 读寄存器 → 沿帧指针链走（客体与门块都保持 x29 链）→ 恢复；只打 main / sdk 帧
 // State dump (called from crash.c on watchdog / crash; read-only, takes no lock): what each guest thread is waiting on and where its most recent SVC was issued from
 // During a state dump, take the backtrace of other guest threads: suspend → read registers → walk the frame pointer chain (both guest code and gate blocks keep the x29 chain) → resume; only main / sdk frames are printed
+#ifdef __APPLE__
 static void thr_bt(thr_t *t) {
     if (!t->mport || t->exited || t->mport == mach_thread_self()) return;
     if (thread_suspend(t->mport) != KERN_SUCCESS) return;
@@ -434,6 +527,15 @@ void svc_thread_dump(void) {
         vm_deallocate(mach_task_self(), (vm_address_t)ths, nth * sizeof *ths);
     }
 }
+
+#else
+// ELF 保留等待状态诊断，线程寄存器快照由平台信号层实现。
+// ELF retains wait-state diagnostics; thread register snapshots belong to the platform signal layer.
+void svc_thread_dump(void) {
+    for (thr_t *t=g_all;t;t=t->all)
+        LOG("thread %#x exited=%d wait=%d last_svc=%#x",t->handle,t->exited,t->wkind,t->last_svc);
+}
+#endif
 
 int svc_thread(int num, uint64_t *regs) {
     { thr_t *me = pthread_getspecific(g_keythr); if (me) { me->last_svc = num; me->last_lr = regs[30]; me->nsvc++; } }

@@ -1,4 +1,7 @@
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#endif
+#include "platform.h"
 // 崩溃现场：打印出错地址、pc、lr（换成模块内偏移）与寄存器；缺页钩子分发。
 // 只放信号处理本身：诊断功能（探针 / UI 消息 / 采样）在 diag.c，本文件不依赖它们（图形单测只链本文件）。
 // Crash state: prints the faulting address, pc, lr (converted to module-relative offsets) and the registers; dispatches page fault hooks.
@@ -9,8 +12,10 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#ifdef __APPLE__
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
+#endif
 #include <stdatomic.h>
 #include <time.h>
 
@@ -74,6 +79,16 @@ static void *watchdog_main(void *arg) {
     }
     return NULL;
 }
+void crash_watch_start(void) {
+    const char *watch = getenv("DM_WATCH"), *stall = getenv("DM_WATCH_STALL");
+    if (watch) alarm(atoi(watch));
+    if (watch || stall) {
+        g_watch_stall = stall && atoi(stall) > 0 ? (unsigned)atoi(stall) : 15;
+        atomic_store(&g_watch_last_ns, watch_now_ns());
+        pthread_t th; if (pthread_create(&th, NULL, watchdog_main, NULL)) die("看门狗线程");
+        pthread_detach(th);
+    }
+}
 void crash_off(const char *tag, uint64_t a) {   // diag.c 也用 | Also used by diag.c
 #define off crash_off
 
@@ -88,7 +103,13 @@ void crash_off(const char *tag, uint64_t a) {   // diag.c 也用 | Also used by 
 void dm_backtrace(uint64_t fp) {
     fprintf(stderr, "[dm] bt:");
     for (int i = 0; i < 32 && fp && !(fp & 7); i++) {
+#ifdef __APPLE__
         uint64_t nfp = ((uint64_t *)fp)[0], ra = ((uint64_t *)fp)[1];
+#else
+        uint64_t frame[2];
+        if (dm_self_read(frame, (const void *)(uintptr_t)fp, sizeof frame) != sizeof frame) break;
+        uint64_t nfp = frame[0], ra = frame[1];
+#endif
         off("", ra);
         if (nfp <= fp) break;
         fp = nfp;
@@ -129,6 +150,16 @@ void crash_set_wait_dump(void (*fn)(void)) { g_wait_dump = fn; }
 // 按需导出现场（不退出）：iOS 包没有无进展看门狗，冒烟判红时经 DM_LOG_PORT 发 dump 触发——各客体线程在等什么 + 图形侧等待点，和看门狗打的是同一份
 // Dump the current state on demand (without exiting): the iOS app has no no-progress watchdog, so when the smoke test fails it sends dump through DM_LOG_PORT to trigger this -- what each guest thread is waiting on + the graphics-side wait points, the same thing the watchdog prints
 void crash_dump_now(const char *why) { fprintf(stderr, "[dm] 现场导出（%s）：拍 %u / 阶段 %s\n", why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]); if (g_dump_hook) g_dump_hook(); if (g_wait_dump) g_wait_dump(); }
+#ifndef __APPLE__
+// 信号链由 Android 平台层保留；脏页处理仍复用原来的钩子注册表。
+// Android retains ART's signal chain; dirty-page handling uses the original registry.
+int crash_fault_dispatch(void *address, int write, void *context) {
+    for (int i = 0; i < g_nfault_hook; i++)
+        if (g_fault_hook[i](address, write, context)) return 1;
+    return 0;
+}
+#endif
+#ifdef __APPLE__
 static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
@@ -173,13 +204,8 @@ void crash_install(void) {
     // 读代码查到：iOS main.m 缺省 setenv DM_WATCH=30 → 玩家启动 30 s 被 SIGALRM 杀；无进展看门狗缺省 15 s → 暂停菜单（拍停）15 s 被杀
     // Both watchdogs are turned on only when a test explicitly sets DM_WATCH / DM_WATCH_STALL: the product (the player launches from the desktop, no environment variables) turns on neither.
     // Found by reading the code: iOS main.m did setenv DM_WATCH=30 by default → the player's launch was killed by SIGALRM at 30 s; the no-progress watchdog defaulted to 15 s → the pause menu (ticks stopped) was killed at 15 s
-    const char *watch = getenv("DM_WATCH"), *stall = getenv("DM_WATCH_STALL");
-    if (watch) alarm(atoi(watch));
-    if (watch || stall) {
-        g_watch_stall = stall && atoi(stall) > 0 ? (unsigned)atoi(stall) : 15;
-        atomic_store(&g_watch_last_ns, watch_now_ns());
-        pthread_t th; if (pthread_create(&th, NULL, watchdog_main, NULL)) die("看门狗线程");
-        pthread_detach(th);
-    }
+    crash_watch_start();
     sigaction(SIGSEGV, &sa, 0); sigaction(SIGBUS, &sa, 0); sigaction(SIGILL, &sa, 0); sigaction(SIGTRAP, &sa, 0);
 }
+
+#endif // __APPLE__: Android signal and alternate-stack boundary lives in android/headless.c.

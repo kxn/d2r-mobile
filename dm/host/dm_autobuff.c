@@ -36,7 +36,11 @@
 #include "dm_custom.h"
 #include "dm_hud.h"
 #include "dm_unit.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#else
+#include "platform.h"
+#endif
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>

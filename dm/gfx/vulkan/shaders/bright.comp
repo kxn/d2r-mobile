@@ -1,0 +1,27 @@
+// 对应原 nvn_mtl.m 的 k_lut_msl：PQ 曝光与高光保护保持原公式。
+// Vulkan counterpart of upstream k_lut_msl, preserving PQ and highlight protection.
+#version 450
+layout(local_size_x=4, local_size_y=4, local_size_z=4) in;
+layout(set=0, binding=0) uniform sampler3D original_lut;
+layout(set=0, binding=1) writeonly uniform image3D output_lut;
+layout(push_constant) uniform Exposure { float k; } exposure;
+const float m1=0.1593017578125, m2=78.84375;
+const float c1=0.8359375, c2=18.8515625, c3=18.6875;
+vec3 pq(vec3 v) {
+    vec3 p=pow(abs(v),vec3(m1));
+    return pow((c1+c2*p)/(1.0+c3*p),vec3(m2));
+}
+vec3 pq_inverse(vec3 u) {
+    vec3 q=pow(u,vec3(1.0/m2));
+    return pow(max(q-c1,0.0)/max(c2-c3*q,1e-6),vec3(1.0/m1));
+}
+void main() {
+    ivec3 g=ivec3(gl_GlobalInvocationID), n=imageSize(output_lut);
+    if(any(greaterThanEqual(g,n))) return;
+    vec3 u=(vec3(g)+0.5)/vec3(n);
+    vec3 transformed=clamp(pq(exposure.k*pq_inverse(u)),0.0,1.0);
+    vec4 b=textureLod(original_lut,transformed,0.0);
+    vec4 o=texelFetch(original_lut,g,0);
+    float s=smoothstep(0.65,1.0,dot(b.rgb,vec3(0.2126,0.7152,0.0722)));
+    imageStore(output_lut,g,vec4(max(mix(b.rgb,o.rgb,s),o.rgb),b.a));
+}

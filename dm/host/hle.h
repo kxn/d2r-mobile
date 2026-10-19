@@ -6,10 +6,11 @@
 // such parameters are always declared as int/unsigned and truncated by ourselves. Variadic arguments go on the stack on Apple and in registers on Switch ⇒ variadic functions cannot use C's "..." directly.
 #pragma once
 #include "dm.h"
+#include "platform.h"
 typedef struct { const char *name; void *fn; } hle_ent;
 #define HLE(mangled, ret, cname, ...)                                                             \
     static ret cname(__VA_ARGS__);                                                                \
-    __attribute__((used, section("__DATA,swhle"))) static const hle_ent hle_ent_##cname = {mangled, (void *)cname}; \
+    DM_HLE_SECTION("swhle") static const hle_ent hle_ent_##cname = {mangled, (void *)cname}; \
     static ret cname(__VA_ARGS__)
 
 typedef uint32_t Result;   // nn::Result：w0，0 = 成功 | nn::Result: w0, 0 = success
@@ -39,13 +40,16 @@ void guest_clock_freeze_for(int reason, int on);   // 按原因冻结（1 后台
 typedef struct { const char *name; void *fn; const char *why; } hle_force_ent;
 #define HLE_FORCE(mangled, why, ret, cname, ...)                                                   \
     static ret cname(__VA_ARGS__);                                                                \
-    __attribute__((used, section("__DATA,swforce"))) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why}; \
+    DM_HLE_SECTION("swforce") static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why}; \
     static ret cname(__VA_ARGS__)
 
 // 运行模式（0 掌机 / 1 主机）：hle_oe.c 持有，hid 的手柄样式跟它走；前端可在运行中切换
 // Operation mode (0 handheld / 1 docked): owned by hle_oe.c, and the hid controller style follows it; the front end can switch it at runtime
 int dm_opmode(void);
-void dm_3d_scale_hot(int hot);      // 过热时把 3D 渲染比例降到 0.70（界面不动），0 = 恢复 | When overheating, lower the 3D render scale to 0.70 (UI untouched); 0 = restore
+void dm_3d_scale_hot(int hot);      // 保留原前端兼容入口；当前不直接改比例 | Legacy frontend entry; currently does not change the scale
+#ifdef __ANDROID__
+void dm_android_3d_thermal_limit(int limit); // 0/30/20: constrain existing adaptive levels; explicit fixed modes remain fixed
+#endif
 ssize_t dm_data_pread(int fd, void *buf, size_t n, off_t off);   // 资源档案的读：有「.holes」区段表的剔零档案按表换算（hle_fs.c） | Resource archive reads: zero-stripped archives with a ".holes" extent table are translated through the table (hle_fs.c)
 void dm_data_note_fd(int fd, const char *hostpath);
 int dm_overlay_file(const char *rel, char *out, size_t n);   // 覆盖层里的文件：DM_ROMFS_OVERLAY 可以有多层（冒号分隔，前面的优先），逐层找 <层>/<rel>，找到写进 out 返回 1（hle_fs.c） | File in the overlay: DM_ROMFS_OVERLAY may have several layers (colon-separated, earlier ones take priority); look for <layer>/<rel> layer by layer, and on a hit write it to out and return 1 (hle_fs.c)

@@ -9,6 +9,9 @@ import socket, re
 class Gdb:
     def __init__(self, host='127.0.0.1', port=55571, timeout=30):
         self.sock = socket.create_connection((host, port), timeout=timeout)
+        # ACK and the next command are separate writes. Nagle + delayed ACK otherwise
+        # adds tens of milliseconds to every tiny local memory/register request.
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sock.settimeout(timeout)
         self.buf = b''
         self.pending = []
@@ -158,4 +161,8 @@ class Gdb:
     def modules(self):
         """monitor get info 的模块表 → {名字: (起, 止)}。 | Module table from monitor get info → {name: (start, end)}."""
         info = self.monitor('get info')
-        return {n: (int(a, 16), int(b, 16)) for a, b, n in re.findall(r'0x([0-9a-fA-F]+)\s*-\s*0x([0-9a-fA-F]+)\s+(\S+)', info)}, info
+        # Restrict to complete lines: \s can cross newlines and previously turned
+        # heap/ASLR/stack ranges into fictitious module entries.
+        return {n: (int(a, 16), int(b, 16)) for a, b, n in re.findall(
+            r'^[ \t]*0x([0-9a-fA-F]+)[ \t]*-[ \t]*0x([0-9a-fA-F]+)[ \t]+(\S+)[ \t]*$',
+            info, re.MULTILINE)}, info

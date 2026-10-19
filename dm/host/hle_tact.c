@@ -22,10 +22,12 @@
 // an offline cross-check of all 4,979 files before character select (558.8 MiB of output) gives MD5 == the list's CKey.
 #include "hle.h"
 #include "../third_party/libdeflate/libdeflate.h"
-#include <CommonCrypto/CommonDigest.h>
+#include "crypto.h"
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __APPLE__
 #include <pthread/qos.h>
+#endif
 #include <stdatomic.h>
 
 // DM_TACTCHK=<文件>：每次解码记一行「输入开头16字节(hex)\t输入长度\t输出长度\t输出MD5\t发起线程句柄」，离线与独立解码的逐块 MD5 对照（验收用）。
@@ -104,7 +106,10 @@ static void pf_consumed(pf_ent *e) {                   // 持 g_pfl：推进所�
     for (; ps->ev + g_pflag < ps->cur; ps->ev++) { pf_ent *x = &g_pf[ps->ix[ps->ev]]; if (atomic_load(&x->st) == PF_READY) { pf_free(x); atomic_fetch_add(&g_pfdrop, 1); } }
 }
 static void *pf_worker(void *arg) {
-    (void)arg; pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+    (void)arg;
+#ifdef __APPLE__
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#endif
     struct libdeflate_decompressor *d = libdeflate_alloc_decompressor(); if (!d) die("libdeflate 分配解压器失败（预取）");
     for (;;) {
         pthread_mutex_lock(&g_pfl);
@@ -270,6 +275,17 @@ __attribute__((weak)) int dm_touch_game_hide_own_glyph(uint64_t widget) { (void)
 // svc_dispatch in hle_svc.c calls here for 0x80 and up; 0x85 preserves x0.
 
 uint64_t svc_host_call(int num, uint64_t *regs) {
+#if defined(DM_HEADLESS) && !defined(DM_NATIVE_FEATURES)
+    if(num==SVC_HOST_TACT_ZLIB) { regs[0]=tact_decode_zlib(regs);return 1; }
+#ifdef DM_NATIVE_GAME_CALLS
+    { int dm_native_game_call(int, uint64_t *); if (dm_native_game_call(num, regs)) return 1; }
+#endif
+#ifdef DM_NATIVE_GRANNY
+    if(num==SVC_HOST_GRANNY_A) { void svc_granny_chunk_a(uint64_t *); svc_granny_chunk_a(regs);return 1; }
+    if(num==SVC_HOST_GRANNY_B) { void svc_granny_chunk_b(uint64_t *); svc_granny_chunk_b(regs);return 1; }
+#endif
+    return 0;
+#else
     switch (num) {
     case SVC_HOST_PRIVATE_SKILL_AIM: { void svc_private_skill_aim(uint64_t *); svc_private_skill_aim(regs); return 1; }
     case SVC_HOST_PRIVATE_SKILL_RENDER: {
@@ -297,4 +313,5 @@ uint64_t svc_host_call(int num, uint64_t *regs) {
     case SVC_HOST_MERC_SLOT_CL: { void svc_merc_slot_cl(uint64_t *); svc_merc_slot_cl(regs); return 1; }
     }
     return 0;
+#endif
 }

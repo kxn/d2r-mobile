@@ -1,3 +1,8 @@
+#ifdef __APPLE__
+#define DM_C(name) _##name
+#else
+#define DM_C(name) name
+#endif
 // 两个公共入口 + 静态桩表。
 // 0) unimpl_stubs：未实现导入的记名桩，第 k 个 = movz x9,#k; b unimpl_entry（静态代码，iOS 不许运行时生成）
 // 1) unimpl_entry：未实现导入的桩入口，x9 = 桩号；保存 x0-x8+lr 调 unimpl_c(idx, regs)。
@@ -9,19 +14,19 @@
 // 2) dm_gate: the rewriter replaces svc / cntpct reads with "bl to this entry". On entry lr = the gate block return point (gate_dispatch uses it to look up which gate this is),
 //    save x0-x30 to a contiguous area on the stack, call gate_dispatch(ret, regs), write back x0 (gate return value), return.
     .text
-    .globl _unimpl_stubs
+    .globl DM_C(unimpl_stubs)
     .p2align 3
-_unimpl_stubs:
+DM_C(unimpl_stubs):
     .set k, 0
     .rept 4096                // = hle.c MAX_STUB
     movz x9, #k
-    b _unimpl_entry
+    b DM_C(unimpl_entry)
     .set k, k + 1
     .endr
 
-    .globl _unimpl_entry
+    .globl DM_C(unimpl_entry)
     .p2align 2
-_unimpl_entry:
+DM_C(unimpl_entry):
     stp x29, x30, [sp, #-96]!
     mov x29, sp
     stp x0, x1, [sp, #16]
@@ -31,13 +36,13 @@ _unimpl_entry:
     str x8, [sp, #80]
     mov x0, x9
     add x1, sp, #16
-    bl _unimpl_c
+    bl DM_C(unimpl_c)
     ldp x29, x30, [sp], #96
     ret
 
-    .globl _dm_gate
+    .globl DM_C(dm_gate)
     .p2align 2
-_dm_gate:
+DM_C(dm_gate):
     // 开 256 字节帧，保存 x0..x30（x0..x29 成对，x30 单独），门可读改 x0..x30
     // Open a 256-byte frame and save x0..x30 (x0..x29 in pairs, x30 alone); the gate may read and modify x0..x30
     sub sp, sp, #800
@@ -81,7 +86,7 @@ _dm_gate:
     str x9, [sp, #784]
     mov x0, x30              // 返回点 = 门标识 | Return point = gate identifier
     mov x1, sp               // regs
-    bl _gate_dispatch
+    bl DM_C(gate_dispatch)
     ldr x9, [sp, #784]
     msr fpcr, x9
     ldr x9, [sp, #776]
@@ -131,14 +136,75 @@ _dm_gate:
 //    Horizon 线程须经 ExitThread 退出，入口返回即报错。
 // 3) dm_thread_enter(entry, arg, sp): guest thread start. Switch to the guest stack given by the SDK and call entry with x0 = argument;
 //    Horizon threads must exit via ExitThread; returning from entry is reported as an error.
-    .globl _dm_thread_enter
+#ifdef __ANDROID__
+    // Preserve the native pthread continuation before abandoning its stack.
+    // These wrappers do not touch Android's x18 platform/shadow-stack register
+    // or either TLS register. Exit loads everything before cleanup can free
+    // the thread object containing the three saved words.
+    .globl DM_C(dm_thread_enter_host)
     .p2align 2
-_dm_thread_enter:
+DM_C(dm_thread_enter_host):
+    mov x9, sp
+    stp x9, x29, [x3]
+    str x30, [x3, #16]
+    b DM_C(dm_thread_enter)
+
+    // Synchronous pure-host callback on the unused portion below thread_main's
+    // parked frame. x19 retains the caller CFA across the stack discontinuity,
+    // allowing ordinary DWARF unwind through callback -> bridge -> guest gate.
+    // x18/TLS and every AAPCS callee-saved register are untouched or restored.
+    .globl DM_C(dm_call_host_stack)
+    .p2align 2
+DM_C(dm_call_host_stack):
+    .cfi_startproc
+    hint #34 // BTI c; architectural NOP on older ARMv8 CPUs
+    stp x29, x30, [sp, #-32]!
+    .cfi_def_cfa_offset 32
+    .cfi_offset x29, -32
+    .cfi_offset x30, -24
+    stp x19, x20, [sp, #16]
+    .cfi_offset x19, -16
+    .cfi_offset x20, -8
+    mov x29, sp
+    mov x19, sp
+    .cfi_def_cfa x19, 32
+    mov x20, x1
+    mov sp, x0
+    mov x0, x2
+    blr x20
+    mov sp, x19
+    .cfi_def_cfa sp, 32
+    ldp x19, x20, [sp, #16]
+    .cfi_restore x19
+    .cfi_restore x20
+    ldp x29, x30, [sp], #32
+    .cfi_def_cfa_offset 0
+    .cfi_restore x29
+    .cfi_restore x30
+    ret
+    .cfi_endproc
+
+    .globl DM_C(dm_thread_exit_host)
+    .p2align 2
+DM_C(dm_thread_exit_host):
+    ldp x9, x29, [x0]
+    ldr x30, [x0, #16]
+    mov sp, x9
+    mov x0, x1
+    br x2
+#endif
+    .globl DM_C(dm_thread_enter)
+    .p2align 2
+DM_C(dm_thread_enter):
     mov sp, x2
     mov x29, #0
     mov x16, x0
     mov x0, x1
     adr x30, 1f
     br x16
-1:  bl _dm_thread_returned
+1:  bl DM_C(dm_thread_returned)
     brk #0
+
+#ifndef __APPLE__
+.section .note.GNU-stack,"",%progbits
+#endif

@@ -13,7 +13,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#else
+#include "platform.h"
+#endif
 #include <stdatomic.h>
 #include <math.h>
 
@@ -2990,7 +2994,19 @@ uint64_t dm_ui_alone_take(uint64_t others) {   // fill 里调：返回这一次�
 }
 uint64_t dm_ui_auto_buttons(void) { return (dm_guest_frame() < atomic_load(&g_fe_key_until) ? atomic_load(&g_fe_key_mask) : 0) | (atomic_load(&g_del_hold) ? DM_BTN_A : 0)
                                            | (dm_guest_frame() < atomic_load(&g_pulse_until) ? atomic_load(&g_pulse_mask) : 0); }
-static void fe_key(uint64_t mask) { atomic_store(&g_fe_key_mask, mask); atomic_store(&g_fe_key_until, dm_guest_frame() + 3); }
+static void fe_key(uint64_t mask) {
+    unsigned frames = 3;
+#ifdef __ANDROID__
+    // 方向脉冲只跨一个出图帧：慢帧下三帧会超过原版按住连发延迟，
+    // 一次菜单移动变成多行，补挪也会来回越过目标。其余键保留原时长。
+    // A directional pulse spans one presented frame. On slow frames, three
+    // frames exceed the game's repeat delay and skip menu rows on every retry.
+    // Other buttons retain their original duration.
+    if (mask & (DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT)) frames = 1;
+#endif
+    atomic_store(&g_fe_key_mask, mask);
+    atomic_store(&g_fe_key_until, dm_guest_frame() + frames);
+}
 static void ui_auto_key(uint64_t mask) { fe_key(mask); }
 static void fe_send(const char *cat, const char *act, const char *arg) {
     module_t *m = main_module(); uint64_t root = 0; if (!m) return; memcpy(&root, m->base + 0x2f05458, 8); if (!root) return;

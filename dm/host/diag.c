@@ -3,11 +3,15 @@
 #include "dm_prof.h"
 #include "dm.h"
 #include "dm_hud.h"
+#include "dm_guest_player.h"
 #include "dm_cursor.h"
 #include "dm_hud_exp.h"
 #include "dm_elysium.h"
 #include "dm_bossrush.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#endif
+#include "platform.h"
 #include <fcntl.h>
 #include <dirent.h>
 #include <stdatomic.h>
@@ -16,13 +20,65 @@
 #include <dlfcn.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
+#ifdef __APPLE__
 #include <malloc/malloc.h>
+#else
+#include <malloc.h>
+#endif
 #include <sys/mman.h>
+#ifdef __APPLE__
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
+#endif
 #if defined(__APPLE__)
 #include <pthread/qos.h>
 #endif
+// 保留原诊断读数；ELF 使用可失败的本进程读取，不解引用未知地址。
+// Preserve original diagnostics through fallible native process reads on ELF.
+static int diag_read(uint64_t address, size_t size, uintptr_t out, size_t *got) {
+#ifdef __APPLE__
+    vm_size_t n = 0;
+    int result = vm_read_overwrite(mach_task_self(), address, size, out, &n);
+    *got = n;
+    return result;
+#else
+    long n = dm_self_read((void *)out, (const void *)(uintptr_t)address, size);
+    *got = n > 0 ? (size_t)n : 0;
+    return n < 0;
+#endif
+}
+static uint64_t diag_heap_in_use(void) {
+#ifdef __APPLE__
+    malloc_statistics_t ms;
+    malloc_zone_statistics(NULL, &ms);
+    return ms.size_in_use;
+#elif defined(__ANDROID__)
+    return mallinfo().uordblks;
+#else
+    return mallinfo2().uordblks;
+#endif
+}
+// RSS 与 Darwin footprint 不是同一指标，日志必须标出实际来源。
+// Linux RSS is not Darwin footprint; keep the metric name explicit.
+#ifdef __APPLE__
+#define DIAG_RESIDENT_NAME "phys_footprint"
+#else
+#define DIAG_RESIDENT_NAME "rss"
+#endif
+static uint64_t diag_resident(void) {
+#ifdef __APPLE__
+    task_vm_info_data_t vi;
+    mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    return task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &n) == KERN_SUCCESS
+        ? vi.phys_footprint : UINT64_MAX;
+#else
+    FILE *f = fopen("/proc/self/statm", "r");
+    unsigned long pages = 0;
+    int ok = f && fscanf(f, "%*u %lu", &pages) == 1;
+    if (f) fclose(f);
+    return ok ? (uint64_t)pages * (uint64_t)sysconf(_SC_PAGESIZE) : UINT64_MAX;
+#endif
+}
 void crash_off(const char *tag, uint64_t a);
 #define off crash_off
 void dm_backtrace(uint64_t fp);
@@ -37,15 +93,22 @@ void dm_mtl_l3_tick(uint32_t tick) __attribute__((weak));
 // Only when /dev/fd cannot be opened (sandbox) fall back to fcntl probing, capped at 4096; the method is printed once on first use
 static int l3_fd_count(void) {
     static int said; int n = 0;
-    DIR *d = opendir("/dev/fd");
+    const char *fd_path =
+#ifdef __APPLE__
+        "/dev/fd";
+#else
+        "/proc/self/fd";
+#endif
+    DIR *d = opendir(fd_path);
     if (d) {
         int self = dirfd(d); struct dirent *e;
         while ((e = readdir(d))) if (e->d_name[0] != '.' && atoi(e->d_name) != self) n++;
         closedir(d);
-        if (!said++) LOG("L3MEM 句柄计数：/dev/fd 目录");
+        if (!said++) LOG("L3MEM 句柄计数：%s 目录", fd_path);
         return n;
     }
-    int top = getdtablesize(); if (top > 4096) top = 4096;
+    long limit = sysconf(_SC_OPEN_MAX);
+    int top = limit > 0 && limit < 4096 ? (int)limit : 4096;
     for (int fd = 0; fd < top; fd++) if (fcntl(fd, F_GETFD) != -1) n++;
     if (!said++) LOG("L3MEM 句柄计数：/dev/fd 打不开，fcntl 探测前 %d 个", top);
     return n;
@@ -61,11 +124,8 @@ static uint64_t g_l3mem_seq;
 
 static void l3mem_report(uint32_t tick, uint64_t seq) {
     uint64_t started = now_ns();
-    malloc_statistics_t ms;
-    task_vm_info_data_t vi;
-    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
     uint64_t t = now_ns();
-    malloc_zone_statistics(NULL, &ms);
+    uint64_t heap = diag_heap_in_use();
     uint64_t malloc_ns = now_ns() - t;
     t = now_ns();
     uint64_t metal = dm_mtl_l3_sample ? dm_mtl_l3_sample(tick) : 0;
@@ -73,14 +133,12 @@ static void l3mem_report(uint32_t tick, uint64_t seq) {
     t = now_ns();
     int handles = l3_fd_count();
     uint64_t fd_ns = now_ns() - t;
-    uint64_t footprint = 0;
     t = now_ns();
-    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &count) == KERN_SUCCESS)
-        footprint = vi.phys_footprint;
+    uint64_t footprint = diag_resident();
     uint64_t task_ns = now_ns() - t;
-    LOG("[dm] L3MEM 拍 %u 堆在用 %llu Metal已分配 %llu 句柄 %d phys_footprint %llu 耗时_ns %llu malloc_ns %llu metal_ns %llu fd_ns %llu task_ns %llu 线程 dm-l3mem 序号 %llu",
+    LOG("[dm] L3MEM 拍 %u 堆在用 %llu Metal已分配 %llu 句柄 %d " DIAG_RESIDENT_NAME " %llu 耗时_ns %llu malloc_ns %llu metal_ns %llu fd_ns %llu task_ns %llu 线程 dm-l3mem 序号 %llu",
         tick,
-        (unsigned long long)ms.size_in_use, (unsigned long long)metal, handles,
+        (unsigned long long)heap, (unsigned long long)metal, handles,
         (unsigned long long)footprint, (unsigned long long)(now_ns() - started),
         (unsigned long long)malloc_ns, (unsigned long long)metal_ns,
         (unsigned long long)fd_ns, (unsigned long long)task_ns,
@@ -128,7 +186,7 @@ static void l3mem_request(uint32_t tick) {
 // ---------- Probes DM_PROBE=module:offset[,module:offset...] (Mac-only development diagnostics) ----------
 // Modifies code pages at runtime (mprotect writable → write brk → back to executable) and executes trampolines written at runtime: Mac development debugging only, unavailable on iOS (signed code pages are not writable,
 // runtime instruction pages are not executable), and not part of the shipped product. Product diagnostics go through observation gates inserted offline by the rewriter (OBS table → gate_obs_set), such as DM_UIMSG below.
-#if !TARGET_OS_IPHONE
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
 // 写法 模块:偏移[@x0 偏移]。在客体地址换上 brk，命中时打印 x0..x3（及其指向的可读字符串）与回溯，原指令放进跳板槽执行后跳回。
 // 跳板借用 x16：只在函数入口或 x16 已死的点下探针；原指令不能是 PC 相对类（adr/adrp/b/bl/ldr 字面量/cbz…）。
 // Syntax module:offset[@x0 offset]. Put a brk at the guest address; on hit print x0..x3 (and the readable strings they point to) and a backtrace, then execute the original instruction from a trampoline slot and jump back.
@@ -138,8 +196,8 @@ typedef void (*probe_fn)(ucontext_t *uc);
 static struct { uint64_t at; uint32_t *slot; unsigned hits; char name[40]; long dump; probe_fn fn; } g_probe[MAX_PROBE];   // dump：命中时打印 [x0+dump] 16 字节（-1 = 不打）；fn：专用处理（替代缺省打印） | dump: on hit print 16 bytes at [x0+dump] (-1 = do not print); fn: dedicated handler (replaces the default print)
 static int g_nprobe;
 static void probe_str(uint64_t p) {
-    char buf[80]; vm_size_t got = 0;
-    if (p < 0x1000 || vm_read_overwrite(mach_task_self(), p, sizeof buf - 1, (vm_address_t)buf, &got) || !got) return;
+    char buf[80]; size_t got = 0;
+    if (p < 0x1000 || diag_read(p, sizeof buf - 1, (uintptr_t)buf, &got) || !got) return;
     buf[got] = 0; int n = 0; while (buf[n] >= 0x20 && buf[n] < 0x7f) n++;
     if (n >= 3 && (buf[n] == 0 || n == (int)got)) { fprintf(stderr, " \"%.*s\"", n, buf); return; }
     // 游戏字符串对象 {char* 指针, u64 长度, u64 容量|最高位}（0xdf67f0 FJSONUtils 的路径参数即此布局）
@@ -147,7 +205,7 @@ static void probe_str(uint64_t p) {
     if (got >= 24) {
         uint64_t ptr, len; memcpy(&ptr, buf, 8); memcpy(&len, buf + 8, 8);
         char t[96]; got = 0;
-        if (len >= 3 && len < sizeof t && !vm_read_overwrite(mach_task_self(), ptr, len, (vm_address_t)t, &got) && got == len) {
+        if (len >= 3 && len < sizeof t && !diag_read(ptr, len, (uintptr_t)t, &got) && got == len) {
             int k = 0; while (k < (int)len && t[k] >= 0x20 && t[k] < 0x7f) k++;
             if (k == (int)len) fprintf(stderr, " S\"%.*s\"", (int)len, t);
         }
@@ -177,10 +235,10 @@ static int probe_hit(ucontext_t *uc) {   // 由 probe_install 注册给 crash.c 
         { uint64_t x8 = uc->uc_mcontext->__ss.__x[8]; Dl_info di; fprintf(stderr, " x8=%#llx", x8);   // x8：间接调用目标常在这里（blr x8 前下探针） | x8: indirect call targets are often here (probe placed before blr x8)
           if (dladdr((void *)x8, &di) && di.dli_sname) fprintf(stderr, "（%s+%#lx）", di.dli_sname, (unsigned long)(x8 - (uint64_t)di.dli_saddr)); }
         if (g_probe[i].dump >= 0) {
-            uint8_t b[16]; vm_size_t got = 0;
+            uint8_t b[16]; size_t got = 0;
             uint64_t at = uc->uc_mcontext->__ss.__x[0] + (g_probe[i].dump & 0xffffff);
-            if (g_probe[i].dump & 0x1000000) { uint64_t p = 0; vm_size_t g = 0; if (!vm_read_overwrite(mach_task_self(), at, 8, (vm_address_t)&p, &g)) at = p; else at = 0; }   // @*偏移：先解引用再转储 | @*offset: dereference first, then dump
-            if (at && !vm_read_overwrite(mach_task_self(), at, 16, (vm_address_t)b, &got) && got == 16) {
+            if (g_probe[i].dump & 0x1000000) { uint64_t p = 0; size_t g = 0; if (!diag_read(at, 8, (uintptr_t)&p, &g)) at = p; else at = 0; }   // @*偏移：先解引用再转储 | @*offset: dereference first, then dump
+            if (at && !diag_read(at, 16, (uintptr_t)b, &got) && got == 16) {
                 fprintf(stderr, " [%s%#lx]=", (g_probe[i].dump & 0x1000000) ? "*x0+" : "x0+", g_probe[i].dump & 0xffffff); for (int k = 0; k < 16; k++) fprintf(stderr, "%02x", b[k]); }
         }
         fputc('\n', stderr);
@@ -217,28 +275,7 @@ static void probe_add(module_t *m, uint64_t off, long dump, probe_fn fn) {
 // 哈希是 FNV-1a 64；首次命中时扫 main 只读段的全部字符串建反查表，消息直接以名字打印（便于与原版消息流逐条对照）
 // ---------- DM_UIMSG=1: UI message bus (observation gate OBS_UIMSG at main 0xb1dc60, x1 = message {u64 type hash, u64 action hash, char* panel name, ...}) ----------
 // Hashes are FNV-1a 64; on first hit all strings in main's read-only segment are scanned to build a reverse lookup table, and messages are printed directly by name (for comparing entry by entry against the original game's message stream)
-#define UIH_BITS 18
-static struct { uint64_t h; const char *s; } *g_uih;
-static uint64_t fnv1a(const char *p, size_t n) { uint64_t h = 0xcbf29ce484222325ull; for (size_t i = 0; i < n; i++) h = (h ^ (uint8_t)p[i]) * 0x100000001b3ull; return h; }
-static void uih_build(void) {
-    module_t *m = &g_mod[0];
-    g_uih = calloc(1u << UIH_BITS, sizeof *g_uih);
-    const char *p = (const char *)m->base + m->ro_off, *e = (const char *)m->base + m->data_off;
-    while (p < e) {
-        const char *q = p; while (q < e && *q >= 0x20 && *q < 0x7f) q++;
-        if (q < e && !*q && q - p >= 3) {
-            uint64_t h = fnv1a(p, q - p); unsigned i = (unsigned)(h >> (64 - UIH_BITS));
-            while (g_uih[i].s && g_uih[i].h != h) i = (i + 1) & ((1u << UIH_BITS) - 1);
-            g_uih[i].h = h; g_uih[i].s = p;
-        }
-        p = q + 1;
-    }
-}
-static const char *uih_name(uint64_t h, char *buf) {
-    if (g_uih) for (unsigned i = (unsigned)(h >> (64 - UIH_BITS)); g_uih[i].s; i = (i + 1) & ((1u << UIH_BITS) - 1))
-        if (g_uih[i].h == h) return g_uih[i].s;
-    snprintf(buf, 24, "%#llx", h); return buf;
-}
+#include "uimsg_hash.h"
 // 输出两路：DM_UIMSG=<路径> 时按 dm/verify/ui_message_stream.md 写 JSONL（每条一行、不折叠、不带时间，供 uicmp.py 与真值对照）；
 // stderr 上另打一行人读摘要（相邻相同合并计数）。DM_UIMSG=1 只打 stderr。
 // Output goes two ways: with DM_UIMSG=<path>, JSONL is written per dm/verify/ui_message_stream.md (one line per message, not folded, no timestamps, for uicmp.py to compare against ground truth);
@@ -338,9 +375,9 @@ void uimsg_subscribe(void (*fn)(const char *cat, const char *act, const char *ar
 static void monres_on_setinfo(const uint64_t *regs, uint64_t payload) {
     int dm_custom_get(const char *key); if (!dm_custom_get("item_notes") || dm_lang_index() != 8) return;   // 物品注释一系只有简中版（英文版：别的语言不显示；注释只写进 zhCN 一列） | the item-notes family exists only in Simplified Chinese (English version: not shown in other languages; notes are written only into the zhCN column)
     module_t *mm = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) mm = &g_mod[i];
-    uint64_t unit = regs[19], name = 0; uint32_t type = 0; vm_size_t got = 0;
-    if (!mm || !unit || vm_read_overwrite(mach_task_self(), unit, 4, (vm_address_t)&type, &got) || type != 1) return;   // 只认怪物（单位类型 1） | Monsters only (unit type 1)
-    if (vm_read_overwrite(mach_task_self(), payload, 8, (vm_address_t)&name, &got) || !name) return;
+    uint64_t unit = regs[19], name = 0; uint32_t type = 0; size_t got = 0;
+    if (!mm || !unit || diag_read(unit, 4, (uintptr_t)&type, &got) || type != 1) return;   // 只认怪物（单位类型 1） | Monsters only (unit type 1)
+    if (diag_read(payload, 8, (uintptr_t)&name, &got) || !name) return;
     int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(mm->base + 0x5b9290);
     static const int id[6] = {36, 37, 39, 41, 43, 45};
     static const char *lb[6] = {"物", "魔", "火", "电", "冰", "毒"}, *cc[6] = {"\xee\x81\xbe" "4", "\xee\x81\xbe" "8", "\xee\x81\xbe" "1", "\xee\x81\xbe" "9", "\xee\x81\xbe" "3", "\xee\x81\xbe" "2"};   // 颜色：字符串表加载时把「ÿc<码>」换成私用区 U+E07E + <码>（UTF-8 EE 81 BE，读缓冲区实测），这里直接写换后的形式（暗金 / 橙 / 红 / 黄 / 蓝 / 绿） | Colors: when the string table loads, "ÿc<code>" is replaced by private-use U+E07E + <code> (UTF-8 EE 81 BE, measured by reading the buffer); here we write the replaced form directly (unique gold / orange / red / yellow / blue / green)
@@ -360,10 +397,10 @@ static void monres_on_setinfo(const uint64_t *regs, uint64_t payload) {
 
 static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄存器 | Observation gate callback: registers are read-only
     if ((g_ui_print || atomic_load(&g_nui_sub)) && !g_uih) uih_build();
-    uint64_t msg = regs[1], f[3] = {0}; vm_size_t got = 0;
-    if (vm_read_overwrite(mach_task_self(), msg, sizeof f, (vm_address_t)f, &got) || got != sizeof f) return;   // 非消息调用：不输出 | Not a message call: no output
+    uint64_t msg = regs[1], f[3] = {0}; size_t got = 0;
+    if (diag_read(msg, sizeof f, (uintptr_t)f, &got) || got != sizeof f) return;   // 非消息调用：不输出 | Not a message call: no output
     char b0[24], b1[24], nm[65] = ""; int have_arg = 0; got = 0;
-    if (f[2] && !vm_read_overwrite(mach_task_self(), f[2], 64, (vm_address_t)nm, &got)) {
+    if (f[2] && !diag_read(f[2], 64, (uintptr_t)nm, &got)) {
         nm[got] = 0; have_arg = 1;
         size_t k = 0; for (; k < got && nm[k]; k++) if ((uint8_t)nm[k] < 0x20 || (uint8_t)nm[k] >= 0x7f) { have_arg = 0; break; }   // 面板名都是可见 ASCII；有些消息（如 InputMessage MouseMove）这一格不是字符串指针， | Panel names are all printable ASCII; for some messages (e.g. InputMessage MouseMove) this slot is not a string pointer,
                                                                                                          // 指到的字节碰巧像字符（出过一次：arg 写成 "\xf0\xbc\xb8"，断言脚本按 UTF-8 读 uimsg.jsonl 报错，inv_tap 假红两次）
@@ -431,8 +468,8 @@ static void setlang_obs(const uint64_t *regs) {
     dm_ui_gen_bump(DM_UIGEN_LANG);   // 界面代号（dm_cursor.h）：切语言会重建整套界面 | UI generation (dm_cursor.h): switching language rebuilds the entire UI
     { void dm_padmode_lang_reset(void); dm_padmode_lang_reset(); }   // 串表清空之前：我们换进串表的指针先写回原文、记的节点清空（dm_padmode.c） | Before the string table is cleared: write the original text back over the pointers we swapped into the string table and clear the recorded nodes (dm_padmode.c)
     module_t *m = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) m = &g_mod[i];
-    uint32_t idx = 0; const char *nm = NULL; vm_size_t got = 0;   // 安全读（不用 tk_rd：它给拍状态采集计数） | Safe read (not tk_rd: that one counts toward tick state collection)
-    if (regs[1] && !vm_read_overwrite(mach_task_self(), regs[1], 4, (vm_address_t)&idx, &got) && got == 4 && idx < 13) {
+    uint32_t idx = 0; const char *nm = NULL; size_t got = 0;   // 安全读（不用 tk_rd：它给拍状态采集计数） | Safe read (not tk_rd: that one counts toward tick state collection)
+    if (regs[1] && !diag_read(regs[1], 4, (uintptr_t)&idx, &got) && got == 4 && idx < 13) {
         uint64_t p = 0; memcpy(&p, m->base + 0x20ae478 + 8ull * idx, 8); nm = (const char *)p; }
     static uint32_t last = 0xffffffff; if (idx != last) { last = idx; LOG("SetLanguage：语言 %s（号 %u），重装字符串表", nm ? nm : "?", idx); }
     if (nm) atomic_store(&g_dm_lang, (int)idx);   // 我们自己的 UIKit 文字跟着换（dm_i18n.c） | our own UIKit text switches along with it (dm_i18n.c)
@@ -448,7 +485,7 @@ void probe_install(void) {
         if (!gate_obs_present(OBS_UIMSG)) LOG("【红】产物没有 UI 观测门 OBS_UIMSG（需 r6 起的产物）：DM_UIMSG / 启动分段 ④–⑥ 无输出");
         else gate_obs_set(OBS_UIMSG, uimsg_print);
     }
-#if !TARGET_OS_IPHONE
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
     crash_set_trap_hook(probe_hit);
     const char *e = getenv("DM_PROBE");
     if (e) {
@@ -465,6 +502,8 @@ void probe_install(void) {
         }
     }
     if (g_slots && !g_slots_sealed) { mprotect(g_slots, 0x4000, PROT_READ | PROT_EXEC); sys_icache_invalidate(g_slots, 0x4000); g_slots_sealed = 1; }
+#else
+    if (getenv("DM_PROBE")) die("DM_PROBE requires the original macOS diagnostic host; use offline observation gates on Android");
 #endif
 }
 
@@ -483,13 +522,22 @@ static void on_sample(int sig, siginfo_t *si, void *uc_) {
     unsigned i = atomic_load(&g_shead) % SRING;
     extern uint64_t now_ns(void);
     uint32_t thr_cur_handle(void);
-    g_sring[i].h = thr_cur_handle(); g_sring[i].t = now_ns(); g_sring[i].pc = uc->uc_mcontext->__ss.__pc; g_sring[i].lr = uc->uc_mcontext->__ss.__lr;
-    uint64_t fp = uc->uc_mcontext->__ss.__fp; int n = 0;
+    g_sring[i].h = thr_cur_handle(); g_sring[i].t = now_ns();
+#ifdef __APPLE__
+    g_sring[i].pc = uc->uc_mcontext->__ss.__pc;
+    g_sring[i].lr = uc->uc_mcontext->__ss.__lr;
+    uint64_t fp = uc->uc_mcontext->__ss.__fp;
+#else
+    g_sring[i].pc = uc->uc_mcontext.pc;
+    g_sring[i].lr = uc->uc_mcontext.regs[30];
+    uint64_t fp = uc->uc_mcontext.regs[29];
+#endif
+    int n = 0;
     // 帧链用安全读：被打断的函数可能把 x29 当普通寄存器用（直接解引用曾段错误）
     // The frame chain uses safe reads: the interrupted function may be using x29 as an ordinary register (a direct dereference once segfaulted)
     for (; n < 16 && fp && !(fp & 7); n++) {
-        uint64_t fr[2]; vm_size_t got = 0;
-        if (vm_read_overwrite(mach_task_self(), fp, sizeof fr, (vm_address_t)fr, &got) || got != sizeof fr) break;
+        uint64_t fr[2]; size_t got = 0;
+        if (diag_read(fp, sizeof fr, (uintptr_t)fr, &got) || got != sizeof fr) break;
         g_sring[i].bt[n] = fr[1];
         if (fr[0] <= fp) { n++; break; }
         fp = fr[0];
@@ -533,7 +581,7 @@ void crash_sample_self(void) {
 // ---------- DM_INFLATE_BENCH=<sample file>: decompress the same batch of samples with the zlib in the game image (main 0xf3a930 inflateInit_, 0xf3aa90 inflate) and time it ----------
 // Sample format same as scratchpad infl/bench.c: {CKey16, raw length, block count, [mode, compressed length, decompressed length, data]...}; verify MD5 == CKey file by file.
 // Called only after guest thread initialization and before SDK initialization (zlib does not depend on the SDK: z_stream's zalloc / zfree are filled with host functions).
-#include <CommonCrypto/CommonDigest.h>
+#include "crypto.h"
 static void *g_zarena[64]; static int g_nzarena;
 static void *bench_zalloc(void *o, unsigned items, unsigned size) { (void)o; void *p = calloc(items, size); if (g_nzarena < 64) g_zarena[g_nzarena++] = p; return p; }
 static void bench_zfree(void *o, void *p) { (void)o; (void)p; }      // 每块结束统一释放 | Everything is freed together at the end of each block
@@ -651,9 +699,9 @@ static void state_dump_monsters(uint64_t G, char *out, size_t cap, size_t *used)
 }
 static int tk_rd(uint64_t a, void *buf, size_t n) {           // = swtick Reader.rd：地址 0 不计数、直接无；读失败无 | = swtick Reader.rd: address 0 is not counted and is None directly; a failed read is None
     if (!a) return 0;
-    g_tkreads++; vm_size_t got = 0;
+    g_tkreads++; size_t got = 0;
     { int dm_guest_heap_readable(uint64_t, size_t); if (dm_guest_heap_readable(a, n)) { memcpy(buf, (const void *)(uintptr_t)a, n); return 1; } }   // 客体堆内：直接读（原先每个字段一次内核调用，主线程每拍几十次） | Inside the guest heap: read directly (it used to be one kernel call per field, dozens of times per tick on the main thread)
-    return !vm_read_overwrite(mach_task_self(), a, n, (vm_address_t)buf, &got) && got == n;
+    return !diag_read(a, n, (uintptr_t)buf, &got) && got == n;
 }
 typedef struct { uint32_t type, cls, id, mode, act, seed, rlo, rhi, x, y, xf, yf, it[5], has_it, nst; uint32_t st[96][2]; unsigned ord; } tk_unit;
 static int tk_cmp(const void *a, const void *b) {
@@ -773,7 +821,7 @@ static void cube_diag_tick(uint64_t G, uint64_t player) {   // 合成请求后 2
 // The local player unit id as recorded by the client itself (main+0x2d20e4c local player slot → main+0x2d60380[slot], same reading as the original 0x45f9d0); 0xffffffff if unreadable (not in a game yet).
 // All three "who is the controlled player" sites go by it: the per-tick feature entry hud_tick, the state dump state_dump, the position check poschk. A corpse left in the player table after the character dies is also a player-type unit with "mode ≠ 0 and coordinates",
 // so counting units present reports "living player + own corpse" as non-unique. That is a stale measuring criterion, not two players on the field
-static uint32_t local_player_id(void) { uint32_t slot = 8, lid = 0xffffffffu; module_t *mm = main_mod(); if (mm && tk_rd((uint64_t)mm->base + 0x2d20e4c, &slot, 4) && slot < 8) tk_rd((uint64_t)mm->base + 0x2d60380 + 4 * slot, &lid, 4); return lid; }
+static uint32_t local_player_id(void) { module_t *m = main_mod(); return dm_guest_local_player_id(m ? (uint64_t)m->base : 0, tk_rd); }
 static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本级经验‰ / 腰带四列件数 / 回城次数 + 当前人数档 → g_hud（前端 dm_hud_get） | Every tick: controlled player's level / current-level experience ‰ / item counts of the four belt columns / town portal count + current /players setting → g_hud (front end dm_hud_get)
     dm_hud_info h = {0};
     uint64_t player = 0, inv = 0, u = 0, next = 0;
@@ -787,15 +835,8 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     // and during the few ticks of dying again the real player's mode is 0 (dying), so what got taken was the corpse -- boss rush / rift / free town portal / personal stash / Chronicle / pouch all treated the corpse as "the player changed" and re-initialized once,
     // and when the real player became mode 17 it switched back and they initialized once more (measured on the host: at the moment of the second death in a boss rush the log showed two rounds in a row of every module's run-entry lines, and the boss rush progress was reset to zero).
     // Once the unit id is known, only that unit is accepted: during the few ticks it is dying there is no controlled player this tick (the same as a first death with no corpse), and it never falls back to another player-class unit. Only when the unit id cannot be read (not in a run yet) does it scan as before
-    uint32_t lid = local_player_id();
-    for (int b = 0; b < 128 && !player; b++) {
-        if (!tk_rd(G + 0x2230 + 8 * b, &u, 8)) continue;
-        for (int k = 0; u && k < 4096; k++) {
-            uint32_t mode = 0, id = 0; uint64_t pp = 0; uint16_t c[4] = {0};
-            if (tk_rd(u + 0xC, &mode, 4) && mode && tk_rd(u + 0x38, &pp, 8) && pp && tk_rd(pp, c, 8) && (c[1] || c[3]) && (lid == 0xffffffffu || (tk_rd(u + 8, &id, 4) && id == lid))) { player = u; break; }
-            if (!tk_rd(u + 0x158, &u, 8)) break;
-        }
-    }
+    module_t *player_main = main_mod();
+    player = dm_guest_player_unit(player_main ? (uint64_t)player_main->base : 0, G, tk_rd);
     uint32_t sig = 0;
     if (player && tk_rd(player + 0x90, &inv, 8) && tk_rd(inv, &sig, 4) && sig == 0x01020304) {
         { static int hp1 = -1; if (hp1 < 0) { const char *e = getenv("DM_TEST_HP1"); hp1 = e != NULL; if (e && e[0] == '0') g_hp1_to = 0; } if (hp1 && cur_tick() > 200) test_hp1(player); }
@@ -1506,7 +1547,6 @@ static void hold_on_uimsg(const char *cat, const char *act, const char *arg) {
 // Columns: wall-clock time / process seconds / thermal state / 3D render scale / present frame rate / share of frame intervals falling in the 16.7, 25, ≥33 ms buckets (boundaries 20.8, 29.2 ms) and number of dropped frames /
 //     per-frame submit CPU ms / scene (in-run Lv or menu). Data source = the actual present intervals in hle_nvn.c (same source as the 「上屏」(present) line in boot.txt); no separate statistic is kept.
 // On by default on iOS; DM_PERF_FILE=<path> picks the file (on Mac it is only written when set), DM_PERF_FILE=0 turns it off. When the file reaches 256 KB it is renamed perf.old.txt and started over.
-#include <TargetConditionals.h>
 #include <sys/stat.h>
 #include <time.h>
 int dm_thermal_now(void);
@@ -1529,7 +1569,10 @@ void dm_longframe_note(const char *what) {
     time_t w = time(NULL); struct tm tmv; localtime_r(&w, &tmv); char ts[16]; strftime(ts, sizeof ts, "%H:%M:%S", &tmv);
     fprintf(fp, "长帧\t%s\t%s；%s\n", ts, what, ctx); fclose(fp);
 }
-void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 帧的实际上屏间隔 ms；−1 = 被系统丢弃，0 = 无读数） | Called once per frame by the present thread (the actual present interval in ms, lagging by 8 frames; −1 = dropped by the system, 0 = no reading)
+void dm_perf_present(double iv) {
+#ifdef DM_NATIVE_FEATURES
+    void dm_android_record_present(double); dm_android_record_present(iv);
+#endif   // 出图线程每帧调一次（滞后 8 帧的实际上屏间隔 ms；−1 = 被系统丢弃，0 = 无读数） | Called once per frame by the present thread (the actual present interval in ms, lagging by 8 frames; −1 = dropped by the system, 0 = no reading)
     static const char *path; static int init; static unsigned c16, c25, c33, disc; static double sum; static uint64_t t0, f0, cpu0, tstart;
     if (!init) { init = 1; const char *e = getenv("DM_PERF_FILE"); path = e ? (strcmp(e, "0") ? e : NULL) : (TARGET_OS_IPHONE ? "perf.txt" : NULL); t0 = tstart = now_ns(); f0 = dm_nvn_frame_count(); cpu0 = dm_nvn_sub_cpu_ns(); }
     dm_3d_scale_feed(iv);   // 动态 3D 比例的控制器吃同一份上屏间隔（hle_oe.c） | The dynamic 3D scale controller consumes the same present intervals (hle_oe.c)
@@ -1752,15 +1795,13 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
 // Columns: seconds, tick number (-1 when not in a run), handles, live threads, thread objects, malloc in-use MiB, phys_footprint MiB (the tick number requires the tick entry observation gate to be attached: any of DM_TICKS / DM_C2S_*)
 static void *soak_main(void *arg) {
     FILE *f = arg; int iv = 60; const char *e = strchr(getenv("DM_SOAK"), ','); if (e) iv = atoi(e + 1);
-    fprintf(f, "秒\t拍号\t句柄\t存活线程\t线程对象\tmalloc_MiB\tfootprint_MiB\n"); fflush(f);
+    fprintf(f, "秒\t拍号\t句柄\t存活线程\t线程对象\tmalloc_MiB\t" DIAG_RESIDENT_NAME "_MiB\n"); fflush(f);
     for (;;) {
         sleep(iv);
         void thr_counts(int *, int *, int *); int h, l, o; thr_counts(&h, &l, &o);
-        malloc_statistics_t ms; malloc_zone_statistics(NULL, &ms);
-        task_vm_info_data_t vi; mach_msg_type_number_t c = TASK_VM_INFO_COUNT; uint64_t fp = 0;
-        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &c) == KERN_SUCCESS) fp = vi.phys_footprint;
+        uint64_t heap = diag_heap_in_use(), fp = diag_resident();
         long long tk = in_game() ? (long long)cur_tick() : -1;        // 不在局内（未进局 / 已离局）写 -1 | Writes -1 when not in a run (not yet entered / already left)
-        fprintf(f, "%.0f\t%lld\t%d\t%d\t%d\t%.1f\t%.1f\n", (now_ns() - g_t0_ns) / 1e9, tk, h, l, o, ms.size_in_use / 1048576.0, fp / 1048576.0);
+        fprintf(f, "%.0f\t%lld\t%d\t%d\t%d\t%.1f\t%.1f\n", (now_ns() - g_t0_ns) / 1e9, tk, h, l, o, heap / 1048576.0, fp / 1048576.0);
         fflush(f);
     }
     return NULL;

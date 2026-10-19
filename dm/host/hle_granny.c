@@ -34,7 +34,9 @@
 //   Known not covered: when a chunk read fails (bytes read not equal to bytes requested) the game leaves the loop early and the deferred ctx stays in its initial state -- this only happens on an I/O error, in which case the segment read itself has already failed.
 // DM_GRANNY_PROF=1 (needs DM_BOOTPROF=1 to fix the character select moment): accumulates call count, input bytes and time per guest thread, in two phases "boot → character select main menu" and "after character select".
 #include "hle.h"
+#ifdef __APPLE__
 #include <pthread/qos.h>
+#endif
 #include <stdatomic.h>
 uint32_t thr_cur_handle(void);
 
@@ -151,7 +153,10 @@ static void selftest_report(void) {
 }
 
 static void *g_worker(void *arg) {
-    (void)arg; pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+    (void)arg;
+#ifdef __APPLE__
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#endif
     for (;;) {
         pthread_mutex_lock(&g_gl);
         while (!g_qhead && !atomic_load(&g_gstop)) pthread_cond_wait(&g_gc, &g_gl);

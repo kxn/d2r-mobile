@@ -370,3 +370,4 @@ dmTcNavBack	返回	Back	同上
 dmTcNavAction	操作	Action	同上
 dmTcNavBind	绑定	Bind	同上
 dmTcNavNext	下一页	Next Page	同上
+dmAppTitle	D2R Mobile	D2R Mobile	Android 启动器名称（由构建脚本生成资源）

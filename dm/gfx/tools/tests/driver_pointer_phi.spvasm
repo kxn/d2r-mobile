@@ -1,0 +1,54 @@
+OpCapability Shader
+OpCapability VariablePointers
+OpExtension "SPV_KHR_variable_pointers"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main LocalSize 1 1 1
+OpDecorate %arr ArrayStride 16
+OpMemberDecorate %block 0 Offset 0
+OpDecorate %block Block
+OpDecorate %root DescriptorSet 2
+OpDecorate %root Binding 1
+OpMemberDecorate %outblock 0 Offset 0
+OpDecorate %outblock Block
+OpDecorate %out DescriptorSet 2
+OpDecorate %out Binding 2
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%u = OpTypeInt 32 0
+%v4 = OpTypeVector %u 4
+%bool = OpTypeBool
+%zero = OpConstant %u 0
+%one = OpConstant %u 1
+%n = OpConstant %u 4096
+%idx = OpConstant %u 22
+%arr = OpTypeArray %v4 %n
+%block = OpTypeStruct %arr
+%ptrblock = OpTypePointer Uniform %block
+%ptrvec = OpTypePointer Uniform %v4
+%root = OpVariable %ptrblock Uniform
+%null = OpConstantNull %ptrvec
+%outblock = OpTypeStruct %v4
+%outptr = OpTypePointer StorageBuffer %outblock
+%outvec = OpTypePointer StorageBuffer %v4
+%out = OpVariable %outptr StorageBuffer
+%main = OpFunction %void None %fn
+%entry = OpLabel
+OpBranch %header
+%header = OpLabel
+%i = OpPhi %u %zero %entry %one %cont
+%p = OpPhi %ptrvec %null %entry %next %cont
+%c = OpIEqual %bool %i %zero
+OpLoopMerge %exit %cont None
+OpBranchConditional %c %cont %body
+%body = OpLabel
+%value = OpLoad %v4 %p
+%dst = OpAccessChain %outvec %out %zero
+OpStore %dst %value
+OpBranch %exit
+%cont = OpLabel
+%next = OpAccessChain %ptrvec %root %zero %idx
+OpBranch %header
+%exit = OpLabel
+OpReturn
+OpFunctionEnd

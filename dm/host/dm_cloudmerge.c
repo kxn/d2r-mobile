@@ -259,7 +259,7 @@ static void cm_hook(const char *wd) {
                 g_pend[i] = g_pend[--g_npend]; g_dirty = 1; }
             free(d); }
         if (g_gold_sent) { char a[1400], b2[1400]; struct stat st; snprintf(a, sizeof a, "%s/%s/%s.d2i", wd, g_stash, g_stash); snprintf(b2, sizeof b2, "%s/%s.d2i", wd, g_stash);
-            if ((!stat(a, &st) || !stat(b2, &st)) && (st.st_mtimespec.tv_sec > g_gold_at.tv_sec || (st.st_mtimespec.tv_sec == g_gold_at.tv_sec && st.st_mtimespec.tv_nsec > g_gold_at.tv_nsec))) { g_gold -= g_gold_sent; if (g_gold < 0) g_gold = 0; g_gold_sent = 0; g_dirty = 1;
+            if ((!stat(a, &st) || !stat(b2, &st)) && (dm_platform_stat_mtime(&st).tv_sec > g_gold_at.tv_sec || (dm_platform_stat_mtime(&st).tv_sec == g_gold_at.tv_sec && dm_platform_stat_mtime(&st).tv_nsec > g_gold_at.tv_nsec))) { g_gold -= g_gold_sent; if (g_gold < 0) g_gold = 0; g_gold_sent = 0; g_dirty = 1;
                 LOG("iCloud 并回：提交前核对 #%llu —— 共享仓库档在加金币之后重写过 → 金币划掉，还剩 %lld", (unsigned long long)cno, g_gold); } }
         if (g_dirty) { plan_path(p, sizeof p, wd, g_entry);
             if (plan_write(p) == 0) { g_dirty = 0; cm_kill(3); LOG("iCloud 并回：清单随这次提交落盘（还剩 %d 件、金币 %lld）%s", g_plan.n, g_gold, !g_plan.n && g_gold <= 0 ? "—— 这一类仓库并完" : ""); }

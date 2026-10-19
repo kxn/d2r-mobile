@@ -26,22 +26,34 @@
 #include "nvn_pace.h"
 #include "../../host/front.h"
 #include "nvn_dirty.h"
+#include "nvn_platform.h"
+#ifdef __ANDROID__
+#include <android/trace.h>
+#endif
+#ifdef __APPLE__
 #include <mach/mach_time.h>
 #include <mach/mach.h>
 #include <TargetConditionals.h>
+#endif
 #include <unistd.h>
 #if TARGET_OS_OSX
 #define DM_MEM_CAP_DEFAULT_GB 24
 #else
 #define DM_MEM_CAP_DEFAULT_GB 0
 #endif
+#ifdef __APPLE__
 #include <pthread/qos.h>
+#endif
 #include <sys/resource.h>
+#ifdef __APPLE__
 #include <mach/thread_policy.h>
+#endif
 #include <assert.h>
 #include <stdatomic.h>
+#ifdef __APPLE__
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#endif
 
 // ---------- 槽表、跳板、未实现桩 ----------
 // ---------- Slot table, thunks, unimplemented stubs ----------
@@ -59,6 +71,9 @@ static uint8_t g_unimpl_seen[NVN_NFUNC];
 uint64_t nvn_unimpl_c(nvn_slot_t *slot, uint64_t x0, uint64_t x1, uint64_t x2) {
     unsigned i = (unsigned)(slot - nvn_slot);
     if (!g_unimpl_seen[i]++) LOG("【红】NVN 未实现被调用：%s (x0=%#llx x1=%#llx x2=%#llx)", nvn_names[i], x0, x1, x2);
+    #ifdef DM_STRICT_HLE
+    die("unimplemented NVN function: %s", nvn_names[i]);
+    #endif
     return 0;
 }
 
@@ -66,13 +81,13 @@ typedef struct { const char *name; void *fn; } nvn_impl;
 #define NVN(name, ret, ...)                                                                       \
     static ret h_##name(__VA_ARGS__);                                                             \
     static const NVNT_##name chk_##name __attribute__((unused)) = h_##name;                       \
-    __attribute__((used, section("__DATA,swnvn"))) static const nvn_impl e_##name = {#name, (void *)h_##name}; \
+    DM_HLE_SECTION("swnvn") static const nvn_impl e_##name = {#name, (void *)h_##name}; \
     static ret h_##name(__VA_ARGS__)
 // 无原型的新版接口：不做签名检查
 // Newer interfaces without prototypes: no signature check
 #define NVN_NOPROTO(name, ret, ...)                                                               \
     static ret h_##name(__VA_ARGS__);                                                             \
-    __attribute__((used, section("__DATA,swnvn"))) static const nvn_impl e_##name = {#name, (void *)h_##name}; \
+    DM_HLE_SECTION("swnvn") static const nvn_impl e_##name = {#name, (void *)h_##name}; \
     static ret h_##name(__VA_ARGS__)
 
 static int g_log;
@@ -83,8 +98,14 @@ static unsigned g_nsem;                          // 语义实现个数（nvn_ini
 static void nvn_init_slots(void) {
     static int done; if (done) return; done = 1;
     g_log = getenv("DM_NVN_LOG") != NULL;
+#ifdef __APPLE__
     unsigned long sz;
     const nvn_impl *im = (const nvn_impl *)getsectiondata(&_mh_execute_header, "__DATA", "swnvn", &sz);
+#else
+    extern const nvn_impl __start_swnvn[], __stop_swnvn[];
+    const nvn_impl *im = __start_swnvn;
+    size_t sz = (const char *)__stop_swnvn - (const char *)im;
+#endif
     unsigned nim = im ? (unsigned)(sz / sizeof *im) : 0, hit = 0;
     for (unsigned i = 0; i < NVN_NFUNC; i++) nvn_slot[i].fn = (void *)nvn_unimpl_entry;
     for (unsigned k = 0; k < nim; k++) {
@@ -256,6 +277,8 @@ static snap_slot *g_snap_free;
 static struct { snap_slot *s; uint64_t at; } *g_snap_ret; static size_t g_snap_nret, g_snap_capret, g_snap_live, g_snap_slots;
 static uint64_t g_snap_sub;   // 已执行（翻译完）的提交数：回收时刻 | Number of submits executed (translated): the reclaim clock
 static _Atomic uint64_t g_x_subs;   // 已入队的提交数（翻译队列，见 nvnQueueSubmitCommands 前）：退役盖戳用它，回收按已执行数，翻译线程落后时副本不会提前回收 | Number of submits enqueued (translation queue, see before nvnQueueSubmitCommands): used for the retire stamp, while reclaim goes by the number executed, so snapshots are not reclaimed early when the translation thread falls behind
+// GPU 资源沿用原副本的入队退役时钟。 | GPU resources share the original snapshot enqueue retirement clock.
+uint64_t nvn_submissions_enqueued(void) { return atomic_load(&g_x_subs); }
 static snap_slot *snap_alloc(void) {   // 持 g_snap_mu | Holds g_snap_mu
     if (!g_snap_free) {
         snap_slot *c = calloc(256, sizeof *c); if (!c) { LOG("【红】对象副本分配失败"); abort(); }
@@ -421,14 +444,46 @@ NVN(nvnSyncInitialize, NVNboolean, NVNsync *s, NVNdevice *d) { (void)d; *(sync_t
 NVN(nvnSyncFinalize, void, NVNsync *s) { ((sync_t *)s)->magic = 0; }
 // 围栏 = 「此前提交到队列的命令全部完成」：记下最近一次提交的栅栏值
 // Fence = "all commands previously submitted to the queue have completed": record the fence value of the most recent submit
-NVN(nvnQueueFenceSync, void, NVNqueue *q, NVNsync *s, NVNsyncCondition c, int f) { (void)q; (void)c; (void)f; ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); }
+NVN(nvnQueueFenceSync, void, NVNqueue *q, NVNsync *s, NVNsyncCondition c, int f) {
+    (void)q; (void)c; (void)f;
+    ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence();
+#ifdef __ANDROID__
+    // Tool-native semantic annotation only: Vulkan traces cannot identify the
+    // originating NVN object/condition. No timestamps, sampling or policy change.
+    if (ATrace_isEnabled()) {
+        char label[128];
+        snprintf(label, sizeof label, "NVN FenceSync q=%p s=%p sub=%llx c=%u f=%x",
+                 (void *)q, (void *)s, (unsigned long long)((sync_t *)s)->fence, (unsigned)c, f);
+        ATrace_beginSection(label); ATrace_endSection();
+    }
+#endif
+}
 // 没围栏过的同步对象按真机行为等到超时；已围栏的只在 GPU 真正完成到该栅栏值后放行
 // A sync object that was never fenced waits until timeout, as on a real device; a fenced one is released only after the GPU has actually completed up to that fence value
 NVN(nvnSyncWait, NVNsyncWaitResult, const NVNsync *s, uint64_t timeout) {
     const sync_t *o = (const sync_t *)s;
-    if (!o->fenced) return NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
-    if (mtl_wait(o->fence, 0)) return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED;
-    return mtl_wait(o->fence, timeout) ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
+#ifdef __ANDROID__
+    int trace = ATrace_isEnabled();
+    if (trace) {
+        char label[128];
+        snprintf(label, sizeof label, "NVN SyncWait s=%p sub=%llx timeout=%llx",
+                 (const void *)s, (unsigned long long)o->fence, (unsigned long long)timeout);
+        ATrace_beginSection(label);
+    }
+#endif
+    NVNsyncWaitResult result;
+    if (!o->fenced) result = NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
+    else if (mtl_wait(o->fence, 0)) result = NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED;
+    else result = mtl_wait(o->fence, timeout) ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
+#ifdef __ANDROID__
+    if (trace) {
+        char label[40];
+        snprintf(label, sizeof label, "NVN SyncWait result=%u", (unsigned)result);
+        ATrace_beginSection(label); ATrace_endSection();
+        ATrace_endSection();
+    }
+#endif
+    return result;
 }
 NVN(nvnEventBuilderSetDefaults, void, NVNeventBuilder *b) { memset(b, 0, sizeof(ev_builder_t)); }
 NVN(nvnEventBuilderSetStorage, void, NVNeventBuilder *b, const NVNmemoryPool *p, int64_t off) { *(ev_builder_t *)b = (ev_builder_t){(const pool_t *)p, off}; }
@@ -787,6 +842,7 @@ NVN(nvnVertexStreamStateSetDivisor, void, NVNvertexStreamState *s, int d) { ST(v
 
 static _Atomic uint64_t g_sub_wall_ns, g_sub_cpu_ns, g_sub_instr;   // 提交（不含出图）的墙钟 / 本线程 CPU 时间 / 本线程退休指令数（逐帧取走） | Wall clock / this thread's CPU time / this thread's retired instruction count for submit (excluding present) (taken away per frame)
 static _Atomic uint64_t g_cum_sub_instr, g_cum_sub_cpu_ns;   // 同上累计（每 300 帧汇总「翻译」行取差，真机经日志口读：每次绘制指令数 / 每帧提交 CPU） | Cumulative versions of the above (the 「翻译」(translation) summary row every 300 frames takes the difference; on a real device read through the log port: instructions per draw / submit CPU per frame)
+#ifdef __APPLE__
 extern int thread_selfcounts(int type, void *buf, size_t nbytes);   // 本线程累计 {指令, 周期}（libSystem 私有接口，Mac / iOS 都有） | This thread's cumulative {instructions, cycles} (libSystem private interface, present on both Mac and iOS)
 static uint64_t thr_instr(void) { uint64_t c[2] = {0, 0}; thread_selfcounts(1, c, sizeof c); return c[0]; }
 // 提交路径的补充读数（真机 Metal 4 指令数 −18% 而提交 CPU 时间 +49%，要分清是内核态、执行效率还是被降频）：
@@ -799,6 +855,11 @@ static uint64_t thr_sys_ns(void) {
     if (thread_info(me, THREAD_BASIC_INFO, (thread_info_t)&bi, &n) == KERN_SUCCESS) r = (uint64_t)bi.system_time.seconds * 1000000000ull + (uint64_t)bi.system_time.microseconds * 1000ull;
     mach_port_deallocate(mach_task_self(), me); return r;
 }
+#else
+static uint64_t thr_instr(void) { return 0; }
+static void thr_counts(uint64_t *instr, uint64_t *cyc) { *instr = *cyc = 0; }
+static uint64_t thr_sys_ns(void) { struct rusage r; if (getrusage(RUSAGE_THREAD, &r)) return 0; return (uint64_t)r.ru_stime.tv_sec * 1000000000ull + r.ru_stime.tv_usec * 1000ull; }
+#endif
 static _Atomic uint64_t g_cum_sub_cyc, g_cum_sub_sys_ns, g_cum_sub_wall_ns;
 static int frame_rec(void);
 static _Atomic uint64_t g_nvn_ns;   // 本帧在提交 / 出图里花的宿主时间（回放编码 + 出图），计时埋点用 | Host time spent in submit / present this frame (replay encoding + present), used by the timing instrumentation
@@ -843,10 +904,20 @@ typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int 
 static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done;   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
-static int g_x_sync; static pthread_t g_x_thr; static mach_port_t g_x_port;   // 翻译线程（策略读数用） | Translation thread (for policy readings)
+static int g_x_sync; static pthread_t g_x_thr;
+#ifdef __ANDROID__
+// Optional platform policy, mirroring the original Apple deadline declaration.
+// The renderer still executes the same original NVN stream and synchronization.
+extern void dm_android_hint_budget(uint64_t) __attribute__((weak));
+extern void dm_android_hint_work(uint64_t,uint64_t,uint64_t) __attribute__((weak));
+#endif
+#ifdef __APPLE__
+static mach_port_t g_x_port;
+#endif
+   // 翻译线程（策略读数用） | Translation thread (for policy readings)
 static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
     mtl_host_apply(host);
-    uint64_t t0 = now_ns(), c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID), i0, y0, s0 = thr_sys_ns(); thr_counts(&i0, &y0);
+    uint64_t t0 = now_ns(), c0 = dm_platform_clock_ns(CLOCK_THREAD_CPUTIME_ID), i0, y0, s0 = thr_sys_ns(); thr_counts(&i0, &y0);
     mtl_sub_begin();
     mtl_sub_index(h, n);
     for (int i = 0; i < n; i++) { mtl_exec_rest(h + i + 1, n - i - 1); mtl_exec((const uint8_t *)h[i]); }
@@ -856,16 +927,22 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
     snap_tick(sub);
     uint64_t dw = now_ns() - t0;
     atomic_fetch_add(&g_nvn_ns, dw); atomic_fetch_add(&g_sub_wall_ns, dw);
-    uint64_t i1, y1; thr_counts(&i1, &y1); uint64_t dc = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c0, di = i1 - i0;
+    uint64_t i1, y1; thr_counts(&i1, &y1); uint64_t dc = dm_platform_clock_ns(CLOCK_THREAD_CPUTIME_ID) - c0, di = i1 - i0;
     atomic_fetch_add(&g_cum_sub_cyc, y1 - y0); atomic_fetch_add(&g_cum_sub_sys_ns, thr_sys_ns() - s0); atomic_fetch_add(&g_cum_sub_wall_ns, dw);
     atomic_fetch_add(&g_sub_cpu_ns, dc); atomic_fetch_add(&g_cum_sub_cpu_ns, dc);
     atomic_fetch_add(&g_sub_instr, di); atomic_fetch_add(&g_cum_sub_instr, di);
+#ifdef __ANDROID__
+    if(dm_android_hint_work) dm_android_hint_work(t0,dw,dc);
+#endif
 }
 static void x_run(const xjob *j, uint64_t job) {
     if (j->kind == XJ_SUBMIT) { x_submit(j->h, j->n, j->sub, j->host); free(j->h); }
     else if (j->kind == XJ_PRESENT) { uint64_t tk = mtl_present(j->tex, j->period, j->crop); pthread_mutex_lock(&g_xmu); g_xtk[job % XTK].job = job; g_xtk[job % XTK].tk = tk; pthread_mutex_unlock(&g_xmu); }
     else {
         mtl_set_frame(j->frame);
+#ifdef __ANDROID__
+        if(dm_android_hint_budget) dm_android_hint_budget((uint64_t)(j->period*1e9));
+#endif
         // 翻译线程与游戏主线程同级：时间约束（实时）线程，周期 = 出图周期，计算量按本线程每帧 CPU 的 p90 自动声明（同取图处的主线程；确定性时钟下不声明）
         // The translation thread has the same standing as the game main thread: a time-constraint (real-time) thread, period = present period, computation declared automatically from the p90 of this thread's per-frame CPU (same as the main thread at acquire; not declared under the deterministic clock)
         uint64_t pn = (uint64_t)(j->period * 1e9); static uint64_t rt_p;
@@ -873,7 +950,18 @@ static void x_run(const xjob *j, uint64_t job) {
     }
 }
 static void *x_thread(void *a) {
-    (void)a; pthread_setname_np("nvn-translate"); g_x_port = pthread_mach_thread_np(pthread_self());
+    (void)a;
+#ifdef __ANDROID__
+    // 翻译线程是原生线程，故障不能误交给 ART 的 Java 隐式空指针处理。
+    // The translation worker is native; do not forward its faults to ART's
+    // implicit Java null-pointer handler.
+    extern void crash_thread_init(void); crash_thread_init();
+#endif
+#ifdef __APPLE__
+    pthread_setname_np("nvn-translate"); g_x_port = pthread_mach_thread_np(pthread_self());
+#else
+    pthread_setname_np(pthread_self(), "nvn-translate");
+#endif
     pthread_mutex_lock(&g_xmu);
     for (;;) {
         while (g_xq_done == g_xq_in) pthread_cond_wait(&g_xcv, &g_xmu);
@@ -888,8 +976,12 @@ static void *x_thread(void *a) {
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
     if (g_x_sync) { LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); return; }
-    pthread_attr_t at; pthread_attr_init(&at); pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0); pthread_attr_setstacksize(&at, 8 << 20);
-    pthread_t t; if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
+    pthread_attr_t at; pthread_attr_init(&at);
+#ifdef __APPLE__
+    pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+    pthread_attr_setstacksize(&at, 8 << 20);
+    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
 }
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
@@ -905,7 +997,18 @@ static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
     pthread_mutex_unlock(&g_xmu);
     return job;
 }
-static void x_wait(uint64_t job) { pthread_mutex_lock(&g_xmu); while (g_xq_done < job) pthread_cond_wait(&g_xcv, &g_xmu); pthread_mutex_unlock(&g_xmu); }
+static void x_wait(uint64_t job) {
+    pthread_mutex_lock(&g_xmu);
+#ifdef __ANDROID__
+    int trace=g_xq_done<job && ATrace_isEnabled();
+    if(trace) ATrace_beginSection("NVN CPU waits translation");
+#endif
+    while(g_xq_done<job) pthread_cond_wait(&g_xcv,&g_xmu);
+    pthread_mutex_unlock(&g_xmu);
+#ifdef __ANDROID__
+    if(trace) ATrace_endSection();
+#endif
+}
 static void x_drain(void) { pthread_mutex_lock(&g_xmu); uint64_t job = g_xq_in; pthread_mutex_unlock(&g_xmu); x_wait(job); }
 static uint64_t x_fence(void) { return atomic_load(&g_x_subs); }
 static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后换来的出图线程票号（0 = 那次出图被丢弃，不用等） | Present thread ticket obtained after the present job runs (0 = that present was dropped, nothing to wait for)
@@ -921,6 +1024,14 @@ NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h)
     if (n > 0) memcpy(j.h, h, (size_t)n * sizeof *h);
     j.host = mtl_host_latch();
     x_push(&j);
+#ifdef __ANDROID__
+    if (ATrace_isEnabled()) {
+        char label[96];
+        snprintf(label, sizeof label, "NVN QueueSubmit q=%p sub=%llx handles=%d",
+                 (void *)q, (unsigned long long)j.sub, n);
+        ATrace_beginSection(label); ATrace_endSection();
+    }
+#endif
     gfx_leave();
 }
 
@@ -1003,7 +1114,7 @@ static void trow(uint64_t f, const char *name, double v);
 static void sleep_until_ns(uint64_t dl);
 static uint64_t present_period(const win_t *o);
 __attribute__((weak)) void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = 0; *ns = 0; }   // 宿主 hle_thread.c 提供真值；图形单测里为 0 | The host's hle_thread.c provides the ground truth; 0 in graphics unit tests
-__attribute__((weak)) uint32_t dm_guest_work_qos(unsigned *count) { if (count) *count = 0; return QOS_CLASS_UNSPECIFIED; }
+__attribute__((weak)) uint32_t dm_guest_work_qos(unsigned *count) { if (count) *count = 0; return 0; }
 extern uint32_t mtl_present_qos(void);
 static uint64_t g_frame;
 static uint64_t g_acq_wait_ns, g_pq_wait_ns;   // 取图里节拍等待 / 等出图队列归还的累计，出图时按帧记（一帧内可有多次取图） | Accumulated display-link wait / wait for the present queue to return inside acquire, recorded per frame at present (there can be several acquires within one frame)
@@ -1033,7 +1144,12 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     // The previous present of this texture has not yet been processed by the present thread (display cannot keep up, a whole swapchain round behind): wait for it to be returned, then hand it to the game to draw
     uint64_t tk = *idx < 4 ? o->ticket[*idx] : 0;
     if (tk) { uint64_t w0 = now_ns(), rt = x_present_ticket(tk); if (rt) mtl_present_wait(rt); g_pq_wait_ns += now_ns() - w0; }   // tk 是翻译队列的出图任务号 | tk is the translation queue's present job number
-    if (s) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); }   // 交换链贴图在此前的提交完成后可用 | The swapchain texture becomes available once the commits before this point have completed
+    // 此前已在 CPU 上等到该张贴图归还；取图同步只表示这张图可复用。
+    // 不能绑到整个队列的最新提交，否则空闲交换链图也会串行等待别的图。
+    // The selected texture has already been returned by the CPU-side wait.
+    // Acquire signals this texture's availability, not completion of unrelated
+    // latest queue work. Explicit QueueFenceSync retains its full queue fence.
+    if (s) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = 0; }
     return NVN_WINDOW_ACQUIRE_TEXTURE_RESULT_SUCCESS;
 }
 
@@ -1068,11 +1184,19 @@ static void dump_frame(void) {
     // 会把整机拖进内核崩溃，同机别的程序两次如此），或测试时用 DM_MEM_CAP_GB=<整数> 指定；玩家的 iOS 包不设上限（被系统杀之前自己退没有意义，反而多一种闪退）
     // Every 300 frames read resident memory and hand it to the graphics layer to print the memory readout line (mtl_mem_stat, low frequency, capped). Memory watchdog: when resident memory exceeds the cap, log a failure and exit on its own. On by default only on the Mac host (24 GB: runaway host memory
     // drags the whole machine into a kernel panic, which happened twice with other programs on the same machine), or set for tests with DM_MEM_CAP_GB=<integer>; the player's iOS app has no cap (exiting before the system kills it is pointless and only adds another kind of crash)
-    if (g_frame % 300 == 0) { task_vm_info_data_t vi; mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
-        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS) { unsigned long long mb = (unsigned long long)(vi.phys_footprint >> 20); unsigned long long ht = 0, hf = 0, hm = 0; int dm_guest_heap_stat(unsigned long long *, unsigned long long *, unsigned long long *); int hok = dm_guest_heap_stat(&ht, &hf, &hm);
-            void mtl_mem_stat(unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long); mtl_mem_stat(g_frame, mb, hok, ht, hf, hm);
-            static long cap = -1; if (cap < 0) { const char *e = getenv("DM_MEM_CAP_GB"); cap = e ? atol(e) : DM_MEM_CAP_DEFAULT_GB; }
-            if (cap > 0 && mb > (unsigned long long)cap * 1024) { LOG("【红】内存看门狗：常驻 %llu MB 超过上限 %ld GB（帧 %llu），自行退出", mb, cap, (unsigned long long)g_frame); _exit(86); } } }
+    if (g_frame % 300 == 0) {
+        double resident = nvn_resident_mb();
+        if (resident >= 0) {
+            unsigned long long mb = resident, ht = 0, hf = 0, hm = 0;
+            int dm_guest_heap_stat(unsigned long long *, unsigned long long *, unsigned long long *);
+            int hok = dm_guest_heap_stat(&ht, &hf, &hm);
+            void mtl_mem_stat(unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long);
+            mtl_mem_stat(g_frame, mb, hok, ht, hf, hm);
+            const char *cap_env = getenv("DM_MEM_CAP_GB");
+            long cap = cap_env ? atol(cap_env) : DM_MEM_CAP_DEFAULT_GB;
+            if (cap > 0 && mb > (unsigned long long)cap * 1024) die("NVN memory cap exceeded: %llu MiB", mb);
+        }
+    }
     dm_guest_frame_tick();   // 确定性客体时钟（DM_DETCLOCK，宿主 hle_os.c）：每次出图推进固定步长；未开为空操作 | Deterministic guest clock (DM_DETCLOCK, host hle_os.c): each present advances a fixed step; a no-op when not enabled
 }
 // ---------- 计时埋点（逐帧行写进 DM_NVN_TSV：frame / @指标 / 值；每 300 帧汇总 p50 / p95 / 最大） ----------
@@ -1121,23 +1245,36 @@ static void tsummary(uint64_t frame) {
         LOG("[nvn] 帧间隔 至帧 %llu：>16.7ms %u / %u 帧，p99 %.2f ms", frame, over, n, v[(n * 99) / 100 < n ? (n * 99) / 100 : n - 1]); } }
     { unsigned n = g_presn < TWIN ? g_presn : TWIN, k = 0, drop = 0, discard = 0; double v[TWIN];   // 上屏：掉帧 = 间隔 > 16.7 × 1.5 ms 或被丢弃 | on-screen present: dropped frame = interval > 16.7 × 1.5 ms or discarded
       for (unsigned i = 0; i < n; i++) { double x = g_pres_iv[i]; if (x < 0) { drop++; discard++; } else if (x > 0) { v[k++] = x; drop += x > 25.0; } }
-      task_vm_info_data_t vi; mach_msg_type_number_t vc = TASK_VM_INFO_COUNT; double fp = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vc) == KERN_SUCCESS ? vi.phys_footprint / 1048576.0 : -1;
+      double fp = nvn_resident_mb();
       double br = dm_brightness_now();   // footprint / 亮度随上屏行带出：不依赖拍入口观测门（营地局也有） | footprint / brightness are carried on the on-screen present row: does not depend on the tick-entry observation gate (camp runs have it too)
       // 上屏间隔 p5 / p50 / p95：整除的帧率三个数相同（144 Hz 屏 72 帧都是 13.9）；不整除时两档交替（60 帧在 144 Hz 屏上 13.9 / 20.8）
       // Present interval p5 / p50 / p95: with an evenly dividing frame rate all three are equal (72 fps on a 144 Hz screen is 13.9 for all); otherwise two tiers alternate (60 fps on a 144 Hz screen gives 13.9 / 20.8)
-      if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），间隔 p5 %.2f / p50 %.2f / p95 %.2f，p99 %.2f ms；footprint %.0f MiB；亮度 %.2f；温控 %d", frame, k + discard, drop, discard,
+      if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），间隔 p5 %.2f / p50 %.2f / p95 %.2f，p99 %.2f ms；" NVN_RESIDENT_LABEL " %.0f MiB；亮度 %.2f；温控 %d", frame, k + discard, drop, discard,
           v[(k * 5) / 100], v[k / 2], v[(k * 95) / 100 < k ? (k * 95) / 100 : k - 1], v[(k * 99) / 100 < k ? (k * 99) / 100 : k - 1], fp, br, dm_thermal_now()); }
       g_presn = 0; }
     { static uint64_t pi, pc, pd, pf; uint64_t ci = atomic_load(&g_cum_sub_instr), cc = atomic_load(&g_cum_sub_cpu_ns), ps_, dr_; mtl_stats(&ps_, &dr_);   // 翻译层 | translation layer
-      if (pf && frame > pf && dr_ > pd) LOG("[nvn] 翻译 至帧 %llu：每次绘制 %.0f 条指令，每帧提交 %.2f M 条 / CPU %.3f ms，每帧绘制 %.0f", frame,
+      if (pf && frame > pf && dr_ > pd) {
+#ifdef __APPLE__
+        LOG("[nvn] 翻译 至帧 %llu：每次绘制 %.0f 条指令，每帧提交 %.2f M 条 / CPU %.3f ms，每帧绘制 %.0f", frame,
           (double)(ci - pi) / (double)(dr_ - pd), (ci - pi) / 1e6 / (double)(frame - pf), (cc - pc) / 1e6 / (double)(frame - pf), (double)(dr_ - pd) / (double)(frame - pf));
+#else
+        // ELF 没有 Darwin 的线程硬件计数器；只报告真实 CPU 时间。
+        // ELF has no Darwin thread hardware counters; report actual CPU time.
+        LOG("[nvn] 翻译 至帧 %llu：每帧提交 CPU %.3f ms，每帧绘制 %.0f；指令/周期计数不可用", frame,
+          (cc - pc) / 1e6 / (double)(frame - pf), (double)(dr_ - pd) / (double)(frame - pf));
+#endif
+      }
       { static uint64_t py, pk, pw; uint64_t cy = atomic_load(&g_cum_sub_cyc), ck = atomic_load(&g_cum_sub_sys_ns), cw = atomic_load(&g_cum_sub_wall_ns);
         if (pf && frame > pf && ci > pi && cy > py) { double nf = (double)(frame - pf), cyc = (double)(cy - py), cpu = (double)(cc - pc);
-          qos_class_t qc = QOS_CLASS_UNSPECIFIED; int rp = 0; pthread_get_qos_class_np(pthread_self(), &qc, &rp);
+          unsigned qc = 0;
+#ifdef __APPLE__
+          int rp = 0; pthread_get_qos_class_np(pthread_self(), (qos_class_t *)&qc, &rp);
+#endif
           uint64_t aw = 0, ag = 0; int an = 0; void mtl_alloc_stats(uint64_t *, uint64_t *, int *); mtl_alloc_stats(&aw, &ag, &an);
           static uint64_t pyn, pyns; uint64_t yn = 0, yns = 0; dm_main_yield_stats(&yn, &yns);
           LOG("[nvn] 翻译细项 至帧 %llu：每帧提交 周期 %.2f M（每条指令 %.2f 周期）、CPU %.3f ms 其中内核态 %.3f ms、墙钟 %.3f ms；平均主频 %.2f GHz（周期 / CPU 时间）；本线程 QoS %#x；分配器池 %d 个、累计等 GPU %llu 次；实时声明计算 %.2f ms；主线程让出 每帧 %.0f 次 / %.3f ms", frame,
               cyc / 1e6 / nf, cyc / (double)(ci - pi), cpu / 1e6 / nf, (double)(ck - pk) / 1e6 / nf, (double)(cw - pw) / 1e6 / nf, cpu > 0 ? cyc / cpu : 0, (unsigned)qc, an, (unsigned long long)aw, g_rt_main.comp_ms, (double)(yn - pyn) / nf, (double)(yns - pyns) / 1e6 / nf); pyn = yn; pyns = yns; }
+#ifdef __APPLE__
         if (frame % 300 == 0) { unsigned wn = 0; uint32_t wq = dm_guest_work_qos(&wn); thread_extended_info_data_t xi; mach_msg_type_number_t xc = THREAD_EXTENDED_INFO_COUNT; int okx = thread_info(pthread_mach_thread_np(pthread_self()), THREAD_EXTENDED_INFO, (thread_info_t)&xi, &xc) == KERN_SUCCESS;
             thread_time_constraint_policy_data_t tp; mach_msg_type_number_t tc = THREAD_TIME_CONSTRAINT_POLICY_COUNT; boolean_t def = 0; int rt_live = thread_policy_get(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&tp, &tc, &def) == KERN_SUCCESS && !def;   // def = 1：实时策略没在生效（没设上 / 被撤） | def = 1: the real-time policy is not in effect (never set / revoked)
             LOG("[nvn] 线程策略：主线程 实时 计算 %.2f ms / 周期 %.2f ms，实时策略%s，当前优先级 %d（基础 %d，调度类 %d）；工作线程 %u 条 QoS %#x；出图 QoS %#x", g_rt_main.comp_ms, g_rt_main.period_ms, rt_live ? "在生效" : "未生效", okx ? xi.pth_curpri : -1, okx ? xi.pth_priority : -1, okx ? xi.pth_policy : -1, wn, wq, mtl_present_qos());
@@ -1147,6 +1284,7 @@ static void tsummary(uint64_t frame) {
                 qos_class_t yq = QOS_CLASS_UNSPECIFIED; int yr = 0; pthread_get_qos_class_np(g_x_thr, &yq, &yr);
                 LOG("[nvn] 线程策略：翻译线程 实时 计算 %.2f ms / 周期 %.2f ms，实时策略%s，当前优先级 %d（基础 %d，调度类 %d）；QoS %#x", g_rt_xlat.comp_ms, g_rt_xlat.period_ms, y_live ? "在生效" : "未生效",
                     oky ? yi.pth_curpri : -1, oky ? yi.pth_priority : -1, oky ? yi.pth_policy : -1, (unsigned)yq); } }
+#endif
         py = cy; pk = ck; pw = cw; }
       pi = ci; pc = cc; pd = dr_; pf = frame; }
     uint64_t up, re, fa, pr; mtl_pkg_stats(&up, &re); nvn_dirty_stats(&fa, &pr);
@@ -1198,6 +1336,7 @@ static void slow_emit(uint64_t f) {
 // a real-time thread that exceeds its declared computation gets demoted by the system, and the performance controller also sets frequency from the declaration (this declaration is how the system learns the frame deadline and the workload).
 // DM_RT_COMP=<ms> fixes the declaration; default auto = every 120 frames take the p90 of this thread's per-frame CPU time and re-declare if it differs from the declared value by > 15% (capped at 0.9 × period).
 static void set_time_constraint_comp(rt_decl *d, uint64_t period_ns, uint64_t comp_ns) {
+#ifdef __APPLE__
     static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
     if (comp_ns < 1000000ull) comp_ns = 1000000ull; if (comp_ns > period_ns * 9 / 10) comp_ns = period_ns * 9 / 10;
     thread_time_constraint_policy_data_t p = {
@@ -1206,6 +1345,9 @@ static void set_time_constraint_comp(rt_decl *d, uint64_t period_ns, uint64_t co
     kern_return_t kr = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&p, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
     if (kr == KERN_SUCCESS) { d->comp_ms = comp_ns / 1e6; d->period_ms = period_ns / 1e6; }
     LOG("[nvn] %s时间约束策略（周期 %.3f ms、计算 %.3f ms）%s", d->who, period_ns / 1e6, comp_ns / 1e6, kr == KERN_SUCCESS ? "已设" : "设置失败");
+#else
+    (void)d; (void)period_ns; (void)comp_ns;
+#endif
 }
 static int rt_comp_fixed_ms(void) { static int v = -2; if (v == -2) { const char *e = getenv("DM_RT_COMP"); v = e && *e && strcmp(e, "auto") ? atoi(e) : -1; } return v; }   // −1 = auto
 static void set_time_constraint(rt_decl *d, uint64_t period_ns) { int f = rt_comp_fixed_ms(); set_time_constraint_comp(d, period_ns, f > 0 ? (uint64_t)f * 1000000ull : 2000000ull); }   // 首次：固定值，或 auto 的起始值 2 ms | first time: the fixed value, or auto's starting value of 2 ms
@@ -1213,7 +1355,7 @@ static void set_time_constraint(rt_decl *d, uint64_t period_ns) { int f = rt_com
 // Called every frame at acquire: records this thread's CPU time since the last call; in auto mode re-declares based on p90
 static void rt_comp_tick(rt_decl *d, uint64_t period_ns) {   // 在被声明的那条线程上调（读本线程 CPU 时钟） | Call on the thread being declared (reads this thread's CPU clock)
     if (rt_comp_fixed_ms() > 0 || !period_ns || !d->comp_ms) return;
-    uint64_t c = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID); if (!d->last) { d->last = c; return; }
+    uint64_t c = dm_platform_clock_ns(CLOCK_THREAD_CPUTIME_ID); if (!d->last) { d->last = c; return; }
     d->win[d->n++] = (double)(c - d->last) / 1e6; d->last = c;
     if (d->n < 120) return;
     double v[120]; memcpy(v, d->win, sizeof v); qsort(v, 120, sizeof *v, dcmp); d->n = 0;
@@ -1221,9 +1363,7 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns) {   // 在被声明的�
     if (comp > d->comp_ms * 1.15 || comp < d->comp_ms * 0.85) set_time_constraint_comp(d, period_ns, (uint64_t)(comp * 1e6));
 }
 static void sleep_until_ns(uint64_t dl) {   // 单调时钟上的绝对时刻 | absolute time on the monotonic clock
-    static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
-    uint64_t now = now_ns(); if (dl <= now) return;
-    mach_wait_until(mach_absolute_time() + (dl - now) * tb.denom / tb.numer);
+    nvn_sleep_until(dl);
 }
 // 出图固定 60 Hz：自适应机制在 24/24 份真机日志第 60 帧退档且不再回升，本期先以 60 帧为硬底。
 // DM_PRESENT_HZ=0（不限帧率）只作显式的性能剖析开关：游戏部分界面逻辑按帧计数（同存档不限帧率时
@@ -1256,10 +1396,21 @@ static void present_cfg(const win_t *o) {
     else LOG("[nvn] 出图节拍 %d Hz，间隔模式 %s（游戏设的出图间隔 %d；%s）", g_hz, g_display_mode ? "display（每节拍一帧，剪口）" : "game（原版语义）", o->interval,
         e ? "DM_PRESENT_HZ 钉住" : "无窗口，固定 60 Hz");
 }
+static _Atomic uint64_t g_present_period_ns;
+uint64_t dm_nvn_present_period_ns(void) { return atomic_load(&g_present_period_ns); }
 static uint64_t present_period(const win_t *o) {
     present_cfg(o);
     int itv = g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; double hz = g_hz_auto ? dm_pace_hz(mtl_display_refresh(), 60) : g_hz;   // 省电模式的 30 帧由显示节拍决定，这里照旧按 60 档（60 / 120 Hz 屏与原先逐字相同） | Power saving 30 fps is determined by display pacing; here the 60 tier is used as before (identical to before on 60 / 120 Hz screens)
-    return hz > 0 ? (uint64_t)(itv * 1e9 / hz) : 0;
+#ifdef __ANDROID__
+    // Android 没有 Apple 显示节拍对象，取图等待直接采用原 30/60 策略。
+    // 固定 DM_PRESENT_HZ 调试覆盖仍优先，游戏出图间隔仍参与计算。
+    // Android has no Apple display link: acquire uses the original 30/60
+    // policy. Fixed debug Hz and the NVN interval still apply.
+    if (g_hz_auto) hz = mtl_pace_hz();
+#endif
+    uint64_t period = hz > 0 ? (uint64_t)(itv * 1e9 / hz) : 0;
+    atomic_store(&g_present_period_ns,period);
+    return period;
 }
 int (*g_nvn_loadscreen_up)(void);   // 宿主登记：读取画面此刻是否开着（diag.c 订阅界面消息时填；图形单测里为空 = 不设闸） | host registration: whether the loading screen is up right now (filled in when diag.c subscribes to UI messages; null in graphics unit tests = no gate)
 NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
@@ -1279,7 +1430,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);
     uint64_t f = g_frame, ps, dr; mtl_stats(&ps, &dr);
     if (nvn_real[0] || nvn_real[1]) {   // DM_NVN_PROF：录制期 = 除提交外全部已实现函数耗时；提交期 = QueueSubmitCommands | DM_NVN_PROF: record phase = time of all implemented functions except submit; submit phase = QueueSubmitCommands
-        static unsigned isub = ~0u; static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
+        static unsigned isub = ~0u;
         if (isub == ~0u) for (isub = 0; isub < NVN_NFUNC && strcmp(nvn_names[isub], "nvnQueueSubmitCommands"); isub++) {}
         uint64_t rec = 0, sub = 0;
         static uint64_t acc[NVN_NFUNC];
@@ -1287,11 +1438,11 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
         if ((g_frame + 1) % TWIN == 0) {   // 每 300 帧列出耗时最多的 5 个函数 | every 300 frames list the 5 most time-consuming functions
             char line[1024]; size_t o = 0;
             for (int k = 0; k < 5; k++) { unsigned best = 0; for (unsigned i = 1; i < NVN_NFUNC; i++) if (acc[i] > acc[best]) best = i;
-                if (!acc[best]) break; o += snprintf(line + o, sizeof line - o, " %s %.2f ms；", nvn_names[best] + 3, acc[best] * tb.numer / tb.denom / 1e6); acc[best] = 0; }
+                if (!acc[best]) break; o += snprintf(line + o, sizeof line - o, " %s %.2f ms；", nvn_names[best] + 3, nvn_clock_to_ns(acc[best]) / 1e6); acc[best] = 0; }
             LOG("[nvn] 翻译层耗时前 5（近 300 帧合计）：%s", line); memset(acc, 0, sizeof acc);
         }
-        trow(g_frame, "@rec_ms", rec * tb.numer / tb.denom / 1e6); trow(g_frame, "@submit_ms", sub * tb.numer / tb.denom / 1e6);
-        tpush(4, rec * tb.numer / tb.denom / 1e6); tpush(5, sub * tb.numer / tb.denom / 1e6);
+        trow(g_frame, "@rec_ms", nvn_clock_to_ns(rec) / 1e6); trow(g_frame, "@submit_ms", nvn_clock_to_ns(sub) / 1e6);
+        tpush(4, nvn_clock_to_ns(rec) / 1e6); tpush(5, nvn_clock_to_ns(sub) / 1e6);
     }
     if (prev_in) {
         double fr = (t0 - prev_in) / 1e6, wk = (t0 - prev_out) / 1e6, nv = atomic_exchange(&g_nvn_ns, 0) / 1e6;
@@ -1302,7 +1453,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
         trow(f, "@wait_ms", g_acq_wait_ns / 1e6); trow(f, "@pq_wait_ms", g_pq_wait_ns / 1e6);
         if (frame_rec()) {
             static pthread_t pth; static uint64_t pcpu, pproc;
-            uint64_t c = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID); pthread_t th = pthread_self();
+            uint64_t c = dm_platform_clock_ns(CLOCK_THREAD_CPUTIME_ID); pthread_t th = pthread_self();
             trow(f, "@cpu_ms", pcpu && pthread_equal(th, pth) ? (c - pcpu) / 1e6 : -1); pth = th; pcpu = c;
             struct rusage ru; getrusage(RUSAGE_SELF, &ru);
             uint64_t pc = (uint64_t)(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000000ull + (uint64_t)(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) * 1000ull;
@@ -1360,8 +1511,14 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     prev_in = t0; prev_pass = ps; prev_draw = dr;
     dump_frame();
     if (g_frame % TWIN == 0) tsummary(g_frame);
-    { static uint64_t pc, py, pf; uint64_t i_, y_, c_ = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID); thr_counts(&i_, &y_);   // 主线程（游戏线程）的每帧 CPU 与平均主频：与「翻译细项」行的翻译线程对照，分「整机降频」还是「翻译线程被放小核」 | Per-frame CPU and average clock of the main (game) thread: compared with the translation thread on the "translation detail" line, to tell "whole-chip downclocking" from "translation thread placed on an efficiency core"
-      if (g_frame % TWIN == 0) { if (pf && g_frame > pf && c_ > pc) LOG("[nvn] 主线程 至帧 %llu：每帧 CPU %.2f ms，平均主频 %.2f GHz（周期 / CPU 时间）", g_frame, (c_ - pc) / 1e6 / (double)(g_frame - pf), (double)(y_ - py) / (double)(c_ - pc)); pc = c_; py = y_; pf = g_frame; } }
+    { static uint64_t pc, py, pf; uint64_t i_, y_, c_ = dm_platform_clock_ns(CLOCK_THREAD_CPUTIME_ID); thr_counts(&i_, &y_);   // 主线程（游戏线程）的每帧 CPU 与平均主频：与「翻译细项」行的翻译线程对照，分「整机降频」还是「翻译线程被放小核」 | Per-frame CPU and average clock of the main (game) thread: compared with the translation thread on the "translation detail" line, to tell "whole-chip downclocking" from "translation thread placed on an efficiency core"
+      if (g_frame % TWIN == 0) { if (pf && g_frame > pf && c_ > pc) {
+#ifdef __APPLE__
+        LOG("[nvn] 主线程 至帧 %llu：每帧 CPU %.2f ms，平均主频 %.2f GHz（周期 / CPU 时间）", g_frame, (c_ - pc) / 1e6 / (double)(g_frame - pf), (double)(y_ - py) / (double)(c_ - pc));
+#else
+        LOG("[nvn] 主线程 至帧 %llu：每帧 CPU %.2f ms；周期/主频计数不可用", g_frame, (c_ - pc) / 1e6 / (double)(g_frame - pf));
+#endif
+      } pc = c_; py = y_; pf = g_frame; } }
     { xjob j = {XJ_FRAME}; j.frame = g_frame; j.period = present_period(o) / 1e9; x_push(&j); }   // 帧号随队列生效（见翻译队列说明） | The frame number takes effect in queue order (see the translation queue notes)
     // 真机语义：出图只入队、立即返回；本帧显示时刻按节拍器排，该贴图到「显示时刻 + 一个周期」才可再获取（阻塞在 AcquireTexture）
     // Real-device semantics: present only enqueues and returns immediately; this frame's display time is scheduled by the pacer, and the texture can be acquired again only at "display time + one period" (blocking in AcquireTexture)

@@ -20,7 +20,11 @@
 //   everything else.
 #include "dm_i18n.h"
 #include "dm_i18n_tab.h"
+#ifdef __APPLE__
 #include <TargetConditionals.h>
+#else
+#include "platform.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

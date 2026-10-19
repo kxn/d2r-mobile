@@ -20,6 +20,9 @@ int mtl_fps_target(void) { return 60; }   // 目标帧率（nvn_mtl.m）：单�
 double mtl_display_refresh(void) { return 0; }   // 屏幕刷新率（nvn_mtl.m）：单测里没有窗口，读不到 → 出图帧率按目标 | Screen refresh rate (nvn_mtl.m): unit tests have no window, so it cannot be read → present frame rate uses the target
 double dm_pace_hz(double screen_hz, double floor_hz) { return screen_hz > 0 ? screen_hz : floor_hz; }   // 只在读不到刷新率时被调，按目标 | Only called when the refresh rate cannot be read; uses the target
 pthread_key_t g_keyres[2];                                   // 分辨率参数位（loader.c）的桩：没建键，取走 31 时不写线程槽 | stub for the resolution parameter slot (loader.c): no key created, so taking 31 does not write the thread slot
+#ifndef __APPLE__
+int dm_tsd_set(pthread_key_t key, const void *value) { return pthread_setspecific(key, value); }
+#endif
 uint64_t dm_game_res(int docked) { (void)docked; return 0; }  // 出图分辨率（dm_uiscreen.c）的桩 | stub for the render resolution (dm_uiscreen.c)
 void dm_uiscreen_res_reread(void) {}
 void dm_ui_gen_bump(int why) { (void)why; }   // 界面代号（dm_cursor.c）：单测不管 | UI generation (dm_cursor.c): not relevant to unit tests
@@ -86,6 +89,15 @@ static int s3_replay(int clustered) {   // clustered = 1：每 10 秒的慢帧�
     return s3_dm;
 }
 static void test_scale3d(void) {
+    CHECK(scale3d_thermal_level(0, 0, 3, 0) == 0, "Android 热比例：无热限制保留原动态档");
+    CHECK(scale3d_thermal_level(0, 30, 3, 0) == 2, "Android 热比例：30 帧热档约束到既有 0.65 档");
+    CHECK(scale3d_thermal_level(0, 20, 3, 0) == 3, "Android 热比例：20 帧热档约束到既有 0.60 档");
+    CHECK(scale3d_thermal_level(4, 30, 5, 0) == 4, "Android 热比例：原动态已更低时不升画质");
+    CHECK(scale3d_thermal_level(0, 20, 1, 0) == 1, "Android 热比例：尊重用户 0.70 下限");
+    CHECK(scale3d_thermal_level(0, 20, 0, 0) == 0, "Android 热比例：下限高于全部既有档时不造新档");
+    CHECK(scale3d_thermal_level(0, 20, -1, 0) == 0, "Android 热比例：固定/无回退模式保持原比例");
+    CHECK(scale3d_thermal_level(0, 20, 3, 1) == 0, "Android 热比例：画质优先不覆盖显式选项");
+    CHECK(scale3d_thermal_level(2, 0, 3, 0) == 2, "Android 热比例：热限制释放后仍保留原动态档");
     s3 = (scale3d_ctl){.max_level = 2}; s3_now = 1000 * S3_SEC;
     CHECK(s3_n(1200, F60) == 0, "动态比例：60 帧稳 20 秒 → 保持 0 档");
     CHECK(s3_n(1000, 25.0) == 0, "动态比例：25.0 ms（未超 25.0005）不算掉帧 → 不降");

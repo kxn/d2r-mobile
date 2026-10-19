@@ -1,0 +1,38 @@
+// Linux 图形验证夹具：调用原 NVN C 实现与同一套 GPU 测试，不装载或执行任何游戏 CPU 代码。
+// Linux graphics validation fixture: call original NVN C implementations and the same GPU tests, without loading or executing game CPU code.
+#include "../../nvn/hle_nvn.c"
+#include <signal.h>
+void *nvn_thunk[NVN_NFUNC];
+const char *nvn_names[NVN_NFUNC]={
+#include "nvn_test_names.inc"
+};
+void nvn_unimpl_entry(void) { die("unimplemented NVN function in graphics fixture"); }
+void nvn_prof_entry(void) { die("profiling thunk unavailable in graphics fixture"); }
+__attribute__((constructor)) static void direct_calls(void) {
+  nvn_init_slots();for(unsigned i=0;i<NVN_NFUNC;i++)nvn_thunk[i]=nvn_slot[i].fn;
+}
+uint64_t g_t0_ns;
+uint64_t now_ns(void) { return dm_platform_clock_ns(CLOCK_MONOTONIC); }
+uint64_t guest_ns(void) { return now_ns(); }
+int dm_detclock_enabled(void) { return 0; }
+void dm_guest_frame_tick(void) {}
+int dm_guest_heap_stat(unsigned long long *total,unsigned long long *free_bytes,unsigned long long *largest) { *total=*free_bytes=*largest=0;return 0; }
+double front_display_refresh(char *name,size_t size) { if(size)name[0]=0;return 0; }
+static int (*fault_handlers[8])(void *,int,void *);
+static unsigned fault_count;
+static void (*write_handlers[8])(void *,size_t);
+static unsigned write_count;
+void dm_fault_hook_register(int (*fn)(void *,int,void *)) { if(fault_count==8)die("fixture fault hooks");fault_handlers[fault_count++]=fn; }
+void dm_guest_write_prep_register(void (*fn)(void *,size_t)) { if(write_count==8)die("fixture write hooks");write_handlers[write_count++]=fn; }
+void dm_guest_write_prepare(void *ptr,size_t size) { for(unsigned i=0;i<write_count;i++)write_handlers[i](ptr,size); }
+static void fault_handler(int signal,siginfo_t *info,void *context) {
+  for(unsigned i=0;i<fault_count;i++)if(fault_handlers[i](info->si_addr,info->si_code==SEGV_ACCERR,context))return;
+  _exit(128+signal);
+}
+void crash_thread_init(void) {
+  struct sigaction action={.sa_sigaction=fault_handler,.sa_flags=SA_SIGINFO};sigemptyset(&action.sa_mask);sigaction(SIGSEGV,&action,NULL);
+}
+#include "../../../host/android/tests/native_vulkan.c"
+#ifdef DM_VULKAN_TEST_EMBED
+int main(void) { return dm_vulkan_test_main(); }
+#endif

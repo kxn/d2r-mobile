@@ -160,7 +160,7 @@ static void rec_pre_commit(const char *wd) {
     else if (RS.wrote) { RS.wrote = 0; RS.dirty = 1; }                 // 没成（被拒）：重新算待落盘 | did not succeed (refused): count it as pending write again
     if (RS.dirty && wd) { char d[1200], c[1200], p[1200], q[1220]; size_t L = strlen(wd); struct stat a, b;
         snprintf(d, sizeof d, "%s/%s/%s.d2s", wd, RS.who, RS.who); snprintf(c, sizeof c, "%.*s/%s/%s.d2s", (int)(L > 5 && !strcmp(wd + L - 5, ".work") ? L - 5 : L), wd, RS.who, RS.who);
-        int fresh = !stat(d, &a) && (stat(c, &b) || a.st_mtimespec.tv_sec != b.st_mtimespec.tv_sec || a.st_mtimespec.tv_nsec != b.st_mtimespec.tv_nsec || a.st_size != b.st_size);   // 已提交目录里还没有这个角色 = 新建的，也算 | this character is not yet in the committed directory = newly created, which also counts
+        int fresh = !stat(d, &a) && (stat(c, &b) || dm_platform_stat_mtime(&a).tv_sec != dm_platform_stat_mtime(&b).tv_sec || dm_platform_stat_mtime(&a).tv_nsec != dm_platform_stat_mtime(&b).tv_nsec || a.st_size != b.st_size);   // 已提交目录里还没有这个角色 = 新建的，也算 | this character is not yet in the committed directory = newly created, which also counts
         if (fresh) { snprintf(p, sizeof p, "%s/%s/%s.sw_rift", wd, RS.who, RS.who); snprintf(q, sizeof q, "%s.tmp", p); FILE *f = fopen(q, "w");
             if (!f) LOG("【红】秘境：侧文件写不进 %s", q);
             else { fprintf(f, "tier %d\nunlock %d\nbest %d\nclears %d\ndeaths %d\nms %x\nsunder %x\ngift %d\npts %d\n", RS.snap.tier, RS.snap.unlock, RS.snap.best, RS.snap.clears, RS.snap.deaths, RS.snap.ms, RS.snap.sunder, RS.snap.gift, RS.snap.pts);

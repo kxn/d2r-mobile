@@ -1,6 +1,16 @@
 // 点游戏世界里的目标 = 与它交互（实现与依据见 dm_world.c）
 // Tapping a target in the game world = interacting with it (implementation and rationale in dm_world.c)
 #pragma once
+#include <stdint.h>
+// 只读已载入目标的格坐标；屏幕外也可返回 1，是否可点仍须 watch_pos。
+// Loaded target cells, including offscreen; watch_pos separately gates touches.
+int dm_world_watch_cells(int *x, int *y);
+#ifdef DM_NATIVE_WORLD_CORE
+// 只读相邻已载入房间的其他关卡与边界参考点；不是通路/已换图判据。
+// Nearby loaded level and boundary reference; not proof of a traversable exit.
+int dm_world_near_level(int *area, int *x, int *y);
+int dm_world_client_area(void);
+#endif
 unsigned dm_world_tap(float nx, float ny);   // 任意线程：排一笔点按（出图画面归一化坐标 [0,1]）；主线程取手柄处解析目标并发令，没有目标什么都不发。返回序号 | any thread: queue one tap (coordinates normalized to the rendered picture, [0,1]); the main thread resolves the target and sends the command at the controller-poll point, and sends nothing when there is no target. Returns the sequence number
 int dm_world_tap_result(unsigned seq);       // -1 还没执行；0 没有目标；1 物品（拾取）2 NPC（对话）3 物件（使用）4 出口 5 尸体（取回） | -1 not executed yet; 0 no target; 1 item (pick up) 2 NPC (talk) 3 object (use) 4 exit 5 corpse (retrieve)
 int dm_world_has_target(void);               // 任意线程：按主键会去交互的目标是否存在（游戏手柄版自己的选择） | any thread: whether a target that the primary button would interact with exists (the game's own controller-version selection)

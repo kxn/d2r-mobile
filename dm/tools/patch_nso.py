@@ -4,7 +4,7 @@
 #   x18 读写            → 线程槽 K18（TSD，经 tpidrro_el0）
 #   mrs tpidr_el0       → 读线程槽 KTLS；msr tpidr_el0 → 写 KTLS
 #   mrs tpidrro_el0     → 读线程槽 KTLR（Horizon ThreadLocalRegion 指针）
-#   svc #n、mrs cntpct_el0 → 宿主门（门地址取自线程槽 KGATE，进 C 后按返回点查 gates.tsv）
+#   svc #n、mrs cntpct_el0 → 宿主门（ABI3 从只读键页取固定门地址，旧 ABI 取 KGATE；进 C 后按返回点查 gates.tsv）
 #   已登记剪口（CUTS，按 NSO 构建号限定）：改写前逐条断言原字节，不符即中止；结果列在 <名>.cuts.tsv
 #   已登记观测门（OBS，按构建号限定）：入口一条指令换成「进宿主观测回调 → 执行原指令 → 跳回」，诊断零运行时改代码；列在 <名>.obs.tsv
 # 键页只在数据段末尾保存“实际键号 × 8”，补丁代码通过键页间接取线程槽：装载器可使用任意键号。
@@ -15,7 +15,7 @@
 #   x18 read/write      → thread slot K18 (TSD, via tpidrro_el0)
 #   mrs tpidr_el0       → read thread slot KTLS; msr tpidr_el0 → write KTLS
 #   mrs tpidrro_el0     → read thread slot KTLR (Horizon ThreadLocalRegion pointer)
-#   svc #n, mrs cntpct_el0 → host gate (gate address taken from thread slot KGATE; once in C, gates.tsv is looked up by return point)
+#   svc #n, mrs cntpct_el0 → host gate (ABI3 reads the fixed read-only key-page gate; legacy ABIs use KGATE; gates.tsv is looked up by return point)
 #   Registered cuts (CUTS, restricted by NSO build ID): before rewriting, the original bytes are asserted one by one and any mismatch aborts; results are listed in <name>.cuts.tsv
 #   Registered observation gates (OBS, restricted by build ID): one instruction at the entry is replaced with "enter the host observation callback → execute the original instruction → jump back", so diagnostics modify zero code at runtime; listed in <name>.obs.tsv
 # The key page only stores "actual key number × 8" at the end of the data segment, and patch code fetches thread slots indirectly through the key page: the loader may use any key number.
@@ -26,6 +26,18 @@ import lz4.block
 from capstone import *
 
 src, outdir, NAME = sys.argv[1], sys.argv[2], sys.argv[3]
+# 宿主 ABI 只改变平台相关改写；默认保持原 Apple 产物逐字节不变。
+# Host ABI only changes platform-dependent rewrites; default Apple output remains byte-identical.
+HOST_ABI = os.environ.get('DM_HOST_ABI', 'darwin')
+assert HOST_ABI in ('darwin', 'elf', 'elfdesc', 'elfdesc-gate'), f'unsupported host ABI: {HOST_ABI}'
+HOST_ELF = HOST_ABI != 'darwin'
+HOST_TLSDESC = HOST_ABI in ('elfdesc', 'elfdesc-gate')
+HOST_DIRECT_GATE = HOST_ABI == 'elfdesc-gate'
+# Startup-only producer option; the canonical pipeline fingerprints this value.
+# It never changes genuine TLS, and ABI0/1/2 keep their original templates.
+_group_size = os.environ.get('DM_X18_GROUP_SIZE', '3')
+assert _group_size in ('1', '2', '3'), f'unsupported DM_X18_GROUP_SIZE: {_group_size!r}'
+X18_GROUP_SIZE = int(_group_size)
 d = open(src, 'rb').read()
 assert d[:4] == b'NSO0'
 flags = struct.unpack_from('<I', d, 0xc)[0]
@@ -244,6 +256,9 @@ for off, ob, nb, why, scope in cuts:
 # Key page indices are fixed; the key page content is written by the loader as "actual key number × 8".
 KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1': 507, 'KASPECT': 505, 'KASPECTUI': 504}   # KRES*：分辨率参数位；KASPECT：画面宽高比上限（见 PARAMS） | KRES*: resolution parameter slots; KASPECT: picture aspect ratio cap (see PARAMS)
 KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI'))}
+# ABI3 adds a process function address, not another per-thread TLS slot.
+# The loader fills this entry before sealing the existing key page read-only.
+HOST_GATE_IDX = 8
 
 md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); md.detail = True
 patch = bytearray(); fix = []; gates = []; stats = {}
@@ -257,6 +272,19 @@ def emit_key_addr(reg, kind):
     fix.append((len(patch), kind)); emit(ADRP(reg, here(), KEY_PAGE_OFF)); emit(LDRX(reg, reg, KEY_INDEX[kind]))
 
 def emit_slot_addr(base, key_reg, kind):
+    if HOST_TLSDESC:
+        # TLSDESC 由系统动态链接器解析；只借 x0/x1/LR，保留原 NZCV。
+        # Native TLSDESC is resolved by the system linker. Borrow x0/x1/LR
+        # and preserve NZCV; no guest instruction or CPU is interpreted.
+        emit(STP_PRE(0, 1, 31, -48)); emit(STRX(30, 31, 2))
+        emit(0xD53B4200); emit(STRX(0, 31, 3))  # mrs x0,nzcv
+        emit_key_addr(0, kind); emit(LDRX(1, 0)); emit(BLR(1))
+        emit(MRS_TPIDRRO(1)); emit(ADDR(0, 1, 0))
+        if KEY_INDEX[kind]: emit(ADDI(0, 0, KEY_INDEX[kind] * 8))
+        emit(STRX(0, 31, 4)); emit(LDRX(0, 31, 3)); emit(0xD51B4200)  # msr nzcv,x0
+        emit(LDRX(30, 31, 2)); emit(LDP(0, 1, 31, 0))
+        emit(LDRX(base, 31, 4)); emit(ADDI(31, 31, 48))
+        return
     emit_key_addr(key_reg, kind); emit(ADDR(base, base, key_reg))
 
 # ---- 编码器 ----
@@ -272,7 +300,7 @@ def STUR(t, n, off): return 0xF8000000 | ((off & 0x1FF) << 12) | (n << 5) | t   
 def LDUR(t, n, off): return 0xF8400000 | ((off & 0x1FF) << 12) | (n << 5) | t   # ldur xt,[xn,#off]
 def LDRX(t, n, imm12=0): return 0xF9400000 | (imm12 << 10) | (n << 5) | t
 def STRX(t, n, imm12=0): return 0xF9000000 | (imm12 << 10) | (n << 5) | t
-def MRS_TPIDRRO(t): return 0xD53BD060 | t
+def MRS_TPIDRRO(t): return (0xD53BD040 if HOST_ELF else 0xD53BD060) | t
 def ADRP(dd, pc, target):
     imm = ((target & ~0xFFF) - (pc & ~0xFFF)) >> 12; assert -(1 << 20) <= imm < (1 << 20)
     return 0x90000000 | ((imm & 3) << 29) | (((imm >> 2) & 0x7FFFF) << 5) | dd
@@ -326,7 +354,80 @@ def sp_delta(ins):
     assert not re.match(r'(sp|wsp),', ins.op_str), f'writes sp: {ins.address:x} {ins.op_str}'
     return 0
 
+def elf_sp_operand(ins, word, reg):
+    """把原 sp 操作数改到持有原 sp 的寄存器；仍执行原指令。 | Redirect original sp operands to a saved-sp register; execute the original instruction."""
+    if not re.search(r'\b(?:wsp|sp)\b', ins.op_str): return word
+    assert (word >> 5) & 31 == 31, f'unsupported sp operand: {ins.address:x} {ins.op_str}'
+    word = (word & ~(31 << 5)) | (reg << 5)
+    return word
+
+def site_plain_elf(ins):
+    """ELF 没有红区：先分配栈帧，sp 相对指令使用原 sp 的副本。 | ELF has no red zone: allocate a frame, redirect sp-relative instructions to the original sp."""
+    S, T, U = pick(regs_in(ins), 3)
+    dlt = sp_delta(ins)
+    assert dlt >= -96 and 128 + dlt < 4096, f'sp delta {dlt} at {ins.address:x}'
+    start = here()
+    emit(STP_PRE(S, T, 31, -128)); emit(STRX(U, 31, 2)); emit(ADDI(U, 31, 128))
+    emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    emit(elf_sp_operand(ins, subst(ins, S), U))
+    emit(STRX(S, T)); emit(LDRX(U, 31, 2)); emit(LDP(S, T, 31, 0))
+    emit(ADDI(31, 31, 128 + dlt)); emit(B(here(), ins.address + 4))
+    return start
+
+def plain_group_member(ins):
+    """Only ordinary no-SP scalar rewrites; never cross a control/atomic/TLS operation."""
+    m = ins.mnemonic
+    if not has18(ins) or re.search(r'\b(?:sp|wsp)\b', ins.op_str): return False
+    if m.startswith(('b.', 'br', 'bl', 'ret')) or m in ('adr', 'adrp', 'b', 'cbz', 'cbnz', 'tbz', 'tbnz', 'mrs', 'msr', 'sys', 'sysl', 'dc', 'ic', 'at', 'tlbi', 'cfp', 'dvp', 'cpp', 'wfet', 'wfit'): return False
+    if m.startswith(('ldxr', 'ldaxr', 'stxr', 'stlxr', 'ldxp', 'ldaxp', 'stxp', 'stlxp', 'cas', 'swp', 'ldadd', 'stadd', 'ldclr', 'stclr', 'ldeor', 'steor', 'ldset', 'stset', 'ldsmax', 'stsmax', 'ldsmin', 'stsmin', 'ldumax', 'stumax', 'ldumin', 'stumin')): return False
+    if m.startswith('ldr') and '[' not in ins.op_str: return False
+    return True
+
+def site_plain_group(seg):
+    """Each original site keeps its own entry. This entry executes a short suffix.
+
+    All scratch registers are absent from the whole suffix. Publish K18 after
+    each original instruction, including read-only uses as on the old path;
+    a fault on the next instruction therefore sees the same preceding K18.
+    No host call or TLS mutation occurs while the native TLS address is held.
+    """
+    assert HOST_DIRECT_GATE and 2 <= len(seg) <= 3
+    assert all(plain_group_member(x) and x.address == seg[0].address + 4*i for i, x in enumerate(seg))
+    used = set().union(*(regs_in(x) for x in seg))
+    S,T = pick(used)
+    start = here()
+    emit(STP_PRE(S,T,31,-32))
+    emit(MRS_TPIDRRO(T)); emit_slot_addr(T,S,'K18'); emit(LDRX(S,T))
+    for ins in seg:
+        emit(subst(ins,S)); emit(STRX(S,T))
+    emit(LDP_POST(S,T,31,32)); emit(B(here(),seg[-1].address+4))
+    return start
+
+def finish_plain_groups(entries):
+    """Late observation/parameter/rule overrides must win over a fused suffix.
+
+    Descending source order finalizes later fallback entries first. Preserve
+    any late head override; otherwise append the original single-instruction
+    template and retarget only its original entry. A fallback is still the same
+    original instruction; an actual late rule remains a mismatching entry.
+    This is still one build from the original NSO.
+    """
+    for a in sorted(entries, reverse=True):
+        item = entries[a]; seg = item['seg']
+        if len(seg) < 2: continue
+        if struct.unpack_from('<I', IMG, a)[0] != B(a,item['start']):
+            stat('plain_group_late_head'); continue
+        if any(struct.unpack_from('<I', IMG, x.address)[0] != B(x.address,entries[x.address]['start']) for x in seg):
+            item['start'] = site_plain_elf(seg[0]); put_branch(a,item['start'])
+            stat('plain_group_fallback')
+
+def spill_pair(S, T):
+    emit(STP_PRE(S,T,31,-32) if HOST_ELF else STP(S,T,31,-16))
+def restore_pair(S, T):
+    emit(LDP_POST(S,T,31,32) if HOST_ELF else LDP(S,T,31,-16))
+
 def site_plain(ins):
+    if HOST_ELF: return site_plain_elf(ins)
     S, T = pick(regs_in(ins))
     dlt = sp_delta(ins)
     save = -16 if dlt == 0 else -112          # 改 sp 的指令会写到 sp 下方，暂存放到保留区深处 | Instructions that modify sp write below sp, so the scratch save is placed deep in the reserved area
@@ -343,62 +444,90 @@ def site_cond(ins):
     S, T = pick(regs_in(ins))
     tgt = ins.operands[-1].imm
     start = here()
-    emit(STP(S, T, 31, -16)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    spill_pair(S, T); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
     m = ins.mnemonic
     taken = here() + 4 * 3
     off = (taken - here()) >> 2
     nw = ((w & 0xFF000000) | ((off & 0x7FFFF) << 5) | S) if m in ('cbz', 'cbnz') else ((w & 0xFFF80000) | ((off & 0x3FFF) << 5) | S)
     pc = here(); emit(nw)
     dd = dis(nw, pc); assert dd.mnemonic == m and dd.operands[-1].imm == taken
-    emit(LDP(S, T, 31, -16)); emit(B(here(), ins.address + 4))
+    restore_pair(S, T); emit(B(here(), ins.address + 4))
     assert here() == taken
-    emit(LDP(S, T, 31, -16)); emit(B(here(), tgt))
+    restore_pair(S, T); emit(B(here(), tgt))
     return start
 
 def site_pcrel(ins):
     tgt = ins.operands[1].imm
     S, T = pick(set())
     start = here()
-    emit(STP(S, T, 31, -16)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18')   # S 先作键页偏移暂存，下一条再装目标值 | S first serves as a temporary for the key page offset; the next instruction then loads the target value
+    spill_pair(S, T); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18')   # S 先作键页偏移暂存，下一条再装目标值 | S first serves as a temporary for the key page offset; the next instruction then loads the target value
     pc = here(); emit(ADRP(S, pc, tgt))
     if ins.mnemonic == 'adr': emit(ADDI(S, S, tgt & 0xFFF))
     emit(STRX(S, T))
-    emit(LDP(S, T, 31, -16)); emit(B(here(), ins.address + 4))
+    restore_pair(S, T); emit(B(here(), ins.address + 4))
     return start
 
 def site_br(ins, base, count):
     """跳转表 br x18：目标 = base + 4i。x16 暂存红区 → 等距落地垫 → 恢复 x16 → 原目标。 | Jump table br x18: target = base + 4i. Stash x16 in the red zone → equally spaced landing pads → restore x16 → original target."""
     start = here()
-    emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # x16 / x17 是函数内可存活的临时寄存器，借用前存红区 | x16 / x17 are temporary registers that can stay live within a function; save them to the red zone before borrowing
-    emit(MRS_TPIDRRO(16)); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16)); emit(LDUR(17, 31, -24))
+    if HOST_ELF: emit(STP_PRE(16,17,31,-16))
+    else: emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # x16 / x17 是函数内可存活的临时寄存器，借用前存红区 | x16 / x17 are temporary registers that can stay live within a function; save them to the red zone before borrowing
+    emit(MRS_TPIDRRO(16)); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16)); emit(LDRX(17,31,1) if HOST_ELF else LDUR(17, 31, -24))
+    # TLSDESC expands the slot lookup. Keep the original 24-word prefix when
+    # it fits, but never let the dispatch instructions overlap the landing
+    # table. Recalculate because changing its address can change the ADD/SUB
+    # instruction count at a page boundary.
     padbase = start + 4 * 24
-    delta = padbase - base
-    op = ADDI if delta >= 0 else SUBI; dl = abs(delta)
-    ops = []; hi, lo = dl >> 12, dl & 0xFFF
-    while hi: h = min(hi, 0xFFF); ops.append(op(16, 16, h, 1)); hi -= h
-    if lo: ops.append(op(16, 16, lo, 0))
-    assert len(ops) <= 12
+    while True:
+        delta = padbase - base
+        op = ADDI if delta >= 0 else SUBI; dl = abs(delta)
+        ops = []; hi, lo = dl >> 12, dl & 0xFFF
+        while hi: h = min(hi, 0xFFF); ops.append(op(16, 16, h, 1)); hi -= h
+        if lo: ops.append(op(16, 16, lo, 0))
+        assert len(ops) <= 12
+        required = here() + 4 * (len(ops) + 1)  # adjustment plus BR
+        if required <= padbase: break
+        padbase = required
     for o in ops: emit(o)
     emit(BR(16))
     while here() < padbase: emit(NOP)
+    assert here() == padbase, f'jump landing table overlap at {ins.address:x}'
     tails = padbase + 4 * count
     for i in range(count): emit(B(here(), tails + 8 * i))
     for i in range(count):
-        emit(0xF85F0000 | (31 << 5) | 16)      # ldur x16,[sp,#-16]
+        emit(LDP_POST(16,17,31,16) if HOST_ELF else 0xF85F0000 | (31 << 5) | 16)      # ldur x16,[sp,#-16]
         emit(B(here(), base + 4 * i))
     return start
 
 def site_sysreg_read(ins, kind):
     """mrs xN, tpidr_el0 / tpidrro_el0 → xN = 线程槽值。 | mrs xN, tpidr_el0 / tpidrro_el0 → xN = thread slot value."""
     N = ins.bytes[0] & 31
+    if HOST_ELF and N == 31:
+        start = here(); emit(B(here(), ins.address + 4)); return start
+    if HOST_ELF and N == 18:
+        S,T,U = pick(set(),3); start = here()
+        emit(STP_PRE(S,T,31,-32)); emit(STRX(U,31,2))
+        emit(MRS_TPIDRRO(T)); emit_slot_addr(T,S,kind); emit(LDRX(U,T))
+        emit(MRS_TPIDRRO(T)); emit_slot_addr(T,S,'K18'); emit(STRX(U,T))
+        emit(LDRX(U,31,2)); emit(LDP_POST(S,T,31,32)); emit(B(here(),ins.address+4))
+        return start
     tmp = 16 if N != 16 else 17
     start = here()
-    emit(STUR(tmp, 31, -16)); emit(MRS_TPIDRRO(N)); emit_slot_addr(N, tmp, kind); emit(LDRX(N, N)); emit(LDUR(tmp, 31, -16))   # tmp 存红区借用 | tmp is saved by borrowing the red zone
+    emit(STP_PRE(tmp,31,31,-16) if HOST_ELF else STUR(tmp,31,-16)); emit(MRS_TPIDRRO(N)); emit_slot_addr(N, tmp, kind); emit(LDRX(N, N)); emit(LDP_POST(tmp,31,31,16) if HOST_ELF else LDUR(tmp,31,-16))   # tmp 存红区借用 | tmp is saved by borrowing the red zone
     emit(B(here(), ins.address + 4))
     return start
 
 def site_tpidr_write(ins):
     N = struct.unpack('<I', ins.bytes)[0] & 31
+    if HOST_ELF:
+        S,T,U = pick({N},3); start = here()
+        emit(STP_PRE(S,T,31,-32)); emit(STRX(U,31,2))
+        if N == 18:
+            emit(MRS_TPIDRRO(T)); emit_slot_addr(T,S,'K18'); emit(LDRX(U,T))
+        else: emit(ADDI(U,N,0) if N != 31 else 0xaa1f03e0 | U)
+        emit(MRS_TPIDRRO(T)); emit_slot_addr(T,S,'KTLS'); emit(STRX(U,T))
+        emit(LDRX(U,31,2)); emit(LDP_POST(S,T,31,32)); emit(B(here(),ins.address+4))
+        return start
     (T,) = pick({N}, 1)
     start = here()
     emit(0xF81F0000 | (31 << 5) | T)           # stur xT,[sp,#-16]
@@ -417,7 +546,14 @@ def emit_gate_call():
         Fetching the slot through the key page needs a second register to be borrowed; x29 is borrowed and then immediately restored from the stack: the x29 saved by _dm_gate must be the guest's original value --
         the host identifies the caller by [x29+8] (skill binding observation gate 6, private aiming gate svc86), and the crash backtrace also walks the x29 chain
         (since r24 plan C it was borrowed and not returned, the x29 the host got was the slot offset from the key page, and skill icons fell back to placeholder text)."""
-    emit(MRS_TPIDRRO(30)); emit_slot_addr(30, 29, 'KGATE'); emit(LDRX(30, 30)); emit(LDRX(29, 31))
+    # ABI3 substitutes only the process-constant lookup; the legacy contract
+    # above remains for ABI0/1/2. The caller still saves/restores x29/x30.
+    if HOST_DIRECT_GATE:
+        # Same dm_gate address as KGATE, loaded from the module's read-only
+        # process slot. No TLS resolver, borrowed x29, or changed NZCV/x18.
+        emit(ADRP(30, here(), KEY_PAGE_OFF)); emit(LDRX(30, 30, HOST_GATE_IDX))
+    else:
+        emit(MRS_TPIDRRO(30)); emit_slot_addr(30, 29, 'KGATE'); emit(LDRX(30, 30)); emit(LDRX(29, 31))
 
 def site_gate(ins, kind, arg):
     """svc / mrs cntpct_el0 → 宿主门。门地址取自线程槽 KGATE；门按返回点（本块 ldp 的地址）查 gates.tsv。 | svc / mrs cntpct_el0 → host gate. The gate address is taken from thread slot KGATE; the gate looks up gates.tsv by return point (the address of this block's ldp)."""
@@ -469,16 +605,22 @@ def find_windows(insl):
 def site_window(seg):
     used = set()
     for x in seg: used |= regs_in(x)
-    S, T = pick(used)
+    uses_sp = HOST_ELF and any(re.search(r'\bsp\b', x.op_str) for x in seg)
+    if uses_sp:
+        S,T,U = pick(used,3)
+        assert all(sp_delta(x)==0 for x in seg), 'exclusive window writes sp'
+    else: S,T = pick(used)
     lo, hi = seg[0].address, seg[-1].address + 4
     start = here()
-    emit(STP(S, T, 31, -16)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    spill_pair(S, T); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    if uses_sp: emit(STRX(U,31,2)); emit(ADDI(U,31,32))
     copy0 = here(); n = len(seg)
     exits = copy0 + 4 * n
     ex_targets = []; words = []
     for k, x in enumerate(seg):
         w = struct.unpack('<I', x.bytes)[0]
         if has18(x): w = subst(x, S)
+        if uses_sp: w = elf_sp_operand(x,w,U)
         m = x.mnemonic
         if m in ('cbz', 'cbnz', 'tbz', 'tbnz') or m.startswith('b.'):
             tgt = x.operands[-1].imm
@@ -501,7 +643,10 @@ def site_window(seg):
     # (one operation done twice / a lock-free list popped more than once). The game has 6 such windows (main 0x1848eb8 / 0x1848f28 / 0x1848f84, sdk 0x2ea0fc / 0x2ea4cc / 0x2ea644);
     # windows whose only branch is a cbnz back into the window are not affected. The equivalence check used to never draw the "compare equal" direction at random, so it stayed green (equiv.py now forces both directions of window branches).
     for t in [hi] + ex_targets:
-        emit(STRX(S, T)); emit(LDP(S, T, 31, -16)); emit(B(here(), t)); emit(NOP)
+        emit(STRX(S,T))
+        if uses_sp: emit(LDRX(U,31,2))
+        restore_pair(S,T); emit(B(here(),t))
+        if not uses_sp: emit(NOP)
     return start, lo, hi
 
 # ---- 函数边界（eh_frame_hdr）----
@@ -581,6 +726,13 @@ for fa, fb in funcs:
 def put_branch(at, to): struct.pack_into('<I', IMG, at, B(at, to))
 for wseg in windows:
     st, lo, hi = site_window(wseg); stat('window'); put_branch(lo, st)
+plain_ins = {}
+if HOST_DIRECT_GATE and X18_GROUP_SIZE > 1:
+    for a,(k,_) in kinds.items():
+        if k != 'x18' or a in done: continue
+        ins = dis(struct.unpack_from('<I', IMG, a)[0],a)
+        if plain_group_member(ins): plain_ins[a] = ins
+plain_entries = {}
 for a in sorted(kinds):
     if a in done: continue
     k, arg = kinds[a]
@@ -591,7 +743,17 @@ for a in sorted(kinds):
         elif m in ('cbz', 'cbnz', 'tbz', 'tbnz'): st = site_cond(ins); stat('cond')
         elif m in ('adr', 'adrp'): st = site_pcrel(ins); stat('pcrel')
         elif m in ('blr', 'ret', 'b', 'bl') or (m == 'ldr' and '[' not in ins.op_str): raise RuntimeError(f'{a:x} {m} {ins.op_str}')
-        else: st = site_plain(ins); stat('plain')
+        else:
+            seg = [plain_ins[a]] if a in plain_ins else [ins]
+            if a in plain_ins:
+                for n in range(1,X18_GROUP_SIZE):
+                    if a+4*n not in plain_ins or func_of(a+4*n) != func_of(a): break
+                    candidate = seg+[plain_ins[a+4*n]]
+                    if len(set().union(*(regs_in(x) for x in candidate)) & set(range(16))) > 14: break
+                    seg = candidate
+            if len(seg) > 1: st = site_plain_group(seg); stat(f'plain_group_{len(seg)}')
+            else: st = site_plain(ins); stat('plain')
+            plain_entries[a] = {'start':st,'seg':seg}
     elif k == 'tpidr_r': st = site_sysreg_read(ins, 'KTLS'); stat(k)
     elif k == 'tpidrro_r': st = site_sysreg_read(ins, 'KTLR'); stat(k)
     elif k == 'tpidr_w': st = site_tpidr_write(ins); stat(k)
@@ -791,7 +953,7 @@ for oa, wa, ob_, wb, r, key, why in params:
         assert r not in regs_in(ins), f'参数位中间用到 x{r}：{o:#x} {ins.mnemonic} {ins.op_str}'
     start = here()
     tmp = 16 if r != 16 else 17
-    emit(STUR(tmp, 31, -16)); emit(MRS_TPIDRRO(r)); emit_slot_addr(r, tmp, key); emit(LDRX(r, r)); emit(LDUR(tmp, 31, -16)); emit(B(here(), oa + 4))
+    emit(STP_PRE(tmp,31,31,-16) if HOST_ELF else STUR(tmp,31,-16)); emit(MRS_TPIDRRO(r)); emit_slot_addr(r, tmp, key); emit(LDRX(r, r)); emit(LDP_POST(tmp,31,31,16) if HOST_ELF else LDUR(tmp,31,-16)); emit(B(here(), oa + 4))
     struct.pack_into('<I', IMG, oa, B(oa, start)); struct.pack_into('<I', IMG, ob_, NOP); stat('param')
 
 # 既有三块原生规则跳板均只使用后继覆盖的死临时w8，不改w0/stat返回、sp或NZCV。
@@ -835,6 +997,9 @@ if RULE_RUN:
         0x52800062, 0x51000849, B(a+20,0x6c6584)],
         'touch-run-v4：原通用合法移动仅player0请求Walk2规范为Run3，非player与其它请求保原，w8/原资格不改')
 
+# Only after all existing late rules have selected their original entrypoints
+# can a suffix be certified. Unknown/overridden members retain the old path.
+if HOST_DIRECT_GATE: finish_plain_groups(plain_entries)
 os.makedirs(outdir, exist_ok=True)
 P = lambda ext: os.path.join(outdir, f'{NAME}.{ext}')
 open(P('patched.bin'), 'wb').write(IMG + bytearray(PATCH_OFF - len(IMG)) + patch)
@@ -845,6 +1010,8 @@ if PRIVATE_AIM:
     with open(P('aim.tsv'), 'w') as f:
         f.write('# RULESET\tskill-aim-v1-private\n# ORIGINAL_CALL\t0x2faf04\t97fee7fd\n# ORIGINAL_CALLEE\t0x2b4ef8\n# SKILL_CALLER\t0x2b5b80\n# SVC\t0x86\n# INPUT\tactual GetNpad sampled right; move axis unchanged\n')
         f.write('# IMAGE_SHA256\t'+hashlib.sha256(open(P('patched.bin'),'rb').read()).hexdigest()+'\n')
+elif os.path.exists(P('aim.tsv')):
+    os.unlink(P('aim.tsv'))
 if RULE_RUN:
     with open(P('rules.tsv'), 'w') as f:
         f.write(f'# RULESET\t{RULESET}\n# BUILD_ID\t{BUILD_ID}\n# ORIGINAL_SHA256\t{RULE_ORIG_SHA}\n# IMAGE_SHA256\t{hashlib.sha256(open(P("patched.bin"), "rb").read()).hexdigest()}\n')
@@ -852,6 +1019,8 @@ if RULE_RUN:
 elif os.path.exists(P('rules.tsv')):
     os.unlink(P('rules.tsv'))  # 重出native时清本模块旧规则登记，不让旧manifest混入原资源域 | When rebuilding native, clear this module's old rule registration so the old manifest does not leak into the original-resource domain
 with open(P('fixups.tsv'), 'w') as f:
+    if HOST_ELF: f.write(f'# HOST_ABI\t{3 if HOST_DIRECT_GATE else 2 if HOST_TLSDESC else 1:#x}\n')
+    if HOST_DIRECT_GATE: f.write(f'# HOST_GATE_IDX\t{HOST_GATE_IDX}\n')
     f.write(f'# PATCH_OFF\t{PATCH_OFF:#x}\n# KEY_PAGE_OFF\t{KEY_PAGE_OFF:#x}\n# KEY_PAGE_SIZE\t0x4000\n# TEXT_END\t{TEXT_END:#x}\n# RO_OFF\t{RO_OFF:#x}\n# DATA_OFF\t{DATA_OFF:#x}\n')
     for k in KEY_INDEX: f.write(f'# KEY_{k}_IDX\t{KEY_INDEX[k]}\n')
 with open(P('gates.tsv'), 'w') as f:

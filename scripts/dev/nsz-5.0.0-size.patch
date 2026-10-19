@@ -1,0 +1,28 @@
+--- a/Decompressor.py
++++ b/Decompressor.py
+@@ -274,9 +274,9 @@
+             INCOMPRESSIBLE_HEADER_SIZE, sections[0].offset - INCOMPRESSIBLE_HEADER_SIZE
+         )
+         sections.insert(0, fakeSection)
+-    nca_size = INCOMPRESSIBLE_HEADER_SIZE
+-    for i in range(sectionCount):
+-        nca_size += sections[i].size
++    # The first section can overlap the 0x4000-byte stored header.
++    # Counting it twice corrupts PFS0 entry sizes and subsequent offsets.
++    nca_size = max(INCOMPRESSIBLE_HEADER_SIZE, max(s.offset + s.size for s in sections))
+     return nca_size
+ 
+ 
+@@ -312,9 +312,9 @@
+             INCOMPRESSIBLE_HEADER_SIZE, sections[0].offset - INCOMPRESSIBLE_HEADER_SIZE
+         )
+         sections.insert(0, fakeSection)
+-    nca_size = INCOMPRESSIBLE_HEADER_SIZE
+-    for i in range(sectionCount):
+-        nca_size += sections[i].size
++    # The first section can overlap the 0x4000-byte stored header.
++    # Counting it twice corrupts PFS0 entry sizes and subsequent offsets.
++    nca_size = max(INCOMPRESSIBLE_HEADER_SIZE, max(s.offset + s.size for s in sections))
+     pos = nspf.tell()
+     blockMagic = nspf.read(8)
+     nspf.seek(pos)

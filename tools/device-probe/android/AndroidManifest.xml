@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.d2rmobile.devprobe" android:versionCode="1" android:versionName="0.1">
+    <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="36" />
+    <uses-feature android:glEsVersion="0x00030000" android:required="false" />
+    <queries><package android:name="org.renderdoc.renderdoccmd.arm64" /></queries>
+    <application android:label="D2R Device Probe" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:debuggable="true" android:extractNativeLibs="true" android:allowBackup="false">
+        <activity android:name=".ProbeActivity" android:exported="true" android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
