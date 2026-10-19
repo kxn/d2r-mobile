@@ -176,8 +176,18 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('romfs'); ap.add_argument('out')
     ap.add_argument('--astcenc', default=os.environ.get('ASTCENC')); ap.add_argument('--preset', default='thorough')
     ap.add_argument('--limit', type=int, default=0); ap.add_argument('--only', default='')
+    ap.add_argument('--block-size', choices=['4x4', '6x6'], default='4x4',
+                    help='6x6 is an experimental bounded 2D sample repack; default4x4 is unchanged')
+    ap.add_argument('--threads', type=int, choices=[1, 2], default=2,
+                    help='6x6 sample encoder thread limit; does not change the default4x4 path')
+    ap.add_argument('--normal-block-size', choices=['4x4', '6x6'], default='4x4',
+                    help='6x6 sample recipe keeps _NRM at4x4 unless explicitly overridden')
     o = ap.parse_args()
     if not o.astcenc or not os.access(o.astcenc, os.X_OK): sys.exit('astc_pack：找不到 astcenc（--astcenc 或环境变量 ASTCENC）')
+    if o.block_size == '6x6':
+        import astc_repack
+        astc_repack.run(o)
+        return
     rows = [l.rstrip('\n').split('|') for l in open(os.path.join(o.romfs, 'data', 'build_manifest.psv'), encoding='utf-8')]
     rows = [f for f in rows if len(f) >= 11 and f[9].lower().endswith('.texture') and o.only in f[9].lower()]
     seen = set(); todo = []
