@@ -109,7 +109,7 @@ static void shared_device_probe(void) {
   vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host_read,0,NULL,0,NULL);
   VK_CHECK(vkEndCommandBuffer(cmd));VkFenceCreateInfo fc={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VK_CHECK(vkCreateFence(V.device,&fc,NULL,&fence));
   VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&cmd};
-  VK_CHECK(vkQueueSubmit(V.queue,1,&submit,fence));VK_CHECK(vkWaitForFences(V.device,1,&fence,VK_TRUE,UINT64_MAX));
+  VK_CHECK(vkQueueSubmit(V.queue,1,&submit,fence));VK_CHECK(vkWaitForFences(V.device,1,&fence,VK_TRUE,30000000000ull));
   shared_cache(&b,shared_alignment,128,1);int valid=1;
   for(unsigned k=0;k<64;k++)if(memory[shared_alignment+k]!=0x31)valid=0;
   for(unsigned k=0;k<64;k+=4) {uint32_t value;memcpy(&value,memory+shared_alignment+64+k,4);if(value!=0x718293a4)valid=0;}
