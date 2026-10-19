@@ -282,6 +282,7 @@ void vk_profile_read(uint64_t times[VK_TIME_COUNT]) {
 typedef struct temporary {
   struct temporary *next;
   vk_buffer b;
+  uint64_t last_used_serial;
 } temporary;
 enum { GPU_REGIONS = 512, GPU_REGION_STATS = 1024 };
 typedef struct {
@@ -372,6 +373,15 @@ VkCommandBuffer vk_command_buffer(VkCommandBufferLevel level) {
 }
 static temporary *reusable_temporaries;
 static uint64_t reusable_bytes;
+static uint64_t temporary_last_prune;
+static int temporary_age_reference;
+#ifdef DM_VULKAN_TEST_EMBED
+static uint64_t temporary_soft_limit=64ull<<20;
+static uint64_t temporary_idle_age=1024,temporary_prune_interval=256;
+#else
+static const uint64_t temporary_soft_limit=64ull<<20;
+static const uint64_t temporary_idle_age=1024,temporary_prune_interval=256;
+#endif
 static void buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback);
 static vk_buffer *temp_buffer(uint64_t size,int readback) {
   if (!recording_resources)
@@ -383,6 +393,7 @@ static vk_buffer *temp_buffer(uint64_t size,int readback) {
   if (t) {
     *reuse = t->next;
     reusable_bytes -= t->b.size;
+    t->last_used_serial = recording_resources->queue_serial;
     t->next = recording_resources->temporaries;
     recording_resources->temporaries = t;
     return &t->b;
@@ -396,6 +407,7 @@ static vk_buffer *temp_buffer(uint64_t size,int readback) {
                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
                        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,readback);
+  t->last_used_serial = recording_resources->queue_serial;
   t->next = recording_resources->temporaries;
   recording_resources->temporaries = t;
   return &t->b;
@@ -839,6 +851,23 @@ int vk_pool_pending_writes(uint64_t address, uint64_t size) {
   return size && (recording_cpu_write(address, size) || pending_cpu_write(address, size));
 }
 
+// Only the recording owner touches this list. Entries arrive after GPU/CPU
+// effects AND the exclusive command-pool reset; active, pending and reset-
+// blocked allocations cannot be considered here. Keep the hot working set,
+// even above the soft limit, rather than repeatedly allocating it each frame.
+static void prune_reusable_temporaries(uint64_t now) {
+  if(temporary_age_reference || reusable_bytes<=temporary_soft_limit ||
+     now<temporary_last_prune || now-temporary_last_prune<temporary_prune_interval)return;
+  temporary_last_prune=now;
+  temporary **link=&reusable_temporaries;
+  while(*link && reusable_bytes>temporary_soft_limit) {
+    temporary *t=*link;
+    if(now>=t->last_used_serial && now-t->last_used_serial>=temporary_idle_age) {
+      *link=t->next;reusable_bytes-=t->b.size;
+      vk_buffer_destroy(&t->b);free(t);
+    } else link=&t->next;
+  }
+}
 static void reclaim_submissions(void) {
   pthread_mutex_lock(&completion_mu);
   submission *list = retired;
@@ -882,6 +911,7 @@ static void reclaim_submissions(void) {
     available_resources = r;
     free(s);
   }
+  prune_reusable_temporaries(queue_submitted);
 }
 
 // Owner control boundary only. No wait, submit, initialization or active-data
@@ -901,6 +931,12 @@ int mtl_trim_idle_resources(void) {
 void vk_test_idle_temporaries(uint64_t *bytes,unsigned *count) {
   *bytes=reusable_bytes;*count=0;
   for(temporary *t=reusable_temporaries;t;t=t->next)(*count)++;
+}
+void vk_test_temporary_age_policy(int enabled) {
+  temporary_soft_limit=enabled?512:64ull<<20;
+  temporary_idle_age=enabled?4:1024;
+  temporary_prune_interval=enabled?1:256;
+  temporary_last_prune=0;
 }
 #endif
 
@@ -1114,6 +1150,7 @@ static char *option_string(const char *name) {
 }
 static void init_options(void) {
   atomic_store(&pool_options_initialized,1);
+  temporary_age_reference=option_one("DM_VULKAN_TEMP_CACHE_AGE_REFERENCE");
   vk_startup_options *o=&V.options;
   o->pool_window_bytes=atomic_load(&pool_window_requested);
   if(o->pool_window_bytes==UINT64_MAX) {
