@@ -752,3 +752,16 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   int dm_vulkan_test_main(void);
   dm_vulkan_test_main();
 }
+
+// Owned fixture only: no nativeStart, guest modules or original game loop.
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeWsiTests(
+    JNIEnv *env,jclass klass,jobject surface,jstring directory,jfloat refresh,
+    jboolean async_submit,jboolean validation) {
+  window=ANativeWindow_fromSurface(env,surface);
+  if(!window)_exit(92);
+  vk_android_window(window,refresh);
+  setenv("DM_VULKAN_WSI_TEST","1",1);
+  Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
+      env,klass,directory,async_submit,JNI_FALSE,JNI_FALSE,validation,
+      JNI_FALSE,JNI_FALSE,JNI_FALSE);
+}

@@ -438,6 +438,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pool.inc"
 #include "native_vulkan_dirty_range.inc"
 #include "native_vulkan_acquire.inc"
+#include "native_vulkan_wsi.inc"
 #include "native_vulkan_stream.inc"
 #include "native_vulkan_read.inc"
 #include "native_vulkan_depth_array.inc"
@@ -552,6 +553,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_POOL_PUBLICATION_FIXTURE")) {pool_publication_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-publication\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_BINDING_MASK_FIXTURE")) {shader_pool_ranges_test();pool_binding_mask_gpu_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-binding-mask\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_FLAGS_FIXTURE")) {pool_flags_test();printf("{\"test\":\"pool-flags\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+  if(getenv("DM_VULKAN_WSI_TEST"))return android_wsi_scope_test();
   ds_plane_store_test();
   if(getenv("DM_DS_PLANE_STORE_FIXTURE")) {CHECK(vk_validation_error_count()==0);printf("{\"test\":\"ds-plane-store\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
