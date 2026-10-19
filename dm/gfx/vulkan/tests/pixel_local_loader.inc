@@ -27,6 +27,17 @@ static int pixel_local_loader_test(void) {
     die("pixel-local full-group fixed mapping");
   for(unsigned repeat=0;repeat<32;repeat++)
     if(vk_shader_pixel_local(fs,fs->module)!=proof)die("pixel-local immutable proof identity");
+  for(unsigned omit=0;omit<4;omit++) {
+    unsigned mask=15u&~(1u<<omit);
+    const vk_pixel_local_proof *subset=vk_shader_pixel_local_subset(fs,fs->module,mask);
+    if(!subset || subset->count!=3 || subset->group_count!=4 || subset->selection_mask!=mask ||
+       subset->source_shader!=fs || subset->shader==proof->shader || subset->module==proof->module)
+      die("pixel-local exact subset immutable identity");
+    for(unsigned i=0;i<fs->nb;i++)if(fs->bindings[i].binding==(int)omit+1 &&
+        subset->shader->bindings[i].kind!=3)die("pixel-local omitted sampler was converted");
+  }
+  if(vk_shader_pixel_local_subset(fs,fs->module,3) || vk_shader_pixel_local_subset(fs,fs->module,16))
+    die("pixel-local unsupported subset must fallback");
   vk_shader orphan=*fs;orphan.canonical_base=NULL;
   if(vk_shader_pixel_local(&orphan,fs->module))die("pixel-local missing owner accepted");
   vk_shader invalid_owner=*fs;invalid_owner.canonical_base=fs;orphan.canonical_base=&invalid_owner;
@@ -37,10 +48,15 @@ static int pixel_local_loader_test(void) {
      vertex->uv[0].attribute!=3 || vertex->uv[0].scale[0].offset!=48 || vertex->uv[0].bias[1].offset!=44 || vertex->module!=vs->module)
     die("pixel-local exact vertex FMA proof");
   if(vk_shader_pixel_local(fs,vs->module))die("pixel-local actual module identity rejection");
-  for(unsigned i=3;i<=10;i++) {
+  for(unsigned i=3;i<=17;i++) {
+    if(i==11)continue;
     char key[17];snprintf(key,sizeof key,"%016x",i);vk_shader *bad=vk_shader_load_key(key);
     if(vk_shader_pixel_local(bad,bad->module))die("pixel-local corrupted proof accepted: %s",key);
   }
+  vk_shader *legacy=vk_shader_load_key("0000000000000012");
+  const vk_pixel_local_proof *legacy_full=vk_shader_pixel_local(legacy,legacy->module);
+  if(!legacy_full || legacy_full->count!=4 || vk_shader_pixel_local_subset(legacy,legacy->module,7))
+    die("pixel-local DPL1 full proof/fallback compatibility");
   vk_shader *all=vk_shader_load_key("000000000000000b");
   if(!all->specialization_module || !all->predicate || !all->texel_storage_alternative || !all->texel_storage_alternative->specialization_module)
     die("pixel-local five source modules were not loaded");
@@ -69,6 +85,6 @@ static int pixel_local_loader_test(void) {
         die("pixel-local changed the original input resource identity");
     }
   }
-  LOG("[pixel-local loader fixture] 4 inputs+VS FMA+5 independent base/spec/pred/tssbo/tssbo_spec modules; 8 corruption/closure controls rejected");
+  LOG("[pixel-local loader fixture] 4 inputs+VS FMA+5 independent base/spec/pred/tssbo/tssbo_spec modules; 14 corruption/closure controls rejected; DPL2 exact masks and DPL1 compatibility");
   return 0;
 }

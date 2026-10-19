@@ -1,6 +1,6 @@
 """Deployable DPL1 input-attachment alternatives, bound to each actual module.
 
-One deterministic complete same-UV group per module; never a subset powerset.
+Complete same-UV group plus each nonempty single-omission subset; never a powerset.
 Runtime still proves geometry, sampler, layout, attachment and pass conditions.
 All integers use little endian; there are no native pointers or JSON in DPL1.
 """
@@ -10,7 +10,7 @@ import struct
 from dmsh_pixel_local import analyze, input_variant
 
 MAGIC = 0x314c5044
-VERSION = 1
+VERSION = 2
 SUFFIXES = ('spv', 'meta', 'spec', 'pred', 'tssbo')
 MODULES = {'base': 1, 'spec': 2, 'pred': 3, 'tssbo': 4, 'tssbo_spec': 5}
 HEADER_BYTES = 192
@@ -39,10 +39,10 @@ def actual_modules(blobs, reflection):
     return result
 
 
-def _record(kind, source):
+def _record(kind, source, omit=None):
     proof = analyze(source)
     if 'rejected' in proof: return None
-    bindings = []; recipes = []; variant = b''; location = 0; position = 0
+    bindings = []; recipes = []; variant = b''; location = 0; position = 0; mask = 0; group_count = 0
     if proof['stage'] == 'Fragment':
         groups = {}
         for binding in proof['bindings']:
@@ -57,12 +57,19 @@ def _record(kind, source):
         location = min(groups, key=lambda k:(-len(groups[k]), k))
         selected = sorted(groups[location], key=lambda b:(b['set'], b['binding']))
         if len({b['set'] for b in selected}) != 1: return None
+        group_count = len(selected)
+        mask = (1 << group_count)-1
+        if omit is not None:
+            if not 0 <= omit < len(selected) or len(selected)==1: return None
+            mask &= ~(1 << omit)
+            selected = [b for i,b in enumerate(selected) if i != omit]
         mapping = {(b['set'], b['binding']):i for i,b in enumerate(selected)}
         variant, _ = input_variant(source, mapping)
         for i,b in enumerate(selected):
             lod = (1 if any(s['lod']=='implicit-zero-required' for s in b['samples']) else 0) | (2 if any(s['lod']=='explicit-zero' for s in b['samples']) else 0)
             bindings.append(struct.pack('<4I', b['set'], b['binding'], i, lod))
     elif proof['stage'] == 'Vertex':
+        if omit is not None: return None
         position = proof['position']['attribute']
         if not 0 <= position < 16: return None
         for r in proof['uv_recipes']:
@@ -76,7 +83,7 @@ def _record(kind, source):
     else: return None
     body = b''.join(bindings+recipes)+variant
     return (struct.pack('<8I', kind, 96+len(body), len(bindings), len(recipes), location,
-                        position, len(variant)//4, 0)+sha(source)+
+                        position, len(variant)//4, mask | (group_count << 8))+sha(source)+
             (sha(variant) if variant else bytes(32))+body)
 
 
@@ -88,8 +95,14 @@ def build(blobs, reflection=None):
     # Metadata is an independent member of the fingerprint closure.
     descriptor_set = reflection.get('descriptor_set', 0)
     if not 0 <= descriptor_set < 6: raise ValueError('pixel-local descriptor set')
-    records = [record for name,code in modules.items()
-               if (record := _record(MODULES[name], code)) is not None]
+    records = []
+    for name,code in modules.items():
+        full = _record(MODULES[name], code)
+        if full is None: continue
+        records.append(full)
+        count = struct.unpack_from('<I',full,8)[0]
+        if count > 1:
+            records.extend(_record(MODULES[name], code,omit) for omit in range(count))
     body = b''.join(records)
     size = HEADER_BYTES+len(body)
     if size > MAX_BYTES: raise ValueError('pixel-local artifact size limit')

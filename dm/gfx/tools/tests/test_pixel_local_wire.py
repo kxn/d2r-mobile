@@ -25,7 +25,7 @@ class PixelLocalWire(unittest.TestCase):
         return self.compile('#version 450\n'+declarations+'layout(location=1)in vec2 uv;layout(location=0)out vec4 color;void main(){color='+
             '+'.join(f'texture(src{i},uv'+('+vec2(0.001)' if neighbor else '')+')' for i in range(bindings))+';}')
     def records(self,blob):
-        self.assertEqual(struct.unpack_from('<2I',blob),(wire.MAGIC,1))
+        self.assertEqual(struct.unpack_from('<2I',blob),(wire.MAGIC,wire.VERSION))
         self.assertEqual(struct.unpack_from('<I',blob,8)[0],len(blob))
         records=[];offset=192
         for i in range(struct.unpack_from('<I',blob,20)[0]):
@@ -38,14 +38,19 @@ class PixelLocalWire(unittest.TestCase):
         p=self.root/'variant.spv';p.write_bytes(code)
         subprocess.run(['spirv-val','--target-env','vulkan1.1',str(p)],check=True,capture_output=True)
         return subprocess.check_output(['spirv-dis',str(p)],text=True)
-    def test_full_four_binding_group_one_variant(self):
+    def test_full_four_binding_group_and_each_single_omission(self):
         source=self.fragment();blob,proof=wire.build({'spv':source},{'descriptor_set':1})
-        records=self.records(blob);self.assertEqual(len(records),1);h,src,dst,code=records[0]
+        records=self.records(blob);self.assertEqual(len(records),5);h,src,dst,code=records[0]
         self.assertEqual((h[2],h[3],h[4]),(4,0,1))
         self.assertEqual(src,hashlib.sha256(source).digest());self.assertEqual(dst,hashlib.sha256(code).digest())
         text=self.validate(code);self.assertEqual(text.count('OpImageRead '),4)
         self.assertNotIn('OpImageSampleImplicitLod ',text)
-        self.assertEqual(proof['records'],1)
+        self.assertEqual(proof['records'],5)
+        self.assertEqual([x[0][7] for x in records],[0x40f,0x40e,0x40d,0x40b,0x407])
+        for h,src,dst,code in records[1:]:
+            text=self.validate(code);self.assertEqual(text.count('OpImageRead '),3)
+            self.assertEqual(text.count('OpImageSampleImplicitLod '),1)
+            self.assertEqual(dst,hashlib.sha256(code).digest())
     def test_single_binding_positive(self):
         records=self.records(wire.build({'spv':self.fragment(1)},{'descriptor_set':1})[0])
         self.assertEqual(records[0][0][2],1);self.validate(records[0][3])

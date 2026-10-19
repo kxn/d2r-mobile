@@ -40,10 +40,27 @@ void main(){gl_Position=vec4(pos,1.0);uv=fma(tex,coeff.v[3].xy,coeff.v[2].zw);}'
     def changed(offset,value):
         def corrupt(data):struct.pack_into('<I',data,offset,value);return bytes(data)
         return corrupt
-    controls={3:lambda b:bytes(b[:-4]),4:changed(192+96+4,127),5:changed(20,6),
+    controls={3:lambda b:bytes(b[:-4]),4:changed(192+96+4,127),5:changed(20,46),
               6:changed(192,6),7:changed(192+8,9),8:changed(192+32,0),
               9:lambda b:bytes(b[:-1])+bytes([b[-1]^128]),10:changed(32,0)}
     for number,corrupt in controls.items():publish(number,blobs,corrupt=corrupt)
+    # DPL2 structural negative controls use real validated modules, not fake SPV.
+    def remove_full(data):
+        size=struct.unpack_from('<I',data,196)[0]; del data[192:192+size]
+        struct.pack_into('<I',data,8,len(data));struct.pack_into('<I',data,20,4)
+        return bytes(data)
+    full_size=struct.unpack_from('<I',wire.build(blobs,{'descriptor_set':1})[0],196)[0]
+    controls2={12:changed(192+28,0x41f),13:remove_full,
+               14:changed(192+full_size+28,0x40f),
+               15:changed(192+full_size+96+4,1),
+               16:changed(192+full_size+28,0x30e),
+               17:changed(192+full_size+28,0x40c)}
+    for number,corrupt in controls2.items():publish(number,blobs,corrupt=corrupt)
+    legacy=bytearray(wire.build(blobs,{'descriptor_set':1})[0][:192+full_size])
+    struct.pack_into('<I',legacy,4,1);struct.pack_into('<I',legacy,8,len(legacy))
+    struct.pack_into('<I',legacy,20,1);struct.pack_into('<I',legacy,192+28,0)
+    for suffix,data in blobs.items():(root/('0000000000000012.'+suffix)).write_bytes(data)
+    (root/'0000000000000012.plocal').write_bytes(legacy)
     # All five actual source modules are independently transformed and loaded.
     source=compile('''#version 450
 layout(set=1,binding=1,std140)uniform A{vec4 first[4096];};

@@ -1711,3 +1711,13 @@ CPU 对照已补两厂真机 memory-pool oracle 各 400,453 项；Mali 真实游
 新增18项真实 GPU 用例覆盖 NONE0/1、旧 STORE、FS reader WAR、前后 clear、shared DS、guest alias、PSO 故障及两 aspect/history 像素；原26+9项保留。旧9f生产代码配同一新增用例严格失败：plans1/draws0/aborts1/passes3；修复为 plans1/draws1/aborts0/passes2，且实际观察到 DS_WRITE scope。独立完整 async 21,813,081／sync 21,713,669 零 VUID/SYNC；专用新增用例由单独 selector 验证，不能把完整套件数量冒称包含这些新增用例。增加一次受限 DS 查询和必要的真实屏障，无新 Shader、游戏补丁或 GPU 回读。真机转换命中及物理 tile／带宽收益待测，报告 `pixel-local-union-ds-preflight-v1-source-ready.json`。
 
 高通已有同包官方 SDP OFF/ON 数据实际转换319次、0回退，但按完成帧归一的读/写/纹理流量变化均不足1%，边界、PSO增长及场景差异仍存在，不能宣称硬件 GMEM 合并或净带宽收益。后续局部转换将对齐原 Metal 的 producer 交集，避免把外部 history 无条件纳入 attachment；这需要离线证明的独立模块，不能在运行时删改已编译输入。
+
+### 局部 input 转换：外部 history 保留普通采样
+
+原 Metal 只把 producer MRT 交集采样转成 fetch。新 DPL2 对完整同 UV 组及每个非空 single-omission 子集离线生成独立、源 SHA 绑定的模块；4个成员为5种，非15种幂集。mask 位表示规范化完整组的排序位置，非 Vulkan binding 编号。loader 检查 full-first、完整组数量、唯一 mask、严格绑定/LOD 子序列和各实际模块身份；DPL1 继续读取，缺少精确子集则普通绘制回退。运行时在 producer 与 consumer 均重新证明交集，只将对应成员转为 input，history 描述符与真实依赖继续走普通采样；无运行时 SPIR-V 改写。
+
+新 GPU 用例的4种 history 槽位置均从4 inputs/5 attachments 降为3 inputs/4 attachments；多于一个外部成员缺精确变体、无本地成员等安全回退，全部本地仍使用 full。原 local feedback、writer、query、PSO 故障、abandon、STORE/history 像素保护保留。原 mip case8现可合并：producer/consumer 都只读外部 history 的不同 mip，history 已不作为 attachment；真正本地反馈负例不放宽。独立42项 GPU 用例、14项 loader 损坏控制及完整 async21,823,451/sync21,724,039 通过零 VUID/SYNC；主线与 DS 修复合并后的专用263,748项及完整async21,823,449项也通过。首轮主线夹具漏通用 FS9 的失败保留，补用已有完整夹具材料后通过，未改生产代码。
+
+新增成本：318个非空 sidecar 真实生成后580→2886 records、56,042,480→324,755,824字节，增加约269MB磁盘/工具缓存，不能当作 RSS；最大单文件2,508,680B。Q已见30个 eligible FS 若全部 query，其 retained blob 上界3,325,360→13,911,632B，非实际已加载量。P35仅3696→18656B。模块/schema 按需建立，但被读 sidecar 的完整 blob 会保留。consumer 为跨 geometry 回调重验，P35 descriptor/sampler 检查从4增至4+3；planner 不重复解析 selected。逻辑附件减少不代表物理 tile 合并、DRAM 或 FPS 改善，仍为默认关闭的候选，需重新生成/验证完整 shader chain 后真机验证。见 `pixel-local-subsets-v1-implementation-report.json`。
+
+DS 入场修复已实际部署：Mali 普通游戏3秒窗口+236 plans/+236 draws/0 abort，高通营地移动211 plans/211 draws/0 abort，画面/HUD人工静态检查正常并原生命周期两次存档停机；静态截图不能排除动态闪烁，且尚未证明帧率、发热改善。Mali 原厂单次OFF/ON对照另行记录边界，不能把开启命中当作性能收益。

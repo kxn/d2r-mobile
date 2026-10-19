@@ -172,6 +172,34 @@ static int pl_inputs(pl_candidate *plan,const vk_state *state,const vk_pixel_loc
   }
   return seen==((1u<<proof->count)-1);
 }
+// Canonical group bit positions are ascending (set,binding), never raw binding
+// numbers. Only producer MRT intersections become inputs; other samples remain
+// in the original descriptor schema and execute normal dynamic dependencies.
+static const vk_pixel_local_proof *pl_local_subset(pl_candidate *p,const vk_state *state,
+    vk_shader *shader,VkShaderModule actual,const p_set_rt *producer) {
+  const vk_pixel_local_proof *full=vk_shader_pixel_local(shader,actual);
+  if(!full || !pl_inputs(p,state,full))return NULL;
+  unsigned mask=0;
+  for(unsigned k=0;k<full->count;k++)for(int a=0;a<producer->n;a++)
+    if(pl_tex_same(&p->inputs[k],producer->color[a]))mask|=1u<<k;
+  if(!mask)return NULL;
+  const vk_pixel_local_proof *selected=vk_shader_pixel_local_subset(shader,actual,mask);
+  if(!selected || selected->selection_mask!=mask || selected->group_count!=full->count ||
+      selected->uv_location!=full->uv_location || selected->source_shader!=full->source_shader)return NULL;
+  // Copy already validated descriptor facts into compact selected order. No
+  // resource operation/callback occurs between the full proof and this copy.
+  unsigned at=0;
+  for(unsigned bit=0;bit<full->count;bit++)if(mask&(1u<<bit)) {
+    if(at>=selected->count || selected->bindings[at].binding!=full->bindings[bit].binding ||
+        selected->bindings[at].lod_mask!=full->bindings[bit].lod_mask)return NULL;
+    if(at!=bit) {
+      p->inputs[at]=p->inputs[bit];p->input_views[at]=p->input_views[bit];
+      p->has_input_view[at]=p->has_input_view[bit];p->handles[at]=p->handles[bit];
+    }
+    at++;
+  }
+  return at==selected->count?selected:NULL;
+}
 static int pl_attachment_shape(const tex_t *t,const view_t *v,unsigned w,unsigned h) {
   return pl_texture_shape(t,v,w,h) && (!v || !v->set_levels || v->nlevels==1);
 }
@@ -226,9 +254,9 @@ static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned w
       if(!changed)continue;
       const p_draw *d;const p_draw_idx *i;if(!pl_draw_header(op,&d,&i))return NULL;
       vk_shader *list[6]={0};vk_program_shaders(scan.program,list);
-      p->fragment=vk_shader_pixel_local(list[1],list[1]->module);
+      p->fragment=pl_local_subset(p,&scan,list[1],list[1]->module,&S.targets);
       p->vertex=vk_shader_pixel_local(list[0],list[0]->module);
-      if(!p->fragment || !p->vertex || !pl_inputs(p,&scan,p->fragment) ||
+      if(!p->fragment || !p->vertex ||
           !pl_geometry(&scan,p->vertex,p->fragment->uv_location,d,i,width,height) || !pl_no_ds_writes(&scan))return NULL;
       p->draw_op=op;p->second=scan;break;
     }

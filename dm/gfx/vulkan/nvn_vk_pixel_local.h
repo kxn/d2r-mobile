@@ -1,4 +1,4 @@
-// DPL1 immutable offline proof/module ABI. Presence never authorizes a pass:
+// DPL1/2 immutable offline proof/module ABI. Presence never authorizes a pass:
 // the renderer proves actual geometry/samplers/views/dependencies before use.
 #pragma once
 #include <stdint.h>
@@ -22,6 +22,7 @@ typedef struct vk_pixel_local_proof {
   VkShaderModule module;   // exact converted actual module (VS retains original)
   uint8_t source_sha256[32],variant_sha256[32];
   uint32_t set,count,uv_location,position_attribute,uv_count;
+  uint32_t selection_mask,group_count; // canonical full-group positions; subset inputs stay compact
   vk_pixel_local_binding bindings[VK_PIXEL_LOCAL_MAX_INPUTS];
   vk_pixel_local_uv uv[VK_PIXEL_LOCAL_MAX_UV];
 } vk_pixel_local_proof;
@@ -31,3 +32,6 @@ int vk_pixel_local_enabled(void);
 // Each actual base/spec/pred/tssbo module has its own source-bound proof.
 const vk_pixel_local_proof *vk_shader_pixel_local(struct vk_shader *shader,VkShaderModule actual_module);
 // See nvn_vk_shader.h for descriptor binding API (its offsets type is defined there).
+
+// Exact full-group selection. Zero selects the canonical complete proof.
+const vk_pixel_local_proof *vk_shader_pixel_local_subset(struct vk_shader *shader,VkShaderModule actual_module,uint32_t mask);

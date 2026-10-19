@@ -71,9 +71,9 @@ static pixel_local_cache *pixel_local_load(vk_shader *base) {
   size_t bytes;uint8_t *data=pixel_local_read(base->key,"plocal",&bytes);if(!data)return NULL;
   pixel_local_cache *cache=NULL;void *blobs[5]={0};size_t sizes[5]={0};
   if(bytes<192 || (bytes&3) || pixel_local_word(data)!=UINT32_C(0x314c5044) ||
-     pixel_local_word(data+4)!=1 || pixel_local_word(data+8)!=bytes ||
+     (pixel_local_word(data+4)!=1 && pixel_local_word(data+4)!=2) || pixel_local_word(data+8)!=bytes ||
      pixel_local_word(data+12)!=base->stage || pixel_local_word(data+16)!=base->set ||
-     pixel_local_word(data+20)>5 || pixel_local_word(data+24)!=192 || pixel_local_word(data+28))goto bad;
+     pixel_local_word(data+20)>(pixel_local_word(data+4)==1?5:45) || pixel_local_word(data+24)!=192 || pixel_local_word(data+28))goto bad;
   const char *suffixes[]={"spv","meta","spec","pred","tssbo"};
   for(unsigned i=0;i<5;i++) {
     blobs[i]=pixel_local_read(base->key,suffixes[i],&sizes[i]);uint8_t digest[32]={0};
@@ -86,39 +86,65 @@ static pixel_local_cache *pixel_local_load(vk_shader *base) {
     free(data);return NULL;
   }
   cache=calloc(1,sizeof *cache+(size_t)count*sizeof *cache->records);if(!cache)goto bad;
-  cache->count=count;size_t offset=192;unsigned kinds=0;
+  cache->count=count;size_t offset=192;unsigned version=pixel_local_word(data+4);
+  pixel_local_record *full[6]={0};unsigned masks[6][9]={{0}},mask_counts[6]={0};
   for(unsigned n=0;n<cache->count;n++) {
     if(offset>bytes || bytes-offset<96)goto bad;
     const uint8_t *record=data+offset;pixel_local_record *out=&cache->records[n];
     unsigned kind=pixel_local_word(record),length=pixel_local_word(record+4);
     unsigned count=pixel_local_word(record+8),uv_count=pixel_local_word(record+12),words=pixel_local_word(record+24);
-    if(kind<1 || kind>5 || (kinds&(1u<<kind)) || length<96 || length>bytes-offset ||
-       count>8 || uv_count>16 || pixel_local_word(record+28) ||
+    if(kind<1 || kind>5 || length<96 || length>bytes-offset ||
+       count>8 || uv_count>16 || (version==1 && pixel_local_word(record+28)) ||
        length!=96+(size_t)count*16+(size_t)uv_count*64+(size_t)words*4)goto bad;
-    kinds|=1u<<kind;
+    unsigned selection=pixel_local_word(record+28);
+    unsigned mask=version==1?((1u<<count)-1):(selection&255u);
+    unsigned group_count=version==1?count:((selection>>8)&255u);
+    if(selection>>16 || group_count>8)goto bad;
+    if(mask_counts[kind]>=9)goto bad;
+    for(unsigned old=0;old<mask_counts[kind];old++)if(masks[kind][old]==mask)goto bad;
+    masks[kind][mask_counts[kind]++]=mask;
     const void *source;size_t source_bytes;uint8_t digest[32];
     if(!pixel_local_source(kind,blobs,sizes,&source,&source_bytes))goto bad;
     CC_SHA256(source,source_bytes,digest);if(memcmp(digest,record+32,32))goto bad;
     vk_pixel_local_proof *proof=&out->proof;proof->set=base->set;proof->count=count;
     proof->uv_count=uv_count;proof->uv_location=pixel_local_word(record+16);
     proof->position_attribute=pixel_local_word(record+20);
+    proof->selection_mask=mask;proof->group_count=group_count;
     memcpy(proof->source_sha256,record+32,32);memcpy(proof->variant_sha256,record+64,32);
     if(base->stage==0) {
-      if(kind!=1 || count || !uv_count || words || proof->position_attribute>=16 || proof->uv_location)goto bad;
+      if(kind!=1 || count || !uv_count || words || proof->position_attribute>=16 || proof->uv_location || mask || full[kind])goto bad;
       uint8_t zero[32]={0};if(memcmp(proof->variant_sha256,zero,32))goto bad;
     } else if(base->stage==1) {
-      if(!count || uv_count || words<5 || proof->uv_location>=16 || proof->position_attribute)goto bad;
+      if(!count || uv_count || words<5 || proof->uv_location>=16 || proof->position_attribute || !mask || (mask&~255u))goto bad;
     } else goto bad;
     const uint8_t *p=record+96;unsigned seen[128]={0};
     for(unsigned i=0;i<count;i++,p+=16) {
       vk_pixel_local_binding *b=&proof->bindings[i];unsigned set=pixel_local_word(p);
       b->binding=pixel_local_word(p+4);b->input_index=pixel_local_word(p+8);b->lod_mask=pixel_local_word(p+12);
-      if(set!=base->set || b->binding>=128 || seen[b->binding]++ || b->input_index!=i || !b->lod_mask || (b->lod_mask&~3u))goto bad;
+      if(set!=base->set || b->binding>=128 || (i && b->binding<=proof->bindings[i-1].binding) || seen[b->binding]++ || b->input_index!=i || !b->lod_mask || (b->lod_mask&~3u))goto bad;
       unsigned found=0;
       // For paired modules unchanged combined-image bindings have the same
       // metadata; converted texel-buffer bindings are never eligible here.
       for(unsigned j=0;j<base->nb;j++)if(base->bindings[j].binding==(int)b->binding && base->bindings[j].kind==3 && base->bindings[j].count==1)found++;
       if(found!=1)goto bad;
+    }
+    // The first record for each actual module is its complete canonical group.
+    // Subsequent records must omit exactly one member, never invent bindings.
+    if(!full[kind]) {
+      if(group_count!=count || mask!=((1u<<group_count)-1))goto bad;
+      full[kind]=out;
+    } else {
+      const vk_pixel_local_proof *f=&full[kind]->proof;
+      if(version!=2 || base->stage!=1 || !f->count || group_count!=f->group_count || count+1!=f->count ||
+          (mask&~f->selection_mask) || __builtin_popcount(mask)!=count ||
+          proof->uv_location!=f->uv_location)goto bad;
+      unsigned at=0;
+      for(unsigned bit=0;bit<f->count;bit++)if(mask&(1u<<bit)) {
+        if(proof->bindings[at].binding!=f->bindings[bit].binding ||
+           proof->bindings[at].lod_mask!=f->bindings[bit].lod_mask)goto bad;
+        at++;
+      }
+      proof->group_count=f->count;
     }
     unsigned uv_seen=0;
     for(unsigned i=0;i<uv_count;i++,p+=64) {
@@ -146,7 +172,7 @@ bad:
   free(cache);free(data);
   LOG("[vulkan] pixel-local artifact rejected: %s",base->key);return NULL;
 }
-const vk_pixel_local_proof *vk_shader_pixel_local(vk_shader *shader,VkShaderModule actual) {
+const vk_pixel_local_proof *vk_shader_pixel_local_subset(vk_shader *shader,VkShaderModule actual,uint32_t mask) {
   if(!shader || !actual || !vk_pixel_local_enabled())return NULL;
   // Lifetime-owned construction association: no global shader-list search on
   // the candidate-draw path. Alternative representations retain this owner.
@@ -158,7 +184,7 @@ const vk_pixel_local_proof *vk_shader_pixel_local(vk_shader *shader,VkShaderModu
   if(!base->pixel_local_checked){base->pixel_local_checked=1;base->pixel_local_data=pixel_local_load(base);}
   pixel_local_cache *cache=base->pixel_local_data;if(!cache)return NULL;
   for(unsigned i=0;i<cache->count;i++) {
-    pixel_local_record *r=&cache->records[i];if(r->kind!=kind)continue;
+    pixel_local_record *r=&cache->records[i];if(r->kind!=kind || (mask && r->proof.selection_mask!=mask))continue;
     vk_pixel_local_proof *proof=&r->proof;
     if(proof->shader)return proof;
     if(base->stage==0){proof->source_shader=proof->shader=shader;proof->module=actual;return proof;}
@@ -187,4 +213,8 @@ const vk_pixel_local_proof *vk_shader_pixel_local(vk_shader *shader,VkShaderModu
     shader_descriptor_layouts(alt);proof->source_shader=shader;proof->shader=alt;proof->module=alt->module;return proof;
   }
   return NULL;
+}
+
+const vk_pixel_local_proof *vk_shader_pixel_local(vk_shader *shader,VkShaderModule actual) {
+  return vk_shader_pixel_local_subset(shader,actual,0);
 }

@@ -232,8 +232,10 @@ static const vk_pixel_local_proof *pl_consumer(vk_shader *vs,vk_shader *fs,VkSha
   uint64_t recording=vk_recording_serial(),pass=V.passes;
   const void *payload=draw?(const void *)draw:(const void *)idx;
   if(!p->current || p->current+8!=payload || p->current!=p->plan.draw_op)return NULL;
-  const vk_pixel_local_proof *proof=vk_shader_pixel_local(fs,actual),*vertex=vk_shader_pixel_local(vs,vs->module);
-  if(!proof || !vertex || proof->set!=p->plan.fragment->set || proof->count!=p->plan.fragment->count ||
+  pl_candidate *test=pl_scratch;test->width=p->plan.width;test->height=p->plan.height;
+  const vk_pixel_local_proof *proof=pl_local_subset(test,&S,fs,actual,&p->plan.first.targets),*vertex=vk_shader_pixel_local(vs,vs->module);
+  if(!proof || !vertex || proof->selection_mask!=p->plan.fragment->selection_mask ||
+      proof->group_count!=p->plan.fragment->group_count || proof->set!=p->plan.fragment->set || proof->count!=p->plan.fragment->count ||
       proof->uv_location!=p->plan.fragment->uv_location ||
       memcmp(proof->bindings,p->plan.fragment->bindings,proof->count*sizeof *proof->bindings) ||
       !target_fields_equal(&S.targets,&p->plan.second.targets) || !pl_consumer_resources(&S,&p->plan,proof))goto fail;
@@ -243,7 +245,7 @@ static const vk_pixel_local_proof *pl_consumer(vk_shader *vs,vk_shader *fs,VkSha
   if(active_job!=j || recording!=vk_recording_serial() || pass!=V.passes)return NULL;
   if(!geometry)goto fail;
   uint64_t epoch=vk_texture_descriptor_epoch();
-  pl_candidate *test=pl_scratch;test->width=p->plan.width;test->height=p->plan.height;
+  test=pl_scratch;test->width=p->plan.width;test->height=p->plan.height;
   if(!pl_inputs(test,&S,proof))goto fail;
   for(unsigned k=0;k<proof->count;k++)if(test->handles[k]!=p->plan.handles[k] ||
       !pl_tex_same(&test->inputs[k],&p->plan.inputs[k]) || test->has_input_view[k]!=p->plan.has_input_view[k] ||

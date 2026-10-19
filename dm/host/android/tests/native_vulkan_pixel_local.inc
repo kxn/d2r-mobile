@@ -49,6 +49,16 @@ static VKAPI_ATTR void VKAPI_CALL pixel_local_batch_barrier(
 }
 #include "native_vulkan_pixel_local_mip_alias.inc"
 #include "native_vulkan_pixel_local_depth.inc"
+static PFN_vkCreateRenderPass pixel_subset_pass_original;
+static unsigned pixel_subset_inputs,pixel_subset_attachments,pixel_subset_two_pass_creates;
+static VKAPI_ATTR VkResult VKAPI_CALL pixel_subset_pass(VkDevice d,const VkRenderPassCreateInfo *ci,
+    const VkAllocationCallbacks *alloc,VkRenderPass *pass) {
+  if(ci->subpassCount==2) {
+    pixel_subset_inputs=ci->pSubpasses[1].inputAttachmentCount;
+    pixel_subset_attachments=ci->attachmentCount;pixel_subset_two_pass_creates++;
+  }
+  return pixel_subset_pass_original(d,ci,alloc,pass);
+}
 static int pixel_local_render_test(void) {
   const char *fault=getenv("DM_TEST_PIXEL_LOCAL_PSO_FAILURE");
   int inject=fault && !strcmp(fault,"1");
@@ -110,14 +120,15 @@ static int pixel_local_render_test(void) {
   // reuse. A just-promoted image deliberately keeps the ordinary GENERAL
   // recording policy for that submission and must take the safe fallback.
   mtl_sub_begin();for(unsigned k=0;k<9;k++) {
-    if(k>=4 && k<=6)continue;
+    if((k>=4 && k<=6) || k==3 || k==8)continue;
     vk_pixel_local_image token;CHECK(vk_texture_pixel_local_prepare((const tex_t *)&textures[k],k!=3 && k!=8,&token));
     CHECK(token.usage&VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT);
     if(k==3 || k==8)CHECK(!(token.usage&VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT));
   }
+  vk_texture_prepare_binding(83,0,VK_SHADER_STAGE_FRAGMENT_BIT);
   vk_internal_wait(vk_internal_commit());
   const float blue[]={0,0,1,1},history[]={16/255.f,16/255.f,16/255.f,1},black[]={0,0,0,0};
-  for(unsigned test=0;test<26;test++) {
+  for(unsigned test=0;test<33;test++) {
     if(test>=23 && test<=24 && !V.features.fragmentStoresAndAtomics) {
       LOG("[pixel-local render fixture] case=%u not executed: fragmentStoresAndAtomics unavailable",test);continue;
     }
@@ -131,6 +142,19 @@ static int pixel_local_render_test(void) {
     mtl_reg_tex(80,(const tex_t *)&textures[first_source],test==6?&mip1:NULL);
     mtl_reg_tex(81,(const tex_t *)&textures[test==8?0:1],NULL);
     mtl_reg_tex(83,(const tex_t *)&textures[history_source],NULL);
+    if(test==31) {
+      mtl_sub_begin();vk_pixel_local_image local_history;
+      CHECK(vk_texture_pixel_local_prepare((const tex_t *)&textures[3],1,&local_history));
+      vk_internal_wait(vk_internal_commit()); // first actual four-MRT use is now stable
+    }
+    NVNseparateTextureHandle bind_handles[6];memcpy(bind_handles,handles,sizeof handles);
+    if(test>=26 && test<=29) {
+      unsigned omitted=test-26,at=0;
+      for(unsigned k=0;k<4;k++)bind_handles[k]=k==omitted?handles[3]:handles[at++];
+    }
+    if(test==30){bind_handles[2]=bind_handles[3]=handles[3];}
+    if(test==32)for(unsigned k=0;k<4;k++)bind_handles[k]=handles[3];
+    if(!test) {pixel_subset_pass_original=vkCreateRenderPass;vkCreateRenderPass=pixel_subset_pass;}
     uint64_t before_plans,before_draws,before_aborts;vk_pixel_local_stats(&before_plans,&before_draws,&before_aborts);
     CALL(nvnCommandBufferBeginRecording,&local);
     for(unsigned k=0;k<9;k++) {
@@ -161,7 +185,8 @@ static int pixel_local_render_test(void) {
     CALL(nvnCommandBufferBindVertexAttribState,&local,2,attrs);CALL(nvnCommandBufferBindVertexStreamState,&local,1,&stream);
     CALL(nvnCommandBufferBindVertexBuffers,&local,0,1,&vb);
     if(test==3 || test==20)CALL(nvnCommandBufferResetCounter,&local,NVN_COUNTER_TYPE_SAMPLES_PASSED);
-    CALL(nvnCommandBufferSetRenderTargets,&local,3,source,NULL,NULL,NULL);
+    const NVNtexture *four_sources[]={source[0],source[1],source[2],&textures[3]};
+    CALL(nvnCommandBufferSetRenderTargets,&local,test==31?4:3,test==31?four_sources:source,NULL,NULL,NULL);
     CALL(nvnCommandBufferBindProgram,&local,test==10?&alpha:test==23?&producer_writer:&producer,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
     if(test>=23 && test<=24)CALL(nvnCommandBufferBindStorageBuffer,&local,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)storage+0xd0000,4);
     CALL(nvnCommandBufferDrawArrays,&local,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
@@ -180,7 +205,7 @@ static int pixel_local_render_test(void) {
     }
     if(test==2)CALL(nvnCommandBufferSetScissor,&local,0,0,8,16);
     CALL(nvnCommandBufferBindProgram,&local,(test==4 || test==10 || test==16)?&single:(test==9 || test==21)?&neighbor:test==11?&vertex_alias:(test==12 || test==22)?&vertex_schema:test==24?&consumer_writer:test==25?&late_upload:&consumer,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
-    CALL(nvnCommandBufferBindSeparateTextures,&local,NVN_SHADER_STAGE_FRAGMENT,0,test==25?6:4,handles);
+    CALL(nvnCommandBufferBindSeparateTextures,&local,NVN_SHADER_STAGE_FRAGMENT,0,test==25?6:4,bind_handles);
     CALL(nvnCommandBufferBindSeparateSamplers,&local,NVN_SHADER_STAGE_FRAGMENT,0,1,&sh);
     if(test==9 || test==21)CALL(nvnCommandBufferBindSeparateTextures,&local,NVN_SHADER_STAGE_FRAGMENT,4,1,&handles[0]);
     if(test==11 || test==12 || test==22) {
@@ -211,21 +236,24 @@ static int pixel_local_render_test(void) {
       int operation=vk_pool_operation_begin_ranges(NULL,0);CHECK(operation==1);
       vk_pool_operation_end(operation);
     }
+    if(!test) {vkCreateRenderPass=pixel_subset_pass_original;
+      if(vk_pixel_local_enabled()) {CHECK(pixel_subset_two_pass_creates>0);CHECK(pixel_subset_inputs==3);CHECK(pixel_subset_attachments==4);}
+    }
     if(test==3 || test==20) {uint64_t samples;memcpy(&samples,storage+0x90000,8);CHECK(samples==512);}
     LOG("[pixel-local render fixture] case=%u enabled=%d passes=%llu",test,vk_pixel_local_enabled(),(unsigned long long)(V.passes-passes));
-    CHECK(V.passes-passes==(test==25?(vk_pixel_local_enabled()?2:3):inject && !test?2:vk_pixel_local_enabled() && (!test || test==4 || test==5 || (test>=13 && test<=17))?1:test==11 || test==24 || (!vk_pixel_local_enabled() && (test==12 || test==22))?3:2));
+    CHECK(V.passes-passes==(test==25?(vk_pixel_local_enabled()?2:3):inject && !test?2:vk_pixel_local_enabled() && (!test || test==4 || test==5 || (test>=13 && test<=17) || (test>=26 && test<=29) || test==31)?1:test==11 || test==24 || (!vk_pixel_local_enabled() && (test==12 || test==22))?3:2));
     uint64_t plans,draws,aborts;vk_pixel_local_stats(&plans,&draws,&aborts);
     if(vk_pixel_local_enabled() && (test==9 || test==12 || test==21 || test==22)) {CHECK(plans>before_plans);CHECK(aborts>before_aborts);CHECK(draws==before_draws);}
     if(test==25 && vk_pixel_local_enabled()) {CHECK(plans==before_plans+1);CHECK(aborts==before_aborts+1);CHECK(draws==before_draws);}
     if(inject && !test) {CHECK(plans==before_plans+1);CHECK(aborts==before_aborts+1);CHECK(draws==before_draws);}
-    if(vk_pixel_local_enabled() && test>=13 && test<=17) {CHECK(plans==before_plans+1);CHECK(draws==before_draws+1);CHECK(aborts==before_aborts);}
+    if(vk_pixel_local_enabled() && ((test>=13 && test<=17) || (test>=26 && test<=29) || test==31)) {CHECK(plans==before_plans+1);CHECK(draws==before_draws+1);CHECK(aborts==before_aborts);}
     if(vk_pixel_local_enabled() && ((test>=18 && test<=20) || (test>=23 && test<=24))) {
       CHECK(plans==before_plans);CHECK(draws==before_draws);CHECK(aborts==before_aborts);
     }
     NVNcopyRegion region={0,0,0,16,16,1};uint8_t pixels[1024];CALL(nvnTextureReadTexels,&textures[4],NULL,&region,pixels);
     for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++)for(unsigned c=0;c<4;c++) {
       unsigned expected=test==2&&x>=8?0:c==3?255:(test==4 || test==10 || test==16)?(c==0?64:0):
-        test==25?128:test==6?(c==0?16:c==1?80:255):test==8?(c==0?144:c==1?16:80):(test==9 || test==11 || test==21)?(c==0?144:80):80;CHECK(abs((int)pixels[(y*16+x)*4+c]-(int)expected)<=1);
+        test==30?(c==2?32:96):test==32?64:test==25?128:test==6?(c==0?16:c==1?80:255):test==8?(c==0?144:c==1?16:80):(test==9 || test==11 || test==21)?(c==0?144:80):80;CHECK(abs((int)pixels[(y*16+x)*4+c]-(int)expected)<=1);
     }
     if(test>=23 && test<=24) {uint32_t writes;memcpy(&writes,storage+0xd0000,4);CHECK(writes==256);}
     // These are later consumers outside the fused command stream. Tile-only

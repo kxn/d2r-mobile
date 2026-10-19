@@ -99,7 +99,10 @@ static int pixel_local_mip_alias_test(void) {
     }
     uint64_t plans,draws,aborts;vk_pixel_local_stats(&plans,&draws,&aborts);
     int failed=inject && !test;
-    int eligible=vk_pixel_local_enabled() && (test==0 || test==7);
+    // External history is now ordinary sampled, not an attachment; its
+    // default view may safely coexist with the producer reading history mip1.
+    // Local feedback/default/alias negatives0..6 are unchanged.
+    int eligible=vk_pixel_local_enabled() && (test==0 || test==7 || test==8);
     int fused=eligible && !failed;
     LOG("[pixel-local mip alias fixture] case=%u enabled=%d fused=%d passes=%llu",test,vk_pixel_local_enabled(),fused,(unsigned long long)(V.passes-passes));
     CHECK(V.passes-passes==(fused?1:2));CHECK(aborts-before_aborts==(unsigned)failed);
