@@ -57,3 +57,5 @@ DM_VULKAN_VALIDATE=1 DM_VULKAN_SYNC_VALIDATE=1 native_vulkan_test
 包 UID 及所加载 driver/ELF 指纹核对。Linux Lavapipe 或 shell UID 的
 通过不能代替普通 app UID 的真实驱动结果，更不代表游戏共享池或帧率
 取得了进展。采集完成后由协调者关闭本次测试应用/工具。
+
+冷启动 host_import_opt_in 同时设置 TU_DM_HOST_IMPORT 和 PANVK_DM_HOST_IMPORT；只有选中驱动消费自身选项，测试仍仅调用标准 Vulkan API。开启 validation 时记录可见层和 vkCreateInstance 的实际 VkResult，不能把层加载失败误报为内核导入失败。
