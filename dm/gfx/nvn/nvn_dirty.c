@@ -50,9 +50,10 @@ void nvn_dirty_stat(int *live, int *peak, int *cap) { *live = atomic_load(&g_liv
 static _Atomic int g_overflow_logged;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // 建池 / 销池（客体线程，可能并发）互斥选槽；缺页处理路径不碰它 | Pool creation / destruction (guest threads, possibly concurrent) pick slots under a mutex; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // 本模块的 mprotect：调用次数、覆盖页数、耗时（mach 时基，缺页路径里也安全） | This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
-static void mp(uintptr_t a, size_t len, int prot) {
-    uint64_t t = nvn_clock_ticks(); mprotect((void *)a, len, prot);
+static int mp(uintptr_t a, size_t len, int prot) {
+    uint64_t t = nvn_clock_ticks(); int result = mprotect((void *)a, len, prot);
     atomic_fetch_add(&g_mp_ticks, nvn_clock_ticks() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift);
+    return result;
 }
 
 static _Atomic int g_busy_red;
@@ -100,8 +101,9 @@ void nvn_dirty_test_publication_hook(nvn_dirty_test_hook hook, void *context) {
     test_hook_context = context; test_hook = hook; // set/reset only while writer joined
 }
 #endif
-static void unprotect_page(range_t *r, uintptr_t p, int host_write) {   // 调用方已把状态从 PROT 改成 BUSY | The caller has already changed the state from PROT to BUSY
-    mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
+// Publish only after the claimed page's mprotect has completed. Keep the
+// original per-page generation/publication order, including the test hook.
+static inline void unprotect_publish(range_t *r, uintptr_t p, int host_write) {
     uint64_t generation = atomic_fetch_add(&g_now, 1) + 1;
 #ifdef DM_DIRTY_RANGE_TEST_HOOKS
     // Never pause a signal handler. Only the owned host-preparation test uses it.
@@ -119,6 +121,10 @@ static void unprotect_page(range_t *r, uintptr_t p, int host_write) {   // 调�
     advance(&g_changes);
     atomic_store(&r->state[p], PG_NONE);
 }
+static void unprotect_page(range_t *r, uintptr_t p, int host_write) {   // 调用方已把状态从 PROT 改成 BUSY | The caller has already changed the state from PROT to BUSY
+    mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
+    unprotect_publish(r, p, host_write);
+}
 static int on_fault(void *addr, int is_write, void *uc) {
     (void)uc;
     range_t *r = is_write ? find(address(addr)) : NULL;
@@ -135,10 +141,29 @@ static void prep_write(void *addr, size_t len) {
         range_t *r = find(a);
         if (!r) { a = (a + g_pg) & ~(g_pg - 1); continue; }
         uintptr_t stop = e < r->end ? e : r->end;
-        for (uintptr_t p = (a - r->base) >> g_shift, q = (stop - 1 - r->base) >> g_shift; p <= q; p++) {
-            for (;;) { uint8_t st = PG_PROT;   // 见 BUSY 等完要重看：对方可能是在设只读，等完这页是 PROT，照样得解 | After waiting out BUSY, look again: the other side may have been setting read-only, in which case the page is PROT after the wait and still has to be unprotected
-                if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p, 1); atomic_fetch_add(&g_preps, 1); break; }
-                if (st != PG_BUSY || !busy_wait(r, p)) break; }
+        for (uintptr_t p = (a - r->base) >> g_shift, q = (stop - 1 - r->base) >> g_shift; p <= q;) {
+            uint8_t st = PG_PROT;
+            if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) {
+                // Own only a bounded consecutive PROT prefix. Never mprotect
+                // across an unclaimed NONE/BUSY page or another range. A
+                // competing preparer must not wait while retaining a prefix:
+                // flush this run before retrying/waiting on its next page.
+                uintptr_t first = p++;
+                while (p <= q && p - first < 64) {
+                    uint8_t next = PG_PROT;
+                    if (!atomic_compare_exchange_strong(&r->state[p], &next, PG_BUSY)) break;
+                    p++;
+                }
+                if (mp(r->base + (first << g_shift), (p - first) << g_shift, PROT_READ | PROT_WRITE))
+                    die("dirty-page write preparation could not restore writable memory");
+                for (uintptr_t page = first; page < p; page++) unprotect_publish(r, page, 1);
+                atomic_fetch_add(&g_preps, p - first);
+                continue;
+            }
+            // A protector may have held BUSY. After it finishes, retry this
+            // same page: its final state can be PROT and still needs unprotect.
+            if (st == PG_BUSY && busy_wait(r, p)) continue;
+            p++;
         }
         a = stop;
     }
