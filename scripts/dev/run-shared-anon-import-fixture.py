@@ -132,13 +132,16 @@ try:
     time.sleep(.2)
    launch.wait(timeout=5);phase['launch_exit']=launch.returncode
   phase['rows']=rows;phase['provider_panvk']='provider=panvk'in log
-  phase['actual_noncoherent_0xb']='host_coherent=0'in log and 'flags=0xb'in log
+  memory_rounds=[dict(round=int(r),type=int(t),flags=int(f,16),coherent=int(c),atom=int(n))for r,t,f,c,n in re.findall(r'round=(\d+) import_type=(\d+) flags=(0x[0-9a-f]+) host_coherent=(\d+) atom=(\d+)',log)]
+  phase['memory_rounds']=memory_rounds
+  phase['actual_noncoherent_0xb']=bool(memory_rounds)and all(v['flags']==11 and v['coherent']==0 and v['atom']==64 for v in memory_rounds)
   phase['validation_explicitly_disabled']=any(r.get('validation_layer')=='disabled_explicitly'for r in rows)
   configuration=[r for r in rows if r.get('test_configuration')=='host-import-anonymous-mapping'];owned=[r for r in rows if r.get('test_configuration')=='standard-owned-dirty']
   assert phase['provider_panvk']and phase['actual_noncoherent_0xb']and phase['validation_explicitly_disabled'],'Provider/type/validationnotproved'
   assert len(configuration)==len(owned)==1 and configuration[0]['kind']==('shared'if shared else'private')and owned[0]['enabled']==dirty,'Actualmatrixmode mismatch'
   if phase['stage']=='oracle-passed':
    final=phase['final'];assert final['uid']>=10000 and final['rounds']==4 and final['import_bytes']==8192 and final['alignment']==4096 and final['checks']>50000
+   assert [v['round']for v in memory_rounds]==[0,1,2,3]
    cycles=[r for r in rows if r.get('test_details')=='standard-owned-dirty-cycle'];assert len(cycles)==(12 if dirty else 0)
    if dirty:assert all(r['cpu_first']==r['GPU_copy_readback_first']for r in cycles)
   phase['oracle_passed']=phase['stage']=='oracle-passed';save()
