@@ -1216,3 +1216,27 @@ meminfo 的 PSS 为 2,777,433KiB，不同运行的旧 7c 端点为 2,747,035KiB�
 覆盖及性能不变。此候选未替换可玩版本。详见本机
 `shared-image-cpu-only-0b36faa-actual-q-acceptance-agent.json` 及
 `shared-image-cpu-only-0b36faa-root-actual-review.json`。
+
+### 整池注册的首次触发已经用 LLDB 确认
+
+同一冻结 `0b36faa` APK、原游戏及 `3c8710be` 驱动，官方 LLDB 在实际导入
+调用点取得四个首次导入池的完整栈、NVN flags、pool 地址／大小和
+`pool_address` 的原始请求。四次 `backings` 均为空：
+
+| 整池容量 | NVN flags | 首次请求 | 触发路径 |
+| --- | ---: | ---: | --- |
+| 400 MiB | 34 | 3968 B | B2T 的线性上传源，池内偏移 512 |
+| 710 MiB | 33 | 24064 B | B2T 后的 canonical retile，池内偏移 17978368 |
+| 2 MiB | 18 | 16 B | 原 GPU 查询结果写入，池内偏移 528384 |
+| 1 MiB | 20 | 32 B | Compute storage binding，池内偏移 816 |
+
+这四次请求并没有扩张成 `pool_remaining`，整池大小来自
+`shared_pool_materialize` 的 `p->size`。首次范围不是后续所有 GPU 访问范围，
+不能据此只注册这几个字节便视为完成。特别是 retile 路径维护图像与线性
+内存的别名写入语义，不能删除其实际 GPU 写入来降低注册容量。
+
+窗口候选须复用操作预留、物理 span、真实完成及重收集流程，预留完整
+descriptor／VBO／IBO 和 retile 目标及其 storage 对齐前缀；跨窗需求必须由
+一个连续 VkBuffer 满足。当前尚无该候选的 GPU／Android 验收或驻留收益。
+LLDB 退出后原营地、存档、停机与完整生产恢复均已闭合，工具服务和端口
+转发已清理。证据：`shared-image-cpu-only-0b36faa-materialize-debug-v1-analysis-agent.json`。
