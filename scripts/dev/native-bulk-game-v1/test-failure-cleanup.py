@@ -3,6 +3,7 @@
 from pathlib import Path
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -39,7 +40,7 @@ class Device:
 
 
 class LifecycleFailureTests(unittest.TestCase):
-    def exercise(self, replacement):
+    def exercise(self, replacement, counter_failure=False):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder) / 'phase'
             dev = Device()
@@ -60,6 +61,8 @@ class LifecycleFailureTests(unittest.TestCase):
                     return 0
 
             def collect(_dev, _pid, d, report, _out, label):
+                if counter_failure:
+                    return
                 d['screenshots'] = [{'remote': '/data/local/tmp/owned.png',
                                      'screencap_requested': True}]
                 if replacement:
@@ -67,6 +70,10 @@ class LifecycleFailureTests(unittest.TestCase):
                 raise RuntimeError('injected screenshot pull failure')
 
             def save(cmd, **kwargs):
+                if counter_failure and 'counter-helper.py' in cmd:
+                    if replacement:
+                        dev.pid = '54321'
+                    raise subprocess.CalledProcessError(1, cmd)
                 self.assertIn('android-game-background-save.py', ' '.join(cmd))
                 report = Path(cmd[cmd.index('--report') + 1])
                 report.write_text(json.dumps({'fresh_original_lifecycle_save': True,
@@ -76,13 +83,19 @@ class LifecycleFailureTests(unittest.TestCase):
             with patch.object(t.subprocess, 'Popen', Launcher), \
                  patch.object(t.subprocess, 'run', save), \
                  patch.object(t.m, 'screenshot_collect', collect), \
+                 patch.object(t.m, 'original_route'), \
                  patch.object(t.m, 'screenshot_pull_remove',
                               side_effect=RuntimeError('injected retry failure')):
-                with self.assertRaises(RuntimeError):
-                    t.phase_game(dev, out, {'kind': 'control'},
-                                 {'serial': '10CG570J59001U1'}, 'test-token')
+                with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
+                    config = {'serial': '10CG570J59001U1'}
+                    if counter_failure:
+                        config['counter_snapshot'] = {
+                            'helper_path': 'counter-helper.py',
+                            'config': {'path': '/local/config.json', 'sha256': 'a' * 64}}
+                    t.phase_game(dev, out, {'kind': 'control'}, config, 'test-token')
             state = json.loads((out / 'phase.json').read_text())
-            self.assertTrue(state['screenshot_collection_errors'])
+            if not counter_failure:
+                self.assertTrue(state['screenshot_collection_errors'])
             if replacement:
                 self.assertFalse(saved)
                 self.assertFalse(dev.stopped)
@@ -98,6 +111,12 @@ class LifecycleFailureTests(unittest.TestCase):
 
     def test_replacement_pid_is_never_saved_or_stopped(self):
         self.exercise(True)
+
+    def test_counter_tool_failure_still_saves_and_stops_owned_game(self):
+        self.exercise(False, counter_failure=True)
+
+    def test_counter_tool_replacement_pid_is_not_stopped(self):
+        self.exercise(True, counter_failure=True)
 
 
 if __name__ == '__main__':

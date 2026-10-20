@@ -21,6 +21,17 @@ state and a single system `dumpsys meminfo` snapshot. These are functional and
 residency evidence, not a sustained thermal/FPS result. Official profiling may
 be added only through the existing tools, in a separate window from a debugger.
 
+An optional `counter_snapshot` input has exactly three pinned file records:
+`ready`, `config`, and `server`. It uses the frozen `4984509` official LLDB
+helper after the normal route, outside any profiling window. The helper reads
+four existing global counters once and detaches; its configuration must match
+the paired APK/ELF and canonical build record. The exact NDK server is deployed
+only into each experiment's isolated temporary directory. No production
+runtime counters or per-frame logging are added. A helper failure still runs
+the original save/stop path for the owned first PID. Counts describe imported
+address ranges and metadata, not resident or unique physical RAM; keep the
+system memory snapshot as a separate measurement.
+
 Run with `--inputs PATH --inputs-sha256 SHA --report PATH`. Add `--execute` only
 after reviewing the exact immutable manifest and prerequisite receipts. There
 is no implicit retry, device discovery, installer settings change, game-state

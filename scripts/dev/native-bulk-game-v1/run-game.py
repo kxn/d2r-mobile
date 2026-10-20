@@ -86,6 +86,31 @@ def proof(path, digest):
     require(len(p['prerequisites']) >= 2, 'actual fixture and bake receipts required')
     for row in p['prerequisites']:
         pinned(row)
+    if 'counter_snapshot' in p:
+        counter = p['counter_snapshot']
+        require(set(counter) == {'ready', 'config', 'server'}, 'counter snapshot fields differ')
+        counter_ready = read(pinned(counter['ready']))
+        require(counter_ready['revision'] == '4984509f629b9ec71b3a3b6366fee7895f83bd02',
+                'reviewed once-only counter helper required')
+        counter['helper_path'] = str(pinned(counter_ready['helper']))
+        pinned(counter_ready['capture_module'])
+        tool_inputs = read(pinned(counter_ready['tool_inputs']))
+        for row in tool_inputs['tools']:
+            pinned(row)
+        config = read(pinned(counter['config']))
+        require(config['serial'] == p['serial'] and config['APK_sha256'] == p['new_apk']
+                and config['ELF_sha256'] == p['new_elf']
+                and config['canonical_source_ready_sha256'] == p['canonical']['sha256']
+                and config['tool_inputs_sha256'] == counter_ready['tool_inputs']['sha256'],
+                'counter helper target differs from paired runtime')
+        require(counter['server']['sha256'] ==
+                'fb970fd0800b1f886ce7a366cf361e57f302ef08bb769f9eb0b85e5fc6823d3e',
+                'exact reviewed official NDK server required')
+        pinned(counter['server'])
+        subprocess.run([sys.executable, counter['helper_path'], '12345', '/tmp',
+                        '--config', counter['config']['path'], '--config-sha256',
+                        counter['config']['sha256'], '--plan'], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     require([v['kind'] for v in p['phases']] == ['control', 'native'], 'matched pair order')
     for phase in p['phases']:
         composition = read(pinned(phase['composition']))
@@ -208,6 +233,30 @@ def phase_game(dev, out, phase, p, token):
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
         m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
+        if p.get('counter_snapshot'):
+            require(pid() == own, 'PID changed before once-only counter snapshot')
+            counter = p['counter_snapshot']
+            snapshot_out = out / 'native-import-counter-snapshot'
+            snapshot_out.mkdir()
+            command = [sys.executable, counter['helper_path'], own, str(snapshot_out),
+                       '--config', counter['config']['path'], '--config-sha256',
+                       counter['config']['sha256']]
+            d['counter_snapshot_command'] = command
+            save()
+            # No concurrent profile window: one official debugger attach reads
+            # existing globals, detaches, and removes its owned server/forward.
+            with (snapshot_out / 'console.txt').open('w') as log:
+                # The helper bounds its official debugger/ADB operations and
+                # owns tracer cleanup. Do not SIGKILL it via run(timeout=...).
+                subprocess.run(command, check=True, stdout=log,
+                               stderr=subprocess.STDOUT)
+            counter_result = read(snapshot_out / 'debugger-result.json')
+            require(counter_result['counter_snapshot_accepted'] is True
+                    and not counter_result['cleanup_errors']
+                    and counter_result['owned_PID_TracerPid_zero_after_cleanup'] is True,
+                    'once-only counter snapshot / detach failed')
+            d['native_import_counters'] = counter_result['snapshot']
+            save()
         require(pid() == own, 'PID changed before residency snapshot')
         (out / 'official-dumpsys-meminfo.txt').write_text(dev.adb('shell', 'dumpsys', 'meminfo', own))
         m.screenshot_collect(dev, own, d, report, out, 'HUD-after-route')
@@ -341,6 +390,8 @@ def main():
                     tar.add(Path(phase['overlay_root']) / n, arcname='overlay/' + n, recursive=False)
                 if name == 'native':
                     tar.add(phase['native_table']['path'], arcname='native/native-layouts.bin', recursive=False)
+                if p.get('counter_snapshot'):
+                    tar.add(p['counter_snapshot']['server']['path'], arcname='temp/d2r-lldb-server', recursive=False)
                 for label, _ in DIRS:
                     tar.add(owner, arcname=label + '/' + m.OWNER, recursive=False)
             remote = '/data/local/tmp/d2r-native-bulk-' + token + '-' + name + '.tar'
@@ -350,6 +401,8 @@ def main():
             require(dev.digest(remote) == sha(payload), 'resource transfer changed')
             dev.app('mkdir', incoming)
             dev.app('tar', 'xf', remote, '-C', incoming)
+            if p.get('counter_snapshot'):
+                dev.app('chmod', '700', incoming + '/temp/d2r-lldb-server')
             if name == 'control':
                 for label, target in DIRS:
                     if d['old_dirs'][label] is not None:
