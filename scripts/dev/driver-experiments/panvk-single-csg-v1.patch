@@ -1,0 +1,85 @@
+--- a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+@@ -1042,6 +1042,8 @@
+ kbase_destroy_group(struct panvk_gpu_queue *queue)
+ {
+    struct panvk_device *dev = to_panvk_device(queue->vk.base.device);
++   uint32_t handles[PANVK_SUBQUEUE_COUNT];
++   unsigned count = 0;
+ 
+    for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
+       struct panvk_subqueue *subq = &queue->subqueues[i];
+@@ -1054,12 +1056,20 @@
+       subq->kbase.ringbuf_bo = NULL;
+       subq->kbase.user_io = NULL;
+ 
++      // Terminate every CSI before dropping their shared group. Record the
++      // owner even when creation failed before the first ring was allocated.
+       if (subq->kbase.group_handle != UINT32_MAX) {
+-         kbase_kmod_csf_group_destroy(dev->kmod.dev,
+-                                      subq->kbase.group_handle);
++         bool seen = false;
++         for (unsigned j = 0; j < count; j++)
++            seen |= handles[j] == subq->kbase.group_handle;
++         if (!seen)
++            handles[count++] = subq->kbase.group_handle;
+          subq->kbase.group_handle = UINT32_MAX;
+       }
+    }
++   for (unsigned i = 0; i < count; i++)
++      kbase_kmod_csf_group_destroy(dev->kmod.dev, handles[i]);
++   queue->group_handle = UINT32_MAX;
+ }
+ 
+ static VkResult
+@@ -1073,15 +1083,22 @@
+    for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++)
+       queue->subqueues[i].kbase.group_handle = UINT32_MAX;
+ 
++   // Keep the three existing VT/fragment/compute streams, but make their
++   // firmware scheduling group common. Original kbase SYSTEM-scope signals,
++   // waits, ring contents, sequence numbers and heap lifetimes are unchanged.
++   if (kbase_kmod_csf_group_create(dev->kmod.dev, PANVK_SUBQUEUE_COUNT,
++                                   &queue->group_handle)) {
++      result = panvk_errorf(dev, VK_ERROR_INITIALIZATION_FAILED,
++                            "Failed to create the kbase queue group");
++      goto err_destroy_group;
++   }
++   for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++)
++      queue->subqueues[i].kbase.group_handle = queue->group_handle;
++   mesa_logi("kbase: single CSG %u with %u command streams",
++             queue->group_handle, PANVK_SUBQUEUE_COUNT);
++
+    for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
+       struct panvk_subqueue *subq = &queue->subqueues[i];
+-
+-      if (kbase_kmod_csf_group_create(dev->kmod.dev, 1,
+-                                      &subq->kbase.group_handle)) {
+-         result = panvk_errorf(dev, VK_ERROR_INITIALIZATION_FAILED,
+-                               "Failed to create a kbase queue group");
+-         goto err_destroy_group;
+-      }
+ 
+       subq->kbase.ringbuf_bo =
+          pan_kmod_bo_alloc(dev->kmod.dev, dev->kmod.vm, KBASE_RINGBUF_SIZE,
+@@ -1127,7 +1144,7 @@
+       }
+ 
+       subq->kbase.user_io = kbase_kmod_csf_queue_bind(
+-         dev->kmod.dev, subq->kbase.group_handle, 0,
++         dev->kmod.dev, subq->kbase.group_handle, i,
+          subq->kbase.ringbuf_dev,
+          KBASE_RINGBUF_SIZE);
+       if (!subq->kbase.user_io) {
+@@ -1138,9 +1155,9 @@
+ 
+       subq->kbase.insert = 0;
+       subq->kbase.emitted_jobs = 0;
+-      mesa_logd("kbase: bound subqueue %u to group %u CSI0, ring CPU %p, "
++      mesa_logd("kbase: bound subqueue %u to group %u CSI%u, ring CPU %p, "
+                 "ring VA 0x%" PRIx64 ", user_io %p",
+-                i, subq->kbase.group_handle, subq->kbase.ringbuf_cpu,
++                i, subq->kbase.group_handle, i, subq->kbase.ringbuf_cpu,
+                 subq->kbase.ringbuf_dev,
+                 subq->kbase.user_io);
+    }
