@@ -165,9 +165,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     !getIntent().getBooleanExtra("async_submit", false) ||
                     !getIntent().getBooleanExtra("shared_guest_heap", false) ||
                     getIntent().getBooleanExtra("memory_test", false) || getIntent().getBooleanExtra("acquire_scope_test", false) ||
-                    !"panvk".equals(getIntent().getStringExtra("vulkan_provider")) ||
+                    !"adreno".equals(getIntent().getStringExtra("vulkan_provider")) ||
                     getIntent().getBooleanExtra("validate", false))
-                throw new IllegalArgumentException("Native resource oracle requires one cold explicit PanVK shared async test without game/other tests");
+                throw new IllegalArgumentException("Native resource oracle requires one cold explicit Turnip shared async test without game/other tests");
             nativeResourceFixtureStarted = sharedImageFixture = true;
             File fixtureRoot = new File(getFilesDir(), "runtime");
             if (!fixtureRoot.isDirectory() && !fixtureRoot.mkdirs()) throw new IllegalStateException("runtime directory");
@@ -178,7 +178,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     getIntent().getStringExtra("native_resource_producer_sha256"),
                     getIntent().getStringExtra("native_resource_fixture_dir"),
                     getIntent().getBooleanExtra("vulkan_test_validation", true));
-            nativeVulkanDriver("panvk", new File(fixtureRoot, "vulkan-panfrost").getAbsolutePath(), null);
+            nativeVulkanDriver("adreno", new File(fixtureRoot, "vulkan-driver").getAbsolutePath(), getApplicationInfo().nativeLibraryDir);
             new Thread(() -> nativeTests(fixtureRoot.getAbsolutePath(), true, false, false, getIntent().getBooleanExtra("vulkan_test_validation", true), false), "native-resource-test").start();
             return;
         }

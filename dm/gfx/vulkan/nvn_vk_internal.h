@@ -387,6 +387,7 @@ int vk_ghost_replaying(void);
 #ifdef DM_VULKAN_SHARED_POOLS
 int vk_pool_shared_mode(void);
 int vk_pool_shared_active(void);
+int vk_pool_shared_gpu_gate_mode(void);
 int vk_pool_shared_materialized(uint64_t address,uint64_t bytes);
 int vk_pool_shared_observe_protect(uint64_t address,uint64_t bytes,uint64_t *stamp);
 // Prepare may submit/wait before physical borrows. Begin only checks that

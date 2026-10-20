@@ -150,6 +150,9 @@ void vk_loader_initialize(void) {
       PFN_vkGetInstanceProcAddr get_proc=(PFN_vkGetInstanceProcAddr)dlsym(custom_loader,"vkGetInstanceProcAddr");
       if(!get_proc) die("Vulkan custom loader entrypoint missing");
       volkInitializeCustom(get_proc);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      if(getenv("DM_VULKAN_NATIVE_RESOURCE_TABLE"))native_driver_hash(driver_path);
+#endif
       LOG("[vulkan loader] custom=%slibvulkan_freedreno.so",driver_directory);
     }
 #else
