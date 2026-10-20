@@ -32,7 +32,10 @@ assert {p.name for p in (a.artifact/'vulkan-fixture').iterdir()}==set(fixture)
 for name,digest in fixture.items():
  assert (a.artifact/'vulkan-fixture'/name).is_file() and not (a.artifact/'vulkan-fixture'/name).is_symlink()
  assert sha(a.artifact/'vulkan-fixture'/name)==digest
-assert m['gate_source_revision']=='8205364fca3c1196d5be506a3b6ea5aeabe59d18'
+ready=json.loads((a.artifact/'gate-source-ready.json').read_text())
+assert ready['commit']==m['gate_source_revision'] and ready['core_commit']=='8205364fca3c1196d5be506a3b6ea5aeabe59d18'
+assert ready['canonical_native_library_sha256']==m['native_library_sha256']
+assert ready['canonical_APK_sha256']==m['base_apk_sha256']
 assert m['contains_game_binary'] is False
 baseline_bound=bool(a.module_report and a.resource_report and a.expected_original_apk and a.expected_original_elf and a.expected_shaderchain)
 if a.execute:assert baseline_bound,'Execution requires current root APK/ELF/28modules/6resources/shaderchain bindings'
