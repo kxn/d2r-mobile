@@ -6,8 +6,8 @@ Selected ac88 contains diagnostic source changes, all additional flags OFF; not 
 """
 import argparse,hashlib,importlib.util,json,re,subprocess,time,uuid,signal,zipfile,os,xml.etree.ElementTree as ET
 from pathlib import Path
-R=Path('/home/dl/d2r-mobile');READY=R/'.local/logs/panvk-bc3-focused-89e80fb-source-ready-agent.json'
-READY_SHA='79a878716ff9fa0ccef9d250157981ed0a367e0b6d4320bcb7f5a858857ec65a'
+R=Path('/home/dl/d2r-mobile');READY=R/'.local/logs/panvk-bc4-layered-ca619b3-source-ready-agent.json'
+READY_SHA='292f477dec43d5dbe210a25773259efea577f6ca62bfa4c880e05f60ed8e6cb4'
 PREVIOUS=R/'.local/worktrees/panvk-shader-map-game-v7/scripts/dev/run-panvk-minegraph-game.py'
 S=importlib.util.spec_from_file_location('reviewed_original022_transaction',PREVIOUS);previous=importlib.util.module_from_spec(S);S.loader.exec_module(previous)
 P=argparse.ArgumentParser();P.add_argument('--serial',default='10.10.10.44:34455');P.add_argument('--artifact',type=Path,required=True);P.add_argument('--output',type=Path,required=True);P.add_argument('--execute',action='store_true');a=P.parse_args()
@@ -17,18 +17,20 @@ assert sha(READY)==READY_SHA;ready=json.loads(READY.read_text());assert ready['o
 for row in ready['only_changed_files']:assert sha(row['path'])==row['sha256']
 base_source=Path(ready['source_root']);base_manifest=ready['canonical_manifest'];assert sha(base_manifest['path'])==base_manifest['sha256']
 canonical=json.loads(Path(base_manifest['path']).read_text());assert all(sha(base_source/n)==h for n,h in canonical['source_inputs'].items())
+assert sha(a.artifact/'candidate.apk.build.json')==ready['ordinary_APK_manifest']['sha256']
 m=json.loads((a.artifact/'candidate.apk.build.json').read_text());assert sha(a.artifact/'candidate.apk')==m['apk_sha256']==ready['ordinary_UID_independent_APK']['sha256']
 assert m['package']==pkg and m['activity']==pkg+'.MainActivity' and not m['contains_game_binary']and not m['original_app_DEX_assets_packaged']and not m['shared_heap']and not m['TRACE']
 assert m['source_revision']==ready['source_revision']and m['native_library_sha256']==canonical['native_library_sha256']and len(m['native_library_sha256'])==6
 with zipfile.ZipFile(a.artifact/'candidate.apk')as z:
  assert all(hashlib.sha256(z.read('lib/arm64-v8a/'+n)).hexdigest()==h for n,h in m['native_library_sha256'].items())
 assert sha(a.artifact/'driver/libvulkan_panfrost.so')==m['driver_sha256']==ready['driver_unchanged']['sha256']
-assert sha(a.artifact/'bc3-capture.bin')==m['dataset_sha256']==ready['dataset']['sha256']
+assert sha(a.artifact/'dataset-source.json')==m['dataset_source_sha256']==ready['dataset_source']['sha256']
+assert sha(a.artifact/'bc4-layered.bin')==m['dataset_sha256']==ready['dataset']['sha256']
 shader_files=m['shader_files'];assert set(shader_files)=={k+e for k in ['e5888d20bd2a77b9','c113a6c86bb7e554']for e in ['.meta','.spv']}
 assert all(sha(a.artifact/'vulkan-fixture'/n)==h for n,h in shader_files.items())
 driver,promotion=previous.proof();assert driver['driver']['sha256']==m['driver_sha256']
 expected=promotion['promoted_module_and_resource_hashes']
-plan={'scope':'ONE ordinaryUID original022 actualNVN BC3 capture-subset GPU functional run; no game/performance/v7-WAIT equivalence claim','serial':a.serial,'package':pkg,'source_ready_sha256':READY_SHA,'APK_sha256':m['apk_sha256'],'driver_sha256':m['driver_sha256'],'dataset_sha256':m['dataset_sha256'],'source_revision':m['source_revision'],'controller_sha256':sha(__file__),'functional_bound_seconds':75,'install_bound_seconds':70,'launches':1,'shared':False,'TRACE':False,'settings_properties_changed':False,'selected_driver_boundary':'Frozen ac88 diagnostic-source ICD4e7b29e7; only startup token, TRACE/SHADER_MAP OFF, unchanged GPU path; not stock or untouched Mesa','original_baseline':'Existing production022 APK/35resources/stockMali directories are read-only, never save/restage/stop','original_game_policy':'must be stopped; APK35files+4dirs+shaders+properties+layer settings read-only before/after'}
+plan={'scope':'ONE ordinaryUID original022 actualNVN BC4source->252layerarray/layer250/7mip functional run; one final fence,no game/performance/v8-WAIT equivalence claim','serial':a.serial,'package':pkg,'source_ready_sha256':READY_SHA,'APK_sha256':m['apk_sha256'],'driver_sha256':m['driver_sha256'],'dataset_sha256':m['dataset_sha256'],'source_revision':m['source_revision'],'controller_sha256':sha(__file__),'fixture_case':'bc4-layered','NVN_submissions':5,'explicit_intermediate_drains':0,'final_fence_waits':1,'functional_bound_seconds':75,'install_bound_seconds':70,'launches':1,'shared':False,'TRACE':False,'settings_properties_changed':False,'selected_driver_boundary':'Frozen ac88 diagnostic-source ICD4e7b29e7; startup+bc_trace tokens, TRACE/SYNC/DUMP/SHADER_MAP OFF, unchanged GPU path; not stock or untouched Mesa','original_baseline':'Existing production022 APK/35resources/stockMali directories are read-only, never save/restage/stop','original_game_policy':'must be stopped; APK35files+4dirs+shaders+properties+layer settings read-only before/after'}
 if not a.execute:print(json.dumps(plan,indent=2));raise SystemExit(0)
 a.output.mkdir(parents=True,exist_ok=False);tmp='/data/local/tmp/dm-panvk-bc3-'+uuid.uuid4().hex
 result={**plan,'stage':'preflight','cleanup_errors':[],'owned_tmp':tmp};made_tmp=False;installation_requested=False;installed=False;installer=None;launch=None;original_before=None;first_pid=None;active_phase=None
@@ -38,9 +40,22 @@ def validate_rows(rows,first_pid):
  terminal=final[0];assert terminal['rc']==0 and terminal['pid']==int(first_pid)and 10000<=terminal['uid']<200000 and terminal['vendor_id']==0x13b5 and terminal['shared']is False and terminal['game_modules_executed']is False
  config=[r for r in rows if r.get('BC3_app_configuration')is True];assert len(config)==1
  c=config[0];assert c['pid']==int(first_pid)and c['uid']==terminal['uid']and c['provider']=='panvk'and c['shared']is False and c['TRACE']is False and c['game_modules_executed']is False
- body=[r for r in rows if r.get('test')=='original022-BC3-capture-focused'];assert len(body)==1
- row=body[0];assert row['result']=='passed'and row['regions']==52 and row['images']==7 and row['sampled_pixels']==371731 and row['raw_BC_bytes']==371920 and row['backend_CPU_BC_decode']is False and row['game_modules_executed']is False and row['checks']>=1488000
+ body=[r for r in rows if r.get('test')=='original022-BC4-layered-T2T'];assert len(body)==1
+ row=body[0];assert row['result']=='passed'and row['BC_format']==139 and row['mips_copied']==7 and row['destination_layers']==252 and row['only_layer_read']==250 and row['source_levels']==8 and row['destination_levels']==7 and row['sampled_pixels']==43688 and row['raw_BC_bytes_compared']==21856 and row['backend_CPU_BC_decode']is False and row['game_modules_executed']is False and row['checks']==87454
+ assert row['NVN_submissions']==5 and row['independent_command_objects']==5 and row['explicit_middle_drains']==0 and row['final_fence_waits']==1
+ case=[r for r in rows if 'BC3_app_case'in r];assert case==[{'BC3_app_case':'bc4-layered'}]
+ assert not any(r.get('test')in ['original022-BC3-capture-focused','original022-BC3-capture-queued21']for r in rows)
  return terminal
+
+def validate_bc_shadow(log):
+ banners=re.findall(r'^\[MESA-PANVK\] panvk_debug: ([^\n]+)$',log,re.M)
+ assert banners and all(set(v.split('|'))=={'startup','bc_trace'}for v in banners),'Exact startup+bc_trace required; no TRACE/SYNC/DUMP/metadata'
+ for levels,layers in [(8,1),(7,252)]:assert re.search(r'^\[MESA-PANVK\] bc_img: fmt=139 128x128x1 mips='+str(levels)+r' layers='+str(layers)+r' usage=0x[0-9a-f]+$',log,re.M),'Requested native ICD emulatedBC4 shadow not observed'
+ copies=re.findall(r'^\[MESA-PANVK\] bc_copyimg: sfmt=139 dfmt=139 regions=1$',log,re.M);assert len(copies)==7,'All7 actual BC4 T2T command recordings required'
+ decode=re.findall(r'^\[MESA-PANVK\] bc_decode: fmt=139 idx=1 level=(\d+) layer=(\d+)\+1 ext=(\d+)x(\d+)x1 disp=\d+x\d+x1 src=0x[0-9a-f]+ dst=0x[0-9a-f]+$',log,re.M)
+ coverage={layer:sorted({int(m)for m,l,w,h in decode if int(l)==layer and int(m)<7 and int(w)==128>>int(m)and int(h)==128>>int(m)})for layer in [0,250]}
+ assert all(v==list(range(7))for v in coverage.values()),'Source/target BC4 decode mip coverage incomplete'
+ return {'BC4_emulated_images_requested_shapes_observed':True,'T2T_API_record_count':len(copies),'decode_API_mips_by_layer':coverage,'recorded_decode_lines':len(decode),'scope':'DriverCPU command-recording evidence only; combined actual GPU pixel/raw oracle is required. Original preservation may initialize other layers/mips; these are not sampled bythetest.'}
 
 def save():(a.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 def ad(*args,check=True):
@@ -144,7 +159,7 @@ def install():
    try:tree=ET.fromstring(xml)
    except ET.ParseError:tree=None
    if tree is not None:
-    safe=any(n.get('text')=='Owned BC3 fixture' for n in tree.iter('node'))
+    safe=any(n.get('text')=='Owned BC4 fixture' for n in tree.iter('node'))
     nodes=[n for n in tree.iter('node') if
       (n.get('package')=='com.android.packageinstaller' and n.get('resource-id')=='android:id/button1' and (n.get('text') in ('Install','安装','继续安装') or any(c.get('resource-id')=='com.android.packageinstaller:id/vbutton_title' and c.get('text')=='继续安装' for c in n.iter('node')))) or
       (n.get('package')=='com.oplus.appdetail' and n.get('resource-id','').endswith('/btn_left') and n.get('text')=='Install')]
@@ -177,12 +192,12 @@ try:
  ad('shell','mkdir',tmp);made_tmp=True;installation_requested=True;install();installed=True;assert exact_fixture()
  assert not process(pkg),'Installer started an unowned process; no relaunch'
  ad('push',a.artifact/'driver/libvulkan_panfrost.so',tmp+'/libvulkan_panfrost.so')
- ad('push',a.artifact/'bc3-capture.bin',tmp+'/bc3-capture.bin');ad('push',a.artifact/'vulkan-fixture',tmp+'/vulkan-fixture')
+ ad('push',a.artifact/'bc4-layered.bin',tmp+'/bc4-layered.bin');ad('push',a.artifact/'vulkan-fixture',tmp+'/vulkan-fixture')
  ad('shell','run-as',pkg,'mkdir','-p','files/runtime/driver','files/runtime/vulkan-fixture','files/runtime/shader-cache')
  ad('shell','run-as',pkg,'cp',tmp+'/libvulkan_panfrost.so','files/runtime/driver/libvulkan_panfrost.so')
- ad('shell','run-as',pkg,'cp',tmp+'/bc3-capture.bin','files/runtime/bc3-capture.bin')
+ ad('shell','run-as',pkg,'cp',tmp+'/bc4-layered.bin','files/runtime/bc4-layered.bin')
  ad('shell','run-as',pkg,'cp','-R',tmp+'/vulkan-fixture/.','files/runtime/vulkan-fixture/')
- resource_files={'files/runtime/bc3-capture.bin':m['dataset_sha256'],**{'files/runtime/vulkan-fixture/'+n:h for n,h in shader_files.items()}}
+ resource_files={'files/runtime/bc4-layered.bin':m['dataset_sha256'],**{'files/runtime/vulkan-fixture/'+n:h for n,h in shader_files.items()}}
  def verify_resources():
   text=ad('exec-out','run-as',pkg,'sha256sum',*resource_files)
   assert {line.split(None,1)[1].strip():line.split()[0]for line in text.splitlines()}==resource_files
@@ -196,8 +211,8 @@ try:
   driver_alias_stat[path]={'device':dev,'major':os.major(dev),'minor':os.minor(dev),'inode':inode,'size':size,'sha256':m['driver_sha256']}
  assert len({(v['device'],v['inode'],v['size'])for v in driver_alias_stat.values()})==1
  result['driver_alias_stat']=driver_alias_stat;save()
- args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_directory','/data/user/0/'+pkg+'/files/runtime']
- phase={'name':'BC3-focused','launch_command':B+args,'launches':1};active_phase=phase;result['runs']=[phase];result['stage']='one-cold-launch';save()
+ args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_directory','/data/user/0/'+pkg+'/files/runtime','--es','fixture_case','bc4-layered']
+ phase={'name':'BC4-layered','launch_command':B+args,'launches':1};active_phase=phase;result['runs']=[phase];result['stage']='one-cold-launch';save()
  with(a.output/'launch.txt').open('w')as f:launch=subprocess.Popen(B+args,stdout=f,stderr=subprocess.STDOUT)
  deadline=time.monotonic()+75
  while True:
@@ -218,7 +233,7 @@ try:
  current,kind=observe_pid(phase,allow_claim=False);assert kind=='owned'and current==first_pid
  maps=ad('exec-out','run-as',pkg,'cat','/proc/'+first_pid+'/maps');(a.output/'maps.txt').write_text(maps)
  assert stage=='oracle-passed';terminal=validate_rows(rows,first_pid);assert terminal['uid']==result['ordinary_UID']
- banners=re.findall(r'^\[MESA-PANVK\] panvk_debug: ([^\n]+)$',log,re.M);assert banners and all(v=='startup'for v in banners),'TRACE/metadata/scope flags not allowed'
+ phase['actual_BC4_shadow']=validate_bc_shadow(log);save()
  loader_paths=re.findall(r'provider=panvk direct ICD=([^\s]+)',log);assert len(loader_paths)==1 and loader_paths[0]in allowed_driver_paths
  assert not re.search(r'VUID-|FATAL|native fault signal=|CHECK line',log)
  assert not any(x in maps.lower()for x in ('renderdoc','libvklayer_','liblwi','libvulkan_freedreno'))
@@ -230,7 +245,7 @@ try:
   assert(major,minor,inode)==(st['major'],st['minor'],st['inode']);mapped.append(line)
  assert mapped;phase['exact_private_driver_mappings']=mapped;verify_resources()
  assert all(ad('exec-out','run-as',pkg,'sha256sum',p).split()[0]==m['driver_sha256']for p in allowed_driver_paths)
- launch.wait(timeout=5);stop_owned(phase);result['stage']='actual-original022-BC3-focused-owned-passed'
+ launch.wait(timeout=5);stop_owned(phase);result['stage']='actual-original022-BC4-layered-owned-passed'
 except BaseException as e:result.update(stage='failed-preserved',error=repr(e))
 finally:
  try:
@@ -248,7 +263,7 @@ finally:
   if made_tmp:
    # This unique empty-created directory only receives our seven known files
    # and installer XML; refuse unexpected paths before deleting the tree.
-   names=ad('shell','find',tmp,'-type','f').splitlines();allowed={tmp+'/libvulkan_panfrost.so',tmp+'/bc3-capture.bin',tmp+'/installer.xml',*(tmp+'/vulkan-fixture/'+n for n in shader_files)}
+   names=ad('shell','find',tmp,'-type','f').splitlines();allowed={tmp+'/libvulkan_panfrost.so',tmp+'/bc4-layered.bin',tmp+'/installer.xml',*(tmp+'/vulkan-fixture/'+n for n in shader_files)}
    assert all(n in allowed for n in names)and not ad('shell','find',tmp,'-type','l')
    ad('shell','rm','-r',tmp);ad('shell','test','!','-e',tmp);result['fixture_tmp_absent']=True
   result['owned_clients_stopped']=all(c is None or c.poll()is not None for c in(installer,launch))
@@ -258,4 +273,4 @@ finally:
    result['original_after']=snapshot();assert result['original_after']==original_before;result['original_unchanged']=True
  except BaseException as e:result['cleanup_errors'].append(repr(e))
  save()
-print(json.dumps(result));raise SystemExit(0 if result['stage']=='actual-original022-BC3-focused-owned-passed'and not result['cleanup_errors']else 1)
+print(json.dumps(result));raise SystemExit(0 if result['stage']=='actual-original022-BC4-layered-owned-passed'and not result['cleanup_errors']else 1)
