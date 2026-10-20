@@ -115,7 +115,32 @@ static void shared_device_probe(void) {
   shared_cache(&b,shared_alignment,128,1);int valid=1;
   for(unsigned k=0;k<64;k++)if(memory[shared_alignment+k]!=0x31)valid=0;
   for(unsigned k=0;k<64;k+=4) {uint32_t value;memcpy(&value,memory+shared_alignment+64+k,4);if(value!=0x718293a4)valid=0;}
+  // Probe success does not guarantee every future host pointer has the same
+  // memoryTypeBits. Prepare the NC phase cold if any admissible type needs it.
+  int needs_gate=0;
+  for(uint32_t k=0;k<V.mem.memoryTypeCount;k++) {
+    VkMemoryPropertyFlags f=V.mem.memoryTypes[k].propertyFlags;
+    if((f&(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT))==
+        (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT) &&
+        !(f&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))needs_gate=1;
+  }
+#ifdef DM_VULKAN_TEST_EMBED
+  shared_gpu_gate_force=getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE")!=NULL;
+  if(shared_gpu_gate_force)needs_gate=1; // admission only, not NC Vk cache calls
+#endif
   vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);free(memory);
+  if(valid && needs_gate) {
+    uint64_t atom=V.props.limits.nonCoherentAtomSize,page=(uint64_t)getpagesize();
+    if(!atom || (atom&(atom-1)) || !page || (page&(page-1)) || atom>page) {
+      LOG("[shared pool] startup legacy: NC atom exceeds image-page gate");valid=0;
+    }
+    if(valid && !nvn_dirty_gpu_gates_enable()) {
+      LOG("[shared pool] startup legacy: sleeping CPU prewrite gate unavailable");valid=0;
+    } else if(valid) {
+      static const dm_guest_write_lease_hooks hooks={nvn_dirty_kernel_write_begin,nvn_dirty_kernel_write_end};
+      dm_guest_write_lease_register(&hooks);shared_gpu_gate_phase=1;
+    }
+  }
   // Only a successful capability/byte probe changes the immutable backing
   // policy. Every unsupported return above keeps the original legacy options,
   // including Android's default windows and the published defer getter.

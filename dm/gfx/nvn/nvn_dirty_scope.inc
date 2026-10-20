@@ -17,7 +17,8 @@ static range_t *scope_bucket(uintptr_t base) {
     range_t *r=&g_r[n];size_t pages=DIRTY_SCOPE_BUCKET/g_pg;
     r->state=calloc(pages,sizeof *r->state);r->gen=calloc(pages,sizeof *r->gen);
     r->scope_refs=calloc(pages,sizeof *r->scope_refs);
-    if(!r->state || !r->gen || !r->scope_refs)die("image dirty scope metadata allocation");
+    if(gpu_gates_enabled)r->gpu_gate=calloc(pages,sizeof *r->gpu_gate);
+    if(!r->state || !r->gen || !r->scope_refs || (gpu_gates_enabled&&!r->gpu_gate))die("image dirty scope metadata allocation");
     r->base=base;r->end=base+DIRTY_SCOPE_BUCKET;r->cap=pages;
     atomic_store(&g_nr,n+1);return r;
 }
