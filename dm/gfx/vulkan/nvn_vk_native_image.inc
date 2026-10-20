@@ -123,7 +123,9 @@ static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFl
   VkCommandBuffer command=vk_render_pending_primary();
   if(!command || stages!=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT || access!=VK_ACCESS_SHADER_READ_BIT ||
       i->use_clock>image_pass_begin_clock || vk_mip_clear_pending())return VK_NULL_HANDLE;
-  uintptr_t address=(uintptr_t)i->tex.mem,bytes=i->tex.L.size;
+  uint64_t address,bytes;
+  if(!vk_pool_native_image_acquire_range(i->native_pool,(uintptr_t)i->tex.mem,i->tex.L.size,
+      &address,&bytes))return VK_NULL_HANDLE;
   if(!vk_pool_native_acquire_independent(address,bytes))return VK_NULL_HANDLE;
   uintptr_t page=(uintptr_t)getpagesize(),end=address+bytes;
   if(!page || (page&(page-1)) || end>UINTPTR_MAX-(page-1))return VK_NULL_HANDLE;
@@ -148,7 +150,14 @@ static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAcc
   if(!i->native_entry)return;
   if(!i->native_acquired) {
     VkCommandBuffer command=native_acquire_pending_primary(i,stages,access);
-    if(!command) {vk_render_end();command=V.cmd;}
+    if(!command) {
+      vk_render_end();command=V.cmd;
+      // A failed negative proof can include another stage's Buffer alias in
+      // this same logical draw. Retain the original complete acquire scope;
+      // only the proven-independent pending-pass path is fragment-only.
+      stages=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+      access=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
+    }
     // GENERAL is the real external producer state, not an UNDEFINED discard.
     VkImageMemoryBarrier acquire={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
       .oldLayout=VK_IMAGE_LAYOUT_GENERAL,.newLayout=VK_IMAGE_LAYOUT_GENERAL,
@@ -162,11 +171,19 @@ static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAcc
     // destination and moves the proven-independent barrier before the pass.
     vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,stages,
       0,0,NULL,0,NULL,1,&acquire);
-    i->layout=VK_IMAGE_LAYOUT_GENERAL;i->layout_scope=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    i->layout=VK_IMAGE_LAYOUT_GENERAL;i->layout_scope=stages;
     // A new external publication invalidates all previous content ordering
     // proofs even when the CPU wrote identical bytes. The acquire orders it.
     memset(i->access,0,(size_t)i->levels*3*sizeof *i->access);i->access_generation++;
-    for(unsigned n=0;n<i->levels;n++)image_cell(i,0,n,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
+    for(unsigned n=0;n<i->levels;n++) {
+      image_access *cell=image_cell(i,0,n,0);
+      cell->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
+      // Acquire covers every mip even when its first consumer selects one.
+      // A later first transition of an unused mip must chain from THIS real
+      // destination scope, never TOP_OF_PIPE. This is a directed ordering
+      // source, not a claim that any other consumer is already visible.
+      cell->mip_scope=stages;
+    }
     i->native_alias_generation=0;i->native_alias_visible_stages=0;
     i->native_acquired=1;i->native_next=native_acquired_images;native_acquired_images=i;
   }
@@ -185,7 +202,7 @@ int vk_test_native_pending_acquire(VkImage handle,void *allocation,uint64_t addr
                                   VkBuffer output) {
   if(native_acquired_images)die("Pending-acquire fixture requires no other acquired native images");
   nvn_native_entry entry={0};image_access cells[3]={0};
-  image own={.handle=handle,.native_entry=&entry,.aspect=VK_IMAGE_ASPECT_COLOR_BIT,
+  image own={.handle=handle,.native_entry=&entry,.native_pool=allocation,.aspect=VK_IMAGE_ASPECT_COLOR_BIT,
     .levels=1,.layers=1,.layout=VK_IMAGE_LAYOUT_GENERAL,.access=cells,
     .tex={.mem=(void *)(uintptr_t)address,.L={.size=bytes}}};
   native_range_add(&own);

@@ -1539,7 +1539,8 @@ static void init_device(void) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   native_resource_options(available,extension_count_device);
 #ifdef DM_VULKAN_TEST_EMBED
-  int native_pending_fixture=getenv("DM_NATIVE_PENDING_ACQUIRE_FIXTURE")!=NULL;
+  int native_pending_fixture=getenv("DM_NATIVE_PENDING_ACQUIRE_FIXTURE")!=NULL ||
+    getenv("DM_NATIVE_ACQUIRE_SCOPE_FIXTURE")!=NULL;
   if(native_pending_fixture) {
     int found=0;
     for(unsigned n=0;n<extension_count_device;n++)

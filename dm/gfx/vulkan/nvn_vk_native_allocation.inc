@@ -42,6 +42,31 @@ void vk_pool_native_image_collect(void) {
 }
 int vk_native_resources_active(void) {return native_resource_path!=NULL;}
 
+int vk_pool_native_image_acquire_range(void *token,uint64_t address,uint64_t bytes,
+                                     uint64_t *first,uint64_t *length) {
+  native_image_allocation *a=token;
+  if(!a || !first || !length)return 0;
+  pthread_mutex_lock(&V.resources);pool *p=a->owner;
+  int valid=!atomic_load(&a->released) && p && a->identity==p->identity &&
+    !p->shared_closing && p->shared && address==a->address && bytes==a->bytes;
+  if(valid) {
+    // Registration alignment is not the image's binding range, but using the
+    // whole immutable import envelope is a cheap stronger negative proof.
+    // Optimal image vs linear Buffer aliasing additionally pads binding ranges
+    // to bufferImageGranularity; neither it nor host import alignment is
+    // universally bounded by the OS page size.
+    uint64_t granularity=V.props.limits.bufferImageGranularity;
+    uint64_t page=(uint64_t)getpagesize(),atom=V.props.limits.nonCoherentAtomSize;
+    if(page>granularity)granularity=page;
+    if(atom>granularity)granularity=atom;
+    uint64_t base=(uintptr_t)p->guest,lo=base+a->begin,hi=base+a->end;
+    valid=granularity && !(granularity&(granularity-1)) && hi>=lo &&
+      hi<=UINT64_MAX-(granularity-1);
+    if(valid) {*first=lo&~(granularity-1);*length=((hi+granularity-1)&~(granularity-1))-*first;}
+  }
+  pthread_mutex_unlock(&V.resources);return valid;
+}
+
 #ifdef DM_VULKAN_TEST_EMBED
 static int native_allocation_test_fail;
 void vk_test_native_allocation_fail(int fail) {native_allocation_test_fail=fail;}

@@ -303,6 +303,8 @@ int vk_pool_pending_writes(uint64_t address, uint64_t size);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 // Owner-only, no waits: full retained Pool/Buffer publication and access proof.
 int vk_pool_native_acquire_independent(uint64_t address,uint64_t size);
+int vk_pool_native_image_acquire_range(void *token,uint64_t address,uint64_t bytes,
+                                     uint64_t *first,uint64_t *length);
 #endif
 uint64_t vk_recording_serial(void);
 uint64_t vk_completed_serial(void);
