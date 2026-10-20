@@ -305,14 +305,14 @@ try:
  assert config[0]['previous_writer_ASTC'] is True
  assert config[0]['provider']=='adreno' and config[0]['async'] is True and config[0]['validation']=='disabled_explicitly'
  passed=[r for r in rows if r.get('test')=='native-resource-original-NVN']
- assert len(passed)==1 and passed[0]['result']=='passed' and passed[0]['checks']==408
+ assert len(passed)==1 and passed[0]['result']=='passed' and passed[0]['checks']==412
  assert passed[0]['format']==158 and passed[0]['mips']==9 and passed[0]['family_version']==2 and passed[0]['tail_levels']==5
  assert passed[0]['no_pool_shadow'] is True and passed[0]['full_all_mips'] is True and passed[0]['tail_packaged_and_B2T'] is True
  assert passed[0]['native_offset']==1056768 and passed[0]['pool_bytes']==4194304 and passed[0]['game_modules_executed'] is False
  previous=[r for r in rows if r.get('test')=='native-previous-writer-ASTC-pending-FS']
- assert len(previous)==1 and previous[0]['result']=='passed' and previous[0]['checks']==36
+ assert len(previous)==1 and previous[0]['result']=='passed' and previous[0]['checks']==40
  assert previous[0]['positive_cases']==2 and previous[0]['unknown_negative_cases']==1 and previous[0]['mips']==[4,5,6]
- for key in ('old_TRANSFER_and_COMPUTE_histories_retained','current_recording_denied','FS_pixels_reference_equal','CS_pixels_reference_equal','T2B_compressed_blocks_exact'):assert previous[0][key] is True
+ for key in ('old_TRANSFER_and_COMPUTE_histories_retained','current_recording_denied','both_positive_FS_versions_changed','FS_pixels_reference_equal','CS_pixels_reference_equal','T2B_compressed_blocks_exact'):assert previous[0][key] is True
  lane=[r for r in rows if r.get('native_allocation_lane') is True]
  assert len(lane)==1 and lane[0]['imports']==1 and lane[0]['import_bytes']==135168 and lane[0]['metadata_bytes']==120
  for key in ('same_physical_pages_as_Buffer_imports','no_payload_copy','window_two_unions','last_release_collected'):assert lane[0][key] is True
