@@ -112,6 +112,29 @@ static void legacy_image_outer_preflight_test(void) {
     S.vertex[0]=(NVNbufferRange){(uintptr_t)data+49152,sizeof vertices};S.has_viewport=S.has_scissor=1;
     S.viewport[0][2]=S.viewport[0][3]=16;S.scissor=(p_scissor){0,0,16,16};vk_pipeline_state_changed();
     vk_shader *shader_list[6]={0};vk_program_shaders(S.program,shader_list);
+    // Registration identity is not a prediction: replace the SAME live id
+    // through non-packaged/null/empty/out-of-limit descriptors, then restore
+    // its packaged source. Only the current eligible registration may publish
+    // this queued CPU effect. The actual draw/dispatch below must still upload
+    // and execute against the restored descriptor.
+    mtl_sub_begin();volatile uint32_t *filtered=(volatile uint32_t *)(source+4092);
+    dm_guest_write_prepare((void *)filtered,4);*filtered=0;
+    mtl_sub_event(filtered,NVN_EVENT_SIGNAL_MODE_WRITE,0x1379acdeu);
+    mtl_reg_tex(17,(const tex_t *)&target,NULL);vk_shader_cpu_sources(shader_list,&S,!graphics);
+    CHECK(*filtered==0 && vk_pool_pending_writes((uintptr_t)filtered,4));
+    tex_t absent=*(const tex_t *)&texture;absent.mem=NULL;
+    mtl_reg_tex(17,&absent,NULL);vk_shader_cpu_sources(shader_list,&S,!graphics);
+    CHECK(*filtered==0 && vk_pool_pending_writes((uintptr_t)filtered,4));
+    absent=*(const tex_t *)&texture;absent.L.size=0;
+    mtl_reg_tex(17,&absent,NULL);vk_shader_cpu_sources(shader_list,&S,!graphics);
+    CHECK(*filtered==0 && vk_pool_pending_writes((uintptr_t)filtered,4));
+    mtl_reg_tex(17,(const tex_t *)&texture,NULL);mtl_set_tex_pool_n(17);
+    vk_shader_cpu_sources(shader_list,&S,!graphics);
+    CHECK(*filtered==0 && vk_pool_pending_writes((uintptr_t)filtered,4));
+    mtl_set_tex_pool_n(32);vk_shader_cpu_sources(shader_list,&S,!graphics);
+    CHECK(*filtered==0x1379acdeu && !vk_pool_pending_writes((uintptr_t)filtered,4));
+    vk_internal_wait(vk_internal_commit());
+    dirty_range_fill(source,4096,red);
     CHECK(!vk_shader_cpu_sources_ready(shader_list,&S,!graphics));
     if(graphics) {p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3};CHECK(!vk_ghost_cpu_draw_ready(shader_list,&S,&draw,NULL));}
     for(unsigned clean=0;clean<2;clean++) {
@@ -145,4 +168,7 @@ static void legacy_image_outer_preflight_test(void) {
   printf("{\"test_details\":\"legacy-image-outer-preflight\",\"defer_disabled\":true,\"fresh_draw_and_dispatch\":true,"
          "\"initialized_clean_pending_CPU_effect\":true,\"hostpage_neighbor_effect\":true,\"disjoint_effect_not_waited\":true,"
          "\"optional_packaged_ghost_declined\":true,\"real_GPU_pixels\":true,\"result\":\"passed\"}\n");
+  printf("{\"test_details\":\"legacy-CPU-source-prefilter\",\"current_registry_registration\":true,"
+         "\"nonpackaged_null_empty_not_waited\":true,\"descriptor_limit_respected\":true,"
+         "\"packaged_effect_still_published\":true,\"restored_draw_dispatch_GPU_pixels\":true,\"result\":\"passed\"}\n");
 }

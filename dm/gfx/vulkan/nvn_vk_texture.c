@@ -2299,6 +2299,24 @@ int vk_texture_descriptor(int id,tex_t *out) {
   if(ok) *out=texture_descriptors[id].texture;
   pthread_mutex_unlock(&V.resources);return ok;
 }
+void vk_texture_packaged_cpu_preflight(int id) {
+  // Private stock images without packaged CPU contents cannot enter the
+  // source-conversion phase. Read that logical fact in the SAME registry
+  // snapshot as validity/limit, before copying the full texture descriptor.
+  // Never cache it by id: registrations may replace has_layout/mem/size.
+  tex_t snapshot;
+  pthread_mutex_lock(&V.resources);
+  int needed=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
+  if(needed) {
+    const tex_t *t=&texture_descriptors[id].texture;
+    needed=t->has_layout && t->mem && t->L.size;
+    if(needed)snapshot=*t;
+  }
+  pthread_mutex_unlock(&V.resources);
+  // Publication may wait/replay: retain the old by-value lifetime contract,
+  // and do not hold the registry lock or a physical image/view across it.
+  if(needed)vk_texture_cpu_preflight(&snapshot);
+}
 int vk_texture_descriptor_footprint(int id,vk_texture_footprint *out) {
   pthread_mutex_lock(&V.resources);
   int ok=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;

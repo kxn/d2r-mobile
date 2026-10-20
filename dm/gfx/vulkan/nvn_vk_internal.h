@@ -282,6 +282,8 @@ int vk_pool_try_read(uint64_t address,size_t size,void *out);
 int vk_pool_cpu_prepare(uint64_t address,uint64_t size);
 int vk_pool_cpu_unknown(uint64_t address,uint64_t size);
 void vk_texture_cpu_preflight(const tex_t *texture);
+// Private/defer-off operation preflight: only packaged descriptors read CPU contents.
+void vk_texture_packaged_cpu_preflight(int id);
 int vk_pool_cpu_source_ready(uint64_t address,uint64_t size);
 void vk_cover_wait_reference(int reference);
 int vk_cover_read(uint64_t address,size_t size,void *out);
