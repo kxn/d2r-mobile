@@ -9,7 +9,7 @@
  #define KBASE_RINGBUF_SIZE     (64 * 1024)
  /* Worst-case size of one ring entry, in bytes. Diagnostic breadcrumbs add a
   * few extra LS stores, so keep this conservatively above the normal panthor
-@@ -110,6 +112,89 @@
+@@ -110,6 +112,101 @@
     return threshold;
  }
  
@@ -75,6 +75,18 @@
 +      mesa_logi("kbase: timeout pending ring subqueue %u extract %" PRIu64
 +                " insert %" PRIu64 " (firmware cursor, not current PC)",
 +                i, begin, end);
++      /* CS_EXTRACT can name CALL itself, whose real address/length MOVEs
++       * precede it. Include the existing retained previous complete entry
++       * only if its validated ring occurrence contains this extract. Never
++       * seed guessed registers or replace the firmware cursor/active PC. */
++      uint64_t context_begin;
++      if (panvk_kbase_diag_tail_begin(end, subq->kbase.last_last_job_offset,
++                                     KBASE_RINGBUF_SIZE, &context_begin) &&
++          context_begin <= begin) {
++         mesa_logi("kbase: pending ring subqueue %u full entry begins at %" PRIu64,
++                   i, context_begin);
++         begin = context_begin;
++      }
 +      kbase_decode_ring_range(queue, subq, begin, end);
 +   }
 +   struct panvk_physical_device *phys_dev =
@@ -99,7 +111,7 @@
  static VkResult
  kbase_subqueue_wait_seqno(struct panvk_gpu_queue *queue, uint32_t subqueue,
                            uint64_t target_seqno, uint32_t rekick_mask,
-@@ -935,6 +1020,8 @@
+@@ -935,6 +1032,8 @@
           for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++)
              kbase_log_subqueue_state(queue, i, "timeout snapshot");
  
@@ -108,7 +120,7 @@
           if (dev->debug.decode_ctx && insert > extract) {
              // pandecode_user_msg(dev->debug.decode_ctx,
              //    "\nSubqueue %d Ringbuffer Trampoline [job %lu, gpu_va: %lx, cpu=%p, Size %u bytes, to %lx]:\n",
-@@ -942,15 +1029,17 @@
+@@ -942,15 +1041,17 @@
              //    subq->kbase.ringbuf_cpu + offset, padded_size, stream_addr);
              mesa_logi("kbase: csf timeout on subqueue %d @ job %lu / %lu: insert %lu (gpu_va: %lx), extract %lu (gpu_va: %lx)"
                 ", last_job_offset %u (gpu_va: %lx), last_last_job_offset %u (gpu_va: %lx)",
@@ -133,7 +145,7 @@
           }
  
           return vk_queue_set_lost(&queue->vk,
-@@ -983,15 +1072,11 @@
+@@ -983,15 +1084,11 @@
              //    subq->kbase.ringbuf_cpu + offset, padded_size, stream_addr);
              mesa_logi("kbase: csf error/potential timeout (error=%d) on subqueue %d @ job %lu / %lu: insert %lu (gpu_va: %lx), extract %lu (gpu_va: %lx)"
                 ", last_job_offset %u (gpu_va: %lx), last_last_job_offset %u (gpu_va: %lx)",
