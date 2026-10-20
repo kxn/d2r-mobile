@@ -113,7 +113,7 @@ try:
  assert ad('shell','sha256sum',tmp+'/driver.so').split()[0]==sha(a.driver)and ad('shell','sha256sum',tmp+'/capture.gfxr').split()[0]==sha(a.capture)
  ad('shell','run-as',pkg,'mkdir','-p','files/driver');ad('shell','run-as',pkg,'cp',tmp+'/driver.so','files/driver/libvulkan_panfrost.so');ad('shell','run-as',pkg,'cp',tmp+'/capture.gfxr','files/capture.gfxr')
  assert ad('shell','run-as',pkg,'sha256sum','files/driver/libvulkan_panfrost.so').split()[0]==sha(a.driver)and ad('shell','run-as',pkg,'sha256sum','files/capture.gfxr').split()[0]==sha(a.capture)
- args='--validate --memory-translation none /data/user/0/'+pkg+'/files/capture.gfxr'
+ args='--validate --debug-messenger-level info --memory-translation none /data/user/0/'+pkg+'/files/capture.gfxr'
  cmd=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_token',token,'--es','args',shlex.quote(args)]
  result.update(stage='one-cold-replay',launch_command=B+cmd);save()
  with (a.output/'launch.txt').open('w')as f:launch=subprocess.Popen(B+cmd,stdout=f,stderr=subprocess.STDOUT)

@@ -31,13 +31,17 @@ static void path_join(char *out,const char *base,const char *tail) {
 }
 static void load_system(void) {
   if(!atomic_load_explicit(&configured,memory_order_acquire))fail("cold configuration missing");
-  char lib[PATH_MAX],dir[PATH_MAX];path_join(lib,hook_dir,"libadrenotools.so");
+  char lib[PATH_MAX],dir[PATH_MAX],hooks[PATH_MAX];path_join(lib,hook_dir,"libadrenotools.so");
   tools_handle=dlopen(lib,RTLD_NOW|RTLD_LOCAL);if(!tools_handle)fail(dlerror());
   typedef void *(*open_fn)(int,int,const char *,const char *,const char *,const char *,const char *,void **);
   open_fn open_driver=(open_fn)dlsym(tools_handle,"adrenotools_open_libvulkan");if(!open_driver)fail("adrenotools entry");
-  strcpy(dir,driver_path);char *end=strrchr(dir,'/');if(!end)fail("driver path");*end=0;
+  strcpy(dir,driver_path);char *end=strrchr(dir,'/');if(!end)fail("driver path");end[1]=0;
+  /* Match the existing project loader directory_copy contract: adrenotools
+   * driver.cpp concatenates customDriverDir + customDriverName directly. */
+  if(snprintf(hooks,sizeof hooks,"%s/",hook_dir)>=(int)sizeof hooks)fail("hook directory length");
+  struct stat input;if(stat(driver_path,&input)||!S_ISREG(input.st_mode))fail("private ICD input absent");
   /* ADRENOTOOLS_DRIVER_CUSTOM=1 only; never GPU_MAPPING_IMPORT. */
-  loader_handle=open_driver(RTLD_NOW|RTLD_LOCAL,1,NULL,hook_dir,dir,"libvulkan_panfrost.so",NULL,NULL);
+  loader_handle=open_driver(RTLD_NOW|RTLD_LOCAL,1,NULL,hooks,dir,"libvulkan_panfrost.so",NULL,NULL);
   if(!loader_handle)fail("custom standard-loader initialization failed");
   real_gipa=(PFN_vkGetInstanceProcAddr)dlsym(loader_handle,"vkGetInstanceProcAddr");
   if(!real_gipa || real_gipa==vkGetInstanceProcAddr)fail("standard loader GIPA absent/recursive");
