@@ -36,7 +36,7 @@ def proof():
   for n,h in ready['canonical_native_library_sha256'].items():require(hashlib.sha256(z.read('lib/arm64-v8a/'+n)).hexdigest()==h,'sixlib mismatch '+n)
  oldmods={Path(n).name:{'sha256':h}for n,h in base['inventories']['files/runtime/modules'].items()if not n.endswith('/.d2r-deploy-managed')}
  old={'apk':m.APK,'elf':m.ELF,'chain':m.CHAIN,'module_artifacts':oldmods};new={'apk':NEWAPK,'elf':NEWELF,'chain':m.CHAIN,'module_artifacts':{n:{'sha256':h}for n,h in files.items()}}
- dep=[Path(__file__),HERE/'transaction.py',HERE/'installer.py',m.COMMON,m.SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py',SOURCE_TOOLS/'run-game.py',SOURCE_TOOLS/'reused-transaction.py',NATIVE/'composition.json',TABLE]
+ dep=[Path(__file__),HERE/'transaction.py',HERE/'installer.py',HERE/'identity.py',m.COMMON,m.SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py',R/'scripts/dev/android-game-walk-to.py',SOURCE_TOOLS/'run-game.py',SOURCE_TOOLS/'reused-transaction.py',NATIVE/'composition.json',TABLE]
  return {'old':old,'new':new,'raw':raw,'baseline':base,'overlay':delta,'table':composition,'inputs':{**{str(p):h for p,h in pins.items()},**{str(p):sha(p)for p in dep}}}
 def fixture_gate(path,digest):
  require(path is not None and digest=='755c634376a6bdebde5168bbf0b7cc3e1694c8398bd2f8940a7a51790f8dd9ca','--execute needs exact root-pinned actual AA combined fixture acceptance')
@@ -48,7 +48,7 @@ def fixture_gate(path,digest):
  return {str(path):digest,str(report):j['actual_result_sha256']}
 def debugger_gate(path,digest):
  require(path is not None and digest is not None and sha(path)==digest,'--execute needs frozen official LLDB helper sourceReady + SHA')
- j=read(path);require(j.get('runtime_commit')==COMMIT and j.get('runtime_ELF_sha256')==NEWELF,'LLDB helper wrong target ELF')
+ j=read(path);require(j.get('capture_protocol')=='native-bind-transfer-fragment-v2','old debugger does not capture actual FRAGMENT use');require(j.get('runtime_commit')==COMMIT and j.get('runtime_ELF_sha256')==NEWELF,'LLDB helper wrong target ELF')
  files=j['files'];require(files and all(sha(Path(x['path']))==x['sha256']for x in files),'LLDB helper bytes changed');server=j['server'];require(sha(Path(server['path']))==server['sha256'],'LLDB server bytes changed')
  run=Path(j['run_debugger']);require(run.name=='run-debugger.py'and any(x['path']==str(run)for x in files),'helper entry not frozen')
  return run,server,{str(path):digest,**{x['path']:x['sha256']for x in files},server['path']:server['sha256']}
@@ -62,7 +62,7 @@ def current_owned(label,inv,d,p):
  if label=='native':return inv=={m.OWNER:d['owner_sha256'],'native-layouts.bin':p['table']['native_table_sha256']}
  return True # Original temp/cache retained atomically; new ones have this token.
 def accepted_debugger(d):
- j=d.get('debugger_result',{});return j.get('native_binding_accepted')is True and j.get('owned_debugger_cleanup_complete')is True
+ j=d.get('debugger_result',{});return j.get('native_binding_accepted')is True and j.get('owned_debugger_cleanup_complete')is True and j.get('transfer_and_fragment_proven')is True
 
 def main():
  a=argparse.ArgumentParser(description=__doc__);a.add_argument('--execute',action='store_true');a.add_argument('--report',type=Path,required=True)
@@ -100,15 +100,13 @@ def main():
    if d['old_dirs'][label]is not None:m.rename_dir(dev,target,stage+'/backup/'+label,d['old_dirs'][label]);d.setdefault('backed_up',[]).append(label);write()
    inv=m.inventory(dev,stage+'/incoming/'+label);require(current_owned(label,inv,d,p),'incoming changed '+label);m.rename_dir(dev,stage+'/incoming/'+label,target,inv);d.setdefault('published',[]).append(label);write()
   install(dev,APK,NEWAPK,out/'install-candidate.log');d['candidate_installed']=True;write();dev.identity(p['new'])
-  m.DEBUGGER=debugger;m.NATIVE_TABLE=ABS_TABLE;m.PACK_SHA=p['table']['native_pack_content_sha256'];m.PRODUCER_SHA=p['table']['producer_source_sha256']
+  m.NATIVE_TABLE_LOCAL=TABLE;m.NATIVE_COMPOSITION=p['table'];m.DEBUGGER=debugger;m.NATIVE_TABLE=ABS_TABLE;m.PACK_SHA=p['table']['native_pack_content_sha256'];m.PRODUCER_SHA=p['table']['producer_source_sha256']
   phaseout=out/'native16';phaseout.mkdir();phase={**p['new'],'shared_import_window_bytes':16777216,'serial':d['serial'],'remote_screenshot':'/data/local/tmp/d2r-native-one-'+token+'.png'};d['native_phase']=phase;write()
   try:m.wait_game(dev,phaseout/'transaction.json',phase,phaseout)
   finally:write()
   require(phase.get('original_HUD_reached')and phase.get('fresh_save_then_stopped'),'game did not reach original HUD/fresh save2')
-  if phase.get('screenshot_device_written'):
-   remote=phase['remote_screenshot'];image=phaseout/'HUD.png';dev.adb('pull',remote,str(image));require(sha(image)==phase['screenshot_sha256'],'screenshot pull changed');dev.adb('shell',shlex.join(['sh','-c','test "$(sha256sum "$1" | cut -d" " -f1)" = "$2" && rm "$1"','sh',remote,phase['screenshot_sha256']]))
   require(accepted_debugger(phase),'native binding not proven: inspect official LLDB result; missing hits are inconclusive, not runtime failure')
-  d['stage']='one-real-native-material-original-game-passed';write()
+  d['stage']='one-real-native-material-original-game-transfer-fragment-visual-captured';write()
  except BaseException as e:d['error']=repr(e);write()
  finally:
   try:

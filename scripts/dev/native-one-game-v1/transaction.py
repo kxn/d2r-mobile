@@ -23,6 +23,9 @@ spec=importlib.util.spec_from_file_location('existing_resource_journal',COMMON);
 require=common.require;journal=common.journal
 sha=lambda p:common.Hashes().file(p)
 read=lambda p:json.loads(Path(p).read_text())
+spec=importlib.util.spec_from_file_location('native_one_identity',Path(__file__).parent/'identity.py');identity=importlib.util.module_from_spec(spec);spec.loader.exec_module(identity)
+NATIVE_TABLE_LOCAL=None
+NATIVE_COMPOSITION=None
 
 
 WINDOW_BYTES=16777216
@@ -65,6 +68,39 @@ def claim_pid(d,current,own):
   raise RuntimeError('unowned/multiple/replacement game PID')
  return current
 
+def screenshot_collect(dev,pid,d,path,output,label):
+ require(dev.adb('shell','pidof '+PKG+' || true')==pid,'screenshot requires same owned PID')
+ remote=d['remote_screenshot'].removesuffix('.png')+'-'+label+'.png'
+ shot={'remote':remote,'local':str(output/(label+'.png'))};d.setdefault('screenshots',[]).append(shot);journal(path,d)
+ dev.adb('shell','test','!','-e',remote);shot['screencap_requested']=True;journal(path,d)
+ dev.adb('shell','screencap','-p',remote);shot['device_written']=True;journal(path,d)
+ screenshot_pull_remove(dev,shot,path,d)
+
+def screenshot_pull_remove(dev,shot,path,d):
+ if shot.get('temp_removed')or not shot.get('screencap_requested'):return
+ remote=shot['remote']
+ exists=dev.adb('shell',shlex.join(['sh','-c','if test -f "$1"; then echo FILE; fi','sh',remote]))
+ if not exists:return
+ require(exists=='FILE','unknown screenshot temporary kind');shot['device_written']=True
+ digest=dev.adb('shell','sha256sum',remote).split()[0];require(re.fullmatch('[a-f0-9]{64}',digest),'screenshot hash absent')
+ if shot.get('sha256'):require(shot['sha256']==digest,'owned screenshot changed')
+ shot['sha256']=digest;journal(path,d);local=Path(shot['local'])
+ dev.adb('pull',remote,str(local));require(sha(local)==digest and local.read_bytes()[:8]==b'\x89PNG\r\n\x1a\n','screenshot pull/hash/header mismatch');shot['pulled']=True;journal(path,d)
+ dev.adb('shell',shlex.join(['sh','-c','test "$(sha256sum "$1" | cut -d" " -f1)" = "$2" && rm "$1"','sh',remote,digest]));shot['temp_removed']=True;journal(path,d)
+
+def original_route(dev,pid,d,path,output,state,debugger):
+ # First three points from the already accepted shared-window original5walks.
+ # Host normal joystick input only; no writes to guest/world/quest state.
+ route=[(5215,6289),(5225,6295),(5235,6289)]
+ if not(state.get('valid')and state.get('world_input_ready')and state.get('area')==1 and abs(state.get('x',0)-5225)<=24 and abs(state.get('y',0)-6289)<=24):
+  d['original_route']='skipped: outside previously verified camp start';journal(path,d);return
+ d['original_route_points']=route;journal(path,d);env=os.environ.copy();env['PATH']=str(R/'.local/android-sdk/platform-tools')+':'+env.get('PATH','')
+ for n,(x,y)in enumerate(route):
+  require(dev.adb('shell','pidof '+PKG+' || true')==pid,'route requires same owned PID')
+  command=[sys.executable,str(R/'scripts/dev/android-game-walk-to.py'),str(x),str(y),'--radius','4','--timeout','15','--ready-timeout','2','--serial',d['serial']]
+  with(output/('walk-'+str(n)+'.log')).open('w')as f:subprocess.run(command,env=env,check=True,stdout=f,stderr=subprocess.STDOUT,timeout=25)
+  d['original_route_completed']=n+1;journal(path,d)
+
 def wait_game(dev,path,d,output):
  command=launch_command(d['serial'],output);d['launch_command']=command;d['launch_attempted']=True;journal(path,d)
  own=None;ambiguous=False;launcher=None;debugger=None
@@ -91,6 +127,13 @@ def wait_game(dev,path,d,output):
     observe();require(time.monotonic()<deadline,'one launcher deadline');time.sleep(.3)
    observe();require(launcher.returncode==0,'original HUD launcher failed')
   result=read(output/'launch.json');require(own is not None and result['pid']==int(own),'launcher PID mismatch')
+  (output/'game-state-before-postconditions.jsonl').write_text(dev.app('cat','files/runtime/game-state.jsonl'))
+  d['original_HUD_reached']=result.get('original_hud')is True;d['game_modules_executed']=d['original_HUD_reached'];journal(path,d)
+  screenshot_collect(dev,own,d,path,output,'HUD-before-postconditions')
+  initial=read_json_line(dev.app('tail','-n','1','files/runtime/game-state.jsonl'))
+  original_route(dev,own,d,path,output,initial,debugger)
+  (output/'game-state-after-route.jsonl').write_text(dev.app('cat','files/runtime/game-state.jsonl'))
+  screenshot_collect(dev,own,d,path,output,'HUD-after-route')
   require(result['requested_shared_guest_heap'] is MODE and result['actual_guest_heap']['shared'] is MODE and result['actual_vulkan_provider']=='adreno' and result['requested_legacy_astc_copy'] is False,'fixed control mode mismatch')
   require(result['actual_defer_pool_publication'] is False and result['requested_astc_decode_unorm8'] is False,'unexpected publication/decode override')
   require(debugger is not None,'no debugger attached to owned first PID');debugger.wait(timeout=90);d['debugger_exit']=debugger.returncode
@@ -102,8 +145,8 @@ def wait_game(dev,path,d,output):
   require('import_window_bytes='+str(WINDOW_BYTES)+' no online mirror fallback' in native,'actual shared window mode mismatch')
   if WINDOW_BYTES:require('cold overlapping-import bidirectional GPU byte gate: passed'in native,'missing actual overlapping-import GPU proof')
   require('[native resources] fixed table installed,' in native,'cold native resource table not installed')
-  ids=[json.loads(line) for line in native.splitlines() if line.startswith('{') and '"native_resource_identity":true' in line]
-  require(len(ids)==1 and ids[0].get('driver_sha256')==SO,'native resource driver identity mismatch')
+  proof=identity.verify(NATIVE_TABLE_LOCAL,NATIVE_COMPOSITION,read(output/'native-binding-stops.json'),native)
+  require(proof['PID']==int(own),'native recipe capture PID mismatch');(output/'native-identity-proof.json').write_text(json.dumps(proof,indent=2)+'\n');d['native_identity']=proof;journal(path,d)
   require(result.get('requested_native_resource_table')==NATIVE_TABLE and result.get('requested_native_resource_pack_sha256')==PACK_SHA and result.get('requested_native_resource_producer_sha256')==PRODUCER_SHA,'cold native launch contract mismatch')
   current=read_json_line(dev.app('tail','-n','1','files/runtime/game-state.jsonl'))
   require(current.get('guest_heap',{}).get('shared') is MODE,'actual shared heap differs');require(current.get('pool_mirrors',{}).get('backed_bytes',0)>0,'actual backing bytes missing');require(not MODE or ('[shared pool] immutable startup shared;'in native and current.get('pool_copy_accounting',{}).get('initial_shadow_bytes',-1)==0 and current.get('pool_copy_accounting',{}).get('initial_mirror_bytes',-1)==0),'shared startup/no-shadow copy evidence missing')
@@ -111,10 +154,6 @@ def wait_game(dev,path,d,output):
   require(current.get('pool_windows',{}).get('window_bytes')==WINDOW_BYTES,'published active window differs')
   (output/'camp-state.json').write_text(json.dumps(current,indent=2)+'\n');d['original_HUD_reached']=True;d['game_modules_executed']=True;journal(path,d)
   (output/'game-state.jsonl').write_text(dev.app('cat','files/runtime/game-state.jsonl'))
-  remote=d['remote_screenshot'];dev.adb('shell','test','!','-e',remote)
-  dev.adb('shell','screencap','-p',remote)
-  digest=dev.adb('shell','sha256sum',remote).split()[0];require(re.fullmatch('[a-f0-9]{64}',digest),'screenshot hash absent')
-  d['screenshot_device_written']=True;d['screenshot_sha256']=digest;journal(path,d)
  finally:
   if debugger is not None and debugger.poll() is None:
    debugger.send_signal(signal.SIGINT)
@@ -124,11 +163,17 @@ def wait_game(dev,path,d,output):
    launcher.terminate()
    try:launcher.wait(timeout=15)
    except subprocess.TimeoutExpired:raise RuntimeError('owned launcher still active; preserve transaction')
+  if (output/'debugger-result.json').is_file():
+   try:d['debugger_result']=read(output/'debugger-result.json');journal(path,d)
+   except Exception as e:d['debugger_report_error']=repr(e)
   current=pid()
   try:
    (output/'native.log').write_text(dev.app('cat','files/runtime/native.log'))
    (output/'crash-logcat.txt').write_text(dev.adb('logcat','-b','crash','-d','-v','threadtime'))
   except Exception as e:d['log_collection_error']=repr(e)
+  for shot in d.get('screenshots',[]):
+   try:screenshot_pull_remove(dev,shot,path,d)
+   except Exception as e:d.setdefault('screenshot_collection_errors',[]).append(repr(e));journal(path,d)
   if current:
    require(not ambiguous and own is not None and current==own and current.isdecimal(),'unknown/replacement PID: no save/stop/restore')
    savecommand=[sys.executable,str(R/'scripts/dev/android-game-background-save.py'),'--serial',d['serial'],'--report',str(output/'fresh-save.json')]

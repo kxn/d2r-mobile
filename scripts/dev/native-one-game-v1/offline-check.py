@@ -38,7 +38,8 @@ check('shared-explicit-no-reference-phase','--shared-guest-heap'in cmd and '--no
 check('installed-table-not-use-proof',not c.accepted_debugger({'debugger_result':{'table_installed':True}}))
 check('missing-success-use-rejected',not c.accepted_debugger({'debugger_result':{'native_binding_accepted':False,'owned_debugger_cleanup_complete':True}}))
 check('unclean-debugger-rejected',not c.accepted_debugger({'debugger_result':{'native_binding_accepted':True,'owned_debugger_cleanup_complete':False}}))
-check('entry-success-and-cleanup-accepted',c.accepted_debugger({'debugger_result':{'native_binding_accepted':True,'owned_debugger_cleanup_complete':True}}))
+check('entry-success-and-cleanup-accepted',c.accepted_debugger({'debugger_result':{'native_binding_accepted':True,'owned_debugger_cleanup_complete':True,'transfer_and_fragment_proven':True}}))
+check('old-transfer-only-result-rejected',not c.accepted_debugger({'debugger_result':{'native_binding_accepted':True,'owned_debugger_cleanup_complete':True}}))
 # These are reused byte-for-byte, not a parallel reimplementation of directory/PID primitives.
 old=(c.SOURCE_TOOLS/'reused-transaction.py').read_text();new=(HERE/'transaction.py').read_text()
 def funcs(s):return {n.name:ast.get_source_segment(s,n)for n in ast.parse(s).body if isinstance(n,ast.FunctionDef)}
