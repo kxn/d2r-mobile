@@ -28,6 +28,16 @@ static int native_layout_test(const char *path) {
   nvn_native_recipe *recipe=&((nvn_native_entry *)(bad+1))->recipe;
   memset(recipe->digest,0,32);mbedtls_sha256((const void *)recipe,sizeof *recipe,recipe->digest,0);
   native_table_rehash(bad);NATIVE_CHECK(!nvn_native_table_install(bad,count,table->pack_sha256,&id));free(bad);
+  if(table->version==2) {
+    bad=malloc(count);NATIVE_CHECK(bad!=NULL);memcpy(bad,table,count);
+    nvn_native_family *f=(void *)((nvn_native_entry *)(bad+1)+bad->count);
+    f->thumbnail_mip=entry->description.levels;native_table_rehash(bad);
+    NATIVE_CHECK(!nvn_native_table_install(bad,count,table->pack_sha256,&id));
+    memcpy(bad,table,count);f->source_layout[0]=6;native_table_rehash(bad);
+    NATIVE_CHECK(!nvn_native_table_install(bad,count,table->pack_sha256,&id));
+    memcpy(bad,table,count);memcpy(f->source_layout,"DMN",3);native_table_rehash(bad);
+    NATIVE_CHECK(!nvn_native_table_install(bad,count,table->pack_sha256,&id));free(bad);
+  }
   NATIVE_CHECK(!nvn_native_table_install(table,count-1,table->pack_sha256,&id));
   NATIVE_CHECK(nvn_native_table_install(table,count,table->pack_sha256,&id));
   NATIVE_CHECK(!nvn_native_table_install(table,count,table->pack_sha256,&id));
@@ -36,7 +46,7 @@ static int native_layout_test(const char *path) {
   h_nvnTextureBuilderSetHeight(&builder,entry->description.height);
   h_nvnTextureBuilderSetLevels(&builder,entry->description.levels);
   h_nvnTextureBuilderSetFormat(&builder,entry->description.format);
-  NVNpackagedTextureLayout layout={{'D','M','N',1,1,0,0,0}};
+  NVNpackagedTextureLayout layout={{'D','M','N',0,1,0,0,0}};layout.layout[3]=table->version;
   h_nvnTextureBuilderSetPackagedTextureLayout(&builder,&layout);
   NATIVE_CHECK(TB(&builder)->d.pkg_block_h==0);
   NATIVE_CHECK(h_nvnTextureBuilderGetStorageSize(&builder)==entry->recipe.image_size);
@@ -51,13 +61,37 @@ static int native_layout_test(const char *path) {
     h_nvnTextureViewSetLevels(&view,n,1);
     NATIVE_CHECK((uint64_t)h_nvnTextureGetViewOffset(&texture,&view)==entry->recipe.mips[n].offset);
   }
+  if(table->version==2) {
+    const nvn_native_family *family=(const void *)(entry+table->count);unsigned first=family->thumbnail_mip;
+    NATIVE_CHECK(first>0 && first<entry->description.levels);
+    nvn_texdesc tail=entry->description,source;tail.samples=TB(&builder)->d.samples;tail.width>>=first;tail.height>>=first;tail.levels-=first;
+    if(!tail.width)tail.width=1;if(!tail.height)tail.height=1;uint8_t original[8];
+    NATIVE_CHECK(nvn_native_layout_classify(layout.layout,&tail,&source,original)==2);
+    NATIVE_CHECK(!nvn_native_layout_resolve(layout.layout,&tail));
+    NATIVE_CHECK(!memcmp(original,family->source_layout,8) && source.pkg_block_h==family->source_layout[0]+1);
+    nvn_texlayout storage;nvn_tex_layout(&source,&storage);
+    h_nvnTextureBuilderSetWidth(&builder,tail.width);h_nvnTextureBuilderSetHeight(&builder,tail.height);
+    h_nvnTextureBuilderSetLevels(&builder,tail.levels);
+    NATIVE_CHECK(h_nvnTextureBuilderGetStorageSize(&builder)==storage.size);
+    NATIVE_CHECK(h_nvnTextureBuilderGetStorageAlignment(&builder)==storage.align);
+    NVNtexture thumbnail={0};NATIVE_CHECK(h_nvnTextureInitialize(&thumbnail,&builder));
+    NATIVE_CHECK(!nvn_native_layout_is_marker(CTX(&thumbnail)->layout));
+    NATIVE_CHECK(!memcmp(CTX(&thumbnail)->layout,original,8) && !memcmp(&CTX(&thumbnail)->d,&source,sizeof source));
+    for(unsigned n=0;n<tail.levels;n++) {h_nvnTextureViewSetLevels(&view,n,1);
+      NATIVE_CHECK(h_nvnTextureGetViewOffset(&thumbnail,&view)==nvn_tex_level_offset(&source,n));}
+    h_nvnTextureFinalize(&thumbnail);
+    tail.flags=NVN_TEXTURE_FLAGS_IMAGE;NATIVE_CHECK(!nvn_native_layout_classify(layout.layout,&tail,NULL,NULL));
+    tail.flags=0;tail.width++;NATIVE_CHECK(!nvn_native_layout_classify(layout.layout,&tail,NULL,NULL));
+    h_nvnTextureBuilderSetWidth(&builder,entry->description.width);h_nvnTextureBuilderSetHeight(&builder,entry->description.height);
+    h_nvnTextureBuilderSetLevels(&builder,entry->description.levels);
+  }
   nvn_texdesc mismatch=entry->description;mismatch.width++;
   NATIVE_CHECK(!nvn_native_layout_resolve(layout.layout,&mismatch));
   tex_t ordinary=*CTX(&texture);ordinary.has_layout=0;
   NATIVE_CHECK(!h_nvnTextureCompare(&texture,(const NVNtexture *)&ordinary));
   NATIVE_CHECK(!h_nvnTextureCompare((const NVNtexture *)&ordinary,&texture));
-  layout.layout[3]=2;NATIVE_CHECK(nvn_native_layout_is_marker(layout.layout));
-  NATIVE_CHECK(!nvn_native_layout_resolve(layout.layout,&entry->description));layout.layout[3]=1;
+  layout.layout[3]=0xff;NATIVE_CHECK(nvn_native_layout_is_marker(layout.layout));
+  NATIVE_CHECK(!nvn_native_layout_resolve(layout.layout,&entry->description));layout.layout[3]=table->version;
   layout.layout[4]=2;NATIVE_CHECK(!nvn_native_layout_resolve(layout.layout,&entry->description));
   // Installation owns its table; destroying the caller copy cannot change it.
   memset(table,0,count);free(table);

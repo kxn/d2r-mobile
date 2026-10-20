@@ -88,7 +88,9 @@ def load_entry(spec, number):
             raise ValueError('native mip physical bounds')
         else:
             end = offset + count
-    marker = b'DMN\1' + struct.pack('<I', number)
+    if descriptor.get('thumbnailBase64') and descriptor.get('thumbnailMip') in (None, 0):
+        raise ValueError('thumbnail has the full Builder shape: source encoding cannot be distinguished by this family protocol')
+    marker = b'DMN\2' + struct.pack('<I', number)
     desc = dict(descriptor, layoutData=int.from_bytes(marker, 'little'))
     result = bytearray(original[:first])
     struct.pack_into('<Q', result, 19, desc['layoutData'])
@@ -156,14 +158,28 @@ def build(specifications, output, driver_manifest, base_cache=None):
         updates[detail['logical']] = descriptor
         loaded.append((entry, None, None, detail, identity))
     details = [x[3] for x in loaded]
+    families = []
+    for detail in details:
+        original_layout = detail['original_layout_data']
+        thumbnail = detail['thumbnail_mip']
+        if thumbnail is None:
+            thumbnail = 0
+        if (not isinstance(original_layout, int) or not 0 <= original_layout < 1 << 64 or
+                not isinstance(thumbnail, int) or not 0 <= thumbnail < struct.unpack_from('<I', loaded[len(families)][0], 48 + 48)[0]):
+            raise ValueError('invalid original layout/explicit thumbnail mip')
+        source_layout = struct.pack('<Q', original_layout)
+        if source_layout[0] > 5 or source_layout[:3] == b'DMN':
+            raise ValueError('original packaged layout is not a supported NVN source')
+        families.append(source_layout + struct.pack('<II', thumbnail, 0))
     producers = {x[0][48 + 288:48 + 320] for x in loaded}
     if len(producers) != 1:
         raise ValueError('mixed producer source fingerprints')
     producer_sha = producers.pop()
     pack_sha = sha(canonical({'entries': details, 'driver_sha256': driver_sha.hex(), 'producer_source_sha256': producer_sha.hex()}))
-    table = bytearray(struct.pack('<8s4IQ32s32s32s32s', b'DMNTBL1\0', 1, 160, len(loaded), 1040,
-                                  160 + len(loaded) * 1040, pack_sha, driver_sha, producer_sha, bytes(32)))
+    table = bytearray(struct.pack('<8s4IQ32s32s32s32s', b'DMNTBL2\0', 2, 160, len(loaded), 1040,
+                                  160 + len(loaded) * 1056, pack_sha, driver_sha, producer_sha, bytes(32)))
     table.extend(b''.join(x[0] for x in loaded))
+    table.extend(b''.join(families))
     table[128:160] = sha(table)
     replacements = [(x[3]['logical'], output / x[3]['logical']) for x in loaded]
     cache_record = None
@@ -203,11 +219,12 @@ def build(specifications, output, driver_manifest, base_cache=None):
                 'identity': loaded[0][4].hex(), 'entries': details,
                 'driver_binary_sha256': driver_sha.hex(), 'producer_source_sha256': producer_sha.hex(),
                 'driver_build_record_sha256': sha(driver_manifest.read_bytes()).hex(),
+                'family_protocol': 2, 'tail_source_encoding': 'original-NVN-through-original-backend',
                 'resident_table_bytes': len(table), 'complete_cache_merge': cache_record,
                 'replacements_sha256': sha((output / 'replacements.tsv').read_bytes()).hex(),
-                'pending_runtime_gates': ['native binding and publication lifetime GPU regression',
-                    'thumbnail Builder layout/dimensions and linear B2T streaming contract',
-                    'new TRANSFER_SRC driver layout and ordinary UID GPU validation'],
+                'pending_runtime_gates': ['original NVN full/native and tail/original GPU byte/sample regression',
+                    'native writer scope and prewrite-gate ordinary UID composition',
+                    'actual game full/thumbnail Builder storage and streaming acceptance'],
                 'tool_sha256': sha(Path(__file__).read_bytes()).hex()}
     (output / 'native-pack.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     return manifest
