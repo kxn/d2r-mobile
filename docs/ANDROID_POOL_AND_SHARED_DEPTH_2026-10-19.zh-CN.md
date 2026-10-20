@@ -1029,3 +1029,56 @@ PSO 数相同，但旧包 Uniform 变体从 31 变为 33，新包为 33。因此
 `shader_present.selected` 统计选择路径，不能称作成功出图数。两边实际
 present_worker 均 reference=true／active=false，与 GPU 完成线程是不同职责。
 后续使用精确 BuildID 的离线符号分析定位翻译 CPU 热点，不额外让手机空跑。
+
+
+## 修改版 Turnip：共享启动已通过，尚未到营地
+
+高通用于激进共享内存实验，保留原 BC／四项 UI 资源及 `9507875007c6`
+shader 链，输出 2750×1260、固定 0.75；不为此搬运 Mali 的整套资源。
+原版 Turnip 对照后，改用既有 host-import `3c8710be`，没有混用两个驱动。
+
+`c7a511b` 只在原 `022d625` 的冷启动阶段补齐 Turnip 对应 opt-in，并显式
+开关 PanVK／Turnip 的导入请求。完整 canonical APK 与从原始 NSO 重新生成、
+单独 verify 的 28 项部署文件绑定同一冻结源码。关闭共享的真实 ARM64 游戏
+到达营地、人物／场景／UI 正常、fresh save2 后停止；一次官方 meminfo 的
+TOTAL PSS 为 2,289,085KiB，只是此时快照，不是峰值或内存收益对照。
+
+开启共享时，原 posix_memalign 的小启动探针导入失败，实际回退 legacy。
+严格控制器拒绝把回退算作共享通过，存档停机并完整恢复原包及私有目录。
+随后 `bcdf11a` 将此小探针改为与真实 guest heap 一致的 RW 匿名 mmap，
+保留原 Vulkan API、能力门及导入失败策略，并记录失败阶段。该版真实
+PID14638 启动字节检查通过，明确 actual_shared=1，不再是旧镜像路径。
+
+加载选角期间仍触发既有保护：同一起始地址的新 BC3 sRGB 纹理（serial3841、
+89,600B）与保留的 RGBA16F 图像（serial3290、98,304B）被判为 GPU 所有权
+冲突。进程自行 SIGABRT，未为存档重新启动；生产 d7 APK、29 项模块、UI4、
+shader chain、旧私有驱动及缓存目录恢复、清理通过。这不是 GPU timeout，也
+不是营地通过；不能报告共享内存／FPS／散热改善。下一步区分逻辑纹理退役、
+物理图像额外八提交宽限期及真实数据别名，不能将旧 HDR 数据写回覆盖新 BC3，
+也不能直接删除保护。实际记录在本机 `turnip-shared-game-c7a511b-v1` 和
+`turnip-shared-game-bcdf11a-v2`。
+
+当前 `3c8710be` 只支持 Buffer host import，明确拒绝 host-backed VkImage。
+纹理的直接共享与离线 native 排布仍是独立后继实验，不包含在上述通过范围。
+
+## PanVK：官方 VVL 捕获到真实游戏的首个 API 错误
+
+普通 Surface 路径下，系统 Android loader／校验层使用驱动的 Android native
+buffer 导入接口，与原 direct ICD 的 Mesa 自有 WSI 不同。该诊断组合先遇到
+`panvk_android.c` 的 INVALID_EXTERNAL_HANDLE，不能据此认定原 GPU hang
+就是显示缓冲问题。此次官方 INFO 已明确列出 Core／Synchronization 等启用
+项，但此前 draw 尚未执行，无 VUID 不能证明后续调用有效。失败完整保留，
+原 `022d625` 和 35 项文件、旧目录已恢复，进程停止。
+
+`7991333` 随后只在显式 layered-debug＋validate 冷入口保留真实 Surface 尺寸
+而不 attach Vulkan Window，复用原 offscreen_present，首次读回之后不逐帧等待；
+不是新渲染框架，也不是可玩或性能验收。原始 ARM64 游戏继续原菜单／选角
+绘制，官方 VVL 首先报 `VUID-vkCmdDrawIndexed-None-06479`：片元 Dref 采样
+绑定的 R16_UNORM 图像不具有 SAMPLED_IMAGE_DEPTH_COMPARISON 能力。其后
+出现 kbase subqueue timeout 和 fence -4，实际复现设备丢失。
+
+这提供了必须先修的明确 Vulkan 用法错误，尚不能证明它是所有设备丢失的
+唯一原因。修复应核对 NVN 深度 format／view、比较 sampler 与 shader 映射，
+不通过关闭比较、关闭校验或游戏 shader key 特判绕过。进程自行退出后，原
+`022d625`、35 项文件、完整旧目录恢复和清理均通过；没有重启游戏存档。
+本机证据为 `panvk-layered-offscreen-game-v1-mali-v1/native.log` 及其 result。
