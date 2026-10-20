@@ -30,7 +30,7 @@ static void image_retile_create(void) {
 // records ordinary buffer dependencies, including prior raw readers.
 static shared_copy_backing image_retile_prepare(const tex_t *t) {
   shared_copy_backing p={0};
-  if(!vk_pool_shared_active() || !t || !t->has_layout || !t->mem || !t->L.size ||
+  if(!vk_pool_shared_active() || !t || !t->has_layout || nvn_native_layout_is_marker(t->layout) || !t->mem || !t->L.size ||
       t->d.samples>1 || (t->d.flags&NVN_TEXTURE_FLAGS_LINEAR) ||
       (t->d.target!=NVN_TEXTURE_TARGET_2D && t->d.target!=NVN_TEXTURE_TARGET_2D_ARRAY &&
        t->d.target!=NVN_TEXTURE_TARGET_CUBEMAP && t->d.target!=NVN_TEXTURE_TARGET_CUBEMAP_ARRAY))return p;
@@ -49,7 +49,7 @@ static shared_copy_backing image_retile_prepare(const tex_t *t) {
   return (shared_copy_backing){b->handle,offset,b->size};
 }
 static int image_retile_eligible(image *i,shared_copy_backing p,const VkBufferImageCopy *c) {
-  if(!p.handle || !i->cpu_rebuildable || i->external_access || i->decoded ||
+  if(!p.handle || nvn_native_layout_is_marker(i->tex.layout) || !i->cpu_rebuildable || i->external_access || i->decoded ||
       i->format!=vk_nvn_format(i->tex.d.format) || c->imageOffset.z || c->imageExtent.depth!=1)return 0;
   int bw,bh,bpb=nvn_fmt_bpb(i->tex.d.format,&bw,&bh);
   uint32_t level=c->imageSubresource.mipLevel;

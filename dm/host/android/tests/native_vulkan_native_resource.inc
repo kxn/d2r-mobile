@@ -119,6 +119,11 @@ static int native_resource_gpu_test(const char *directory) {
     CALL(nvnCommandBufferCopyBufferToTexture,&cmd,(uintptr_t)storage+linear_offset+m->offset,&reference,&view,&region,0);
   }
   submit(end());nr_blocks(&native,input,linear);nr_blocks(&reference,input,linear);
+  extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,VkMemoryPropertyFlags *);
+  int imported=0,shadow=1;VkMemoryPropertyFlags properties=0;
+  CHECK(vk_test_fixed_shared_pool((uintptr_t)storage,&imported,&shadow,&properties));
+  CHECK(imported && !shadow && (properties&VK_MEMORY_PROPERTY_HOST_CACHED_BIT));
+  CHECK((properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || vk_pool_shared_gpu_gate_mode());
   CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size)); // sample/read-only has no scopes
   uint8_t vertex[0x880],fragment[0x880];memset(vertex,3,sizeof vertex);memset(fragment,4,sizeof fragment);
   NVNprogram program;NVNshaderData shaders[]={{.control=vertex},{.control=fragment}};
@@ -237,5 +242,8 @@ static int native_resource_gpu_test(const char *directory) {
   CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));vk_test_shared_image_backing(NULL,0);
   storage[native_offset]=0x42;CHECK(storage[native_offset]==0x42);CHECK(!munmap(raw,pool_bytes+65536));
   free(payload);free(linear);CHECK(vk_validation_error_count()==0);
-  printf("{\"test\":\"native-resource-original-NVN\",\"checks\":%u,\"default_enabled\":false,\"game_modules_executed\":false,\"result\":\"passed\"}\n",checks);return 0;
+  printf("{\"test\":\"native-resource-original-NVN\",\"checks\":%u,\"format\":%u,\"mips\":%u,\"family_version\":%u,\"tail_levels\":%u,\"memory_flags\":%u,\"atom\":%llu,\"native_offset\":%u,\"pool_bytes\":%u,\"no_pool_shadow\":true,\"full_all_mips\":true,\"tail_packaged_and_B2T\":%s,\"shared_gpu_gate\":%s,\"default_enabled\":false,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
+    checks,entry.recipe.format,entry.recipe.levels,header.version,has_tail?entry.recipe.levels-family.thumbnail_mip:0,
+    properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,native_offset,pool_bytes,
+    has_tail?"true":"false",vk_pool_shared_gpu_gate_mode()?"true":"false");return 0;
 }
