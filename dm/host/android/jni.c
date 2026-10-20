@@ -4,6 +4,7 @@
 #include "../../gfx/vulkan/nvn_vk_window.h"
 #include "../../gfx/vulkan/nvn_vk_renderdoc.h"
 #include "dm.h"
+#include "guest_heap_startup.h"
 #include "platform.h"
 #include "display.h"
 #include "dm_performance_hint.h"
@@ -512,6 +513,22 @@ static void *game_thread(void *unused) {
   LOG("Android native host optimization=-O%d", DM_ANDROID_RUNTIME_OPT_LEVEL);
   snprintf(path, sizeof path, "%s/modules", runtime_root);
   char *args[] = {"dmhost_android", path, "--run", NULL};
+  // Opt-in only. Paths, log, provider and Surface have already been selected;
+  // freeze the SAME device before any loader/SDK/SVC can publish a guest heap.
+  const char *shared_heap = getenv("DM_GUEST_HEAP_SHARED");
+  if (shared_heap && strcmp(shared_heap,"0") && strcmp(shared_heap,"1"))
+    die("DM_GUEST_HEAP_SHARED must be 0 or 1");
+  int requested_shared_heap = shared_heap && !strcmp(shared_heap,"1");
+  int (*heap_probe)(void) = NULL;
+#ifdef DM_VULKAN_SHARED_POOLS
+  extern int vk_pool_shared_mode(void);
+  heap_probe = vk_pool_shared_mode;
+#endif
+  int use_shared_heap = dm_guest_heap_startup_freeze(requested_shared_heap,heap_probe);
+  if (use_shared_heap < 0) die("Guest heap backing selection was late or conflicting");
+  if (requested_shared_heap && !use_shared_heap)
+    LOG("Shared guest heap request unsupported: immutable legacy/private startup");
+  LOG("Android guest heap startup requested=%d actual_shared=%d",requested_shared_heap,use_shared_heap);
   dm_android_main(3, args);
   return NULL;
 }
