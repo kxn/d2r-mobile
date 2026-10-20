@@ -77,6 +77,8 @@ typedef struct image {
   uint64_t native_use_serial,native_alias_generation;
   VkPipelineStageFlags native_alias_visible_stages;
   VkPipelineStageFlags native_recorded_stages;
+  // 0 external, 1 transient chunk owner, 2 coherent same-queue resident.
+  // Only state 1 enters native_acquired_images; it is not a lifetime reference.
   int native_acquired;
 #endif
   uint64_t last_use;
@@ -1053,6 +1055,17 @@ void vk_test_native_rgba_adopt(const tex_t *t,VkImage handle,VkDeviceMemory memo
   memset(i->access,0,(size_t)i->levels*3*sizeof *i->access);i->access_generation++;
   for(unsigned n=0;n<i->levels;n++)image_cell(i,0,n,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
   native_range_add(i);image_recipes_changed();
+}
+int vk_test_native_image_owner(uint64_t serial) {
+  for(image *i=images;i;i=i->next)if(i->tex.serial==serial)return i->native_acquired;
+  return -1;
+}
+VkPipelineStageFlags vk_test_native_mip_scope(uint64_t serial,unsigned level,uint64_t *use_clock) {
+  for(image *i=image_buckets[serial%8192];i;i=i->hash_next)if(i->tex.serial==serial) {
+    if(!i->native_entry || level>=i->levels)die("Native scope oracle bounds");
+    image_access *cell=image_cell(i,0,level,0);*use_clock=cell->use_clock;return cell->mip_scope;
+  }
+  die("Native scope oracle image missing");
 }
 VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t serial,unsigned level) {
   for(image *i=image_buckets[serial%8192];i;i=i->hash_next)if(i->tex.serial==serial) {

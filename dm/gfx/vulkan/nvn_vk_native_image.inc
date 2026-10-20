@@ -145,8 +145,8 @@ static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFl
   }
   // Only independent first use moves. Current-recording Buffer alias accesses, CPU
   // publication, unknown/order barriers or image writers keep the original
-  // end-pass path. Ownership still returns to FOREIGN at every chunk end;
-  // this is not a new immutable-resource or CPU-writing contract.
+  // end-pass path. This proves only an actual acquire's placement; resident
+  // same-queue reuse makes no new immutable-resource/CPU-writing claim.
   // Known retained writers come only from older chunks: the complete current
   // recording page ledger was negative above. A VkBuffer visibility bit does
   // not order this different object. Reuse the existing global alias-memory
@@ -197,7 +197,14 @@ static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAcc
     }
     i->native_alias_generation=alias_generation;
     i->native_alias_visible_stages=alias_generation?stages:0;
-    i->native_acquired=1;i->native_next=native_acquired_images;native_acquired_images=i;
+    // First publication keeps the original external GENERAL handoff. Once
+    // this exact coherent provider owns the physical image, a later command
+    // chunk is not a new external producer. Keep all real per-mip/alias history.
+    // CPU stores still require NVN execution synchronization and happen-before
+    // the consuming QueueSubmit; neither residency nor coherence permits races.
+    // The transient list must never retain a resident image or a stack fixture.
+    if(vk_pool_native_image_queue_resident(i->native_pool))i->native_acquired=2;
+    else {i->native_acquired=1;i->native_next=native_acquired_images;native_acquired_images=i;}
   }
 
 }
@@ -307,8 +314,10 @@ static void native_image_create(image *i,const nvn_native_entry *entry) {
   i->access_generation++;native_range_add(i);native_image_use(i);
 }
 void vk_native_images_release(void) {
-  // Called at the original end of every command chunk, after render/query
-  // closure. CPU production still requires the original NVN fence/Flush rules;
+  // Only conservative transient imports enter this per-chunk list. Resident
+  // coherent imports retain queue ownership and their access histories across
+  // chunks; submission-owned Pool/token references still retire as before.
+  // Called after render/query closure. CPU production retains NVN fence/Flush rules;
   // releasing is not a CPU wait and does not authorize racing host writes.
   while(native_acquired_images) {
     image *i=native_acquired_images;native_acquired_images=i->native_next;i->native_next=NULL;

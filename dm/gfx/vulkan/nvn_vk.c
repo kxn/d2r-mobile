@@ -1969,6 +1969,17 @@ const _Atomic uint64_t *vk_test_pool_initialized_counter(uint64_t address) {
   const _Atomic uint64_t *result=p?&p->initialized_bytes:NULL;
   pthread_mutex_unlock(&V.resources);return result;
 }
+// Reused exact range oracle from the native-image-only AA wrapper.
+int vk_test_pool_has_buffer_intersection(uint64_t address,uint64_t size) {
+  if(!size || size>UINT64_MAX-address)return -1;
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);int found=p?0:-1;
+  if(p) {
+    uint64_t first=address-(uintptr_t)p->guest,end=first+size;
+    for(pool_backing_span *b=p->backings;b && b->begin<end;b=b->next)
+      if(b->end>first){found=1;break;}
+  }
+  pthread_mutex_unlock(&V.resources);return found;
+}
 VkBuffer vk_test_pool_locked_span_hint(uint64_t address) {
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
   VkBuffer result=p&&p->locked_span_hint?p->locked_span_hint->buffer.handle:VK_NULL_HANDLE;

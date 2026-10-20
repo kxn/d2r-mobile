@@ -1,11 +1,18 @@
 // Real multi-mip imported RGBA dependency oracle, using the original NVN FS/CS
 // shaders. Production ASTC table validation is not relaxed for this host test.
 static void native_acquire_scope_gpu_test(void) {
-  CHECK(vk_pool_shared_mode() && !V.options.pool_window_bytes);
+  int resident=getenv("DM_NATIVE_RESIDENT_OWNER_FIXTURE")!=NULL;
+  int window_fixture=V.options.pool_window_bytes!=0;
+  CHECK(vk_pool_shared_mode() && (!window_fixture || (resident && V.options.pool_window_bytes==65536)));
+  extern int vk_test_native_resident_provider(int);
+  extern int vk_test_native_image_owner(uint64_t);
+  extern VkPipelineStageFlags vk_test_native_mip_scope(uint64_t,unsigned,uint64_t *);
+  int previous_provider=vk_test_native_resident_provider(resident);
   NVNmemoryPoolBuilder pb;NVNmemoryPool pool;
   CALL(nvnMemoryPoolBuilderSetDefaults,&pb);CALL(nvnMemoryPoolBuilderSetDevice,&pb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&pb,bytes,4u<<20);
-  CALL(nvnMemoryPoolBuilderSetFlags,&pb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CALL(nvnMemoryPoolBuilderSetFlags,&pb,(resident?NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED:
+    NVN_MEMORY_POOL_FLAGS_CPU_CACHED)|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&pb));
   VkExternalMemoryImageCreateInfo ext={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
     .handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
@@ -29,7 +36,10 @@ static void native_acquire_scope_gpu_test(void) {
   extern void vk_test_native_rgba_adopt(const tex_t *,VkImage,VkDeviceMemory,void *,const VkImageCreateInfo *,const nvn_native_entry *);
   mtl_sub_begin();vk_test_native_rgba_adopt((const tex_t *)&source,VK_NULL_HANDLE,VK_NULL_HANDLE,NULL,NULL,NULL);
   vk_internal_wait(vk_internal_commit());
-  mtl_sub_begin();VkDeviceMemory memory;void *allocation=vk_pool_native_image_bind(address,needs.size,raw,&needs,&memory);
+  mtl_sub_begin();
+  vk_pool_requirement initial_range={address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,VK_POOL_REQUIRE_NATIVE_IMAGE};
+  int initial_operation=vk_pool_operation_begin_ranges(&initial_range,1);
+  VkDeviceMemory memory;void *allocation=vk_pool_native_image_bind(address,needs.size,raw,&needs,&memory);
   VkImageMemoryBarrier init={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
     .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
     .oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,.newLayout=VK_IMAGE_LAYOUT_GENERAL,.image=raw,
@@ -40,10 +50,19 @@ static void native_acquire_scope_gpu_test(void) {
     VkClearColorValue color={.float32={red[n]/255.f,0,0,1}};VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,n,1,0,1};
     vkCmdClearColorImage(V.cmd,raw,VK_IMAGE_LAYOUT_GENERAL,&color,1,&range);
   }
+  // Preserve the actual finite opaque payload for a later legal CPU producer.
+  // No optimal-image permutation is guessed and no runtime payload is patched.
+  VkMemoryBarrier initial_host={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+    .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
+  vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
+    0,1,&initial_host,0,NULL,0,NULL);
+  vk_pool_native_image_writeback(allocation,address,needs.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
   init.oldLayout=VK_IMAGE_LAYOUT_GENERAL;init.srcQueueFamilyIndex=V.queue_family;init.dstQueueFamilyIndex=VK_QUEUE_FAMILY_FOREIGN_EXT;
   init.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;init.dstAccessMask=0;
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,0,NULL,1,&init);
-  vk_internal_wait(vk_internal_commit());
+  vk_pool_operation_end(initial_operation);vk_internal_wait(vk_internal_commit());
+  uint8_t *original_payload=malloc(needs.size);CHECK(original_payload);
+  memcpy(original_payload,(void *)(uintptr_t)address,needs.size);
   nvn_native_entry entry={0};entry.recipe.image_size=needs.size;entry.recipe.usage=create.usage;entry.recipe.levels=3;
   // Conservative full-image byte coverage for every mip is sufficient for this
   // dependency oracle. No physical mip layout, codec or opaque payload is baked.
@@ -123,6 +142,12 @@ static void native_acquire_scope_gpu_test(void) {
       CHECK(vk_test_native_writer_stages(address,needs.size)&producer_stage);
     }
     mtl_sub_begin();
+    if(resident && order) {
+      uint64_t retained_clock=0;
+      CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==2);
+      CHECK(vk_test_native_mip_scope(((tex_t *)&source)->serial,1,&retained_clock)==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+      CHECK(retained_clock); // Real earlier CS use survived chunk retirement.
+    }
     if(!order || order>=3) {
       S=graphics_state;S.program=(const prog_t *)&primer;
       S.ubo[1][0]=(p_bind_buf){.addr=(uintptr_t)primer_color,.size=16};
@@ -149,7 +174,11 @@ static void native_acquire_scope_gpu_test(void) {
       // Unvisited mip1 must retain the acquire's real directed source. This
       // semantic invariant catches the old memset-to-TOP gap independently of
       // whether a serial software GPU happens to return the right pixel values.
-      CHECK(vk_test_native_unused_mip_source(((tex_t *)&source)->serial,1)==
+      if(resident) {
+        uint64_t actual_clock=0;
+        CHECK(vk_test_native_mip_scope(((tex_t *)&source)->serial,1,&actual_clock)==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        if(order)CHECK(actual_clock);
+      } else CHECK(vk_test_native_unused_mip_source(((tex_t *)&source)->serial,1)==
         (order==5?VK_PIPELINE_STAGE_ALL_COMMANDS_BIT:VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT));
       NVNtextureView v=nr_view(1);mtl_reg_tex(71,(const tex_t *)&source,(const view_t *)&v);
       S=(vk_state){.program=(const prog_t *)&compute};S.tex[5][0]=71;S.samp[5][0]=(uint64_t)72<<20;
@@ -158,14 +187,94 @@ static void native_acquire_scope_gpu_test(void) {
         .view=*(const view_t *)&v,.has_view=1,.r={0,0,0,8,8,1}};vk_texture_copy_t2b(&copy,0,0);
     }
     vk_internal_wait(vk_internal_commit());
+    CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==(resident?2:0));
     if(order!=2)for(unsigned n=0;n<64;n++)CHECK(computed[n]==128);
     if(order!=1)for(unsigned n=0;n<256;n+=4)CHECK(transferred[n]==64 && !transferred[n+1] && !transferred[n+2] && transferred[n+3]==255);
     uint8_t rendered[1024];NVNcopyRegion region={0,0,0,16,16,1};CALL(nvnTextureReadTexels,&output,NULL,&region,rendered);
     for(unsigned n=0;n<sizeof rendered;n+=4)CHECK(rendered[n]==255 && !rendered[n+1] && !rendered[n+2] && rendered[n+3]==255);
   }
+  if(resident) {
+    vk_pool_span_info before_late;
+    int late_unbacked=window_fixture && !previous_writer;
+    extern int vk_test_pool_has_buffer_intersection(uint64_t,uint64_t);
+    if(late_unbacked)CHECK(!vk_test_pool_has_buffer_intersection(address,needs.size));
+    // Three actual queued chunks without a host wait between them. Their
+    // source mip histories and the reused output image must stay valid while
+    // earlier chunks remain in flight. CPU checks occur after the final fence.
+    uint64_t last_chunk=0;
+    for(unsigned mip=0;mip<3;mip++) {
+      mtl_sub_begin();NVNtextureView view=nr_view(mip);
+      mtl_reg_tex(71,(const tex_t *)&source,(const view_t *)&view);
+      S=graphics_state;vk_pipeline_state_changed();
+      vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+      p_copy_b2t read={.tex=(const tex_t *)&output,
+        .src=(uintptr_t)bytes+(3u<<20)+196608+mip*4096,.r={0,0,0,16,16,1}};
+      vk_texture_copy_t2b(&read,0,0);last_chunk=vk_internal_commit();
+      CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==2);
+    }
+    vk_internal_wait(last_chunk);
+    for(unsigned mip=0;mip<3;mip++) {
+      const uint8_t *pixels=bytes+(3u<<20)+196608+mip*4096;
+      for(unsigned n=0;n<1024;n+=4)CHECK(pixels[n]==red[mip] && !pixels[n+1] && !pixels[n+2] && pixels[n+3]==255);
+    }
+    // Four independent real submissions: mutate native bytes via the image,
+    // sample, restore the opaque original via CPU, then sample again. Repeat
+    // with explicit Flush, no-Flush coherent writes, and same-value publication.
+    // The resident oracle uses NVN CPU_UNCACHED plus an actual coherent import,
+    // so its no-Flush case is legal; execution synchronization is still needed.
+    // This is not a promise that arbitrary racing/no-sync host writes are safe.
+    for(unsigned round=0;round<4;round++) {
+      mtl_sub_begin();NVNtextureView view=nr_view(0);
+      uint8_t *linear=bytes+(3u<<20)+262144;
+      for(unsigned n=0;n<4096;n+=4) {linear[n]=0;linear[n+1]=linear[n+3]=255;linear[n+2]=0;}
+      CALL(nvnMemoryPoolFlushMappedRange,&pool,(3u<<20)+262144,4096);
+      p_copy_b2t copy={.tex=(const tex_t *)&source,.src=(uintptr_t)linear,
+        .view=*(const view_t *)&view,.has_view=1,.r={0,0,0,32,32,1}};
+      vk_texture_copy_b2t(&copy,0,0);vk_internal_wait(vk_internal_commit());
+      S=graphics_state;vk_pipeline_state_changed();
+      uint8_t rendered[1024];nr_draw(&source,0,&output,rendered);
+      for(unsigned n=0;n<sizeof rendered;n+=4)CHECK(!rendered[n] && rendered[n+1]==255 && !rendered[n+2] && rendered[n+3]==255);
+      CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==2);
+      // nr_draw waited its fence. This is a real CPU write of saved original
+      // imported payload, including all three mip levels and padding.
+      dm_guest_write_prepare((void *)(uintptr_t)address,needs.size);
+      memcpy((void *)(uintptr_t)address,original_payload,needs.size);
+      if(round!=1)CALL(nvnMemoryPoolFlushMappedRange,&pool,address-(uintptr_t)bytes,needs.size);
+      if(round==2)CALL(nvnMemoryPoolFlushMappedRange,&pool,address-(uintptr_t)bytes,needs.size);
+      S=graphics_state;vk_pipeline_state_changed();nr_draw(&source,0,&output,rendered);
+      for(unsigned n=0;n<sizeof rendered;n+=4)CHECK(rendered[n]==255 && !rendered[n+1] && !rendered[n+2] && rendered[n+3]==255);
+      CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==2);
+      // Late Buffer materialization reads the same native physical bytes;
+      // the image stays resident and real alias histories must still order it.
+      if(late_unbacked && !round)CHECK(!vk_test_pool_has_buffer_intersection(address,needs.size));
+      mtl_sub_begin();void *raw_pointer;uint64_t raw_offset;
+      vk_pool_requirement late_range={address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+      int late_operation=vk_pool_operation_begin_ranges(&late_range,1);
+      CHECK(vk_pool_address_stage(address,needs.size,&raw_pointer,&raw_offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+      vk_transfer_buffer_dependencies((vk_buffer_use[]){{address,needs.size,0}},1);
+      vk_buffer *readback=vk_temp_buffer(needs.size);
+      VkBufferCopy read={.srcOffset=raw_offset,.size=needs.size};
+      vkCmdCopyBuffer(V.cmd,((vk_buffer *)raw_pointer)->handle,readback->handle,1,&read);
+      VkBufferMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+        .buffer=readback->handle,.size=needs.size};
+      vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&host,0,NULL);
+      uint8_t *copied=malloc(needs.size);CHECK(copied);
+      native_lane_readback publication={copied,readback->map,needs.size};
+      vk_completion_write(native_lane_readback_done,&publication,copied,needs.size);
+      vk_pool_operation_end(late_operation);
+      vk_internal_wait(vk_internal_commit());CHECK(!memcmp(copied,original_payload,needs.size));free(copied);
+      CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==2);
+      if(late_unbacked)CHECK(vk_pool_span_query(address,needs.size,&before_late)==VK_POOL_SPAN_SINGLE);
+    }
+    printf("{\"test\":\"native-resident-owner-host-oracle\",\"result\":\"passed\",\"actual_imported_coherent_RGBA\":true,\"provider_override_test_only\":true,\"ASTC_executed\":false,\"CPU_restore_rounds\":4,\"explicit_and_noFlush\":true,\"same_value_flush\":true,\"Buffer_GPU_readback\":true,\"three_chunks_without_explicit_host_wait\":true,\"first_Buffer_materialized_late\":%s,\"previous_writers\":%s}\n",late_unbacked?"true":"false",previous_writer?"true":"false");
+  }
+  free(original_payload);
   CALL(nvnTextureFinalize,&source);CALL(nvnTextureFinalize,&output);
   CALL(nvnProgramFinalize,&graphics);CALL(nvnProgramFinalize,&compute);CALL(nvnProgramFinalize,&primer);
   CALL(nvnProgramFinalize,&copy_compute);CALL(nvnSamplerFinalize,&sampler);
   CALL(nvnMemoryPoolFinalize,&pool);CHECK(!vk_validation_error_count());
+  vk_test_native_resident_provider(previous_provider);
   printf("{\"test\":\"native-acquire-cross-mip-directed-scopes\",\"checks\":%u,\"result\":\"passed\",\"FS0_then_CS1_and_TRANSFER2\":true,\"CS1_then_FS0\":true,\"TRANSFER2_then_FS0\":true,\"previous_TRANSFER_COMPUTE_pixels_and_unknown_negative\":%s,\"actual_imported_RGBA\":true,\"ASTC_executed\":false}\n",checks,previous_writer?"true":"false");
 }

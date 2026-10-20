@@ -1786,3 +1786,14 @@ publication、逐子资源读写依赖与 token 生命周期不变；布局相�
 计数：control bracket 增 30,544，native 增 1,959,057；该 ADB bracket 包围独立
 8 秒 record，不是精确帧分母，不能把全部差额算成可消除 CPU 时间。driver command
 recording/command-pool 保留内存可能受益，但实际 CPU/PSS/吞吐均待同条件对照。
+
+
+### 实验：coherent native image 在同一队列保留所有权
+
+仅在已认证的 AA185 Turnip ELF，且实际 native import 是 `HOST_COHERENT` 时，首次仍通过原 `FOREIGN -> render queue`、`GENERAL -> GENERAL` barrier 接管外部 payload，之后同一 Vulkan 队列的 command chunk 不再主动释放／重新接管这个物理 VkImage。其他 provider 和非 coherent import 继续原流程。生产判断只发生在冷启动身份认证和首次接管，不增加逐 draw 环境变量查询、分配或全表扫描。
+
+所有权与当前 chunk 的临时链分开：resident 图像不进入 `native_acquired_images`，原每次实际访问的 Pool 引用、Buffer/image alias memory dependency、RAW/WAR/WAW、HOST_READ barrier、completion/cache 与物理图像退休继续执行；不在 chunk 边界清空真实 mip/access history，也不声称纹理只读。普通 CPU 不属于 FOREIGN queue；合法 CPU 写入仍须完成 NVN 执行同步，并 happens-before 消费它的 QueueSubmit。Vulkan 的 [host import 约束](https://docs.vulkan.org/refpages/latest/refpages/source/VkImportMemoryHostPointerInfoEXT.html) 和 [host write submission ordering](https://docs.vulkan.org/spec/latest/chapters/synchronization.html#synchronization-submission-host-writes) 均保留，coherent 不允许 CPU/GPU 竞争。
+
+`pool_cpu_written` / `pool_cpu_generation` 是 GPU 写入后 CPU shadow 未知的记录，不能充当 host 写入 epoch；显式 Flush 入口也不能证明不存在合法的 no-Flush CPU 写入。此实验不新增只读预测或内容比对。
+
+验证必须分别记录：host LVP 使用明确 test-only provider override 的真实 imported RGBA 多 mip、前序 TRANSFER/COMPUTE、跨 chunk 访问、CPU 变化／同值 Flush／coherent no-Flush、延迟 Buffer 物化与完整 GPU 读回；AA185 实际 ASTC 全 mip 和真实游戏仍需独立验收。host 结果不能替代 ASTC 真机正确性或整帧性能收益。
