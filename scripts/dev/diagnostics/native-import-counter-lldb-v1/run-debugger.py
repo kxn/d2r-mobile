@@ -161,6 +161,7 @@ def main():
         d['snapshot']=snapshot
         require(snapshot.get('status')=='EXISTING_GLOBALS_READ_ONCE' and not snapshot['errors'],'global metadata/read unavailable; no runtime failure inferred')
         d['client_returncode'] = client.poll()
+        require(d['client_returncode']==0, 'official debugger did not finish successful detach')
     except BaseException as e:
         d['tool_error'] = repr(e)
     finally:
@@ -231,6 +232,10 @@ def main():
             if server is not None and owned_pid(current(), pid):
                 adb('shell', 'run-as', PKG, 'kill', '-CONT', pid)
                 d['owned_PID_resumed_for_caller_save'] = True
+                final_status=adb('exec-out','run-as',PKG,'cat','/proc/'+pid+'/status')
+                tracer=re.search(r'^TracerPid:\s+(\d+)',final_status,re.M)
+                require(tracer and tracer.group(1)=='0','owned first PID still traced after cleanup')
+                d['owned_PID_TracerPid_zero_after_cleanup']=True
         except BaseException as e:
             d['cleanup_errors'].append('owned PID resume: ' + repr(e))
         d['owned_debugger_cleanup_complete'] = not d['cleanup_errors']
