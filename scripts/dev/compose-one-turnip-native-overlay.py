@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'dm/tools'), str(ROOT / 'dm/ios/tools')]
 import casc_overlay as casc
 import touch_layout
+import astc_compose as comp
 
 CACHE = 'data/hd/texture_desc_cache.json'
 
@@ -39,20 +40,10 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':')).encode()
 
 
-def vfs_entries(folder):
-    data = casc.load_vfs1(folder)
+def vfs_path_count(data):
     start, size = struct.unpack_from('>II', data, 12)
-    cft, count = struct.unpack_from('>II', data, 28)
-    require(cft + count <= len(data), 'invalid CFT bounds')
-    result = {}
-    for _, name, value, directory, _ in casc.walk_paths(data, start, start + size):
-        if directory is None:
-            logical = casc.norm_path(name.decode())
-            require(logical not in result, 'duplicate VFS path')
-            offset = cft + value
-            require(offset + 25 <= cft + count, 'invalid CFT item')
-            result[logical] = (value, bytes(data[offset:offset + 25]))
-    return result
+    return sum(directory is None for _, _, _, directory, _ in
+               casc.walk_paths(data, start, start + size))
 
 
 def decoded(folder, row, cft, expected):
@@ -172,14 +163,22 @@ def compose(a):
     patched[index] = descriptor
     require(all(a == b for i, (a, b) in enumerate(zip(old, patched)) if i != index),
             'unrelated cache entry changed')
-    baseline = vfs_entries(ui)
-    originals = vfs_entries(raw)
-    require(all(baseline[name] == originals[name] for name in (logical, CACHE)),
-            'UI baseline already changed the selected texture/cache')
+    baseline = bytes(casc.load_vfs1(ui))
+    originals = bytes(casc.load_vfs1(raw))
+    original_start, original_size = struct.unpack_from('>II', originals, 28)
+    base_start, base_size = struct.unpack_from('>II', baseline, 28)
+    positions = {}
+    for name in (logical, CACHE):
+        original_pos = casc.cft_position(originals, original_start, original_start + original_size, manifest, name)
+        base_pos = casc.cft_position(baseline, base_start, base_start + base_size, manifest, name)
+        require(base_pos - base_start == original_pos - original_start and
+                baseline[base_pos:base_pos + 25] == originals[original_pos:original_pos + 25],
+                'UI baseline changed selected texture/cache CFT')
+        positions[name] = base_pos
     out.mkdir()
     inputs = out / 'inputs'
     link_inputs(raw, ui, inputs)
-    require(vfs_entries(inputs) == baseline, 'layered UI input differs from baseline VFS')
+    require(bytes(casc.load_vfs1(inputs)) == baseline, 'layered UI input differs from baseline VFS')
     files = out / 'files'
     files.mkdir()
     (files / 'texture').write_bytes(texture)
@@ -191,13 +190,17 @@ def compose(a):
     output = out / 'romfs_overlay'
     # Original CASC writer preserves the full UI tree and existing CFT order.
     casc.make_overlay(inputs, output, replacements)
-    final = vfs_entries(output)
-    require(final.keys() == baseline.keys(), 'VFS path tree changed')
-    differences = [name for name in baseline if baseline[name] != final[name]]
-    require(set(differences) == set(replacements), 'unrelated VFS entry changed')
-    require(all(final[name][0] == baseline[name][0] for name in final), 'CFT offsets moved')
+    final = bytes(casc.load_vfs1(output))
+    updates = {}
     for name, path in replacements.items():
-        decoded(output, manifest[name], final[name][1], path.read_bytes())
+        pos = positions[name]
+        item = final[pos:pos + 25]
+        updates[name] = (item[:16], struct.unpack_from('>I', item, 16)[0],
+                         struct.unpack_from('>I', item, 21)[0])
+        decoded(output, manifest[name], item, path.read_bytes())
+    # Existing byte-level proof covers the entire file/path tables, root and
+    # config; avoid confusing path-tree file-table offsets with CFT offsets.
+    tvfs_proof = comp.prove_tvfs(inputs, output, updates)
     require(all(sha(output / item.name) == sha(item) for item in ui.iterdir() if item.is_file()),
             'upstream UI sidecar changed')
     source_paths = [Path(__file__), ROOT / 'dm/tools/casc_overlay.py', ROOT / 'dm/ios/tools/touch_layout.py',
@@ -215,7 +218,8 @@ def compose(a):
         'native_pack_content_sha256': record['pack_content_sha256'],
         'logical': logical, 'changed_descriptor_fields': sorted(changed_fields),
         'cache_entries': len(old), 'unchanged_cache_entries': len(old) - 1,
-        'unchanged_VFS_entries': len(baseline) - 2, 'changed_VFS_entries': sorted(differences),
+        'unchanged_VFS_entries': vfs_path_count(baseline) - 2, 'changed_VFS_entries': sorted(replacements),
+        'original_TVFS_proof': tvfs_proof,
         'all_CFT_offsets_unchanged': True, 'original_CASC_roundtrip': True,
         'upstream_UI_preserved': True, 'native_payload_bytes': entry['image_size'],
         'exact_generated_overlay_files': generated, 'driver_specific_payload': True,
