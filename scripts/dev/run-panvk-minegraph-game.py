@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One reversible native Mesa pandecode original-BC diagnostic. Offline by default.
+"""One reversible native Mesa CSF progress original-BC diagnostic. Offline by default.
 Uses existing directory CAS, ordinary first-PID ownership and original save2 helper.
 Original BC/current-identical upstream UI overlay only; no APK/module changes, old capture, measurement or GPU-import.
 """
@@ -9,9 +9,9 @@ R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
-READY=R/'.local/logs/panvk-minegraph-pandecode-file-v1-source-ready-agent-v2.json'
-READY_SHA='fa1d0d247cb981398362e195bac614fff77b6d753a579a69446265845d1da1ff'
-DRIVER_SHA='feebdd70a1aa4d6aa4ae26269aee69d565ed20d6e414ead5014e8637a34247ed'
+READY=R/'.local/logs/panvk-error-progress-v1-source-ready-agent.json'
+READY_SHA='80674caf7f1bb966ae10eb4809beb2679b74e960dc577b5a9f91aa71460eb44f'
+DRIVER_SHA='bc996257c4395ea5fec016832087e4b2bdac2a919623ea63fd3aec32f37247dc'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
 LOCK='files/runtime/.astc6-full-controller-lock'
@@ -50,8 +50,8 @@ def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':
 def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
  require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
- require(d['diagnostic_only'] and d['only_delta_from_static_hardware_v2_driver_source']==['src/panfrost/genxml/decode_common.c'],'not official pandecode output-only adaptation')
- require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build','src/panfrost/genxml/decode_common.c'],'not the static unsupported-HAL platform candidate')
+ require(d['diagnostic_only'] and d['only_delta_from_static_hardware_v2_driver_source']==['src/panfrost/genxml/decode_common.c','src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c'] and d['only_delta_from_feeb_driver_source']==['src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c'],'not frozen native CSF diagnostic-only adaptation')
+ require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build','src/panfrost/genxml/decode_common.c','src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c'],'not the static unsupported-HAL platform candidate')
  for key in ['source_identity','build_only_adaptation','generated_version','host_codegen','ELF','driver']:
   r=d[key];require(sha(r['path'])==r['sha256'],'driver provenance changed: '+key)
  require(d['driver']['sha256']==DRIVER_SHA and set(d['ICD_exports_verified'])=={'HMI','vk_icdGetInstanceProcAddr','vk_icdGetPhysicalDeviceProcAddr','vk_icdNegotiateLoaderICDInterfaceVersion'},'wrong ICD')
@@ -261,7 +261,7 @@ def clean(dev,path,d):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE native Mesa pandecode output-only diagnostic original022 originalBC; dump cache/mprotect perturbation, NOT performance/stability or sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'ONE bounded native Mesa CSF progress diagnostic original022 originalBC; no static DUMP; error decoder range/order repair only, NOT GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False

@@ -1,0 +1,81 @@
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+index 9905076..933f357 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+@@ -435,6 +435,34 @@ kbase_log_subqueue_state(struct panvk_gpu_queue *queue, uint32_t subqueue,
+                           subq->kbase.last_job_offset);
+ }
+ 
++/* Error diagnostics must not turn a CSF failure into a CPU decoder fault.
++ * Ring counters are monotonic; an old request using them as local offsets
++ * can point outside the registered ring. Do not reinterpret or split such
++ * a request: the existing state logs remain available without DUMP. */
++static void
++kbase_dump_ring_diagnostic(struct panvk_device *dev,
++                           const struct panvk_subqueue *subq,
++                           uint64_t offset, uint64_t bytes,
++                           uint32_t gpu_id, const char *reason)
++{
++   if (!PANVK_DEBUG(DUMP) || !dev->debug.decode_ctx) {
++      mesa_loge("kbase: %s ring decode skipped: DUMP disabled or no decoder",
++                reason);
++      return;
++   }
++
++   if (offset >= KBASE_RINGBUF_SIZE || !bytes ||
++       bytes > KBASE_RINGBUF_SIZE - offset) {
++      mesa_loge("kbase: %s ring decode skipped: offset %" PRIu64
++                ", size %" PRIu64 ", ring %u (outside contiguous ring range)",
++                reason, offset, bytes, KBASE_RINGBUF_SIZE);
++      return;
++   }
++
++   pandecode_cs_binary(dev->debug.decode_ctx, subq->kbase.ringbuf_dev + offset,
++                        bytes, gpu_id);
++}
++
+ static VkResult
+ kbase_init_seqnos(struct panvk_gpu_queue *queue)
+ {
+@@ -980,10 +1008,10 @@ kbase_subqueue_wait_seqno(struct panvk_gpu_queue *queue, uint32_t subqueue,
+                last_job_offset, subq->kbase.ringbuf_dev + last_job_offset,
+                last_last_job_offset, subq->kbase.ringbuf_dev + last_last_job_offset);
+             struct panvk_physical_device *phys_dev = to_panvk_physical_device(dev->vk.physical);
+-            pandecode_cs_binary(dev->debug.decode_ctx,
+-                                 subq->kbase.ringbuf_dev + last_last_job_offset,
+-                                 insert - last_last_job_offset,
+-                                 phys_dev->kmod.dev->props.gpu_id);
++            kbase_dump_ring_diagnostic(dev, subq, last_last_job_offset,
++                                        insert - last_last_job_offset,
++                                        phys_dev->kmod.dev->props.gpu_id,
++                                        "watchdog timeout");
+          }
+ 
+          return vk_queue_set_lost(&queue->vk,
+@@ -1009,7 +1037,7 @@ kbase_subqueue_wait_seqno(struct panvk_gpu_queue *queue, uint32_t subqueue,
+       if (cqs_ret < 0) {
+          int error_type = kbase_kmod_csf_wait_event(dev->kmod.dev, remaining);
+ 
+-         if (dev->debug.decode_ctx && insert > extract && error_type) {
++         if (insert > extract && error_type) {
+             // pandecode_user_msg(dev->debug.decode_ctx,
+             //    "\nSubqueue %d Ringbuffer Trampoline [job %lu, gpu_va: %lx, cpu=%p, Size %u bytes, to %lx]:\n",
+             //    subqueue, subq->kbase.emitted_jobs, subq->kbase.ringbuf_dev + offset,
+@@ -1021,10 +1049,13 @@ kbase_subqueue_wait_seqno(struct panvk_gpu_queue *queue, uint32_t subqueue,
+                last_job_offset, subq->kbase.ringbuf_dev + last_job_offset,
+                last_last_job_offset, subq->kbase.ringbuf_dev + last_last_job_offset);
+             struct panvk_physical_device *phys_dev = to_panvk_physical_device(dev->vk.physical);
+-            pandecode_cs_binary(dev->debug.decode_ctx,
+-                                 subq->kbase.ringbuf_dev + extract,
+-                                 insert - extract,
+-                                 phys_dev->kmod.dev->props.gpu_id);
++            kbase_log_queue_syncobjs(queue);
++            for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++)
++               kbase_log_subqueue_state(queue, i, "CSF event snapshot");
++
++            kbase_dump_ring_diagnostic(dev, subq, extract, insert - extract,
++                                        phys_dev->kmod.dev->props.gpu_id,
++                                        "CSF event");
+          }
+          prev_error_type = error_type;
+       }
