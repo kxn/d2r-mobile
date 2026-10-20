@@ -240,3 +240,23 @@ were successful; source-only cycle-area closure did not prove that geometric
 return path clear. The failed v1 report remains unchanged and its cold8s trace
 remains a valid short window, never a30min pass. V2 removes A, retains all fail
 gates, and explicitly tests the first reverse rather than claiming it passed.
+
+## Exact26b short native candidate validation
+
+`native_candidate_validation` is a mutually exclusive mode after actual6f
+paired qualification. It requires exact26b canonical/raw root review and the
+original f830/native6217/.60/2750x1260/1MiB resources. Both matched compositions
+remain authenticated; `_execution_phases` selects only native. This stage is
+explicitly `native-original-game-short-candidate-validation-complete`, never a
+new matched pair or sustained-thermal result. Input defaults DRAFT; root reviews
+and publishes a separate authorized input after the running6f test finishes.
+
+The original route orchestrator receives B→C→B three normal walk-to points,
+which avoid the v1 C→A obstruction. Every point must complete, otherwise fail
+and retain the existing lifecycle/CAS cleanup. No larger navigation or gameplay
+logic is introduced. The exact source-pinned CPU helper runs independent8s
+simpleperf stat,99Hz8s record and official8s Perfetto, followed by system
+meminfo/screenshot. Existing actual tool coverage/target/PSO checks stay intact.
+No ordinary rerun, SDP, LLDB, custom timer or second30min run is performed.
+Actual normal gameplay progress is saved; original APK and six directories are
+restored by original save2/stop/owner/hash/CAS checks.

@@ -88,10 +88,10 @@ def screenshot_pull_remove(dev,shot,path,d):
  dev.adb('pull',remote,str(local));require(sha(local)==digest and local.read_bytes()[:8]==b'\x89PNG\r\n\x1a\n','screenshot pull/hash/header mismatch');shot['pulled']=True;journal(path,d)
  dev.adb('shell',shlex.join(['sh','-c','test "$(sha256sum "$1" | cut -d" " -f1)" = "$2" && rm "$1"','sh',remote,digest]));shot['temp_removed']=True;journal(path,d)
 
-def original_route(dev,pid,d,path,output,state,debugger):
+def original_route(dev,pid,d,path,output,state,debugger,points=None):
  # First three points from the already accepted shared-window original5walks.
  # Host normal joystick input only; no writes to guest/world/quest state.
- route=[(5215,6289),(5225,6295),(5235,6289)]
+ route=points if points is not None else [(5215,6289),(5225,6295),(5235,6289)]
  if not(state.get('valid')and state.get('world_input_ready')and state.get('area')==1 and abs(state.get('x',0)-5225)<=24 and abs(state.get('y',0)-6289)<=24):
   d['original_route']='skipped: outside previously verified camp start';journal(path,d);return
  d['original_route_points']=route;journal(path,d);env=os.environ.copy();env['PATH']=str(R/'.local/android-sdk/platform-tools')+':'+env.get('PATH','')

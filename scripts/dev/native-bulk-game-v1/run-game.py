@@ -235,13 +235,19 @@ def proof(path, digest):
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
                                 R / 'scripts/dev/android-game-walk-to.py']}
+    p['_execution_phases'] = p['phases']
     if 'sustained_play' in p:
         sustained = module('source_pinned_sustained_play', HERE / 'sustained_play.py')
         sustained.validate(p, pinned, read, require)
         p['controller_sources'].update({str(q): sha(q) for q in
             [HERE / 'sustained_play.py', HERE / 'capture-sustained-scheduler.py']})
         # Keep both compositions authenticated above; execute only native.
-        p['phases'] = [p['phases'][1]]
+        p['_execution_phases'] = [p['phases'][1]]
+    if 'native_candidate_validation' in p:
+        candidate = module('source_pinned_native_candidate_gate', HERE / 'candidate_gate.py')
+        candidate.validate(p, pinned, read, require)
+        p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
+        p['_execution_phases'] = [p['phases'][1]]
     return p
 
 
@@ -334,6 +340,11 @@ def phase_game(dev, out, phase, p, token):
         if p.get('sustained_play'):
             sustained = module('source_pinned_sustained_play_run', HERE / 'sustained_play.py')
             sustained.run(dev, own, d, report, out, initial, p, m)
+        elif p.get('native_candidate_validation'):
+            # Existing original input tool; safe B/C return proven by prior6f run.
+            m.original_route(dev, own, d, report, out, initial, None,
+                             points=[(5225, 6295), (5235, 6289), (5225, 6295)])
+            require(d.get('original_route_completed') == 3, 'candidate original threewalks not completed')
         else:
             m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
@@ -445,7 +456,9 @@ def phase_game(dev, out, phase, p, token):
                     'native table unexpectedly present in standard control')
         d['original_HUD_reached'] = True
         d['game_modules_executed'] = True
-        d['scope'] = ('Native-only sustained original-input route, sparse official Perfetto; '
+        d['scope'] = ('Native-only shortcandidate functional/officialCPU validation; not matchedpair or thermalproof'
+                      if p.get('native_candidate_validation') else
+                      'Native-only sustained original-input route, sparse official Perfetto; '
                       'no combat or whole-game acceptance implied' if p.get('sustained_play') else
                       'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance')
         save()
@@ -512,9 +525,15 @@ def main():
             scope='1800s uninterrupted original-input route plus four official8s Perfetto windows; not combat proof',
             sustained_play=p['sustained_play'], real_game_progress_saved=True,
             restart_or_thermal_pause_cannot_be_combined=True)
+    if p.get('native_candidate_validation'):
+        plan.update(phases=['native-ASTC4'],
+            scope='Shortcandidate originalgame threewalks plus existing officialCPU windows; prior6f pair referenced, no newpaired claim',
+            native_candidate_validation=p['native_candidate_validation'])
     if p.get('performance_tools'):
         plan['profiling'] = True
-        plan['scope'] = 'Three independent official8s stat/record/scheduler-Surface windows before LLDB; not yet measured netthroughput or thermal benefit'
+        plan['scope'] = ('Shortcandidate originalthreewalks and three independent official8s CPU windows; no newpaired or thermal claim'
+                         if p.get('native_candidate_validation') else
+                         'Three independent official8s stat/record/scheduler-Surface windows before LLDB; not yet measured netthroughput or thermal benefit')
         plan['official_performance'] = {'stat_seconds': 8, 'record_user_Hz': 99,
             'record_seconds': 8, 'scheduler_frame_seconds': 8, 'before_LLDB': True,
             'same_window_CPU_and_Surface_events': 'Perfetto only; stat/record are separate windows',
@@ -574,7 +593,7 @@ def main():
         created = True
         owner = out / 'owner'
         owner.write_text(token + '\n')
-        for phase_index, phase in enumerate(p['phases']):
+        for phase_index, phase in enumerate(p['_execution_phases']):
             active = phase
             name = phase['kind']
             incoming = stage + '/incoming/' + name
@@ -644,7 +663,9 @@ def main():
                 require(phase_result.get('sustained_play', {}).get('continuous_pass') is True,
                         '30min sustained route did not complete')
         owner.unlink()
-        d['stage'] = ('native-original-game-uninterrupted-sustained-route-complete'
+        d['stage'] = ('native-original-game-short-candidate-validation-complete'
+                      if p.get('native_candidate_validation') else
+                      'native-original-game-uninterrupted-sustained-route-complete'
                       if p.get('sustained_play') else
                       'matched-resource-original-game-functional-pair-complete')
         write()
