@@ -50,6 +50,12 @@ run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-
     '-DDM_RENDERDOC_INCLUDE_DIR=' + str(ROOT/'.local/tools/Arm_Performance_Studio_2026.5/renderdoc_for_arm_gpus/include'),
     '-DDM_ANDROID_RUNTIME_OPT_LEVEL=' + args.opt_level)
 run('cmake', '--build', ROOT / '.local/build/android-native', '-j'+str(args.native_jobs), '--target', 'dmhost_android')
+native_window_selected = 'DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE:BOOL=ON' in (ROOT/'.local/build/android-native/CMakeCache.txt').read_text()
+native_mixed_compiled = all(marker in (ROOT/'.local/build/android-native/libdmhost_android.so').read_bytes() for marker in
+    (b'defined-BC3-array-mixed-ASTC-preservation', b'mixed-compressed-array', b'DM_MIXED_COMPRESSED_ASTC_SOURCE'))
+if native_window_selected and not native_mixed_compiled:
+    raise RuntimeError('App entry selected but original mixed ASTC preserving bodies absent from actual host ELF')
+
 rows = {row['键']: row for row in csv.DictReader((ROOT / 'dm/i18n/ui_text.tsv').open(), delimiter='\t')}
 shutil.rmtree(OUT / 'res', ignore_errors=True)
 for resource in sorted((SOURCE/'res').rglob('*')):
@@ -156,6 +162,8 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
           'native_resources_compiled':args.native_resources,
+          'mixed_compressed_ASTC_oracles_compiled':native_mixed_compiled,
+          'native_window_app_fixture_compiled':native_window_selected,
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,
