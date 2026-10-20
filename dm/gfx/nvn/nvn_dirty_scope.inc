@@ -7,8 +7,8 @@ _Static_assert(__atomic_always_lock_free(sizeof(uint32_t),0),"signal page owners
 enum { DIRTY_SCOPE_BUCKET = 1 << 20 };
 typedef struct {uint32_t slot;uintptr_t first,end;} dirty_scope_piece;
 struct nvn_dirty_scope {size_t count;dirty_scope_piece pieces[];};
-static void scope_clock(range_t *r) {
-    advance(&r->changes);advance(&g_changes);
+static uint64_t scope_clock(range_t *r) {
+    advance(&r->changes);return advance(&g_changes);
 }
 static range_t *scope_bucket(uintptr_t base) {
     int n=atomic_load(&g_nr);
@@ -79,9 +79,15 @@ void nvn_dirty_scope_release(nvn_dirty_scope *scope) {
     while(scope->count)scope_piece_release(scope->pieces[--scope->count]);
     pthread_mutex_unlock(&g_slot_mu);free(scope);
 }
-void nvn_dirty_scope_gpu_write(const void *mem,size_t bytes) {
-    uintptr_t a=address(mem);if(!bytes || bytes>UINTPTR_MAX-a)return;
+void nvn_dirty_scope_gpu_write_counted(const void *mem,size_t bytes,
+                                     nvn_dirty_scope_publish *token) {
+    uintptr_t a=address(mem);if(!bytes || bytes>UINTPTR_MAX-a) {
+        if(token)token->valid=0;
+        return;
+    }
     uintptr_t end=a+bytes;
+    if(token && (a<token->address || bytes>token->bytes ||
+        a-token->address>token->bytes-bytes))token->valid=0;
     // Inspect only image buckets, never scan all pages of an unrelated shared
     // Buffer or read its bytes. The owner retains storage during this hook.
     int n=atomic_load_explicit(&g_nr,memory_order_acquire);
@@ -96,7 +102,77 @@ void nvn_dirty_scope_gpu_write(const void *mem,size_t bytes) {
             atomic_store(&r->gen[page],generation);
             uint64_t latest=atomic_load(&r->latest);
             while(latest<generation && !atomic_compare_exchange_weak(&r->latest,&latest,generation)){}
-            scope_clock(r);
+            uint64_t completion=scope_clock(r);
+            if(token && token->valid) {
+                // Count only this exact marker's successful publications, never
+                // infer ownership from a before/after global clock difference.
+                if(!completion || completion==UINT64_MAX ||
+                    generation==UINT64_MAX || generation<=token->old_stamp ||
+                    token->own_count==UINT64_MAX ||
+                    atomic_load(&r->changes)==UINT64_MAX)token->valid=0;
+                else {
+                    token->own_count++;
+                    if(generation>token->own_max)token->own_max=generation;
+                }
+            }
         }
     }
+}
+
+void nvn_dirty_scope_gpu_write(const void *mem,size_t bytes) {
+    nvn_dirty_scope_gpu_write_counted(mem,bytes,NULL);
+}
+// Caller retains the scope token and storage; g_slot_mu excludes additions,
+// release and slot lifetime changes while inspecting exact page ownership.
+// Protected state matters independently of completion clocks: a CPU writer may
+// reserve generation N and pause before publishing, while our GPU mark is N+1.
+static int scope_publish_protected(const nvn_dirty_scope_publish *t) {
+    uintptr_t at=t->address,end=at+t->bytes;
+    if(!t->scope || !t->bytes || end<at)return 0;
+    for(size_t k=0;k<t->scope->count && at<end;k++) {
+        dirty_scope_piece piece=t->scope->pieces[k];
+        range_t *r=&g_r[piece.slot];
+        uintptr_t lo=r->base+(piece.first<<g_shift),
+                  hi=r->base+(piece.end<<g_shift);
+        if(at<lo)return 0;
+        if(at>=hi)continue;
+        if(!atomic_load_explicit(&r->live,memory_order_acquire) ||
+            atomic_load(&r->lifetime)==UINT64_MAX ||
+            atomic_load(&r->changes)==UINT64_MAX)return 0;
+        uintptr_t stop=end<hi?end:hi;
+        for(uintptr_t p=(at-r->base)>>g_shift,
+            last=(stop-1-r->base)>>g_shift;p<=last;p++)
+            if(!atomic_load(&r->scope_refs[p]) ||
+                atomic_load(&r->state[p])!=PG_PROT)return 0;
+        at=stop;
+    }
+    return at==end;
+}
+int nvn_dirty_scope_publish_begin(nvn_dirty_scope *scope,const void *mem,
+                                 size_t bytes,uint64_t stamp,
+                                 nvn_dirty_scope_publish *token) {
+    *token=(nvn_dirty_scope_publish){0};
+    uintptr_t a=address(mem);
+    if(!scope || !bytes || bytes>UINTPTR_MAX-a || !stamp ||
+        stamp==UINT64_MAX || pthread_mutex_trylock(&g_slot_mu))return 0;
+    *token=(nvn_dirty_scope_publish){.scope=scope,.address=a,.bytes=bytes,
+        .before=atomic_load_explicit(&g_changes,memory_order_acquire),
+        .old_stamp=stamp};
+    token->valid=token->before && token->before!=UINT64_MAX &&
+        scope_publish_protected(token) && !nvn_dirty_since(mem,bytes,stamp) &&
+        atomic_load_explicit(&g_changes,memory_order_acquire)==token->before;
+    pthread_mutex_unlock(&g_slot_mu);return token->valid;
+}
+int nvn_dirty_scope_publish_finish(nvn_dirty_scope_publish *token,
+                                  uint64_t *own_stamp) {
+    if(!token->valid || !token->own_count || !token->own_max ||
+        token->own_count>=UINT64_MAX-token->before ||
+        pthread_mutex_trylock(&g_slot_mu)) {token->valid=0;return 0;}
+    int ok=scope_publish_protected(token) &&
+        atomic_load_explicit(&g_changes,memory_order_acquire)==
+            token->before+token->own_count;
+    pthread_mutex_unlock(&g_slot_mu);
+    token->valid=0;
+    if(ok)*own_stamp=token->own_max;
+    return ok;
 }

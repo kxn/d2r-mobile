@@ -47,3 +47,24 @@ void nvn_dirty_scope_release(nvn_dirty_scope *scope);
 // Known GPU writes invalidate page generations without pretending mprotect sees
 // GPU access. This never unprotects pages or makes GPU data CPU-visible.
 void nvn_dirty_scope_gpu_write(const void *address,size_t bytes);
+
+// Optional acknowledgement of THIS owner's known GPU publications only. The
+// owner retains scope/storage, serializes GPU markers, and does not protect or
+// release its pages between begin/finish. No CPU visibility/fence is implied.
+// Any unrelated publication, unprotected/BUSY page, lifecycle change, unknown
+// coverage or clock saturation rejects acknowledgement. Rejection leaves the
+// original dirty stamp untouched; success returns only captured GPU generation.
+typedef struct {
+    nvn_dirty_scope *scope;
+    uintptr_t address;
+    size_t bytes;
+    uint64_t before, old_stamp, own_count, own_max;
+    int valid;
+} nvn_dirty_scope_publish;
+int nvn_dirty_scope_publish_begin(nvn_dirty_scope *scope, const void *address,
+                                 size_t bytes, uint64_t old_stamp,
+                                 nvn_dirty_scope_publish *token);
+void nvn_dirty_scope_gpu_write_counted(const void *address, size_t bytes,
+                                     nvn_dirty_scope_publish *token);
+int nvn_dirty_scope_publish_finish(nvn_dirty_scope_publish *token,
+                                  uint64_t *own_stamp);

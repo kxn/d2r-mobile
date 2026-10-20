@@ -90,10 +90,11 @@ static range_t *find(uintptr_t a) {
 // All changes after initialization are RMWs: an acquire of a later completion
 // also observes earlier lifetime invalidation through the release sequence.
 _Static_assert(__atomic_always_lock_free(sizeof(uint64_t), 0), "dirty publication requires lock-free 64-bit atomics");
-static void advance(_Atomic uint64_t *clock) {
+static uint64_t advance(_Atomic uint64_t *clock) {
     uint64_t old = atomic_load_explicit(clock, memory_order_relaxed);
     while (old != UINT64_MAX && !atomic_compare_exchange_weak_explicit(
         clock, &old, old + 1, memory_order_release, memory_order_relaxed)) {}
+    return old == UINT64_MAX ? 0 : old + 1;
 }
 #ifdef DM_DIRTY_RANGE_TEST_HOOKS
 static nvn_dirty_test_hook test_hook;
