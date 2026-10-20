@@ -13,26 +13,34 @@ static void bc3_fixture_path(char out[4096],const char *root,const char *leaf) {
 }
 static void bc3_fixture_env(const char *name,const char *value) {if(setenv(name,value,1))die("BC3 fixture environment");}
 JNIEXPORT jint JNICALL Java_com_d2rmobile_panvkbc3fixture_MainActivity_nativeRun(
-    JNIEnv *env,jclass klass,jstring directory,jstring libraries,jboolean queued) {
+    JNIEnv *env,jclass klass,jstring directory,jstring libraries,jint mode) {
   (void)klass;static atomic_int started;
+  if(mode<0 || mode>2)return 78;
+  int queued=(mode==1),bc4=(mode==2);
   if(getuid()<10000 || vk_loader_is_initialized() || atomic_exchange(&started,1))return 78;
   const char *root=(*env)->GetStringUTFChars(env,directory,NULL);if(!root)return 79;
   const char *hooks=(*env)->GetStringUTFChars(env,libraries,NULL);if(!hooks){(*env)->ReleaseStringUTFChars(env,directory,root);return 79;}
   if(root[0]!='/' || hooks[0]!='/')die("BC3 fixture requires app-private absolute paths");
   char output[4096],dataset[4096],driver[4096],shaders[4096],cache[4096];
-  bc3_fixture_path(output,root,"bc3-test.log");bc3_fixture_path(dataset,root,"bc3-capture.bin");
+  bc3_fixture_path(output,root,"bc3-test.log");bc3_fixture_path(dataset,root,bc4?"bc4-layered.bin":"bc3-capture.bin");
   bc3_fixture_path(driver,root,"driver");bc3_fixture_path(shaders,root,"vulkan-fixture");bc3_fixture_path(cache,root,"shader-cache");
   int error=dm_fixture_output_open(output);if(error)_exit(error);
   printf("{\"BC3_app_configuration\":true,\"uid\":%u,\"pid\":%u,\"provider\":\"panvk\",\"shared\":false,\"TRACE\":false,\"game_modules_executed\":false}\n",(unsigned)getuid(),(unsigned)getpid());
-  printf("{\"BC3_app_case\":\"%s\"}\n",queued?"queued21":"single-batch");
+  printf("{\"BC3_app_case\":\"%s\"}\n",bc4?"bc4-layered":queued?"queued21":"single-batch");
   if(g_nmod)die("BC3 fixture cannot execute game modules");
   vk_loader_set_driver("panvk",driver,hooks);
-  bc3_fixture_env("PANVK_DEBUG","startup");bc3_fixture_env("DM_VULKAN_SHARED_POOLS","0");bc3_fixture_env("DM_GUEST_HEAP_SHARED","0");
+  bc3_fixture_env("PANVK_DEBUG",bc4?"startup,bc_trace":"startup");bc3_fixture_env("DM_VULKAN_SHARED_POOLS","0");bc3_fixture_env("DM_GUEST_HEAP_SHARED","0");
   bc3_fixture_env("DM_VULKAN_ASYNC","1");bc3_fixture_env("DM_VULKAN_EXTERNAL_PROFILE","1");
   bc3_fixture_env("DM_VULKAN_SHADERS",shaders);bc3_fixture_env("DM_CAPTURE_TEST_DIR",root);bc3_fixture_env("MESA_SHADER_CACHE_DIR",cache);
-  bc3_fixture_env("DM_PANVK_BC3_CAPTURE_FIXTURE",dataset);
+  if(bc4) {
+    bc3_fixture_env("DM_PANVK_BC4_LAYERED_FIXTURE",dataset);
+    if(unsetenv("DM_PANVK_BC3_CAPTURE_FIXTURE"))die("BC4 isolated case environment");
+  } else {
+    bc3_fixture_env("DM_PANVK_BC3_CAPTURE_FIXTURE",dataset);
+    if(unsetenv("DM_PANVK_BC4_LAYERED_FIXTURE"))die("BC3 isolated case environment");
+  }
   bc3_fixture_env("DM_PANVK_BC3_CAPTURE_QUEUED",queued?"1":"0");
-  if(unsetenv("DM_PANVK_BC3_CAPTURE_NEGATIVE") || unsetenv("DM_SHARED_GUEST_HEAP_FIXTURE") || unsetenv("DM_VULKAN_VALIDATE") || unsetenv("DM_VULKAN_SYNC_VALIDATE"))die("BC3 fixture requires uncombined cold case");
+  if(unsetenv("DM_PANVK_BC4_NEGATIVE") || unsetenv("DM_PANVK_BC3_CAPTURE_NEGATIVE") || unsetenv("DM_SHARED_GUEST_HEAP_FIXTURE") || unsetenv("DM_VULKAN_VALIDATE") || unsetenv("DM_VULKAN_SYNC_VALIDATE"))die("BC3 fixture requires uncombined cold case");
   (*env)->ReleaseStringUTFChars(env,libraries,hooks);(*env)->ReleaseStringUTFChars(env,directory,root);
   int rc=dm_vulkan_test_main();
   if(g_nmod || mtl_pool_shared_mode() || V.props.deviceType==VK_PHYSICAL_DEVICE_TYPE_CPU)die("BC3 fixture did not execute requested actual device mode");

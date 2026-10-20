@@ -688,6 +688,7 @@ static void fixed_shared_buffer_test(void) {
 #include "native_vulkan_shared_image.inc"
 #endif
 #include "native_vulkan_panvk_bc3.inc"
+#include "native_vulkan_panvk_bc4.inc"
 
 int dm_vulkan_test_main(void) {
   crash_thread_init();
@@ -761,6 +762,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_PANVK_BC4_LAYERED_FIXTURE")) {panvk_bc4_layered_test(getenv("DM_PANVK_BC4_LAYERED_FIXTURE"));return 0;}
   if(getenv("DM_PANVK_BC3_CAPTURE_FIXTURE")) {panvk_bc3_focused_test(getenv("DM_PANVK_BC3_CAPTURE_FIXTURE"));return 0;}
   if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
