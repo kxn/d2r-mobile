@@ -49,6 +49,17 @@ static void *write_prepare(void *p) {
 static void wait_flag(_Atomic int *p){while(!atomic_load(p))sched_yield();}
 static nvn_dirty_gpu_gate *gate;
 static void *complete(void *unused){(void)unused;nvn_dirty_gpu_gate_complete(gate);return NULL;}
+static _Atomic int signal_kernel_sleep_confirmed;
+static void *complete_after_real_signal_sleep(void *unused) {
+    (void)unused;
+    // Functional Linux handshake, not a timing probe. A positive real WAKE
+    // return proves this SIGSEGV handler entered the kernel wait. Keep the
+    // gate unchanged for this wake so the handler must recheck/spuriously wait.
+    while(!syscall(SYS_futex,(uint32_t *)gate->pages[0].word,
+        FUTEX_WAKE_PRIVATE,1,NULL,NULL,0))sched_yield();
+    atomic_store(&signal_kernel_sleep_confirmed,1);
+    nvn_dirty_gpu_gate_complete(gate);return NULL;
+}
 static _Atomic int kernel_ready,kernel_go,kernel_done,arm_started,arm_done;
 static uint8_t *kernel_bytes;
 static int kernel_prepare_early;
@@ -106,6 +117,16 @@ int main(void) {
     CHECK(!pthread_create(&worker,NULL,complete,NULL));CHECK(!pthread_join(worker,NULL));
     CHECK(!pthread_join(writer,NULL));CHECK(atomic_load(&interrupt_count)==1);
     CHECK(*(uint32_t *)(m+48)==0x23896754);
+    // Unlike the deliberate lost-wake case above, prove a real SIGSEGV
+    // handler is sleeping in the Linux futex before completion clears it.
+    nvn_dirty_protect(m,8192);gate=nvn_dirty_gpu_gate_arm(&range,1);CHECK(gate);
+    nvn_dirty_gpu_gate_submitted(gate);atomic_store(&hold_wait,0);
+    atomic_store(&wait_entered,0);atomic_store(&writer_done,0);
+    CHECK(!pthread_create(&writer,NULL,write_user,m+40));wait_flag(&wait_entered);
+    CHECK(!atomic_load(&writer_done));
+    CHECK(!pthread_create(&worker,NULL,complete_after_real_signal_sleep,NULL));
+    CHECK(!pthread_join(worker,NULL));CHECK(!pthread_join(writer,NULL));
+    CHECK(atomic_load(&signal_kernel_sleep_confirmed));CHECK(*(uint32_t *)(m+40)==0x12985643);
     // Cancel/failed-submit leaves consistent RO state and wakes a real fault.
     gate=nvn_dirty_gpu_gate_arm(&range,1);CHECK(gate);atomic_store(&hold_wait,1);
     atomic_store(&wait_go,0);atomic_store(&wait_entered,0);atomic_store(&writer_done,0);
@@ -173,5 +194,5 @@ int main(void) {
     CHECK(*(uint32_t *)(m+12)==0x67);
     nvn_dirty_scope_release(alias);nvn_dirty_scope_release(a);
     CHECK(!munmap(m,4*4096));
-    printf("{\"test\":\"dirty-image-GPU-prewrite-gate\",\"checks\":%u,\"futex_waits\":%u,\"actual_wakes\":%u,\"EAGAIN\":%u,\"injected_EINTR\":%u,\"GPU_executed\":false,\"result\":\"passed\"}\n",checks,atomic_load(&waits),atomic_load(&wakes),atomic_load(&again_count),atomic_load(&interrupt_count));
+    printf("{\"test\":\"dirty-image-GPU-prewrite-gate\",\"checks\":%u,\"futex_waits\":%u,\"actual_wakes\":%u,\"EAGAIN\":%u,\"injected_EINTR\":%u,\"actual_signal_kernel_sleep\":true,\"GPU_executed\":false,\"result\":\"passed\"}\n",checks,atomic_load(&waits),atomic_load(&wakes),atomic_load(&again_count),atomic_load(&interrupt_count));
 }
