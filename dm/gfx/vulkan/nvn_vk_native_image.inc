@@ -346,7 +346,9 @@ static void native_image_prepare(image *i,VkImageSubresourceRange range,VkPipeli
   uint64_t address=(uintptr_t)i->tex.mem+first->offset;
   uint64_t bytes=last->offset+last->size-first->offset;
   if(image_writes(access)) {
-    vk_buffer_native_image_write_dependency(address,bytes,stages,access);
+    // Native imports currently support TRANSFER writes only. This original
+    // dependency path emits a global memory barrier for TRANSFER, retaining
+    // WAR/WAW across Buffer/image aliases without a duplicate write barrier.
     vk_buffer_use use={address,bytes,1};vk_transfer_buffer_dependencies(&use,1);
   } else native_image_alias_read(i,stages);
 }
