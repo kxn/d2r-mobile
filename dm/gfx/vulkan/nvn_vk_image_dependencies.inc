@@ -124,7 +124,11 @@ static __attribute__((noinline)) void image_record_cells(image *i,VkImageSubreso
 static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,
                           VkAccessFlags access,int visibility_proven) {
   int writing=!!image_writes(access);
-  if(writing) {i->cpu_rebuildable=0;image_astc_proof(i,0);}
+  if(writing) {i->cpu_rebuildable=0;image_astc_proof(i,0);
+#ifdef DM_VULKAN_SHARED_POOLS
+    image_shared_alias_write(i);
+#endif
+  }
   image_read_proof *read=writing?NULL:image_read_cached(i,r);
   int covered=read && !(stages&~(visibility_proven?read->visible:read->readers));
   // Keep every logical clock increment and whole-image timestamp. Cell use

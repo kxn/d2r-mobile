@@ -380,3 +380,10 @@ int vk_ghost_replaying(void);
 int vk_pool_shared_mode(void);
 void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate);
 #endif
+
+#ifdef DM_VULKAN_SHARED_POOLS
+int vk_pool_shared_image_source(uint64_t address,uint64_t bytes,int prepare);
+void vk_texture_shared_source_written(uint64_t address,uint64_t bytes);
+void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes);
+void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes);
+#endif

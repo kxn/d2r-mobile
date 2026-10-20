@@ -1698,6 +1698,11 @@ void mtl_pool_del(const void *mem) {
   if(shared_active) {pthread_mutex_lock(&shared_close_test_mu);if(shared_close_test_armed) {shared_close_test_armed=0;shared_close_test_entered=1;pthread_cond_broadcast(&shared_close_test_cv);}pthread_mutex_unlock(&shared_close_test_mu);}
 #endif
   mtl_finish();
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active) {pthread_mutex_lock(&V.resources);pool *closing=pool_find((uintptr_t)mem,1);
+    uint64_t size=closing?closing->size:0;pthread_mutex_unlock(&V.resources);
+    if(size)vk_texture_shared_pool_close((uintptr_t)mem,size);}
+#endif
   pthread_mutex_lock(&V.resources);
   pool **pp = &pools;
   while (*pp && (*pp)->guest != mem)
@@ -1792,6 +1797,9 @@ int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset) {
 }
 static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents) {
   vk_mip_clear_buffer_access(addr,len);
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active)vk_texture_shared_linear_access(addr,len);
+#endif
   // Admission is checked by the same exact physical resolution used below,
   // before initialization may copy CPU bytes into any backing. A missing
   // window is never permission to stitch or silently create whole storage.
@@ -2240,6 +2248,9 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   vertex_buffer_writes[at].visible=0;vertex_buffer_write_count++;
 }
 void vk_buffer_transfer_written_range(uint64_t address,uint64_t size) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active)vk_texture_shared_source_written(address,size);
+#endif
   if(recording_resources->submission_barrier_reference) {
     pool *owner=buffer_recording_owner(address,size);
     buffer_cpu_written(owner,address,size);
@@ -2247,6 +2258,9 @@ void vk_buffer_transfer_written_range(uint64_t address,uint64_t size) {
   } else vertex_buffer_produced(address,size,VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
 void vk_buffer_shader_written(uint64_t address,uint64_t size,VkPipelineStageFlags stages) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active)vk_texture_shared_source_written(address,size);
+#endif
   vertex_buffer_produced(address,size,stages);
 }
 static void buffer_access_dependencies(const vk_buffer_use *uses,unsigned count,int conservative,

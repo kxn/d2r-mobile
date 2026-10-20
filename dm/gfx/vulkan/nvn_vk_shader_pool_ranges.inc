@@ -153,7 +153,11 @@ static int compute_pool_requirement(void *context,const vk_pool_requirement *ran
 // physical pool admission and all shader/texture/temporary borrows. NVN state
 // is stable on the owner; registry descriptors are copied under its own lock.
 void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute) {
-  if(!V.options.pool_defer_publication)return;
+  if(!V.options.pool_defer_publication
+#ifdef DM_VULKAN_SHARED_POOLS
+      && !vk_pool_shared_mode()
+#endif
+      )return;
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
     for(unsigned k=0;k<s->nb;k++) {

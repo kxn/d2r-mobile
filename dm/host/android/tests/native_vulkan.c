@@ -675,6 +675,7 @@ static void fixed_shared_buffer_test(void) {
   CHECK(vk_pool_span_query((uintptr_t)bytes,4096,&meta)==VK_POOL_SPAN_NONE);
   LOG("[fixed shared fixture] actual properties=%#x atom=%llu, host coherent=%u; no shadow; linear NVN-only, packaged image contract remains blocked",properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,!!(properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 }
+#include "native_vulkan_shared_image.inc"
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
@@ -733,6 +734,7 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_SHARED_IMAGE_DIRTY_FIXTURE")) {shared_image_dirty_test();return 0;}
   if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {
     CHECK(vk_pool_shared_mode());
     NVNmemoryPoolBuilder b;CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
