@@ -163,12 +163,24 @@ continues; cleanup errors remain explicit. Actual game/FATAL and CPU failures
 still use the original abort rules. The next pair inputs omit `counter_snapshot`
 so no optional LLDB step blocks memory acceptance. No old failed result changes.
 
-The paired diagnostic launch uses `--external-profile`: performance hints and
-present worker are reference/inactive. Its observed approximately30FPS is not
-the ordinary default game's limit or evidence of a change in normal throughput.
+The paired launch uses `--external-profile` only to disable custom timing.
+Actual performance hints and present worker are reference/inactive, matching
+current defaults; their opt-in flags are independent of external profiling.
+Do not attribute a frequency or throughput difference to external-profile, and
+do not call approximately30FPS the ordinary game's limit.
 
 If an SDK pause check fails and exact cleanup cannot confirm closure, that and
 subsequent phases explicitly skip CPU windows (`cpu_validity: false`) while
 keeping functional/memory/save2 restoration. Confirmed paused or confirmed
 closed tools preserve original CPU collection. No contaminated CPU success is
 reported; unknown/replacement collectors remain untouched.
+
+### Owned collector exit/reuse guard
+
+Remote identity reads bracket exe/SHA/UID metadata with two proc stat snapshots.
+All shell reads tolerate a disappearing proc file without returning failure.
+Absent/zombie at the final snapshot means no executing process; a live partial
+snapshot, changed starttime, or reused PID is preserved and reported. A former
+nonzero command exit is gone only if a new stat confirms absent/zombie. No
+replacement can be claimed from a basename or one stale stat. Original failure
+results remain unchanged; cleanup follow-up is separate evidence.

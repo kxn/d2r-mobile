@@ -27,18 +27,46 @@ def config(row):
  require(c['gui']['pid']!=c['xvfb']['pid'],'distinct owned tool processes required')
  return c
 def ad(c,*args):return subprocess.check_output([c['adb'],'-s',c['serial'],*args],text=True,timeout=30).strip()
-def remote_identity(c,pid):
- raw=ad(c,'shell',f'if test -f /proc/{int(pid)}/stat; then cat /proc/{int(pid)}/stat; readlink -f /proc/{int(pid)}/exe; sha256sum /proc/{int(pid)}/exe 2>/dev/null; sed -n \'s/^Uid:[ \\t]*//p\' /proc/{int(pid)}/status; fi')
+def proc_stat_identity(raw):
  if not raw:return None
- lines=raw.splitlines()
- if lines[0].rsplit(')',1)[1].split()[0]=='Z':return None
- if len(lines)!=4:
-  # GUI disconnection may remove exe/status between the separate proc reads.
-  again=ad(c,'shell',f'if test -f /proc/{int(pid)}/stat; then cat /proc/{int(pid)}/stat; fi')
-  if not again or again.rsplit(')',1)[1].split()[0]=='Z':return None
-  raise RuntimeError('remote identity unavailable for still-live process; preserve')
- return {'pid':int(pid),'starttime':lines[0].rsplit(')',1)[1].split()[19],
-  'exe':lines[1],'sha256':lines[2].split()[0],'uids':lines[3].split()}
+ require(len(raw.splitlines())==1 and ')'in raw,'partial remote proc stat; preserve')
+ fields=raw.rsplit(')',1)[1].split()
+ require(len(fields)>19 and fields[19].isdigit(),'partial remote proc stat fields; preserve')
+ return fields[0],fields[19]
+def remote_identity(c,pid):
+ pid=int(pid);require(pid>0,'invalid owned remote PID')
+ # Proc files can disappear between reads when the official GUI disconnects.
+ # Every read is nonfatal to the shell; two stat snapshots bracket metadata.
+ parts=[('STAT0',f'cat /proc/{pid}/stat'),('EXE',f'readlink -f /proc/{pid}/exe'),
+  ('HASH',f'sha256sum /proc/{pid}/exe'),
+  ('UID',f"sed -n 's/^Uid:[ \\t]*//p' /proc/{pid}/status"),
+  ('STAT1',f'cat /proc/{pid}/stat')]
+ command='; '.join("printf '__SDP_"+k+"__\\n'; "+cmd+' 2>/dev/null || true' for k,cmd in parts)+'; :'
+ try:raw=ad(c,'shell',command)
+ except subprocess.CalledProcessError as e:
+  # Retain the actual former ret1 disappearance case as gone only after a new
+  # stat proves absent/zombie. A live/unknown process must never be killed.
+  last=proc_stat_identity(ad(c,'shell',f'cat /proc/{pid}/stat 2>/dev/null || true; :'))
+  if last is None or last[0]=='Z':return None
+  raise RuntimeError('remote identity command failed while process live; preserve')from e
+ data={};key=None
+ for line in raw.splitlines():
+  if line.startswith('__SDP_')and line.endswith('__'):
+   key=line[6:-2];require(key not in data,'duplicate proc snapshot; preserve');data[key]=[]
+  else:
+   require(key is not None,'unframed proc snapshot; preserve');data[key].append(line)
+ require(set(data)=={k for k,_ in parts},'partial proc snapshot framing; preserve')
+ before=proc_stat_identity('\n'.join(data['STAT0']));after=proc_stat_identity('\n'.join(data['STAT1']))
+ if after is None or after[0]=='Z':return None
+ require(before is not None and before[1]==after[1] and before[0]!='Z',
+  'remote PID reused or unbracketed live process; preserve')
+ require(all(len(data[k])==1 for k in ('EXE','HASH','UID')),'remote live metadata partial; preserve')
+ digest=data['HASH'][0].split();uids=data['UID'][0].split();exe=data['EXE'][0]
+ require(exe.startswith('/')and len(digest)>=2 and len(digest[0])==64 and
+  all(x in '0123456789abcdef'for x in digest[0])and len(uids)==4 and all(x.isdigit()for x in uids),
+  'remote live metadata malformed; preserve')
+ return {'pid':pid,'starttime':after[1],'exe':exe,'sha256':digest[0],'uids':uids}
+
 def check_owners(c):
  for k in ('gui','xvfb'):require(host_identity(c[k]['pid'])==c[k],'owned host '+k+' changed')
  for row in c['collectors']:require(remote_identity(c,row['pid'])==row,'owned official collector changed')

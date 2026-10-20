@@ -1,5 +1,5 @@
 from pathlib import Path
-import importlib.util,json,sqlite3,tempfile,unittest,zipfile
+import importlib.util,json,sqlite3,tempfile,unittest,zipfile,subprocess,os
 from unittest.mock import patch,Mock
 D=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('sdp',D/'sdp_realtime.py');s=importlib.util.module_from_spec(spec);spec.loader.exec_module(s)
@@ -72,11 +72,35 @@ class SDP(unittest.TestCase):
   self.assertEqual(cover['per_metric'][s.REQUIRED[0]]['samples'],238)
   result=s.metrics(root/'sdp.db',a,b);self.assertGreater(result['Texture Memory Read BW (Bytes/Second)']['max'],0)
   with self.assertRaisesRegex(RuntimeError,'incomplete official coverage'):s.metrics(root/'sdp.db',cap['window_start_utc_us'],cap['window_end_utc_us'])
- def test_partial_remote_exit_snapshot_then_absent_is_clean(self):
-  # One stat line while exe/status vanish during official GUI disconnect.
-  tail=['S']+['0']*18+['1234'];raw='123 (sdpservice) '+' '.join(tail)
-  with patch.object(s,'ad',side_effect=[raw,'']):self.assertIsNone(s.remote_identity({},123))
-  with patch.object(s,'ad',side_effect=[raw,raw]),self.assertRaisesRegex(RuntimeError,'still-live'):s.remote_identity({},123)
+ def proc_stat(self,start='1234',state='S'):
+  return '123 (sdpservice) '+' '.join([state]+['0']*18+[start])
+ def framed_proc(self,before,after,partial=False):
+  values=[('STAT0',before),('EXE',''if partial else'/data/local/tmp/SnapdragonProfiler/sdpservice'),('HASH',''if partial else'a'*64+'  /proc/123/exe'),('UID',''if partial else'2000 2000 2000 2000'),('STAT1',after)]
+  return ''.join('__SDP_'+key+'__\n'+(v+'\n'if v else'')for key,v in values).strip()
+ def test_double_stat_stable_identity_and_disappearance(self):
+  st=self.proc_stat()
+  with patch.object(s,'ad',return_value=self.framed_proc(st,st)):
+   self.assertEqual(s.remote_identity({},123),{'pid':123,'starttime':'1234','exe':'/data/local/tmp/SnapdragonProfiler/sdpservice','sha256':'a'*64,'uids':['2000']*4})
+  for before,after in [(st,''),(st,self.proc_stat(state='Z')),('','')]:
+   with patch.object(s,'ad',return_value=self.framed_proc(before,after,partial=True)):self.assertIsNone(s.remote_identity({},123))
+ def test_actual_ret1_status_disappearance_then_absent_or_live(self):
+  # Actual v3 result: sed /proc/22090/status vanished after its earlier stat.
+  e=subprocess.CalledProcessError(1,['adb','shell','old proc reads'],output=self.proc_stat(),stderr='sed: /proc/22090/status: No such file or directory')
+  with patch.object(s,'ad',side_effect=[e,'']):self.assertIsNone(s.remote_identity({},22090))
+  with patch.object(s,'ad',side_effect=[e,self.proc_stat()]),self.assertRaisesRegex(RuntimeError,'process live; preserve'):s.remote_identity({},22090)
+ def test_reused_or_partial_live_PID_preserved(self):
+  st=self.proc_stat()
+  for raw in [self.framed_proc(st,self.proc_stat(start='1235')),self.framed_proc('',st),self.framed_proc(st,st,partial=True)]:
+   with patch.object(s,'ad',return_value=raw),self.assertRaisesRegex(RuntimeError,'preserve'):s.remote_identity({},123)
+ def test_actual_host_shell_two_stat_protocol_and_absent_exit_zero(self):
+  # Executes only the same proc-read shell against this host test PID and an
+  # absent PID. No ADB/process termination/device access or target function.
+  def local(_,*args):
+   self.assertEqual(args[0],'shell');self.assertTrue(args[-1].endswith('; :'))
+   r=subprocess.run(['bash','-c',args[-1]],capture_output=True,text=True,check=True);return r.stdout.strip()
+  with patch.object(s,'ad',side_effect=local):
+   row=s.remote_identity({},os.getpid());self.assertEqual(row['pid'],os.getpid());self.assertEqual(row['uids'],[str(os.getuid())]*4)
+   self.assertIsNone(s.remote_identity({},99999999))
  def test_optional_GPU_failure_actual_hook_continues_memory_path(self):
   # Execute the actual try/except hook from phase_game with a failing official
   # tool; original tool error/close recorded, no synthetic success/zero metrics.
