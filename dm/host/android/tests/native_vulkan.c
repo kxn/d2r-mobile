@@ -744,6 +744,23 @@ int dm_vulkan_test_main(void) {
     CHECK(vk_pool_shared_mode());gpu_query_math_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"GPU-native-query-math\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
   }
+  if(getenv("DM_FIXED_SHARED_POLICY_TEST")) {
+    const char *expected=getenv("DM_FIXED_SHARED_POLICY_TEST");
+    int shared=!strcmp(expected,"shared"),sync=!strcmp(expected,"sync-unsupported");
+    CHECK(shared || sync || !strcmp(expected,"legacy"));
+    CHECK(vk_pool_shared_mode()==shared);
+    CHECK(V.options.pool_window_bytes==(shared?0:16u<<20));
+    CHECK(V.options.pool_mirror_reference==!shared);
+    CHECK(V.options.pool_defer_publication==(!shared && !sync));
+    CHECK(mtl_pool_defer_publication_mode()==V.options.pool_defer_publication);
+    CHECK(!V.cmd);
+    CHECK(!setenv("DM_VULKAN_SHARED_POOLS",shared?"0":"1",1));
+    CHECK(vk_pool_shared_mode()==shared); // startup selection stays immutable
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"fixed-shared-cold-policy\",\"mode\":\"%s\",\"window_bytes\":%llu,\"mirror\":%d,\"defer\":%d,\"checks\":%u,\"result\":\"passed\"}\n",expected,
+        (unsigned long long)V.options.pool_window_bytes,V.options.pool_mirror_reference,V.options.pool_defer_publication,checks);
+    return 0;
+  }
   if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {
     CHECK(vk_pool_shared_mode());
     NVNmemoryPoolBuilder b;CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);

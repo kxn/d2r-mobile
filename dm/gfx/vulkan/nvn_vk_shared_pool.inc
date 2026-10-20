@@ -81,8 +81,6 @@ static void shared_device_probe(void) {
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
   extern int dm_gfx_shared_owner_ready(void);
   if(!dm_gfx_shared_owner_ready()) {LOG("[shared pool] startup legacy: dedicated NVN owner unavailable");return;}
-  if(V.options.pool_window_bytes || V.options.pool_mirror_reference || V.options.pool_defer_publication)
-    die("Fixed shared mode conflicts with legacy window/mirror/defer options");
   if(!shared_extension || !vkGetMemoryHostPointerPropertiesEXT) {LOG("[shared pool] startup legacy: external host import unavailable");return;}
   VkPhysicalDeviceExternalMemoryHostPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
   VkPhysicalDeviceProperties2 props={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&host};
@@ -115,6 +113,15 @@ static void shared_device_probe(void) {
   for(unsigned k=0;k<64;k++)if(memory[shared_alignment+k]!=0x31)valid=0;
   for(unsigned k=0;k<64;k+=4) {uint32_t value;memcpy(&value,memory+shared_alignment+64+k,4);if(value!=0x718293a4)valid=0;}
   vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);free(memory);
+  // Only a successful capability/byte probe changes the immutable backing
+  // policy. Every unsupported return above keeps the original legacy options,
+  // including Android's default windows and the published defer getter.
+  if(valid) {
+    V.options.pool_window_bytes=0;
+    V.options.pool_mirror_reference=0;
+    V.options.pool_defer_publication=0;
+    atomic_store_explicit(&pool_defer_publication_enabled,0,memory_order_release);
+  }
   shared_active=valid;LOG("[shared pool] immutable startup %s; lazy whole Pool, no online mirror fallback",valid?"shared":"legacy: byte probe mismatch");
 }
 
