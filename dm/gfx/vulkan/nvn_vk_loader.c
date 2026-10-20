@@ -6,16 +6,22 @@
 #include <sys/stat.h>
 #include <errno.h>
 #ifdef __ANDROID__
+#include <sys/sysmacros.h>
+#endif
+#ifdef __ANDROID__
 #include "../../third_party/libadrenotools/include/adrenotools/driver.h"
 #endif
 
 static pthread_mutex_t loader_mutex=PTHREAD_MUTEX_INITIALIZER;
 static char driver_directory[PATH_MAX],hook_directory[PATH_MAX];
 static int initialized;
-enum driver_provider { DRIVER_UNSET,DRIVER_SYSTEM,DRIVER_ADRENO,DRIVER_PANVK };
+enum driver_provider { DRIVER_UNSET,DRIVER_SYSTEM,DRIVER_ADRENO,DRIVER_PANVK,DRIVER_PANVK_LAYERED_DEBUG };
 static enum driver_provider provider;
 // Keep both handles alive for the entire Vulkan instance/device lifetime.
 static void *driver_tools,*custom_loader;
+static char layered_debug_library[PATH_MAX];
+static int layered_debug_identity_verified;
+int vk_loader_debug_identity_verified(void) { return layered_debug_identity_verified; }
 
 static void directory_copy(char *dst,const char *src) {
   if(!src || !*src) { dst[0]=0;return; }
@@ -29,6 +35,7 @@ static enum driver_provider parse_provider(const char *name) {
   if(!strcmp(name,"system")) return DRIVER_SYSTEM;
   if(!strcmp(name,"adreno")) return DRIVER_ADRENO;
   if(!strcmp(name,"panvk")) return DRIVER_PANVK;
+  if(!strcmp(name,"panvk-layered-debug")) return DRIVER_PANVK_LAYERED_DEBUG;
   die("Vulkan unknown driver provider: %s",name);
 }
 void vk_loader_set_driver(const char *name,const char *directory,const char *hooks) {
@@ -80,7 +87,7 @@ void vk_loader_initialize(void) {
       directory_copy(driver_directory,getenv("DM_VULKAN_DRIVER_ROOT"));
     if(provider==DRIVER_UNSET) provider=driver_directory[0]?DRIVER_ADRENO:DRIVER_SYSTEM;
   }
-  if(provider==DRIVER_ADRENO || provider==DRIVER_PANVK) {
+  if(provider==DRIVER_ADRENO || provider==DRIVER_PANVK || provider==DRIVER_PANVK_LAYERED_DEBUG) {
 #ifdef __ANDROID__
     char library[PATH_MAX];
     if(provider==DRIVER_PANVK) {
@@ -108,19 +115,28 @@ void vk_loader_initialize(void) {
       if(!hook_directory[0]) die("Vulkan custom driver hook directory missing");
       library_path(library,hook_directory,"libadrenotools.so");
       char driver_path[PATH_MAX];
-      library_path(driver_path,driver_directory,"libvulkan_freedreno.so");
+      const char *driver_name=provider==DRIVER_PANVK_LAYERED_DEBUG?"libvulkan_panfrost.so":"libvulkan_freedreno.so";
+      library_path(driver_path,driver_directory,driver_name);
+      if(provider==DRIVER_PANVK_LAYERED_DEBUG) {
+        if(!getenv("DM_VULKAN_LAYER_PROBE") || !getenv("DM_VULKAN_VALIDATE"))
+          die("Layered PanVK is a cold validation-tool fixture only");
+        panvk_shader_cache(driver_path);
+        strcpy(layered_debug_library,driver_path);
+      }
       driver_tools=dlopen(library,RTLD_NOW|RTLD_LOCAL);
       if(!driver_tools) die("Vulkan driver tools load: %s",dlerror());
       typedef void *(*open_fn)(int,int,const char *,const char *,const char *,const char *,const char *,void **);
       open_fn open_driver=(open_fn)dlsym(driver_tools,"adrenotools_open_libvulkan");
       if(!open_driver) die("Vulkan driver tools entrypoint missing");
       custom_loader=open_driver(RTLD_NOW|RTLD_LOCAL,ADRENOTOOLS_DRIVER_CUSTOM,NULL,
-          hook_directory,driver_directory,"libvulkan_freedreno.so",NULL,NULL);
+          hook_directory,driver_directory,driver_name,NULL,NULL);
       if(!custom_loader) die("Vulkan custom driver load failed: %s",dlerror());
       PFN_vkGetInstanceProcAddr get_proc=(PFN_vkGetInstanceProcAddr)dlsym(custom_loader,"vkGetInstanceProcAddr");
       if(!get_proc) die("Vulkan custom loader entrypoint missing");
       volkInitializeCustom(get_proc);
-      LOG("[vulkan loader] custom=%slibvulkan_freedreno.so",driver_directory);
+      if(provider==DRIVER_PANVK_LAYERED_DEBUG)
+        LOG("[vulkan loader] PanVK debug via existing DRIVER_CUSTOM/system Android loader; identity not yet verified; GPU_MAPPING_IMPORT=off");
+      else LOG("[vulkan loader] custom=%slibvulkan_freedreno.so",driver_directory);
     }
 #else
     die("Application-local Vulkan driver loading requires Android");
@@ -148,12 +164,29 @@ void vk_loader_check_instance(VkInstance instance,int android_surface) {
   LOG("[vulkan loader] PanVK instance dispatch present; Android surface requested=%d",android_surface);
 }
 void vk_loader_check_device(VkPhysicalDevice physical,int driver_properties) {
-  if(provider!=DRIVER_PANVK) return;
+  if(provider!=DRIVER_PANVK && provider!=DRIVER_PANVK_LAYERED_DEBUG) return;
   if(!driver_properties) die("Vulkan PanVK driver identity properties unavailable");
   VkPhysicalDeviceDriverProperties driver={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
   VkPhysicalDeviceProperties2 props={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&driver};
   vkGetPhysicalDeviceProperties2(physical,&props);
   if(driver.driverID!=VK_DRIVER_ID_MESA_PANVK) die("Vulkan selected ICD is not Mesa PanVK (driverID=%u)",driver.driverID);
+#ifdef __ANDROID__
+  if(provider==DRIVER_PANVK_LAYERED_DEBUG) {
+    // Existing adrenotools may fall back to the system HAL. Require both Mesa
+    // identity and an executable mapping of our exact private regular file.
+    struct stat st;if(stat(layered_debug_library,&st) || !S_ISREG(st.st_mode))
+      die("Layered PanVK private driver file disappeared");
+    FILE *file=fopen("/proc/self/maps","r");if(!file)die("Layered PanVK maps unavailable");
+    char line[8192],mode[5];unsigned dev_major,dev_minor;unsigned long inode,lo,hi,offset;int found=0;
+    while(fgets(line,sizeof line,file)) {
+      if(sscanf(line,"%lx-%lx %4s %lx %x:%x %lu",&lo,&hi,mode,&offset,&dev_major,&dev_minor,&inode)==7 &&
+          strchr(mode,'x') && inode==(unsigned long)st.st_ino && dev_major==major(st.st_dev) && dev_minor==minor(st.st_dev))found=1;
+    }
+    if(ferror(file) || fclose(file) || !found)die("Layered PanVK exact private ICD mapping missing: no system fallback accepted");
+    layered_debug_identity_verified=1;
+    LOG("[vulkan loader] PanVK layered private ICD mapping verified path=%s driverID=%u",layered_debug_library,driver.driverID);
+  }
+#endif
   LOG("[vulkan loader] provider=panvk device=%s vendor=%#x driverID=%u driverVersion=%u name=%s info=%s",
       props.properties.deviceName,props.properties.vendorID,driver.driverID,
       props.properties.driverVersion,driver.driverName,driver.driverInfo);

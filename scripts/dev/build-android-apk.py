@@ -130,6 +130,7 @@ inputs.update(native_build.glob('nvn_vk_*_spv.json'))
 inputs.update(touch_assets)
 inputs.update(hud_assets)
 inputs.add(ROOT/'dm/ios/Sources/TouchArt/native_art_manifest.json')
+if layer.is_file():inputs.add(layer)
 opus_config=native_build/'dm-opus/config.h'
 # The decoder's generated configuration is a compilation input. Record it
 # alongside the pinned source, even when Ninja's dependency cache is empty.
@@ -141,7 +142,8 @@ opus_provenance={'upstream':json.loads(opus_upstream.read_text()),
                  'source_checksums_sha256':sha(ROOT/'dm/third_party/opus/SHA256SUMS'),
                  'cmake_rules_sha256':sha(ROOT/'dm/third_party/opus_fixed.cmake'),
                  'generated_config_sha256':sha(opus_config)}
-manifest={'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhost_android.so'),
+manifest={'official_validation_layer':({'path':str(layer.relative_to(ROOT)),'sha256':sha(layer)} if layer.is_file() else None),
+          'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhost_android.so'),
           'tlsdesc':args.tlsdesc,'host_opt_level':args.opt_level,'contains_game_binary':False,
           'official_renderdoc_api':args.renderdoc_api,
           'fixed_shared_pools_compiled':args.shared_pools,

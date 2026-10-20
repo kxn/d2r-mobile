@@ -17,3 +17,6 @@ void vk_loader_check_device(VkPhysicalDevice physical,int driver_properties);
 #ifdef __cplusplus
 }
 #endif
+
+// Debug-only fixture result; never initializes a device or changes selection.
+int vk_loader_debug_identity_verified(void);

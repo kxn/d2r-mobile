@@ -811,6 +811,16 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
          (unsigned)getuid(),(unsigned)getpid(),result);
 }
 
+// Tool-only entry. Reuse the original NVN fixture, normal Android loader and
+// official VVL; no game/Surface/guest initialization or driver modifications.
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeVulkanLayerProbe(
+    JNIEnv *env,jclass klass,jstring directory) {
+  static _Atomic int selected;
+  if(atomic_exchange(&selected,1) || vk_loader_is_initialized())die("Layer probe requires cold process");
+  if(setenv("DM_VULKAN_LAYER_PROBE","1",1))die("Layer probe selector");
+  Java_com_d2rmobile_nativeport_MainActivity_nativeTests(env,klass,directory,JNI_TRUE,JNI_FALSE,JNI_FALSE,JNI_TRUE,JNI_FALSE);
+}
+
 // Separate owned test selector; never freezes game startup policy or touches
 // an already initialized Vulkan device. The normal nativeTests path is unchanged.
 JNIEXPORT jint JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedImageTests(

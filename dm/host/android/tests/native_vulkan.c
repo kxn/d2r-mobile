@@ -16,6 +16,7 @@
 static void *(*bootstrap)(const char *);
 extern void crash_thread_init(void);
 extern unsigned vk_validation_error_count(void);
+extern int vk_loader_debug_identity_verified(void);
 static unsigned checks;
 #define CALL(name, ...) ((NVNT_##name)bootstrap(#name))(__VA_ARGS__)
 #define CHECK(condition)                                                       \
@@ -687,6 +688,45 @@ static void fixed_shared_buffer_test(void) {
 }
 #include "native_vulkan_shared_image.inc"
 #endif
+static VkBool32 VKAPI_PTR layer_probe_reject(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT types,const VkDebugUtilsMessengerCallbackDataEXT *data,void *context) {
+  (void)severity;(void)types;
+  unsigned *expected=context;
+  if(data->pMessageIdName && !strcmp(data->pMessageIdName,"VUID-VkBufferCreateInfo-size-00912"))(*expected)++;
+  // The deliberate invalid call must be stopped by the official layer before
+  // reaching the private ICD. This is not a Vulkan validation implementation.
+  return VK_TRUE;
+}
+static int layer_probe_test(void) {
+  CHECK(vk_async_submissions());
+  complete_pool_overwrite_test();
+  CHECK(vk_validation_error_count()==0);
+  VkPhysicalDeviceDriverProperties driver={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+  VkPhysicalDeviceProperties2 props={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&driver};
+  vkGetPhysicalDeviceProperties2(V.physical,&props);
+#ifdef __ANDROID__
+  CHECK(driver.driverID==VK_DRIVER_ID_MESA_PANVK && vk_loader_debug_identity_verified());
+#endif
+  unsigned expected=0;
+  VkDebugUtilsMessengerCreateInfoEXT info={.sType=VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+    .messageSeverity=VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+    .messageType=VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,.pfnUserCallback=layer_probe_reject,.pUserData=&expected};
+  VkDebugUtilsMessengerEXT messenger;CHECK(vkCreateDebugUtilsMessengerEXT!=NULL);
+  CHECK(vkCreateDebugUtilsMessengerEXT(V.instance,&info,NULL,&messenger)==VK_SUCCESS);
+  VkBufferCreateInfo bad={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=0,.usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    .sharingMode=VK_SHARING_MODE_EXCLUSIVE};
+  VkBuffer buffer=VK_NULL_HANDLE;VkResult invalid=vkCreateBuffer(V.device,&bad,NULL,&buffer);
+  CHECK(invalid==VK_ERROR_VALIDATION_FAILED_EXT && buffer==VK_NULL_HANDLE);
+  CHECK(expected==1 && vk_validation_error_count()==1);
+  vkDestroyDebugUtilsMessengerEXT(V.instance,messenger,NULL);
+  printf("{\"test\":\"official-VVL-private-ICD-entry\",\"checks\":%u,\"driverID\":%u,"
+    "\"private_ICD_verified\":%s,\"positive_GPU_bytes\":true,\"positive_VUID_count\":0,"
+    "\"negative_VUID\":\"VUID-VkBufferCreateInfo-size-00912\",\"negative_count\":%u,"
+    "\"invalid_call_blocked\":true,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
+    checks,driver.driverID,vk_loader_debug_identity_verified()?"true":"false",expected);
+  return 0;
+}
+
 int dm_vulkan_test_main(void) {
   crash_thread_init();
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -759,6 +799,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_VULKAN_LAYER_PROBE"))return layer_probe_test();
   if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_FIXED_SHARED_QUERY_REPORT_TEST")) {

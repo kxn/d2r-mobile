@@ -20,7 +20,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
     private static native int nativeSharedImageTests(String directory, int mode);
-    private static boolean sharedImageFixtureStarted;
+    private static boolean sharedImageFixtureStarted, layerProbeFixtureStarted;
+    private boolean layerProbeFixture;
+    private static native void nativeVulkanLayerProbe(String directory);
     private boolean sharedImageFixture;
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean readbackBatch);
     private static native void nativeSuspend(boolean paused);
@@ -137,6 +139,21 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        if (getIntent().getBooleanExtra("vulkan_layer_probe", false)) {
+            if (saved != null || hostStarted || layerProbeFixtureStarted || sharedImageFixtureStarted ||
+                    !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().hasExtra("run_vulkan_tests") || getIntent().getBooleanExtra("run_vulkan_tests", true) ||
+                    !"panvk-layered-debug".equals(getIntent().getStringExtra("vulkan_provider")))
+                throw new IllegalArgumentException("Layer probe requires one cold explicit tests-only private PanVK process");
+            layerProbeFixtureStarted = layerProbeFixture = true;
+            File fixtureRoot = new File(getFilesDir(), "runtime");
+            if (!fixtureRoot.isDirectory() && !fixtureRoot.mkdirs()) throw new IllegalStateException("runtime directory");
+            nativeProbe(fixtureRoot.getAbsolutePath());
+            nativeVulkanDriver("panvk-layered-debug", new File(fixtureRoot, "vulkan-panfrost").getAbsolutePath(),
+                    getApplicationInfo().nativeLibraryDir);
+            new Thread(() -> nativeVulkanLayerProbe(fixtureRoot.getAbsolutePath()), "vulkan-layer-probe").start();
+            return;
+        }
         if (getIntent().getBooleanExtra("readback_batch_test", false)) {
             if (saved != null || hostStarted || readbackBatchFixtureStarted || sharedImageFixtureStarted ||
                     !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
@@ -353,6 +370,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         super.onNewIntent(intent);
         if (readbackBatchFixtureStarted || intent.hasExtra("readback_batch_test")) {
             android.util.Log.w("D2RVulkan", "Readback oracle is cold-process-only; ignoring new Intent");
+            return;
+        }
+        if (layerProbeFixture || intent.hasExtra("vulkan_layer_probe")) {
+            android.util.Log.w("D2RVulkan", "Layer probe is cold-process-only; ignoring new Intent");
             return;
         }
         if (sharedImageFixture || intent.hasExtra("shared_image_test")) {
