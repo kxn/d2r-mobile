@@ -73,8 +73,11 @@ def observe(claim=True):
  return raw
 def logs():
  text=ad('exec-out','run-as',pkg,'cat',run+'/replay.log',check=False)
- if text:(a.output/'replay.log').write_text(text)
- return text
+ sdk=ad('exec-out','run-as',pkg,'cat',run+'/gfxr.log',check=False)
+ if sdk:(a.output/'official-gfxr.log').write_text(sdk)
+ combined=text+('\n[unchanged official SDK log file]\n'+sdk if sdk else'')
+ if combined:(a.output/'replay.log').write_text(combined)
+ return combined
 def stop():
  current=observe(False)
  if current and not ambiguous and first and current==first:
@@ -113,7 +116,7 @@ try:
  assert ad('shell','sha256sum',tmp+'/driver.so').split()[0]==sha(a.driver)and ad('shell','sha256sum',tmp+'/capture.gfxr').split()[0]==sha(a.capture)
  ad('shell','run-as',pkg,'mkdir','-p','files/driver');ad('shell','run-as',pkg,'cp',tmp+'/driver.so','files/driver/libvulkan_panfrost.so');ad('shell','run-as',pkg,'cp',tmp+'/capture.gfxr','files/capture.gfxr')
  assert ad('shell','run-as',pkg,'sha256sum','files/driver/libvulkan_panfrost.so').split()[0]==sha(a.driver)and ad('shell','run-as',pkg,'sha256sum','files/capture.gfxr').split()[0]==sha(a.capture)
- args='--validate --debug-messenger-level info --memory-translation none /data/user/0/'+pkg+'/files/capture.gfxr'
+ args='--validate --log-file /data/user/0/'+pkg+'/'+run+'/gfxr.log --memory-translation none /data/user/0/'+pkg+'/files/capture.gfxr'
  cmd=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_token',token,'--es','args',shlex.quote(args)]
  result.update(stage='one-cold-replay',launch_command=B+cmd);save()
  with (a.output/'launch.txt').open('w')as f:launch=subprocess.Popen(B+cmd,stdout=f,stderr=subprocess.STDOUT)
@@ -133,9 +136,9 @@ try:
  assert first and not ambiguous,'Replay PID ownership failed'
  # Retain crash/SDK console messages for this exact PID without clearing logcat.
  result['replay_return_marker']=terminal
- assert '[replay bridge] configured pid='+first+' 'in log
- assert 'identity verified driverID=20'in log and 'DRIVER_CUSTOM only, GPU_MAPPING_IMPORT=off'in log
- assert '====== Entering android_main'in log and terminal,'Official replay did not reach normal EOF/return'
+ assert '[replay bridge] configured pid='+first+' 'in log,'Startup PID must match exact observed process'
+ assert 'identity verified driverID=20'in log and 'DRIVER_CUSTOM only, GPU_MAPPING_IMPORT=off'in log,'Private ICD identity/standard loader absent'
+ assert 'Finished loading state for captured frame'in log and terminal,'Official replay did not finish reconstructed state and reach SDK EOF/return'
  assert 'File did not contain any frames'in log,'Expected offscreen submit-only capture EOF'
  assert not any(x in log for x in ('Replay failed','fatal error and cannot continue','[replay bridge] FATAL','VK_ERROR_DEVICE_LOST'))
  errors=sorted(set(re.findall(r'(?:VUID|SYNC)-[A-Za-z0-9_-]+',log)));result['official_validation_diagnostics']=errors
