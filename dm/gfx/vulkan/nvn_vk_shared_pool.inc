@@ -79,6 +79,12 @@ int vk_pool_shared_mode(void) {mtl_init();return shared_active;}
 // Recording-owner read of the immutable result, after device initialization.
 // Unlike the startup query this never initializes Vulkan or reads environment.
 int vk_pool_shared_active(void) {return shared_active;}
+int vk_pool_shared_materialized(uint64_t address,uint64_t bytes) {
+  if(!shared_active || !bytes)return 0;
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  int ready=p && p->shared && !p->shared_closing && p->backings;
+  pthread_mutex_unlock(&V.resources);return ready;
+}
 static void shared_device_probe(void) {
   if(!shared_requested)return;
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
