@@ -484,6 +484,19 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
 #include "native_vulkan_astc_decode.inc"
+// Optional bounded functional records for the independent Android fixture.
+// No timer, sampling or game data; the byte oracles keep their original checks.
+static void publication_memory_report(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(!getenv("DM_FIXED_SHARED_PUBLICATION_RECORDS"))return;
+  extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
+  int ready,shadow;uint32_t properties;
+  if(!vk_test_fixed_shared_pool((uintptr_t)bytes,&ready,&shadow,&properties) || !ready || shadow)
+    die("Shared publication fixture is not using its original imported Pool");
+  printf("{\"fixed_shared_memory\":true,\"properties\":%u,\"noncoherent_atom_size\":%llu,\"host_coherent\":%s,\"whole_pool_bytes\":%u,\"uid\":%u,\"shadow\":false}\n",properties,
+      (unsigned long long)V.props.limits.nonCoherentAtomSize,(properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)?"true":"false",4u<<20,(unsigned)getuid());
+#endif
+}
 #include "native_vulkan_event.inc"
 #ifdef DM_VULKAN_SHARED_POOLS
 extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);

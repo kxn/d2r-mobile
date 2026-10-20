@@ -748,15 +748,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
 
 // Only an explicit isolated native fixture selects this compile-time experiment.
 JNIEXPORT jboolean JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeFixedSharedPoolFixture(
-    JNIEnv *env,jclass klass) {
+    JNIEnv *env,jclass klass,jint kind) {
   (void)env;(void)klass;
 #ifdef DM_VULKAN_SHARED_POOLS
   static int selected;
   extern int vk_loader_is_initialized(void);
-  if(selected || vk_loader_is_initialized()) return JNI_FALSE;
+  if(selected || vk_loader_is_initialized() || kind<0 || kind>2) return JNI_FALSE;
+  // This explicit fixture chooses whole-pool policy; game startup uses the
+  // backend cold decision and preserves legacy options if unsupported.
+  vk_pool_window_bytes(0);vk_pool_mirror_reference(0);mtl_pool_defer_publication(0);
+  const char *fixture=kind==0?"DM_FIXED_SHARED_BUFFER_FIXTURE":kind==1?"DM_GPU_EVENT_PAYLOAD_FIXTURE":"DM_FIXED_SHARED_QUERY_REPORT_TEST";
   if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
       setenv("DM_VULKAN_SHARED_POOLS","1",1) ||
-      setenv("DM_FIXED_SHARED_BUFFER_FIXTURE","1",1))
+      setenv(fixture,"1",1) || setenv("DM_FIXED_SHARED_PUBLICATION_RECORDS","1",1))
     die("Fixed shared fixture startup environment");
   selected=1;return JNI_TRUE;
 #else

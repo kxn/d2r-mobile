@@ -160,6 +160,7 @@ static void gpu_query_report_test(void) {
   // Existing streaming regression spans several actual GPU submissions and
   // keeps cumulative query prefixes/reset boundaries through resource reuse.
   stream_submit_test(controls[0],controls[1]);
+  publication_memory_report();
   CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&memory);
   CHECK(vk_validation_error_count()==0);
   printf("{\"test_details\":\"GPU-native-query-original-CPU-byte-oracle\",\"timestamp_reports\":%u,\"sample_prefixes\":4,\"legacy_CPU_expression_exact\":true,\"streaming_regression\":true,\"image_freshness_acceptance\":false}\n",count+2);

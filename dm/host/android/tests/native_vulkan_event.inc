@@ -58,6 +58,7 @@ static void gpu_event_payload_test(void) {
   for(unsigned i=0;i<64;i++)CHECK(dst[i]==src[i]*3+7);
   CHECK(CALL(nvnEventGetValue,&event)==13);
   CALL(nvnEventFinalize,&event);CALL(nvnProgramFinalize,&program);
+  publication_memory_report();
   CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&memory);
   CHECK(vk_validation_error_count()==0);
   printf("{\"test\":\"GPU-native-NVN-event-payload\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);

@@ -1418,7 +1418,8 @@ static void init_device(void) {
   if(shared && strcmp(shared,"0") && strcmp(shared,"1"))die("DM_VULKAN_SHARED_POOLS expects0or1");
   shared_requested=shared && !strcmp(shared,"1");
 #ifdef DM_VULKAN_TEST_EMBED
-  shared_cache_fixture_records=getenv("DM_FIXED_SHARED_BUFFER_FIXTURE")!=NULL;
+  shared_cache_fixture_records=getenv("DM_FIXED_SHARED_BUFFER_FIXTURE")!=NULL ||
+    getenv("DM_FIXED_SHARED_PUBLICATION_RECORDS")!=NULL;
 #endif
 #endif
   const char *device_extensions[16];

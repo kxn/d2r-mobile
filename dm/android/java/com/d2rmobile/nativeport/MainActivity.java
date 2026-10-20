@@ -73,7 +73,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePresentWorkerReference(boolean reference, boolean sharedQueue);
     private static native void nativeBloomQuarterEnabled(boolean enabled);
     private static native void nativeVulkanDriver(String provider, String directory, String hooks);
-    private static native boolean nativeFixedSharedPoolFixture();
+    private static native boolean nativeFixedSharedPoolFixture(int kind);
     private static native void nativeStreamSubmitReference(boolean reference);
     private static native void nativeStoreDescriptorReference(boolean reference);
     private static native void nativeCoverWaitReference(boolean reference);
@@ -242,7 +242,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     getIntent().getBooleanExtra("acquire_scope_test", false) ||
                     getIntent().getBooleanExtra("memory_test", false))
                 throw new IllegalArgumentException("Fixed shared fixture requires exclusive tests, PanVK, async_submit, explicit validation=false and run_game=false");
-            if (!nativeFixedSharedPoolFixture())
+            String fixtureKind = getIntent().getStringExtra("fixed_shared_fixture_kind");
+            int fixtureMode = fixtureKind == null || "buffer".equals(fixtureKind) ? 0 :
+                    "event".equals(fixtureKind) ? 1 : "query".equals(fixtureKind) ? 2 : -1;
+            if (fixtureMode < 0)
+                throw new IllegalArgumentException("Unknown fixed shared fixture kind");
+            if (!nativeFixedSharedPoolFixture(fixtureMode))
                 throw new IllegalStateException("Fixed shared fixture unavailable or already selected");
         }
         if (getIntent().getBooleanExtra("run_vulkan_tests", false)) {
