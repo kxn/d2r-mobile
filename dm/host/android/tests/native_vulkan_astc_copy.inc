@@ -149,7 +149,27 @@ static void astc_copy_encoding_test(void) {
   }
   p_copy_t2t pair={.src=s,.dst=d,.sr={0,0,0,128,128,1},.dr={0,0,41,128,128,1}};
   mtl_sub_begin();vk_texture_copy_t2t(&pair);vk_internal_wait(vk_internal_commit());
-  if(negative && !strcmp(negative,"existing"))die("ASTC copy accepted an already-defined BC3 destination");
+  if(negative && !strcmp(negative,"existing")) {
+    // Previously this was an unconditional rejection. The new representation
+    // must preserve actual prior BC pixels; it must NOT adopt ASTC block bits.
+    extern VkImageLayout vk_texture_test_bc_copy_layout(const tex_t *);
+    for(unsigned which=0;which<2;which++) {
+      mtl_sub_begin();unsigned state[5];VkImage physical;
+      CHECK(vk_texture_test_astc_copy_info(d,state,&physical));
+      CHECK(!state[0] && state[1]==VK_FORMAT_R8G8B8A8_UNORM && state[4]);
+      vk_buffer *pixels=vk_temp_buffer(128*128*4);
+      VkBufferImageCopy copy={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,which?41:0,1},.imageExtent={128,128,1}};
+      vkCmdCopyImageToBuffer(V.cmd,physical,vk_texture_test_bc_copy_layout(d),pixels->handle,1,&copy);
+      vk_internal_wait(vk_internal_commit());
+      const uint8_t expected[4]={which?31:0,which?63:0,which?127:0,which?255:0};
+      for(unsigned k=0;k<128*128*4;k++)CHECK(abs((int)pixels->map[k]-expected[k%4])<=1);
+    }
+    CALL(nvnTextureFinalize,&source);CALL(nvnTextureFinalize,&destination);
+    CALL(nvnTextureFinalize,&output[0]);CALL(nvnTextureFinalize,&output[1]);CALL(nvnMemoryPoolFinalize,&pool);
+    if(raw)CHECK(!munmap(raw,size));
+    printf("{\"test_details\":\"defined-BC3-array-mixed-ASTC-preservation\",\"actual_ASTC_GPU\":true,\"original_layer0_preserved\":true,\"incoming_layer41_correct\":true,\"physical_RGBA_not_ASTC\":true,\"result\":\"passed\"}\n");
+    return;
+  }
   astc_copy_blocks(d,0,41,astc_decode_constant,NULL);
   // Same physical encoding across multiple destination layers/mips, and a
   // nonzero block ROI. Every byte outside that ROI must remain unchanged.

@@ -1741,3 +1741,14 @@ DS 入场修复已实际部署：Mali 普通游戏3秒窗口+236 plans/+236 draw
 这是短营地顺序对照，镜头差1单位、PSO/variant与driver cache不完全相同；Mali后轮public thermal LIGHT使原策略target60→30，不能作为FPS/等温比较或发热改善结论。静态截图无明显黑块/缺几何/HUD问题，尚无长游玩或真实6GB设备启动证明。原控制器过严检查一条native.log重定向前的JNI日志而失败的轮次保留、未取meminfo并正常存档停机；修复控制器只改用launcher固定请求及逐state实际.75，不伪称观察到了state未暴露的dynamic标志。报告 `pool-finite-v1-{q,mali}-actual-memory-comparison.json`。
 
 基于通用范围/生命周期证明及两厂实际内存下降，Android Activity冷启动未显式设置时选择16MiB，`--pool-window-bytes 0`保留整池参考，明确intent覆盖优先；不允许hot intent换策略。原生CLI/Linux的环境默认保持原状。该默认减少分配，不宣称已经解决持续发热。
+
+
+### 已定义 BC3 数组接收加工 ASTC 页的表示闭包
+
+静态资源加工后的 ASTC4 页可能被原 NVN 有类型 T2T 复制到已有 BC3 页的动态数组。已有目标不能通过取消 fresh 检查整体改成 ASTC：其它 layer/mip 仍是有效 BC 块。shared 模式下对此仅允许二维、单采样、sampled/transfer、无 packaged CPU layout、无其它已定义别名且有实际 CPU 版本观察的 BC3 linear/sRGB 目标，查询旧格式及输入格式 BLIT_SRC、RGBA8 BLIT_DST/SAMPLED 和实际 image-format limits 后，先按原依赖将所有旧 mip/layer 解码 blit 到对应 RGBA8，再执行当前原 T2T 的 ROI 转换。原“全未定义目标可采用 ASTC 编码”的路径保留原条件。
+
+逻辑 NVN format/内存地址保持不变；没有生成 BC 重压缩字节。原 logical owner/alias tree 节点保持，旧 physical image、access、views 在真实 submission 完成后退休，recipe generation/descriptor view 随替换失效。新状态持有 CPU dirty scope/stamp，后续同值 CPU 写也使其失败；其它 image writer 别名拒绝。有类型的 BC/ASTC T2T 和兼容 BC3 linear/sRGB 采样可继续，B2T、T2B、ReadTexels、未声明 raw image、storage/不兼容重解释及相交 mapped Flush/Invalidate 在缺 BC 编码契约时明确拒绝；optional CPU proof 不授权旧 guest bytes。不声称拦截任意绕过 NVN/HLE 的直接 native CPU 读。
+
+代价是一次全层 GPU 读/写与较大的持久 RGBA8 image，旧/新分配暂时共存。实测拒绝目标为 128²×42 层×7 mip，其理想 BC texel payload 917952 B、RGBA texels 3669792 B，差值 2751840 B；这不等于 Vulkan allocation 或实际驻留。每 image 新标志是否占用旧 padding 以最终 NDK DWARF 为准。工作量与内存成本必须和 bulk native payload 膨胀分别记录，不推断 FPS/RAM 净收益。
+
+独立 GPU fixture 为 `DM_MIXED_COMPRESSED_COPY_FIXTURE=1`；host 实际执行 BC→RGBA 全 layer/mip/ROI/旧 view/readback 生命周期，`DM_MIXED_COMPRESSED_ASTC_SOURCE=1` 只有实际 ASTC 支持才从原 production 分支验证混合输入，不支持会明确返回 unsupported。旧 `DM_ASTC_COPY_NEGATIVE=existing` 现显式验证 RGBA 而非 ASTC 的物理表示，真实 readback 原已定义 layer0 与新 ASTC layer41 的全部像素；新 preserving 矩阵进一步覆盖其它 layer/mip/ROI 及 CPU/alias/raw-export 负例。

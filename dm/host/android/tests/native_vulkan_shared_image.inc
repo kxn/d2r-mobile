@@ -184,6 +184,7 @@ static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
   printf("{\"test_details\":\"shared-native-copy-retile\",\"GPU_produced_B2T_source\":true,\"T2T_source_chain\":true,\"two_layers_three_mips\":true,\"same_value_CPU_edit\":true}\n");
 }
 #include "native_vulkan_astc_copy.inc"
+#include "native_vulkan_mixed_compressed_copy.inc"
 #include "native_vulkan_image_observe.inc"
 extern int vk_test_texture_retired_frontier(uint64_t,uint64_t,uint64_t *);
 static void shared_image_retired_alias_test(NVNmemoryPool *pool,uint8_t *data) {

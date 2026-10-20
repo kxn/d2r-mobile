@@ -2,7 +2,8 @@
 // pages are ASTC, while freshly allocated GPU page arrays remain logical BC3.
 // This is NOT a generic NVN compressed-format conversion or reinterpretation.
 // Keep the original logical descriptor and Pool bytes; only wholly undefined
-// physical storage may adopt the source's actual encoding.
+// physical storage may adopt the source's actual encoding. Defined mixed BC3
+// targets instead preserve all previous pixels in the decoded RGBA8 family.
 typedef struct {
 #ifdef DM_VULKAN_SHARED_POOLS
   nvn_dirty_scope *scope;
@@ -25,7 +26,7 @@ static image *astc_copy_find(const tex_t *t) {
   return NULL;
 }
 static int image_astc_copy_unchanged(image *i) {
-  if(!i->astc_copy_encoding)return 1;
+  if(!i->astc_copy_encoding && !i->bc_copy_decoded)return 1;
   uint64_t epoch=nvn_dirty_change_epoch();
   if(epoch && i->checked_dirty_epoch==epoch && i->checked_dirty_stamp==i->astc_copy_stamp)return 1;
   nvn_dirty_range_proof proof={0};
@@ -63,13 +64,29 @@ static int astc_copy_legacy_envelope(const tex_t *t) {
 // Preserve the old already-imported provenance requirement. In window mode
 // an adjacent/crossing imported region must first become ONE exact span, not
 // be treated as proof that every byte of this observation is already covered.
+// A defined BC3 target cannot adopt ASTC block encoding. The only new
+// representation here is the existing decoded RGBA8 family, preserving every
+// physical mip/layer before the incoming copy. Raw BC byte escape stays refused.
+static int astc_copy_mixed_target(const image *d) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  return d && vk_pool_shared_active() && d->initialized && d->shared_alias_linked &&
+      !d->tex.has_layout && !d->external_access && !d->cpu_rebuildable &&
+      !d->astc_copy_encoding && !d->bc_copy_decoded && !d->decoded &&
+      !d->shared_dirty_scope && astc_copy_target(&d->tex) &&
+      d->format==vk_nvn_format(d->tex.d.format) && astc_copy_format(d->tex.d.format) &&
+      d->aspect==VK_IMAGE_ASPECT_COLOR_BIT && d->description.samples==VK_SAMPLE_COUNT_1_BIT &&
+      !(d->description.usage&~(VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT));
+#else
+  (void)d;return 0;
+#endif
+}
 static int image_astc_copy_needs_span(const p_copy_t2t *p) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(!vk_pool_shared_active() || !astc_copy_target(p->src) || !astc_copy_target(p->dst) ||
       !astc_copy_format(p->dst->d.format) || p->dst->has_layout || !p->dst->mem || !p->dst->L.size)return 0;
   image *s=astc_copy_find(p->src),*d=astc_copy_find(p->dst);
   VkFormat source=s?s->format:vk_nvn_format(p->src->d.format);
-  if(source!=astc_copy_format(p->dst->d.format) || (d && (d->astc_copy_encoding || d->initialized)))return 0;
+  if(source!=astc_copy_format(p->dst->d.format) || (d && (d->astc_copy_encoding || (d->initialized && !astc_copy_mixed_target(d)))))return 0;
   vk_pool_span_info span;
   int status=vk_pool_span_query((uintptr_t)p->dst->mem,p->dst->L.size,&span);
   return status==VK_POOL_SPAN_SINGLE || status==VK_POOL_SPAN_CROSSING;
@@ -85,7 +102,7 @@ static astc_copy_observation image_astc_copy_preflight(const p_copy_t2t *p) {
     return o;
   image *s=astc_copy_find(p->src),*d=astc_copy_find(p->dst);
   VkFormat source=s?s->format:vk_nvn_format(p->src->d.format);
-  if(source!=astc_copy_format(p->dst->d.format) || (d && (d->astc_copy_encoding || d->initialized)))return o;
+  if(source!=astc_copy_format(p->dst->d.format) || (d && (d->astc_copy_encoding || (d->initialized && !astc_copy_mixed_target(d)))))return o;
   if(!vk_pool_shared_active()) {
     // A page-level dirty event must describe this entire logical destination,
     // never an unrelated neighbor. Do not invent CPU_NO_ACCESS provenance.
@@ -162,6 +179,75 @@ static int astc_copy_fresh(const image *d) {
   }
   return 1;
 }
+static int astc_copy_no_defined_alias(const image *d) {
+  uint64_t base=(uintptr_t)d->tex.mem,size=d->tex.L.size;
+  if(!base || !size || size>UINT64_MAX-base)return 0;
+  for(const image *a=images;a;a=a->next)if(a!=d && a->tex.mem && a->tex.L.size &&
+      (a->initialized || a->external_access
+#ifdef DM_VULKAN_SHARED_POOLS
+       || a->shared_alias_linked
+#endif
+      )) {
+    uint64_t other=(uintptr_t)a->tex.mem;
+    if(other<=base?base-other<a->tex.L.size:other-base<size)return 0;
+  }
+  return 1;
+}
+static void image_bc_copy_decode(image *d,VkFormat incoming,astc_copy_observation *o) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(!o->scope || !o->stamp || !astc_copy_mixed_target(d) || !astc_copy_no_defined_alias(d))
+    die("Mixed compressed copy requires observed BC3 storage with no defined alias");
+  VkFormat decoded=decoded_format(d->tex.d.format);
+  VkFormatProperties old_properties,incoming_properties,out_properties;
+  vk_format_properties(d->format,&old_properties);vk_format_properties(incoming,&incoming_properties);
+  vk_format_properties(decoded,&out_properties);
+  if(!(old_properties.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+      !(incoming_properties.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+      !(out_properties.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_DST_BIT) ||
+      !(out_properties.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+    die("Mixed compressed copy decode blit unsupported");
+  VkImageFormatProperties supported;
+  if(vkGetPhysicalDeviceImageFormatProperties(V.physical,decoded,d->description.imageType,
+      d->description.tiling,d->description.usage,d->description.flags,&supported)!=VK_SUCCESS ||
+      d->extent.width>supported.maxExtent.width || d->extent.height>supported.maxExtent.height ||
+      d->layers>supported.maxArrayLayers || d->levels>supported.maxMipLevels ||
+      !(supported.sampleCounts&VK_SAMPLE_COUNT_1_BIT))
+    die("Mixed compressed copy RGBA physical image unsupported");
+  // Callbacks may define/replace resources. Take no old handle/view before
+  // ending them, then recheck the logical representation and captured CPU era.
+  vk_mip_clear_drain();vk_render_end();
+  if(d->bc_copy_decoded) {image_astc_copy_check(d);astc_copy_observation_release(o);return;}
+  if(!astc_copy_mixed_target(d) || !astc_copy_no_defined_alias(d) ||
+      nvn_dirty_since(d->tex.mem,d->tex.L.size,o->stamp))
+    die("Mixed compressed copy changed during physical replacement");
+  image_general_transfer(d);vk_transfer_barrier();
+  image *old=malloc(sizeof *old);if(!old)die("Mixed compressed copy retirement allocation");
+  *old=*d;old->shared_alias_linked=0;old->shared_alias_next=NULL;
+  old->shared_alias_range=(alias_range_node){0};
+  image_recipes_changed();image_binding_replaced(d,old);
+  d->views=NULL;d->format=decoded;d->description.format=decoded;d->decoded=1;d->bpp=4;
+  image_allocate(d);
+  // Keep the same logical owner/alias registry node. The old VkImage/access
+  // history and descriptor/framebuffer views retire with the real submission.
+  d->bc_copy_decoded=1;d->astc_copy_stamp=o->stamp;
+  d->shared_dirty_scope=o->scope;o->scope=NULL;d->cpu_rebuildable=0;astc_copy_live++;
+  d->checked_dirty_epoch=d->checked_dirty_stamp=0;d->checked_dirty_range=(nvn_dirty_range_proof){0};
+  for(unsigned level=0;level<d->levels;level++) {
+    VkImageSubresourceLayers sub={d->aspect,level,0,d->layers};
+    int width=mip(d->extent.width,level),height=mip(d->extent.height,level);
+    VkImageBlit b={.srcSubresource=sub,.dstSubresource=sub,
+      .srcOffsets={{0,0,0},{width,height,1}},.dstOffsets={{0,0,0},{width,height,1}}};
+    image_transfer_pair(old,sub,d,sub);
+    vkCmdBlitImage(V.cmd,old->handle,VK_IMAGE_LAYOUT_GENERAL,d->handle,VK_IMAGE_LAYOUT_GENERAL,
+      1,&b,VK_FILTER_NEAREST);
+  }
+  d->initialized=1;vk_completion(image_storage_destroy,old);
+  LOG("[mixed compressed copy] serial=%llu logical=%#x old=%u physical=%u levels=%u layers=%u preserved before incoming ROI",
+      (unsigned long long)d->tex.serial,d->tex.d.format,old->format,d->format,d->levels,d->layers);
+#else
+  (void)d;(void)incoming;(void)o;die("Mixed compressed copy requires scoped shared observation");
+#endif
+}
 static void image_astc_copy_propagate(image *s,image *d,const p_copy_t2t *p,astc_copy_observation *o) {
 #ifdef DM_VULKAN_SHARED_POOLS
   int legacy=!vk_pool_shared_active() && vk_legacy_astc_copy_mode();
@@ -170,6 +256,7 @@ static void image_astc_copy_propagate(image *s,image *d,const p_copy_t2t *p,astc
   // In particular preserve the original legacy ASTC -> decoded RGBA8 blit.
   astc_copy_observation_release(o);return;
 #endif
+  if(d->bc_copy_decoded) {image_astc_copy_check(d);astc_copy_observation_release(o);return;}
   if(d->astc_copy_encoding) {
     if(!astc_copy_target(&s->tex) || !astc_copy_target(&d->tex) || s->format!=d->format || !astc_copy_region(s,d,p))
       die("ASTC propagated destination requires the same actual compressed encoding and block geometry");
@@ -186,6 +273,9 @@ static void image_astc_copy_propagate(image *s,image *d,const p_copy_t2t *p,astc
 #ifdef DM_VULKAN_SHARED_POOLS
   if(!(o->scope || (legacy && o->legacy)) || !o->stamp || !astc_copy_fresh(d) || !astc_copy_region(s,d,p)) {
     if(legacy){astc_copy_observation_release(o);return;}
+    if(astc_copy_mixed_target(d) && astc_copy_region(s,d,p)) {
+      image_bc_copy_decode(d,s->format,o);astc_copy_observation_release(o);return;
+    }
     die("ASTC resource-copy destination has no undefined-storage/CPU-version proof");
   }
   // End/replay before the final eligibility check, without holding a view or
@@ -307,4 +397,30 @@ unsigned vk_texture_test_astc_copy_policy(void *owned,size_t bytes) {
 #endif
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_texture_test_astc_copy_upload(const tex_t *t) {image *i=image_get(t);image_upload(i);}
+#endif
+
+#if defined(DM_VULKAN_TEST_EMBED) && defined(DM_VULKAN_SHARED_POOLS)
+void vk_texture_test_bc_copy_decode(const p_copy_t2t *p) {
+  vk_texture_cpu_preflight(p->src);vk_texture_cpu_preflight(p->dst);
+  image *found=astc_copy_find(p->dst);
+  if(!found)die("Owned mixed copy target must already be defined");
+  if(found->bc_copy_decoded) {image_astc_copy_check(found);return;}
+  astc_copy_observation o={0};
+  if(!shared_image_backing((uintptr_t)p->dst->mem,p->dst->L.size) ||
+      !vk_pool_shared_materialized((uintptr_t)p->dst->mem,p->dst->L.size) ||
+      !vk_pool_shared_image_source((uintptr_t)p->dst->mem,p->dst->L.size,1))
+    die("Owned mixed copy observation unavailable");
+  found=astc_copy_find(p->dst);if(!found)die("Owned mixed copy target changed after CPU preflight");
+  o.scope=nvn_dirty_scope_acquire(p->dst->mem,p->dst->L.size);
+  if(!o.scope || !vk_pool_shared_observe_protect((uintptr_t)p->dst->mem,p->dst->L.size,&o.stamp))
+    die("Owned mixed copy observation refused");
+  image *source=astc_copy_find(p->src);if(!source)die("Owned mixed copy source missing");
+  image_bc_copy_decode(found,source->format,&o);astc_copy_observation_release(&o);
+}
+#endif
+
+#if defined(DM_VULKAN_TEST_EMBED) && defined(DM_VULKAN_SHARED_POOLS)
+VkImageLayout vk_texture_test_bc_copy_layout(const tex_t *t) {
+  image *i=astc_copy_find(t);if(!i)die("Owned mixed copy image missing");return i->layout;
+}
 #endif

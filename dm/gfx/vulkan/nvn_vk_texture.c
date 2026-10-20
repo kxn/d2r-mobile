@@ -83,6 +83,7 @@ typedef struct image {
   uint64_t trace_stamp, trace_levels;
   int initialized, decoded;
   int astc_copy_encoding; // upstream ASTC-pack copy: logical BC3, physical ASTC4
+  int bc_copy_decoded; // mixed compressed copies: logical BC3, physical RGBA8
   uint64_t astc_copy_stamp; // CPU observer only; never a canonical upload stamp
   // A complete CPU upload can rebuild this physical image. Any later GPU
   // writer revokes the proof, even if its result happens to equal guest bytes.
@@ -169,8 +170,8 @@ static void image_shared_alias_write(image *i) {
   if((!shared && !legacy) || i->shared_alias_linked)return;
   // Cold first-writer admission only. A later physical alias cannot silently
   // give a propagated array a second, incompatible logical BC3 encoding.
-  if(astc_copy_live || i->astc_copy_encoding)for(image *a=shared_gpu_aliases;a;a=a->shared_alias_next)
-    if(a!=i && (a->astc_copy_encoding || i->astc_copy_encoding) && a->tex.mem && i->tex.mem) {
+  if(astc_copy_live || i->astc_copy_encoding || i->bc_copy_decoded)for(image *a=shared_gpu_aliases;a;a=a->shared_alias_next)
+    if(a!=i && (a->astc_copy_encoding || i->astc_copy_encoding || a->bc_copy_decoded || i->bc_copy_decoded) && a->tex.mem && i->tex.mem) {
       uint64_t x=(uintptr_t)i->tex.mem,y=(uintptr_t)a->tex.mem;
       if(y<=x?x-y<a->tex.L.size:y-x<i->tex.L.size)
         die("ASTC propagated image conflicts with another optimal-image writer identity");
@@ -801,6 +802,11 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
 static void image_astc_copy_check(image *i);
 static VkFormat image_astc_copy_view_format(image *i,int nvn_format);
 static VkFormat image_binding_format(image *i,const view_t *v,int storage) {
+  if(i->bc_copy_decoded) {
+    image_astc_copy_check(i);
+    if(storage || (v && v->set_format && v->format!=0x44 && v->format!=0x48))
+      die("Mixed compressed copy cannot acquire incompatible logical BC3 view");
+  }
   if(i->astc_copy_encoding) {
     image_astc_copy_check(i);
     if(storage)die("ASTC propagated copy has no logical BC3 storage encoding");
@@ -891,7 +897,7 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
   for (image *i = image_buckets[t->serial % 8192]; i; i = i->hash_next)
     if (i->tex.serial == t->serial) {
       image_astc_copy_check(i);
-      if(i->astc_copy_encoding && required)die("ASTC propagated copy cannot acquire logical BC3 writer usage");
+      if((i->astc_copy_encoding || i->bc_copy_decoded) && required)die("ASTC propagated copy cannot acquire logical BC3 writer usage");
       i->last_use = vk_recording_serial();
       if(required && (required&~i->description.usage)) {
         image_upload(i);
@@ -1433,7 +1439,7 @@ void vk_target_clear_depth(const p_set_rt *rt, const p_scissor *sc,
 void vk_texture_clear(const p_clear_tex *p) {
   vk_mip_clear_drain();vk_texture_cpu_preflight(p->tex);
   image *i = image_get(p->tex);
-  if(i->astc_copy_encoding)die("ASTC propagated copy cannot accept logical BC3 texture clear");
+  if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot accept logical BC3 texture clear");
   int is3d = i->description.imageType == VK_IMAGE_TYPE_3D;
   view_t view = p->has_view ? p->view : (view_t){0};
   if (is3d) view.set_layers = 0; // 原 3D 路径按 zoffset 选深度面，忽略数组层。
@@ -1600,7 +1606,7 @@ void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   shared_copy_backing canonical=image_retile_prepare(p->tex);
 #endif
   image *i = image_get(p->tex);
-  if(i->astc_copy_encoding)die("ASTC propagated copy cannot consume untyped logical BC3 Buffer bytes");
+  if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot consume untyped logical BC3 Buffer bytes");
   image_upload(i);
   VkBufferImageCopy c = copy_region(i, p, row, img);
   vk_buffer *src;
@@ -1676,7 +1682,7 @@ void vk_texture_copy_t2b(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   int operation=copy_pool_operation(p,row,img,1);
   vk_mip_clear_drain();
   image *i = image_get(p->tex);
-  if(i->astc_copy_encoding)die("ASTC propagated copy cannot export logical BC3 Buffer bytes");
+  if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot export logical BC3 Buffer bytes");
   if (i->decoded)
     die("Vulkan decoded BC recompression pending");
   image_upload(i);
@@ -1881,7 +1887,7 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer,
   int native_operation=native_pool_operation(t,VK_PIPELINE_STAGE_TRANSFER_BIT,0);
 #endif
   image *i = image_get(t);
-  if(i->astc_copy_encoding)die("ASTC propagated copy cannot ReadTexels as logical BC3 bytes");
+  if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot ReadTexels as logical BC3 bytes");
   image_upload(i);
   p_copy_b2t p = {.tex = t,
                   .has_view = 1,
@@ -1933,7 +1939,7 @@ void mtl_tex_release(tex_t *t) {
 uint32_t vk_texture_count(void) { return atomic_load(&live_images); }
 static void image_destroy(image *i) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(i->astc_copy_encoding) {if(!astc_copy_live)die("ASTC copy live count underflow");astc_copy_live--;}
+  if(i->astc_copy_encoding || i->bc_copy_decoded) {if(!astc_copy_live)die("ASTC copy live count underflow");astc_copy_live--;}
   image_shared_alias_remove(i);
   nvn_dirty_scope_release(i->shared_dirty_scope);i->shared_dirty_scope=NULL;
 #endif
@@ -1975,6 +1981,16 @@ int vk_texture_shared_linear_conflict(uint64_t address,uint64_t bytes) {
   // Shared mode is fixed before guest execution, not a per-node property.
   return alias_range_overlap(shared_gpu_alias_ranges,address,address+bytes,
                              image_shared_alias_eligible,vk_pool_shared_active());
+}
+static int image_copy_encoding_eligible(const alias_range_node *node,int ignored) {
+  (void)ignored;const image *i=node->owner;
+  return i->initialized && (i->astc_copy_encoding || i->bc_copy_decoded);
+}
+void vk_texture_copy_encoding_access(uint64_t address,uint64_t bytes) {
+  if(!bytes)return;
+  if(bytes>UINT64_MAX-address || (astc_copy_live && alias_range_overlap(shared_gpu_alias_ranges,
+      address,address+bytes,image_copy_encoding_eligible,0)))
+    die("Compressed image physical conversion cannot publish logical BC3 cache bytes");
 }
 void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes) {
   if(vk_texture_shared_linear_conflict(address,bytes))

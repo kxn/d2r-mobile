@@ -308,6 +308,7 @@ static void shared_device_probe(void) {
 
 void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate) {
   if(!shared_active || !bytes)die("Shared publish outside fixed mode");
+  vk_texture_copy_encoding_access(address,bytes);
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   if(!p || !p->shared || p->shared_closing)die("Shared publish Pool lifetime/range");
   uint64_t offset=address-(uintptr_t)p->guest,atom=V.props.limits.nonCoherentAtomSize;
