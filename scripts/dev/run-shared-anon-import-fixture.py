@@ -7,7 +7,10 @@ P.add_argument('--serial',required=True);P.add_argument('--artifact',type=Path,r
 P.add_argument('--driver',type=Path,required=True);P.add_argument('--module-report',type=Path,required=True)
 P.add_argument('--expected-original-apk',required=True);P.add_argument('--expected-original-elf',required=True)
 P.add_argument('--expected-shaderchain',required=True);P.add_argument('--resource-report',type=Path,required=True)
-P.add_argument('--output',type=Path,required=True);P.add_argument('--execute',action='store_true');a=P.parse_args()
+P.add_argument('--output',type=Path,required=True)
+P.add_argument('--matrix-order',nargs=4,choices=['private-plain','private-dirty','shared-plain','shared-dirty'],default=['private-plain','private-dirty','shared-plain','shared-dirty'])
+P.add_argument('--execute',action='store_true');a=P.parse_args()
+if len(set(a.matrix_order))!=4:P.error('--matrix-order must be a permutation of all four controls')
 R=Path(__file__).resolve().parents[2];pkg='com.d2rmobile.sharedanondirtyfixture';original='com.d2rmobile.nativeport';assert pkg!=original
 B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',a.serial];sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 m=json.loads((a.artifact/'candidate.apk.build.json').read_text());assert m['package']==pkg and m['activity']=='com.d2rmobile.nativeport.MainActivity'
@@ -27,19 +30,20 @@ resources=json.loads(a.resource_report.read_text());assert resources['stage']=='
 for name,digest in resources['expected_hashes'].items():
  assert re.fullmatch('[A-Za-z0-9_./-]+',name)and not Path(name).is_absolute()and '..'not in Path(name).parts and re.fullmatch('[0-9a-f]{64}',digest)
  expected['files/runtime/romfs_overlay/'+name]=digest
-matrix=[('private-plain',False,False),('private-dirty',False,True),('shared-plain',True,False),('shared-dirty',True,True)]
+matrix_modes={'private-plain':(False,False),'private-dirty':(False,True),'shared-plain':(True,False),'shared-dirty':(True,True)}
+matrix=[(name,*matrix_modes[name])for name in a.matrix_order]
 plan={'plan_only':not a.execute,'scope':'Four isolated ordinaryUID standard8KiB HOST_ALLOCATION byte controls, no game; no original-package writes, no performance claim',
  'serial':a.serial,'package':pkg,'activity':m['activity'],'APK_sha256':m['apk_sha256'],'native_libraries':m['native_library_sha256'],'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),
  'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,'expected_shaderchain':a.expected_shaderchain,
  'module_report_sha256':sha(a.module_report),'resource_report_sha256':sha(a.resource_report),'module_count':28,'resource_count':6,
  'matrix':[{'name':name,'shared_anonymous':shared,'owned_dirty':dirty,'implicit_host_dependency':False}for name,shared,dirty in matrix],
- 'functional_timeout_seconds_each':45,'installation_timeout_seconds':70,'GUP_unprotect_retry':False,'VVL':'explicitlyfalse; direct PanVK cannot compose AndroidVVL, byte assertions retained',
+ 'functional_timeout_seconds_each':45,'crash_natural_exit_bound_seconds':30,'installation_timeout_seconds':70,'GUP_unprotect_retry':False,'VVL':'explicitlyfalse; direct PanVK cannot compose AndroidVVL, byte assertions retained',
  'cleanup':'owned independent package+unique tmp; originalAPK/ELF/28modules/chain/full4six read-only before/after; refusePIDreplacement',
  'negative_policy':'No expected-failure conversion to pass. Continue cold cells after preserved native assertion if provider/type/control identity is proved; report each failure. Matrix exit1 if any oracle fails.'}
 if not a.execute:print(json.dumps(plan,indent=2));raise SystemExit(0)
 a.output.mkdir(exist_ok=False,parents=True)
 tmp='/data/local/tmp/dm-shared-anon-'+uuid.uuid4().hex
-result={**plan,'stage':'preflight','phases':[],'cleanup_errors':[]};made_tmp=False;requested=False;installed=False;installer=None;launch=None;original_before=None;first_pid=None
+result={**plan,'stage':'preflight','phases':[],'cleanup_errors':[]};made_tmp=False;requested=False;installed=False;installer=None;launch=None;original_before=None;first_pid=None;active_phase=None
 save=lambda:(a.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 def ad(*args,check=True):
  q=subprocess.run(B+list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=20);err=q.stderr.decode(errors='replace')
@@ -62,20 +66,76 @@ def exact_fixture():
  if not path:return False
  assert path.startswith('/')and '\n'not in path and ad('shell','sha256sum',path).split()[0]==m['apk_sha256'],'Unknownfixturepackage; leave untouched'
  return True
-def stop_owned():
- current=process(pkg)
- if current:
-  assert first_pid is not None and current==first_pid,'Unclaimed/replacedfixturePID; leave untouched'
-  assert exact_fixture();ad('shell','am','force-stop',pkg)
- assert not process(pkg)
-def observe_pid(phase):
+def read_oracle_log(phase):
+ log=ad('exec-out','run-as',pkg,'cat','files/runtime/vulkan-test.log',check=False)
+ if log:(a.output/(phase['name']+'-vulkan-test.log')).write_text(log)
+ return log
+
+def parse_oracle_log(log):
+ rows=[]
+ for line in log.splitlines():
+  if line.startswith('{'):
+   try:rows.append(json.loads(line))
+   except json.JSONDecodeError:pass
+ if 'FATAL' in log or 'native fault signal=' in log:return rows,'native-assertion-failed',None
+ finals=[r for r in rows if r.get('test')=='host-import-standard-api']
+ if finals:return rows,'oracle-'+finals[-1].get('result','unknown'),finals[-1]
+ return rows,None,None
+
+def observe_pid(phase,allow_claim=True):
  global first_pid
  current=process(pkg)
+ # Persist raw text before interpreting or rejecting anything. Crash dump/fork
+ # transients must never erase the failed oracle or become another owned PID.
+ raw=phase.setdefault('pid_raw',[])
+ if not raw or raw[-1]!=current:raw.append(current)
+ phase['last_pid_raw']=current;save()
+ if not current:return current,'absent'
+ tokens=current.split()
+ if len(tokens)!=1 or not current.isdecimal():
+  phase['ownership_ambiguous']=True;phase['pid_anomaly']='multiple-or-invalid';save()
+  return current,'ambiguous'
+ if phase.get('ownership_ambiguous'):return current,'ambiguous'
+ if first_pid is None:
+  if not allow_claim:return current,'unclaimed'
+  first_pid=current;phase['first_pid']=int(current);save()
+ elif current!=first_pid:
+  phase['ownership_ambiguous']=True;phase['pid_anomaly']='replacement';save()
+  return current,'replacement'
+ return current,'owned'
+
+def wait_natural_exit(phase):
+ # Functional crash cleanup only; no process is claimed or force-stopped here.
+ wait=phase.setdefault('natural_exit',{'bound_seconds':30,'all_PIDs_absent':False})
+ if wait.get('timed_out'):raise TimeoutError('Unclaimed/crashing PIDs remain; no force-stop or repeated wait')
+ deadline=time.monotonic()+30
+ while True:
+  log=read_oracle_log(phase)
+  rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+  if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+  current,kind=observe_pid(phase,allow_claim=False)
+  if not current:
+   log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+   if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+   wait['all_PIDs_absent']=True;save();return log
+  if time.monotonic()>=deadline:
+   wait['timed_out']=True;save()
+   raise TimeoutError('Crash/ambiguous PIDs did not naturally exit; leave them untouched')
+  time.sleep(.2)
+
+def stop_owned(phase=None):
+ phase=phase if phase is not None else active_phase
+ if phase is None:
+  current=process(pkg);result['cleanup_pid_raw']=current;save()
+  assert not current,'No owned launch phase; preserve unclaimed process'
+  return
+ current,kind=observe_pid(phase,allow_claim=False)
+ if current and (phase.get('native_terminal_seen') or kind!='owned'):
+  wait_natural_exit(phase);return
  if current:
-  assert current.isdecimal(),'MultiplefixturePIDs not supported'
-  if first_pid is None:first_pid=current;phase['first_pid']=int(current);save()
-  else:assert current==first_pid,'ReplacementPID not adopted'
- return current
+  assert first_pid is not None and current==first_pid
+  assert exact_fixture();ad('shell','am','force-stop',pkg)
+ assert not process(pkg)
 def install():
  global installer
  with(a.output/'install.txt').open('w')as out:
@@ -109,25 +169,33 @@ try:
  ad('shell','run-as',pkg,'cp',tmp+'/libvulkan_panfrost.so','files/runtime/vulkan-panfrost/libvulkan_panfrost.so')
  assert ad('exec-out','run-as',pkg,'sha256sum','files/runtime/vulkan-panfrost/libvulkan_panfrost.so').split()[0]==sha(a.driver)
  for name,shared,dirty in matrix:
-  assert not process(pkg);first_pid=None;phase={'name':name,'requested_shared':shared,'requested_dirty':dirty,'stage':'launch'};result['phases'].append(phase);save()
+  assert not process(pkg);first_pid=None;phase={'name':name,'requested_shared':shared,'requested_dirty':dirty,'stage':'launch'};active_phase=phase;result['phases'].append(phase);save()
   ad('shell','run-as',pkg,'rm','-f','files/runtime/vulkan-test.log')
   args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--ez','run_game','false','--ez','run_vulkan_tests','true','--es','vulkan_driver','panvk','--ez','vulkan_test_validation','false','--ez','host_import_opt_in','true','--ez','host_import_test','true','--ez','host_import_implicit_host','false','--ez','host_import_shared_anonymous',str(shared).lower(),'--ez','host_import_owned_dirty',str(dirty).lower()]
   phase['command']=B+args
   with(a.output/(name+'-launch.txt')).open('w')as out:
    launch=subprocess.Popen(B+args,stdout=out,stderr=subprocess.STDOUT);deadline=time.monotonic()+45;log='';rows=[]
    while True:
-    current=observe_pid(phase)
-    log=ad('exec-out','run-as',pkg,'cat','files/runtime/vulkan-test.log',check=False)
-    if log:(a.output/(name+'-vulkan-test.log')).write_text(log)
-    rows=[]
-    for line in log.splitlines():
-     if line.startswith('{'):
-      try:rows.append(json.loads(line))
-      except json.JSONDecodeError:pass
-    finals=[r for r in rows if r.get('test')=='host-import-standard-api']
-    if finals:phase['final']=finals[-1];phase['stage']='oracle-'+finals[-1].get('result','unknown');break
-    if 'FATAL'in log or'native fault signal='in log:phase['stage']='native-assertion-failed';break
-    if first_pid is not None and not current:phase['stage']='exited-without-final';break
+    # Retain oracle bytes/FATAL before examining transient crash PID lists.
+    log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+    if stage=='native-assertion-failed':phase['native_terminal_seen']=True;phase['stage']=stage
+    current,kind=observe_pid(phase,allow_claim=not phase.get('native_terminal_seen',False))
+    if stage=='native-assertion-failed' or kind in ('ambiguous','replacement','unclaimed'):
+     log=wait_natural_exit(phase);rows,stage,final=parse_oracle_log(log)
+     phase['stage']=stage or 'ownership-ambiguous-without-oracle'
+     if final is not None:phase['final']=final
+     break
+    if stage is not None:
+     phase['stage']=stage
+     if final is not None:phase['final']=final
+     break
+    if first_pid is not None and not current:
+     # Re-read after exit so the last flushed FATAL/final row is not discarded.
+     log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log)
+     phase['stage']=stage or 'exited-without-final'
+     if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+     if final is not None:phase['final']=final
+     break
     if time.monotonic()>=deadline:phase['stage']='functional-bound-reached';break
     time.sleep(.2)
    launch.wait(timeout=5);phase['launch_exit']=launch.returncode
@@ -146,7 +214,7 @@ try:
    if dirty:assert all(r['cpu_first']==r['GPU_copy_readback_first']for r in cycles)
   phase['oracle_passed']=phase['stage']=='oracle-passed';save()
   (a.output/(name+'-app-events.txt')).write_text(ad('logcat','-d','-v','threadtime','-s','AndroidRuntime:E','DEBUG:E','libc:E','MESA:I'))
-  stop_owned();phase['PID_absent_after']=True;save()
+  stop_owned(phase);phase['PID_absent_after']=True;save()
   if phase['stage'] not in ('oracle-passed','native-assertion-failed'):raise RuntimeError('Infrastructure/unknownresult: stopmatrixwithoutretry')
  result['all_four_oracles_passed']=all(p['oracle_passed']for p in result['phases'])
  result['stage']='all-four-byte-oracles-passed'if result['all_four_oracles_passed']else'four-controls-completed-with-oracle-failures'

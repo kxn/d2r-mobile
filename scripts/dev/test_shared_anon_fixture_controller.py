@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Offline exact-source orchestration tests; no ADB, GPU or guest execution."""
+import argparse,ast,contextlib,copy,io,itertools,json,tempfile
+from pathlib import Path
+from types import SimpleNamespace
+P=argparse.ArgumentParser();P.add_argument('--recovered-log',type=Path);P.add_argument('--report',type=Path);opts=P.parse_args()
+source=Path(__file__).with_name('run-shared-anon-import-fixture.py');tree=ast.parse(source.read_text())
+names={'read_oracle_log','parse_oracle_log','observe_pid','wait_natural_exit','stop_owned'}
+functions=[n for n in tree.body if isinstance(n,ast.FunctionDef)and n.name in names];assert len(functions)==5
+loop=next(n for n in ast.walk(tree)if isinstance(n,ast.While)and any(isinstance(x,ast.Call)and isinstance(x.func,ast.Name)and x.func.id=='wait_natural_exit'for x in ast.walk(n))and 'functional-bound-reached'in ast.unparse(n))
+fatal=opts.recovered_log.read_text()if opts.recovered_log else '{"test_details":"standard-owned-dirty-cycle","cpu_first":7,"GPU_copy_readback_first":0}\n[dm] FATAL Vulkan check failed\nnative fault signal=6\n'
+assert 'FATAL'in fatal
+class Clock:
+ def __init__(self):self.n=0;self.sleeps=[]
+ def monotonic(self):self.n+=1;return self.n
+ def sleep(self,n):self.sleeps.append(n)
+cases=[]
+with tempfile.TemporaryDirectory(prefix='shared-anon-controller-test-')as td:
+ def setup(logs,pids):
+  state={'logs':list(logs),'pids':list(pids),'calls':[],'events':[],'snapshots':[]};clock=Clock()
+  phase={'name':'owned-cell','stage':'launch'}
+  def process(unused):
+   state['events'].append('pid');v=state['pids'][0]
+   if len(state['pids'])>1:state['pids'].pop(0)
+   return v
+  def ad(*args,**unused):
+   state['calls'].append(args)
+   if args[:3]==('shell','am','force-stop'):state['pids']=[''];return ''
+   assert args[:3]==('exec-out','run-as','owned.test'),args
+   state['events'].append('log');v=state['logs'][0]
+   if len(state['logs'])>1:state['logs'].pop(0)
+   return v
+  g={'json':json,'time':clock,'a':SimpleNamespace(output=Path(td)),'pkg':'owned.test','process':process,'ad':ad,'first_pid':None,'phase':phase,'active_phase':phase,'result':{},'deadline':1000,'exact_fixture':lambda:True}
+  g['save']=lambda:state['snapshots'].append(copy.deepcopy(phase))
+  exec(compile(ast.Module(body=functions,type_ignores=[]),str(source),'exec'),g)
+  return g,state,phase,clock
+ def poll(g):exec(compile(ast.Module(body=[loop],type_ignores=[]),str(source),'exec'),g)
+ def no_force(s):assert not any(c[:3]==('shell','am','force-stop')for c in s['calls'])
+ # Real recovered FATAL must be retained before initial crash/fork PID ambiguity.
+ g,s,phase,clock=setup([fatal],['111 222','222','']);poll(g)
+ assert phase['stage']=='native-assertion-failed'and g['first_pid']is None
+ assert phase['pid_raw']==['111 222','222','']and phase['natural_exit']['all_PIDs_absent']
+ assert s['events'][:2]==['log','pid'];no_force(s)
+ observed=[r for r in phase['rows']if r.get('test_details')=='standard-owned-dirty-cycle']
+ assert observed[0]['cpu_first']==7 and observed[0]['GPU_copy_readback_first']==0
+ cases.append('recovered-private-FATAL-before-multiPID-retained/no-adoption/no-force')
+ # Already claimed first PID is never replaced by a crash child PID.
+ g,s,phase,clock=setup(['',fatal],['101','101 202','202','']);poll(g)
+ assert g['first_pid']=='101'and phase['first_pid']==101 and phase['ownership_ambiguous']
+ assert phase['stage']=='native-assertion-failed';no_force(s)
+ cases.append('firstPID-preserved-through-crash-child/natural-exit-only')
+ # Unknown/replacement processes that do not exit fail boundedly, untouched.
+ for logs,pids in [(['',fatal],['101','202']),([fatal],['303'])]:
+  g,s,phase,clock=setup(logs,pids)
+  try:poll(g);raise RuntimeError('live ambiguous process accepted')
+  except TimeoutError:pass
+  assert phase['natural_exit']['timed_out'];no_force(s)
+  before=len(clock.sleeps)
+  try:g['stop_owned'](phase);raise RuntimeError('cleanup accepted live PID')
+  except TimeoutError:pass
+  assert len(clock.sleeps)==before;no_force(s)
+ cases.append('live-crash/replacement-bounded-timeout/no-force/no-repeated-wait')
+ # Normal exact owned process remains eligible for the original explicit stop.
+ normal='{"test":"host-import-standard-api","result":"passed"}\n'
+ g,s,phase,clock=setup([normal],['101','101']);poll(g);assert phase['stage']=='oracle-passed'
+ g['stop_owned'](phase);assert any(c[:3]==('shell','am','force-stop')for c in s['calls'])
+ cases.append('normal-single-owned-PID-original-stop')
+ # Malformed raw PID text is saved and never adopted.
+ g,s,phase,clock=setup([''],['101 invalid','']);poll(g)
+ assert phase['pid_raw'][0]=='101 invalid'and g['first_pid']is None
+ assert phase['stage']=='ownership-ambiguous-without-oracle';no_force(s)
+ cases.append('invalid-raw-PID-durable/no-adoption')
+# Exercise exact argparse order declaration + exact permutation rejection.
+order_arg=next(n for n in tree.body if isinstance(n,ast.Expr)and isinstance(n.value,ast.Call)and n.value.args and isinstance(n.value.args[0],ast.Constant)and n.value.args[0].value=='--matrix-order')
+check=next(n for n in tree.body if isinstance(n,ast.If)and '--matrix-order must be a permutation'in ast.unparse(n))
+def parse_order(values):
+ parser=argparse.ArgumentParser();g={'P':parser};exec(compile(ast.Module(body=[order_arg],type_ignores=[]),str(source),'exec'),g)
+ g['a']=parser.parse_args(['--matrix-order',*values]);exec(compile(ast.Module(body=[check],type_ignores=[]),str(source),'exec'),g);return g['a'].matrix_order
+keys=['private-plain','private-dirty','shared-plain','shared-dirty']
+for order in itertools.permutations(keys):assert parse_order(order)==list(order)
+for bad in [keys[:3],['shared-plain']*4,[*keys[:3],'unknown']]:
+ with contextlib.redirect_stderr(io.StringIO()):
+  try:parse_order(bad);raise RuntimeError('invalid order accepted')
+  except SystemExit as e:assert e.code==2
+cases.append('all24-complete-permutations/duplicate-missing-unknown-rejected')
+result={'status':'passed','source':str(source),'cases':cases,'recovered_log':str(opts.recovered_log)if opts.recovered_log else None,'scope':'Exact parsed production-controller helpers/poll loop under local mocks; no ADB/device or performance measurements. Real recovered private failure is evidence, never converted to pass.'}
+if opts.report:opts.report.write_text(json.dumps(result,indent=2)+'\n')
+print(json.dumps(result,indent=2))
