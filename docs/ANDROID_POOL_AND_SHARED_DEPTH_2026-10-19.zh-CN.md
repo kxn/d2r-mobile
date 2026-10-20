@@ -694,6 +694,22 @@ ASTC 数据当 BC3 使用。需核实完整资源、子资源和 CPU 后续写�
 完整同尺寸复制。它支持继续验证“新目标沿用源物理压缩编码”的受限方案，
 不允许将已有 BC3 内容或未知 CPU 更新当 ASTC。原可玩版再次恢复并停机。
 
+修复核心 `b8a727d` 与严格测试包装组合为 `277f74f`：仅允许已导入共享
+Pool 上尚无有效内容的新数组采用已知 ASTC4 物理编码，保留逻辑 BC3 描述
+及 Pool 原字节；观察 CPU 版本、保留旧存储直到 GPU 完成，并拒绝无法解释
+的原始字节、Storage、Attachment 和 CPU 后续更新。Mali 普通 UID 实测通过
+128×128×42、七级 mip 的整面/局部复制、mip/layer 保持及默认、线性、sRGB
+视图采样；新的独立检查项确实执行，不以旧 retile 通过冒充新路径。记录为
+`shared-format-277f74f-retile-root-review.json`，原生产包与资源前后相同。
+
+同版本从原始 NSO 重新生成并单独验证后运行真实游戏，serial19 的数组已
+成功采用 ASTC4，越过原格式错误。之后角色场景加载时，GPU 完成线程收到
+`VK_ERROR_DEVICE_LOST`（Fence wait -4），尚未到 HUD。Android 退出记录是
+该进程主动 abort；现有日志没有 GPU fault 地址或具体提交证据，不能据此
+归因最后一个 shader、ASTC 修复或 OOM。kernel dmesg 读取被系统拒绝，后续
+优先使用驱动已有诊断能力。现场 `shared-game-format-277f74f-mali-v1/`；原
+c8 APK、驱动和 34 项模块／资源校验恢复，进程已退出，不提供性能收益结论。
+
 另有已确认的保护边界：原 packaged 图像直接 `mprotect` 的两个入口未等待
 同 host 页上已有的 FS 写租约；kernel `pread` 与新保护交错可能返回 EFAULT。
 新观察握手必须等待旧页依赖、已有 FS 租约和 BUSY 发布后再完成只读保护，
