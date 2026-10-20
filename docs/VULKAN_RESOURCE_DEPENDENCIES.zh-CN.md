@@ -1764,3 +1764,25 @@ DS 入场修复已实际部署：Mali 普通游戏3秒窗口+236 plans/+236 draw
 原 native allocation list 保留退休扫描；新增 resources 锁下的既有 AVL 区间索引，cache/overlap/coverage 仅查询相关区间（相同起点、交叠和 retiring 项均保守处理）。新增每 native allocation 64B、每 Pool 8B；无每 draw 全表扫描、无新计时/性能计数器。index oracle 用32节点旋转/删除/相同起点/交叠/已释放未回收状态与线性集合逐项比较，另用真实相邻 imports 的 GPU 像素/NC可用cache路径、晚真实 Buffer、两次 union 和最后退休作功能验证。
 
 预期减少无实际 VkBuffer 消费者的粗窗口 GUP/pin、未用页覆盖及 Buffer/driver metadata，不承诺恰好回收之前观察的64MiB PSS。native payload padding、CPU cache、系统 PSS、原 game 部署和原厂性能对照各自仍需实际证据；host RGBA 通过不能代替 AA ASTC 或真实游戏。
+
+
+### 已认证 native image 的 GENERAL 布局
+
+仅已通过原 native table/recipe/driver 身份校验的 `native_entry` 保持 GENERAL；
+普通 private 图像继续原逐 mip/专用布局策略。实际采样 descriptor 返回 GENERAL，
+避免每 chunk FOREIGN acquire 的 GENERAL、各采样 mip 的 READ_ONLY、release 的
+GENERAL 之间重复往返。原 FOREIGN ownership handoff、Buffer/image alias、CPU cache
+publication、逐子资源读写依赖与 token 生命周期不变；布局相同不是同步或只读证明。
+
+已烘焙的 external payload 首次使用遵守原 GENERAL 外部发布契约，不能 UNDEFINED
+丢弃其内容；真正新建的 owned GPU 存储仍执行 UNDEFINED→GENERAL 初始化。测试
+保留真实 RGBA clear/readback、late Buffer union、pending-acquire 的实际 alias 拆 pass
+正负例，并检查初始化及 acquire 后的布局。test-embed 在真实 native descriptor
+出口检查 GENERAL，实际 ASTC 的 CPU Flush/transfer→FS/九 mip GPU 证据仍须由
+原 ordinaryUID 严格 fixture 在 AA 驱动验证，不能以宿主 RGBA 代替。
+
+该改动不增加字段、分配、锁或内容缓存，仅在布局选择增加一次 native 指针判断。
+现有实验 native table 仍默认 OFF。候选依据 bcbd751 官方 CPU 栈及原有 layout
+计数：control bracket 增 30,544，native 增 1,959,057；该 ADB bracket 包围独立
+8 秒 record，不是精确帧分母，不能把全部差额算成可消除 CPU 时间。driver command
+recording/command-pool 保留内存可能受益，但实际 CPU/PSS/吞吐均待同条件对照。

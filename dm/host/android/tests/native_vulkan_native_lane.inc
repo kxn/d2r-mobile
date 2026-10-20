@@ -106,7 +106,8 @@ static void native_lane_gpu_test(void) {
   VkImageMemoryBarrier general={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,
     .newLayout=VK_IMAGE_LAYOUT_GENERAL,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
     .image=image,.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1},.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT};
-  vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&general);
+  extern unsigned vk_test_native_initial_general(VkImage);
+  checks+=vk_test_native_initial_general(image);
   int pending_fixture=getenv("DM_NATIVE_PENDING_ACQUIRE_FIXTURE")!=NULL;
   int native_writer_pending=getenv("DM_NATIVE_ONLY_WRITER_PENDING_FIXTURE")!=NULL;
   VkClearColorValue red={.float32={1,0,0,1}};
