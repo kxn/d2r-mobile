@@ -2154,13 +2154,35 @@ void vk_texture_end_submit(void) {
   retired_image **rp = &retired_images;
   while (*rp) {
     retired_image *r = *rp;
-    if (translated < r->at || translated - r->at < 8) {
+    if (translated < r->at) {
+      rp = &r->next;
+      continue;
+    }
+#ifdef DM_VULKAN_SHARED_POOLS
+    int alias_mode=vk_pool_shared_active() || vk_legacy_astc_copy_mode();
+#else
+    int alias_mode=0;
+#endif
+    // Keep the original grace-only lookup cost for the ordinary legacy path.
+    if (!alias_mode && translated-r->at<8) {
       rp = &r->next;
       continue;
     }
     image **ip = &images;
     while (*ip && (*ip)->tex.serial != r->serial)
       ip = &(*ip)->next;
+#ifdef DM_VULKAN_SHARED_POOLS
+    // Logical NVN retirement ends guest-byte authority after every previously
+    // enqueued user has translated and every physical GPU user has completed.
+    // The extra snapshot/cache grace retains the VkImage, not ownership of
+    // recycled guest addresses. This owner-only list edit never writes bytes.
+    if (alias_mode && *ip && (*ip)->last_use <= done)
+      image_shared_alias_remove(*ip);
+#endif
+    if (translated < r->at || translated - r->at < 8) {
+      rp = &r->next;
+      continue;
+    }
     if (*ip && (*ip)->last_use > done) {
       rp = &r->next;
       continue;
