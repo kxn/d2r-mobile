@@ -924,8 +924,8 @@ full6 画质或性能验收。已有完整调用记录将用于核实上传源�
 同帧实际提交中没有 `vkCmdCopyBufferToImage`，故本帧的图像上传及其 CPU
 解排布不是主要渲染流量来源。离线生成可移植的上传块排列，能针对加载和
 流式更新消除 CPU 解排布，但不能据此认定能降低稳定画面每帧的采样带宽。
-GPU 最终 optimal 存储布局仍须与可移植上传布局区分；不必依赖私有驱动才能
-实现前者的上传源加工。详细绑定记录为 `full6-adoption-36a9781-actual-resource-adoption-v1.json`。
+GPU 最终 optimal 存储布局仍须与可移植上传布局区分；可移植上传源的加工不必
+依赖私有驱动。详细绑定记录为 `full6-adoption-36a9781-actual-resource-adoption-v1.json`。
 
 ## 宿主同步验证记录纠错
 
