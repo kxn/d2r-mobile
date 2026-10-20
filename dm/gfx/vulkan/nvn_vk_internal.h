@@ -252,6 +252,7 @@ void vk_gpu_region_end(unsigned token);
 uint64_t vk_gpu_profile_samples(void);
 void vk_ghost_flush(void);
 void vk_effect_copy(void *dst, const void *src, size_t size);
+int vk_event_signal(uint64_t address,uint32_t mode,uint32_t value);
 void vk_buffer_writeback(uint64_t dst, uint64_t size);
 void vk_buffer_writeback_stage(uint64_t dst,uint64_t size,VkPipelineStageFlags producers);
 // Immutable CPU producer snapshot; publication still waits for the real fence.

@@ -3443,9 +3443,13 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
   vk_pool_operation_end(operation);
 }
 void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v) {
-  if(V.options.pool_defer_publication)vk_pool_cpu_prepare((uintptr_t)val,sizeof *val);
   if (mode > 1)
     die("Vulkan unsupported event mode %u", mode);
+  if(vk_event_signal((uintptr_t)val,mode,v))return;
+  // Preserve the original backend's non-Pool completion contract (including
+  // stack events in owned fixtures). Registered NVN Pool payloads never fall
+  // back to a CPU store, even in fixed shared mode.
+  if(V.options.pool_defer_publication)vk_pool_cpu_prepare((uintptr_t)val,sizeof *val);
   vk_effect *e = calloc(1, sizeof *e);
   if (!e)
     die("Vulkan event allocation");
