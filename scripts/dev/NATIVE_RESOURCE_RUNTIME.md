@@ -158,3 +158,45 @@ unless the separately reviewed runtime supplies its frozen gate-mode query.
 This is a composition requirement, not a claim that the new NC path has run.
 The initial writer range is conservatively the full native mip; its larger
 protected envelope/callback cost must not be called a precise ROI optimization.
+
+## Follow-up: tracked linear writers and the original NVN oracle
+
+The follow-up physical ownership registry is sorted by host-page envelope with
+a prefix maximum end. A known Buffer writer finds all intersecting native mip
+pages in O(log N + matches), rather than scanning all native textures. Entries
+remain until physical image retirement; cold insertion/removal shifts metadata.
+The registry costs 32 bytes per allocated slot (geometric capacity, below twice
+live entries after growth), and lazy scope pointers add 128 bytes to each image
+in an explicitly compiled native-resource build. No texture bytes are stored.
+Page-neighbour overlap intentionally admits the conservative mip scope as well.
+
+Native image reads cannot reuse named VkBuffer barrier visibility. The new
+alias-read entry uses original actual producer intervals and a VkMemoryBarrier
+with real producer and consumer stages. A writer-generation and per-image
+stage proof avoid repeating that work when no writer occurred; the lookup is
+for the complete native image, not a partial-mip proof reused for other mips.
+Saturation disables proof reuse. All actual named producer changes and history
+reset invalidate this key. The original Buffer consumer path is unchanged.
+Unknown raw VkImage escape is rejected because its writes cannot be accounted.
+This does not certify arbitrary incompatible overlapping image recipes.
+
+`DM_NATIVE_RESOURCE_NVN_FIXTURE=/owned/directory` selects the new original-NVN
+fixture (only in the explicit native-resource build). It reads the selected
+single-entry startup table plus `native-resource.bin` and `resource-input.bin`,
+checks their producer SHA bindings, and creates only a finite owned MAP_SHARED
+Pool. The fixture uses original NVN Builder, command recording, queue submits,
+ReadTexels and existing sampling shaders. The ordinary reference uses standard
+linear ASTC B2T uploads. Cases cover all nine mip block bytes and samples,
+first linear-writer scope admission, levels4..8 thumbnail-shaped B2T, legal CPU
+native publication after QueueFinish plus Flush, native/ordinary T2T in both
+directions, a Buffer alias read, neighbours, and physical retirement. The
+thumbnail case is an owned full-Builder contract, not evidence of the game's
+unknown Builder sequence. Native GPU execution is NOT covered by host LVP.
+
+For Android, the additional cold `native_resource_fixture_dir` Intent is only
+accepted along with `run_vulkan_tests=true` and the explicit table/digest/shared
+selection. The original nativeStart/nativeTests signatures remain unchanged;
+only the new nativeNativeResources setter gets its own fourth argument. An
+oracle request cannot launch game modules. A custom-driver ordinary-UID app
+transaction and the separately reviewed prewrite-gate core are still required
+before executing this fixture on actual noncoherent hardware.
