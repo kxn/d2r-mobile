@@ -864,3 +864,33 @@ Streamline 官方导出的整窗 GPU 外部读/写，OFF 为 4.300/2.766 GB/s，
 `vkResetCommandPool`，14 个 `memcpy` 叶样本对应 CPU effects 发布；内核没有
 被此次 `cpu-clock:u` 覆盖，不能把这些比例当作线程墙钟占比，更不能将全部
 minor faults 归于 mprotect。采样记录 `legacy-astc-1a5280a-mali-CPU99-recovered-v2`。
+
+## 36a9781：完成线程批处理与空预检减负
+
+当前 Mali 可玩包已更新为 `36a9781`，使用系统 Vulkan 驱动、非共享 guest heap、
+原 fullASTC4 资源；legacy ASTC copy 实验仍默认关闭。保留原同步与数据依赖，
+新增两项减负：真实 fence 完成后，将最多 16 个原 VMA allocation 的 invalidate
+合并调用，尾批仍执行；非 packaged、空内存或空布局的纹理，在原注册锁和有效性
+检查内提前退出 CPU 输入预检查，避免复制整个纹理描述及无效预检。
+
+前者不减少缓存维护范围或 GPU 写回字节，只减少驱动入口；后者不增加预测缓存，
+真实 packaged 输入的晚到 CPU effects 仍须发布。两项均不跳过实际 GPU 完成或
+数据新鲜度检查。完成线程增加有界临时栈空间，没有新增热路径堆分配。
+
+独立普通 UID 的 Mali 测试确认真实 `0xb` 非一致性内存上的 35 个写回范围正确，
+覆盖尾批、fence 后发布和命令池重置顺序。合并包的独立实际 GPU 回归也通过，
+新增预检检查覆盖描述符重新注册、空输入、不相关依赖及真实 draw/dispatch 采样。
+这些是字节和生命周期验收，不是性能测量。
+
+同一合并包随后分别以 legacy ASTC copy 开启及默认关闭运行原始 ARM64 游戏，
+均到达营地 HUD，截图未见明显黑块或几何损坏，通过原生命周期 fresh save2 后
+停止。默认关闭的一次已保留为手机当前安装包；APK、28 项模块、资源、shader
+chain 与私有驱动文件均已核验。原始 NSO 由该冻结源码重新加工并单独 verify，
+没有向历史加工 binary 叠补丁。记录为本机 `stock-cpu-batch-36a9781-owned-mali-v2`、
+`stock-cpu-batch-36a9781-original-mali-v1` 和
+`stock-cpu-batch-36a9781-default-promote-mali-v1`。
+
+这次只证明短营地功能及减少重复工作的机制；截图 FPS 不能证明净涨帧，持续
+游玩散热仍未验收。PanVK 共享内存实验不属于当前默认包。此前私有驱动对照含有
+本地修改，且在格式或保护条件处提前失败，尚未证明未修改 PanVK 能运行完整
+游戏；因此角色加载 GPU hang 不能归因于共享接口，需先补齐干净驱动基线。
