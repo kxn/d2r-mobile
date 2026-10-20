@@ -25,7 +25,13 @@ with zipfile.ZipFile(a.artifact/'candidate.apk') as archive:
   assert hashlib.sha256(archive.read('lib/arm64-v8a/'+leaf)).hexdigest()==digest
 assert len(m['native_library_sha256'])==6
 assert sha(a.driver)=='6b15cf088112720aebb5cec3342e43a2c14be67b16f0460e8d2db9a75889189f'
+assert m['resource_source_ready_sha256']=='0010dbb915f51341a49fb2907094079ef59b977d8fc5a607371ef88a3a2ff6ea'
+assert sha(a.artifact/'resource-source-ready.json')==m['resource_source_ready_sha256']
+resource_ready=json.loads((a.artifact/'resource-source-ready.json').read_text())
+assert resource_ready['source']['commit']=='86381c7c93aa0b299b75cb33c87497b6d7d6528b'
+expected_inputs={('resource4' if row['label']=='ASTC4' else 'resource6')+'/'+Path(item['path']).name:item['sha256'] for row in resource_ready['real_inputs'] for item in row['private_artifacts'] if Path(item['path']).name in ('resource-input.bin','resource-source.json')}
 resource_inputs=m['owned_resource_inputs']
+assert resource_inputs==expected_inputs
 assert m['resource_source_commit']=='86381c7c93aa0b299b75cb33c87497b6d7d6528b'
 assert set(resource_inputs)=={name+'/'+leaf for name in ['resource4','resource6'] for leaf in ['resource-input.bin','resource-source.json']}
 assert all(re.fullmatch('[0-9a-f]{64}',h) and sha(a.artifact/'resources'/name)==h for name,h in resource_inputs.items())

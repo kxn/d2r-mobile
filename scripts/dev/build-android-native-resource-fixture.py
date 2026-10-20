@@ -58,6 +58,8 @@ result={'package':'com.d2rmobile.nativeresourcefixture','activity':'com.d2rmobil
     'JNI_class_package_unchanged':'com.d2rmobile.nativeport','contains_game_binary':False,
     'build_commands':commands,'installed':False}
 ready=json.loads(A.source_ready.read_text())
+assert sha(A.source_ready)=='0010dbb915f51341a49fb2907094079ef59b977d8fc5a607371ef88a3a2ff6ea'
+shutil.copy2(A.source_ready,OUT/'resource-source-ready.json')
 assert ready['source']['commit']=='86381c7c93aa0b299b75cb33c87497b6d7d6528b'
 assert {r['label'] for r in ready['real_inputs']}=={'ASTC4','ASTC6'}
 resources=OUT/'resources';shutil.rmtree(resources,ignore_errors=True);resources.mkdir()
