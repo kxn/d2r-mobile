@@ -24,7 +24,7 @@ with zipfile.ZipFile(a.artifact/'candidate.apk') as archive:
  for leaf,digest in m['native_library_sha256'].items():
   assert hashlib.sha256(archive.read('lib/arm64-v8a/'+leaf)).hexdigest()==digest
 assert len(m['native_library_sha256'])==6
-assert sha(a.driver)=='57b7c6f136cd3a4c2351cdb02a6693a57a160246e718b6c2f312ee65cd79b0e7'
+assert sha(a.driver)=='6849875ce017b19a8913ed0fb3b9a1edcbfb13b44a25ad32d3bfbec7d1602338'
 assert m['resource_source_ready_sha256']=='0010dbb915f51341a49fb2907094079ef59b977d8fc5a607371ef88a3a2ff6ea'
 assert sha(a.artifact/'resource-source-ready.json')==m['resource_source_ready_sha256']
 resource_ready=json.loads((a.artifact/'resource-source-ready.json').read_text())

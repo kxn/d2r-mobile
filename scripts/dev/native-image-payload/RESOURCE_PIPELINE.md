@@ -197,8 +197,8 @@ The separate `--resources-copy-bake` / `--resources-copy-import` modes use the
 exact recipe `SAMPLED | HOST_TRANSFER | TRANSFER_SRC | TRANSFER_DST` (0x400007).
 The original bake/import modes retain 0x400004. A different frozen driver and
 new producer fingerprint are required; old native-image proof does not cover
-these new usage flags. The dedicated controller binds driver SHA 57b7c6f1…
-from source 5709f74 and keeps original game artifacts read-only.
+these new usage flags. The dedicated controller binds driver SHA 6849875c…
+from source 01efc12 and keeps original game artifacts read-only.
 
 Import first checks every original mip against standard GPU uploads, then
 updates one nonzero ASTC block ROI through Buffer-to-Image, another ROI through
@@ -216,3 +216,23 @@ exercise native ASTC import, the private driver, the Android game, performance
 or heat. The first selftest exposed an unaligned synthetic header offset; that
 failure is retained and fixed by the same 64-byte payload alignment used by
 real resource inputs.
+
+
+The first actual 5709f74 copy import failed at bind, before sampling. Its
+strict bind validation mistakenly checked vk_meta-expanded flags/usage as if
+they were the application recipe. Driver 01efc12 captures the validated
+original Create recipe before those internal changes; imported pointer/type/
+offset/size restrictions remain. The same 4093920 APK passed on Mali-G710
+ordinary UID with this new driver: two cold modes, ASTC4 and ASTC6, all nine
+mips, actual noncoherent flags0xb, B2T/T2T ROI updates and native source copying.
+The controller source differs only in its frozen driver fingerprint. All
+input and baked files stayed immutable, neighbors and original mapping stayed
+valid, and the original game package/modules/resources were unchanged. The
+fixture was removed afterward.
+
+New transfer recipes were rebaked: base rowPitch is 1024 for ASTC4 and 704 for
+ASTC6, versus 4096/2816 in the old sample-only recipe. Image sizes remain
+90112/45056 bytes. This difference illustrates why old opaque payloads and
+sample-only performance assumptions cannot be reused. This is a finite
+resource correctness result, not game/runtime integration or memory/heat
+acceptance. Evidence: native-image-resource-copy-4093920-binding-v2-mali.
