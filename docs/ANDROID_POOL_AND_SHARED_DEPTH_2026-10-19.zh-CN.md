@@ -1979,3 +1979,42 @@ begin 与 80a 保持相同，Metal 转发原函数。实际超预算且足够冷
 的负控会在数量断言失败。新 canonical / fresh raw 尚在准备，未安装真机，
 512MiB 仍未作为最终默认预算验收。根源审见
 `.local/logs/private-image-cache-guest-773d530-root-source-review.json`。
+
+
+## 2026-10-21：前台缓存候选真实工作集与 Mali BC 路径
+
+`773d530` 将前台私有图像预算维护限制到真正的 guest 提交入口；内部
+stream、CPU preflight 和 present 重开不维护。源码、真实 GPU 重建与保护用例、
+canonical 六库和原始三份 NSO 重新加工均已独立审查。Q735 的真实游戏 PID15179
+完成三段原生行走，执行原 Android 生命周期两次存档提交后停止，原 APK、六个
+隔离目录和工具状态恢复。两张营地截图未见明显大片缺失；不代表其他场景验收。
+
+这次实际私有 VkImage VMA allocation 合计 328.22 MiB，其中仍在逻辑缓存中的
+CPU 可重建部分为 118.99 MiB，低于候选 512 MiB 软预算，预算释放量为零。
+两者之差 209.23 MiB 不能都归为 Render Target 或可回收数据。Android meminfo
+PSS 为 1,979,620 KiB、RSS 为 2,418,008 KiB；最大类别 Other mmap PSS 为
+1,435,621 KiB。类别本身无法区分 guest backing、驱动或其他映射，下一步采用
+系统已有 showmap 的地址、映射名称和 PSS；不重复 malloc debug 或自写采样器。
+VMA 字节、Pool 语义覆盖范围与 PSS 是重叠视角，不能相加成多份物理内存。
+本次证明正常集成，没有实际淘汰、RAM 降幅或匹配 FPS 增益。模式仍为 Q 的
+fixed .60/native6217，不能代替默认 .75 dynamic、Mali、野外持续游玩或 6GB。
+
+root 真实验收：`.local/logs/native-candidate-short-guest-Q735-v1-root-actual-review.json`
+（SHA256 `edd74c5c36e803a176d95cfc5eae3169ffdc96f8bec818e2c3d1db344669560b`）。
+
+Mali 另一次有界实验只使用现有 PanVK `startup,bc_trace,kbase_diag`，未开启
+TRACE、DUMP、SYNC 或 shader_map，也未加入槽位修正。原022游戏 PID14211 的
+实际日志完整解析出 BC4_UNORM、BC5_UNORM、BC6H_UFLOAT 三类 emulated shadow
+路径，包含 8,382 条 decode 记录和 1,085 条 BC4 image-copy 记录。记录表示 CPU
+命令生成，不能当 GPU 完成、GPU 耗时或超时指令。之前通过的原生 BC3 两个独立
+用例并未覆盖这些路径，后续应审真实 emulation/copy 依赖，而不是重复 BC3 测试。
+
+本次原游戏仍发生 GPU 超时与 fence -4，不能称为 PanVK 修复。finally 一度读到
+两个 PID，控制器正确拒绝强停未知进程；进程自然退出后原目录、属性与资源恢复，
+但因此跳过 no-dump 证明，清理保护门留下本次 owned staging。root 单独核实
+`after-temp/pandecode` 仅有原 owner 标记，再调用原清理函数，最后复核原35个
+文件、45,314个 shader、目录、属性与 layer 设置相同，游戏、锁与临时文件均无残留。
+保留原失败和 cleanup 错误，另存恢复凭据，不把恢复后清理写成原测试成功。
+
+root 凭据：`.local/logs/panvk-bc-emulation-originalBC-original022-mali-v8/root-actual-restoration-review.json`
+（SHA256 `c40d566e03c311f360ed671e300a929909d90423bec78e90751c7fb2dc56238f`）。
