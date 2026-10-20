@@ -695,6 +695,7 @@ int dm_vulkan_test_main(void) {
   vk_buffer_shader_read(0,16,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
   vk_buffer_shader_read(1,0,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
   vk_buffer_shader_read(0,0,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  vk_buffer_shader_read(1,16,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT); // No producer history.
   CHECK(!V.device && !V.cmd);
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE"))vk_legacy_astc_copy_startup(1);

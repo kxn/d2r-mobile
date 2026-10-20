@@ -2281,7 +2281,7 @@ void vk_buffer_shader_read(uint64_t address,uint64_t size,VkPipelineStageFlags s
   VkPipelineStageFlags known=VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT;
   VkPipelineStageFlags producers=0;
   VkCommandBuffer command=VK_NULL_HANDLE;
-  int fragment_query=stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT &&
+  int fragment_query=stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT && recording_resources &&
       !vertex_buffer_write_overflow && !recording_resources->submission_barrier_reference;
   if(fragment_query) {
     if(!buffer_pending_producers(address,size,stages,&producers)) return;
