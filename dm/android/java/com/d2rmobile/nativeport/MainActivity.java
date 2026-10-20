@@ -21,6 +21,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeWatch(int type, int unitClass);
     private static native void nativeHostImportImplicitHostFixture(boolean enable);
     private static native void nativeHostImportOwnedDirtyFixture(boolean enable);
+    private static native void nativeHostImportSharedAnonymousFixture(boolean enable);
+    private static boolean hostImportFixtureStarted;
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean hostImport, boolean hostImportOptIn, boolean poolHostImport, boolean poolHostNoncoherent);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -133,6 +135,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        boolean hostImportTest = getIntent().getBooleanExtra("host_import_test", false);
+        boolean sharedAnonymous = getIntent().getBooleanExtra("host_import_shared_anonymous", false);
+        if (getIntent().hasExtra("host_import_shared_anonymous") &&
+                (!hostImportTest || !getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                 getIntent().getBooleanExtra("run_game", true)))
+            throw new IllegalArgumentException("Anonymous mapping selector requires isolated standard test, game=false");
+        if (hostImportTest && getIntent().getBooleanExtra("run_vulkan_tests", false)) {
+            synchronized (MainActivity.class) {
+                if (hostImportFixtureStarted)
+                    throw new IllegalStateException("Standard host import fixture is one-shot per cold process");
+                hostImportFixtureStarted = true;
+            }
+            nativeHostImportSharedAnonymousFixture(sharedAnonymous);
+        }
         // Select the codec before construction and retain it for each decoder's
         // lifetime. Explicit SDK/shadow references remain available; Activity
         // recreation cannot switch an already advanced decoder's backend.
@@ -317,6 +333,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent.hasExtra("host_import_shared_anonymous"))
+            throw new IllegalStateException("Anonymous fixture mapping cannot change via newIntent");
         if (intent.hasExtra("defer_pool_publication")) {
             android.util.Log.w("D2RPool", "defer_pool_publication is startup-only; cold restart required");
             intent.removeExtra("defer_pool_publication");

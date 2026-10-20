@@ -19,6 +19,7 @@ typedef struct {
   VkBool32 implicit_host_dependency,owned_dirty_cycle,shared_anonymous;
   VkDeviceSize noncoherent_atom;
 } host_import_context;
+static int host_import_oracle_started;
 
 static VkBool32 VKAPI_PTR host_import_validation(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -252,7 +253,14 @@ void dm_vulkan_test_owned_dirty(int enabled) {
   if(enabled)setenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY","1",1);
   else unsetenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY");
 }
+void dm_vulkan_test_shared_anonymous(int enabled) {
+  if(V.device || V.instance || __atomic_load_n(&host_import_oracle_started,__ATOMIC_ACQUIRE))
+    die("Shared anonymous fixture mapping is cold-only");
+  if(enabled)setenv("DM_VULKAN_HOST_IMPORT_SHARED_ANON","1",1);
+  else unsetenv("DM_VULKAN_HOST_IMPORT_SHARED_ANON");
+}
 static int host_import_oracle(void) {
+  CHECK(__atomic_exchange_n(&host_import_oracle_started,1,__ATOMIC_ACQ_REL)==0);
   CHECK(!V.device && !V.instance);
   host_import_context context={0};
   const char *implicit=getenv("DM_VULKAN_HOST_IMPORT_IMPLICIT_HOST");

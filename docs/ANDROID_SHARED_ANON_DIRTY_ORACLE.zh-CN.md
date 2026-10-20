@@ -1,5 +1,8 @@
 # Shared 匿名页与原 dirty 周期：独立小对照
 
+本文记录530995f的host-only阶段；Android独立包后续见
+`ANDROID_SHARED_ANON_APP_FIXTURE.zh-CN.md`。原530冻结报告/产物不改。
+
 本分支基于原 owned-dirty fixture `e56be10`，只改测试。没有改变
 `hle_svc.c`、guest heap、驱动或 NVN borrowed 策略，不执行游戏。
 

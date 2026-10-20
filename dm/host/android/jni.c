@@ -706,6 +706,13 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeHostImpo
   dm_vulkan_test_owned_dirty(enabled);
 }
 
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeHostImportSharedAnonymousFixture(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)env;(void)klass;
+  extern void dm_vulkan_test_shared_anonymous(int);
+  dm_vulkan_test_shared_anonymous(enabled);
+}
+
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only, jboolean validation,
