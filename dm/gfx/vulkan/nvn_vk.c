@@ -2065,6 +2065,13 @@ static int pool_span_resolve_operation(pool *p,uint64_t offset,uint64_t size,
   p->locked_span_hint=out->backing;return 1;
 }
 #ifdef DM_VULKAN_TEST_EMBED
+// All idle owners have already completed effects and reset. Observe only
+// this contract, without selecting a resource owner or modifying its state.
+int vk_test_idle_span_hints_empty(void) {
+  for(submit_resources *r=available_resources;r;r=r->next)
+    if(r->pool_span_hint_count)return 0;
+  return 1;
+}
 // Exact metadata observation in owned tests, not a runtime counter/timer.
 VkBuffer vk_test_recording_span_hint(uint64_t address,uint64_t size,unsigned *count) {
   pthread_mutex_lock(&V.resources);submit_resources *r=recording_resources;

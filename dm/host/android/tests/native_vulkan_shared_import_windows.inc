@@ -158,6 +158,7 @@ static void shared_window_startup_fallback_test(void) {
   printf("{\"test\":\"shared-window-cold-failure-legacy-recovery\",\"checks\":%u,\"actual_GPU_bytes\":true,\"legacy_crossing_and_whole_fallback\":true,\"result\":\"passed\"}\n",checks);
 }
 extern VkBuffer vk_test_recording_span_hint(uint64_t,uint64_t,unsigned *);
+extern int vk_test_idle_span_hints_empty(void);
 static void shared_window_recording_geometry_test(uint8_t *data) {
   enum {W=65536,N=9};NVNmemoryPoolBuilder mb;NVNmemoryPool owner;
   CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
@@ -205,6 +206,7 @@ static void shared_window_recording_geometry_test(uint8_t *data) {
   CHECK(vk_test_recording_span_hint(need[0].address,4,&count)==info[0].handle);
   vk_pool_operation_end(token);vk_internal_wait(vk_internal_commit());
   mtl_finish();mtl_sub_begin();
+  CHECK(vk_test_idle_span_hints_empty());
   CHECK(!vk_test_recording_span_hint(need[0].address,4,&count) && count==0);
   vk_internal_wait(vk_internal_commit());
   CALL(nvnMemoryPoolFinalize,&owner);
