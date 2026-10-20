@@ -49,6 +49,7 @@ def load_module(path, name):
 
 
 one = load_module(ROOT / 'scripts/dev/compose-one-turnip-native-overlay.py', 'compose_one_unchanged')
+producer_gate = load_module(ROOT / 'scripts/dev/native_bulk_producer_gate.py', 'native_bulk_producer_gate')
 
 
 class Fingerprints:
@@ -304,8 +305,12 @@ def compose(a):
             'tracked tool source must be frozen')
     h = Fingerprints()
     acceptance = receipt_gate(a.acceptance, a.acceptance_sha256, h)
+    new_producer = producer_gate.source_ready_gate(a.producer_source_ready, a.producer_source_ready_sha256,
+        a.producer_source_sha256, acceptance, h)
     prepared, quality, source_cache_path = source_gate(a.source_pack_manifest, a.source_pack_manifest_sha256, h, a.artifact_root.resolve())
     context = prepared['source_context']
+    require(new_producer['prepared']['manifest']['sha256'] == a.source_pack_manifest_sha256,
+            'new producer source-ready prepared input differs')
     require(Path(context['original_build_manifest']['path']).resolve() == raw / 'data/build_manifest.psv', 'original BC build differs')
     record = json.loads((pack / 'native-pack.json').read_text())
     h.file(pack / 'native-pack.json')
@@ -320,7 +325,7 @@ def compose(a):
     require(h.file(a.driver_manifest) == record['driver_build_record_sha256'], 'driver manifest differs')
     driver = h.record(driver_manifest['driver'])
     require(h.file(driver) == record['driver_binary_sha256'] == acceptance['driver_sha256'], 'driver differs from real-game functional driver')
-    require(record['producer_source_sha256'] == acceptance['identity']['producer_sha256'], 'native producer differs')
+    require(record['producer_source_sha256'] == a.producer_source_sha256, 'native producer differs from explicit new source pin')
     uuid = acceptance['identity']['actual_recipe_UUID_payload_input_equal_table']
     require(record['identity'] == ''.join(uuid[k] for k in ['layout_uuid', 'device_uuid', 'driver_uuid']), 'actual driver three UUIDs differ')
     table = (pack / 'native-layouts.bin').read_bytes()
@@ -330,6 +335,8 @@ def compose(a):
     require(h.file(a.driver_query) == record['actual_driver_query_sha256'], 'actual producer query changed')
     queried, queried_producer = packer.queried_identity(a.driver_query)
     require(queried.hex() == record['identity'] and queried_producer.hex() == record['producer_source_sha256'], 'actual producer query identity differs')
+    actual_coverage = producer_gate.actual_batches_gate(a.actual_batch_receipts, a.actual_batch_receipts_sha256,
+        new_producer, a.producer_source_sha256, prepared, a.source_pack_manifest_sha256, acceptance, a.driver_query, h)
     ui_proof, manifest, old, old_map, baseline, positions = original_baseline(raw, ui, a.ui_proof, names, h)
     out.mkdir()
     inputs = out / 'inputs'
@@ -360,6 +367,8 @@ def compose(a):
         index.write('# pack\t' + archive_name + '\n')
         for number, (name, specification, prepared_entry) in enumerate(zip(names, specs, prepared['entries']), 1):
             require(prepared_entry['id'] == digest(name.encode()), 'prepared logical ID differs')
+            require(Path(specification['baked']).resolve() == Path(actual_coverage[prepared_entry['id']]['baked']),
+                    'packer baked directory is not its actual batch output')
             for key in ['source', 'texture', 'input', 'prepare_report']:
                 h.record(prepared_entry[key])
             require(Path(specification['source']).resolve() == Path(prepared_entry['source']['path']).resolve() and
@@ -431,6 +440,14 @@ def compose(a):
         'source_pack_manifest_sha256': a.source_pack_manifest_sha256,
         'selected_logicals_sha256': digest(canonical(names)),
         'one_material_functional_receipt_sha256': a.acceptance_sha256,
+        'producer_identity_lineage': {'legacy_one_material_producer': acceptance['identity']['producer_sha256'],
+            'legacy_receipt_scope': 'driver/three UUIDs/protocol and one shape only; not new producer game acceptance',
+            'current_producer': a.producer_source_sha256,
+            'current_source_ready_sha256': a.producer_source_ready_sha256,
+            'actual_batch_receipts_sha256': a.actual_batch_receipts_sha256,
+            'actual_entries_covered': len(actual_coverage),
+            'current_driver_query': str(a.driver_query.resolve()),
+            'new_producer_game_accepted': False},
         'entry_count': len(names), 'entry_proofs': entry_proofs, 'native_payload_bytes': sum(d['image_size'] for d in details),
         'cache_entries': len(old), 'unchanged_cache_entries': len(old) - len(names),
         'changed_VFS_entries': names + [CACHE], 'unchanged_VFS_entries': one.vfs_path_count(baseline) - len(names) - 1,
@@ -454,9 +471,10 @@ def digest_file(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['raw', 'ui-overlay', 'ui-proof', 'native-pack', 'entries', 'packer', 'driver-manifest',
-                 'source-pack-manifest', 'acceptance', 'artifact-root', 'driver-query', 'out']:
+                 'source-pack-manifest', 'acceptance', 'artifact-root', 'driver-query', 'producer-source-ready', 'actual-batch-receipts', 'out']:
         parser.add_argument('--' + name, required=True, type=Path)
-    for name in ['entries-sha256', 'source-pack-manifest-sha256', 'acceptance-sha256']:
+    for name in ['entries-sha256', 'source-pack-manifest-sha256', 'acceptance-sha256',
+                 'producer-source-sha256', 'producer-source-ready-sha256', 'actual-batch-receipts-sha256']:
         parser.add_argument('--' + name, required=True)
     result = compose(parser.parse_args())
     print(json.dumps({key: result[key] for key in ['complete', 'entry_count', 'native_payload_bytes',

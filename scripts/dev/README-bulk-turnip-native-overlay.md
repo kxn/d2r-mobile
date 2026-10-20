@@ -102,3 +102,57 @@ pinned complete composition or its standalone original-declaration proof.
 The device experiment must additionally fix the same runtime, loaded driver,
 PSO/cache/quality and `.6` 3D scale. Offline composition reports no FPS, resident
 RAM, bandwidth or thermal improvement and never marks either output deployable.
+
+## New batch producer identity and actual coverage
+
+The batch wrapper changes the producer source fingerprint. Its8064b800… identity
+must not be relabeled as the old34ec895… one-material producer. Native composition
+additionally requires these explicit flags:
+
+```
+--producer-source-ready NEW_PRODUCER_SOURCE_READY \
+--producer-source-ready-sha256 SOURCE_READY_SHA \
+--producer-source-sha256 NEW_PRODUCER_SHA \
+--actual-batch-receipts ACTUAL_RECEIPT_INDEX \
+--actual-batch-receipts-sha256 ACTUAL_INDEX_SHA
+```
+
+The old root game receipt anchors the unchanged AA driver, all three UUIDs,
+DMNRES1/DMNTBL2 protocol and one validated shape only. The new source-ready gate
+checks the actual APK/six ELFs, independently reproduces its CMake seven-source
+identity/profile, and checks the embedded producer SHA. The new ordinary-UID
+batch outputs must all use that exact identity. `--driver-query` must point to
+`native-resource.json` from one of these actual current batch outputs; an old
+single-material query is rejected even when its driver UUIDs match.
+
+The receipt index is orchestration metadata:
+
+```json
+{
+  "schema": 1,
+  "complete": true,
+  "producer_source_sha256": "NEW_PRODUCER_SHA",
+  "source_pack_manifest_sha256": "PREPARE_MANIFEST_SHA",
+  "results": [{"path": "/actual/batch/result.json", "sha256": "RESULT_SHA"}]
+}
+```
+
+It references unmodified original batch-controller results, complete JSON and
+per-entry JSONL receipts. Each result must have the exact canonical APK/ELFs,
+controller/driver/source fingerprints, one ordinary-UID owned PID, successful
+cleanup and unchanged original game. Every selected input/declaration ID and
+ordinal, UUID/producer, native payload/metadata/992-byte wire hashes and native
+extent must match. All prepared batches and selected entries must be covered
+exactly once before native composition can be complete. First128 evidence never
+certifies6217. Original packer specs retain original source/texture paths and
+point `baked` directly at their actual batch output directory; opaque outputs are
+not recopied or relabeled.
+
+Missing, partial or failed actual receipts cannot produce a complete native
+composition. A complete bake still is not actual-game bulk adoption, sampling,
+visual, bandwidth, RAM or thermal evidence; `deploy_allowed` and new bulk game
+acceptance remain false. Standard NVN ASTC4 control is independent of producer
+bakes and retains its already frozen source/manifest and exact selected set.
+
+Run `test_native_bulk_producer_gate.py` for owned receipt negative controls.
+These synthetic schema tests do not substitute for actual ordinary-UID batches.
