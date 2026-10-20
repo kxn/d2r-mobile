@@ -1378,3 +1378,38 @@ PanVK 官方 replay 的 BDA 配置仍未闭合：最小调试桥接启用设备 
 未运行 compute 解码对照；不能据此评价解码路线。原生产库存、属性及
 工具清理已经独立核验，Mali 停止。记录为
 `panvk-rebind-bda-gfx-caf392e-mali-v1/actual-independent-review.json`。
+
+## 原生图像：真实游戏单材质接入通过，尚未批量推广
+
+`bb4ac54`、AA185 驱动与原 BC／上游 UI 基线的组合，已在 Adreno735
+原生执行真实游戏模块。游戏程序从原始 ExeFS 经同一入口重新生成并独立验证，
+没有叠加游戏 binary 补丁。官方 LLDB 实际取得 135,168B、4KiB 对齐的
+完整九级 mip 图像绑定；资源表、三项 UUID、输入及 payload 指纹均匹配。
+随后实际 B2T 更新的是 mip 4 的 16×16 区域，源行跨度为 256B。
+
+同一 PID、图像 serial、分配 token 后续出现 FRAGMENT／SHADER_READ。
+其真实调用栈是 `vk_texture_shader_record → vk_draw_record`，位于 Draw
+录制之后。精确 canonical ELF 的反汇编确认所有进入该区间的路径都已经
+调用 `vkCmdDraw` 或 `vkCmdDrawIndexed`；当前批次的 begin／abandon／record
+清理规则也排除了准备重试或旧批次残留。它证明这张共享图像参与了真实
+游戏的已录制 Draw，不能据此指认 GPU 上某条采样指令或所有 mip 的像素。
+
+原工具只接受较早的 texture-view 调用栈，因此仍保存其失败结果；没有
+改写原状态或重采。补充分析使用同次捕获和官方反汇编闭合上述合法路径。
+两张原 HUD 截图及三段正常摇杆走位未见明显黑块或几何错误，但只是有限
+视角观察。原生命周期存档两次后停止游戏，原 APK、全部六个私有目录及
+shader chain 已直接核验恢复。根验收记录为
+`native-one-game-bb4ac54-q-v3-root-functional-acceptance.json`；原控制器
+结果保留在 `native-one-game-bb4ac54-q-actual-v3/result.json`。
+
+这次调试器断点会扰动运行，截图的 FPS／电池温度不能当性能或持续散热
+对照。目前只接入一张 135,168B 材质，不能声称全贴图共享或 6GB 已达标。
+下一批选用现有 ASTC4 的 Act1 环境及人物资源，排除 terrain-array 后有
+6,217 项，原 NVN 打包 payload 合计 414,950,400B；这不是驱动原生图像
+大小，也不是预测可节省的 PSS。批量加工将复用原 producer、packer 和
+CASC，逐条生成与释放工作集，再做真实批量运行及现成工具的内存／热验证。
+
+另一个提前 acquire 候选 `c78704e` 尚未部署。审查发现首次 FS acquire
+未必将依赖传到稍后读取未用 mip 的 Compute／Transfer，且独立性范围需
+覆盖真实导入区间及别名粒度。修复在独立后继中进行，不能以主机原测试
+通过代替这两个缺口的处理；当前游戏验收使用的是原保守同步版本。
