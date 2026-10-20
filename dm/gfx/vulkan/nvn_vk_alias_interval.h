@@ -7,7 +7,7 @@
 
 typedef struct alias_range_node {
   struct alias_range_node *left, *right;
-  uint64_t start, end, max_end, serial;
+  uint64_t start, end, min_start, max_end, serial;
   void *owner;
   unsigned height;
 } alias_range_node;
@@ -18,6 +18,7 @@ static unsigned alias_range_height(const alias_range_node *n) {
 static void alias_range_update(alias_range_node *n) {
   unsigned a=alias_range_height(n->left),b=alias_range_height(n->right);
   n->height=1+(a>b?a:b);
+  n->min_start=n->left?n->left->min_start:n->start;
   n->max_end=n->end;
   if(n->left && n->left->max_end>n->max_end)n->max_end=n->left->max_end;
   if(n->right && n->right->max_end>n->max_end)n->max_end=n->right->max_end;
@@ -86,7 +87,10 @@ static alias_range_node *alias_range_remove(alias_range_node *root,
 // including wraparound; it is not silently saturated or reinterpreted.
 static int alias_range_overlap(const alias_range_node *n,uint64_t start,uint64_t end,
     int (*eligible)(const alias_range_node *,int),int shared) {
-  if(!n || n->max_end<=start)return 0;
+  // Starts are ordered even when a stored unsigned end wraps. If every
+  // start is beyond the query, the old per-node start>=end check would
+  // reject the complete subtree, independent of live eligibility.
+  if(!n || n->max_end<=start || n->min_start>=end)return 0;
   if(alias_range_overlap(n->left,start,end,eligible,shared))return 1;
   if(n->start>=end)return 0;
   if(n->end>start && eligible(n,shared))return 1;

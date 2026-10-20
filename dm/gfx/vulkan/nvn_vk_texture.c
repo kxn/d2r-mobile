@@ -163,6 +163,7 @@ static void image_shared_alias_write(image *i) {
   if(!shared && !i->astc_copy_encoding)return;
   i->shared_alias_range=(alias_range_node){.start=(uintptr_t)i->tex.mem,
       .end=(uintptr_t)i->tex.mem+i->tex.L.size,.serial=i->tex.serial,.owner=i,.height=1};
+  i->shared_alias_range.min_start=i->shared_alias_range.start;
   i->shared_alias_range.max_end=i->shared_alias_range.end;
   int inserted=0;
   shared_gpu_alias_ranges=alias_range_insert(shared_gpu_alias_ranges,&i->shared_alias_range,&inserted);
