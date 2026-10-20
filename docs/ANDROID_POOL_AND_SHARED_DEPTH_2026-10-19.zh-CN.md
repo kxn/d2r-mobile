@@ -909,3 +909,30 @@ full6 画质或性能验收。已有完整调用记录将用于核实上传源�
 最终 sampled image 的实际物理格式，不能以离线转换数量代替最终压缩采样证据。
 原始记录在本机 `full6-adoption-36a9781-mali-api-v1/result.json`，手机已恢复
 默认 full4 并停止。截图上的 FPS 不参与性能比较。
+
+随后一次必要的无调试层 full6 短跑（不再抓帧）中，底部血球、蓝球及药水
+图标正常。原存档停机、默认 full4 和 35 项文件恢复均通过；这只能将异常
+收窄至带工具层运行或其时序交互，不能据此认定 GFXR 自身有缺陷。
+记录为 `full6-plain-36a9781-mali-visual-v1/result.json`。
+
+官方 API 和实际 shader 模块的关系已核实：主 HDR 组的三个主要材质槽，在
+586 个 draw 中共出现 1,758 次绑定，其中 788 次为最终 ASTC6 图像视图，
+其余 970 次仍为 ASTC4。此数只证明最终绑定覆盖，不是动态采样次数或 DRAM
+份额，不能将 44.8% 的绑定换算成带宽收益。当前证据排除了“资源虽转了、
+主场景完全没绑定 ASTC6”的猜测，仍未证明实际纹理带宽或持续帧率改善。
+
+同帧实际提交中没有 `vkCmdCopyBufferToImage`，故本帧的图像上传及其 CPU
+解排布不是主要渲染流量来源。离线生成可移植的上传块排列，能针对加载和
+流式更新消除 CPU 解排布，但不能据此认定能降低稳定画面每帧的采样带宽。
+GPU 最终 optimal 存储布局仍须与可移植上传布局区分；不必依赖私有驱动才能
+实现前者的上传源加工。详细绑定记录为 `full6-adoption-36a9781-actual-resource-adoption-v1.json`。
+
+## 宿主同步验证记录纠错
+
+此前 `0856` 两份 source-ready 将 `official_host_VVL_sync` 记为 true，但旧成功
+日志没有启用同步验证的明确标记，只能支持 core VVL。后续显式启用同步验证
+发现测试自身将临时 buffer 的 `readback` 分类改为 1 后漏恢复，污染后续复用。
+`022d625` 仅修测试恢复原字段，不改运行时、不加屏障；完整 async 与 owned
+回归在明确启用 VVL+sync 后通过。原失败、成功日志和冻结报告均保留，新纠错
+记录为 `readback-host-sync-validation-erratum-agent-v1.json`。此纠错不撤销已执行
+的 Mali 非一致性 GPU 字节验收，也不能将宿主同步验证称作 Android 同步层验收。
