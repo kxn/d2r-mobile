@@ -5,7 +5,7 @@ system driver, game binary, NVN renderer, resource pack or allocation policy.
 It builds from the same pinned Mesa and original kbase patch stack as the
 buffer-only `bdd9df32...` candidate, followed by the declared host-import patch
 and `0002-native-astc-host-image.patch`, then the separate declared
-`0003-native-image-transfer.patch`. The 6b15 driver/source remain frozen. Do not modify the earlier frozen tree.
+`0003-native-image-transfer.patch` and `0004-native-image-original-recipe.patch`. The 6b15 driver/source remain frozen. Do not modify the earlier frozen tree.
 
 Both startup options are required:
 
@@ -149,3 +149,20 @@ References:
 - [Image layouts and host access](https://docs.vulkan.org/spec/latest/chapters/resources.html#resources-image-layouts)
 - [Host pointer import](https://docs.vulkan.org/refpages/latest/refpages/source/VkImportMemoryHostPointerInfoEXT.html)
 - [Acquire unmodified contract](https://docs.vulkan.org/refpages/latest/refpages/source/VkExternalMemoryAcquireUnmodifiedEXT.html)
+
+## Binding revision: original API recipe, not augmented meta flags
+
+The first transfer driver (5709f74 / 57b7c6f...) passed baking but its first
+ordinary-UID imported-image Bind failed before any sampling/copy. The original
+PanVK `panvk_image_pre_mod_select_meta_adjustments` adds mutable/block-texel
+flags for compressed transfer images; transfer destinations also gain private
+attachment/storage usage. Reapplying the strict original API predicate to that
+augmented object wrongly rejects a valid image. The failed source and root's
+original logs remain frozen.
+
+Revision 2 captures a certificate from the exact original CreateInfo before
+those helpers run. The public query/Create validation stays strict. Bind checks
+that certificate and keeps all original HOST handle/type/layer/sample/alignment/
+bounds validation. It does not strip arbitrary application flags or admit user
+storage/attachment requests. New full driver/recipe/GPU validation is required;
+no correctness success is inferred merely from this source change.

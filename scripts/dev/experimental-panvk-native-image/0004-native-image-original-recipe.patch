@@ -1,0 +1,41 @@
+--- a/src/panfrost/vulkan/panvk_image.h
++++ b/src/panfrost/vulkan/panvk_image.h
+@@ -34,6 +34,10 @@
+ 
+ struct panvk_image {
+    struct vk_image vk;
++
++   /* Exact original application recipe, captured before vk_meta augments
++    * internal usage/create flags. Never inferred by stripping those flags. */
++   bool dm_native_host_recipe;
+ 
+    struct {
+       VkDeviceAddress device_address;
+--- a/src/panfrost/vulkan/panvk_image.c
++++ b/src/panfrost/vulkan/panvk_image.c
+@@ -775,6 +775,13 @@
+             ? panvk_bc_compact_format(image->vk.format, PANVK_DEBUG(BC_WIDE))
+             : panvk_bc_decoded_format(image->vk.format);
+    }
++
++   /* Capture the original validated API contract before the meta helpers
++    * add MUTABLE/BLOCK_TEXEL flags, attachment and storage usage for copies.
++    * Bind must not reclassify those private flags as application requests. */
++   image->dm_native_host_recipe =
++      image->vk.base.device->enabled_extensions.EXT_external_memory_host &&
++      panvk_dm_native_image_create(phys_dev->dm_native_image_import, pCreateInfo);
+ 
+    /* Add any create/usage flags that might be needed for meta operations.
+     * This is run before the modifier selection because some
+@@ -1589,10 +1596,7 @@
+       const uint64_t size = panvk_image_get_total_size(image);
+       if (image->vk.external_handle_types !=
+              VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
+-          !panvk_dm_native_image_recipe(
+-             physical->dm_native_image_import, image->vk.image_type,
+-             image->vk.format, image->vk.tiling, image->vk.usage,
+-             image->vk.create_flags) ||
++          !image->dm_native_host_recipe ||
+           image->vk.array_layers != 1 || image->vk.extent.depth != 1 ||
+           image->vk.samples != VK_SAMPLE_COUNT_1_BIT ||
+           !(physical->host_import_type_bits &

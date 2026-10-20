@@ -5,7 +5,7 @@
   "default_opt_in": false,
   "host_import_patch_sha256": "cee5843c14b257c2990de6f96200ee5fcae7dc6367de91c0d3131cbbcf506635",
   "mesa_commit": "5a07217f034b3e50d8c7c7794f97a2df1742613b",
-  "mesa_tracked_diff_sha256": "0f3fd494668f0efb8cf78abd8019a3ac99b042c300092cb681db8b5aa24b40c2",
+  "mesa_tracked_diff_sha256": "066fe7c72825dc9e7829c0e7253e3e43b118f3a816e96158d4c2b609aedfd5fe",
   "mesa_untracked_files": {
     "include/drm-uapi/mali_kbase_ioctl.h": "571021b5888e319d98a3d435ee0f76e4b5524b419ca82d5ccce3656203cd33d7",
     "src/compiler/nir/nir_opt_vectorize_robust_ssbo_loads.c": "aecb4f087e4868fdf26769b5818164c46187eb33d910cc48a8f60222b0b92454",
@@ -43,6 +43,7 @@
     "src/vulkan/vulkan-app-loader.sym": "f4108e3ea5a6db273995e01cb50baf01278f6fdc3e906668f592df693f5037a9",
     "src/vulkan/wsi/wsi_x11_dlopen.c": "46851b35775ebeacba0d132f93f4772cbb814fbb02ff7347a2ef737ad195f90f"
   },
+  "native_image_original_recipe_patch_sha256": "c7152aee470ec6e46f444ec10598ebcc66b6bfb0aca5b9ecc4523507bb305d3e",
   "native_image_patch_sha256": "e626508de8916ad1df23953240768a3ddb2610b76263fe4300d6c491f5ca3e8c",
   "native_image_recipe": "exact sampled|host_transfer plus optional transfer_src/transfer_dst; no attachment/storage/AFBC",
   "native_image_runtime_env": "PANVK_DM_NATIVE_IMAGE_IMPORT",
