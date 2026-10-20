@@ -273,12 +273,24 @@ static void native_query_negatives(VkFormat format) {
       .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
   const VkImageUsageFlagBits forbidden[] = {VK_IMAGE_USAGE_STORAGE_BIT,
                                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+#ifndef DM_NATIVE_TURNIP_HOST_ASTC
+                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+#endif
+  };
   for (unsigned n = 0; n < sizeof forbidden / sizeof *forbidden; n++) {
     query.usage = usage | forbidden[n];
     CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
           VK_ERROR_FORMAT_NOT_SUPPORTED);
   }
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+  // The explicit Turnip profile permits transfer aliases; default PanVK keeps
+  // its original narrower rejection. Pixel/byte oracles below are unchanged.
+  query.usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) == VK_SUCCESS);
+  ext.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
+  CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) == VK_ERROR_FORMAT_NOT_SUPPORTED);
+  ext.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+#endif
   query.usage = usage;
   query.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
   CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
@@ -360,6 +372,9 @@ static void native_import(const char *directory, VkFormat format) {
                                         VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     int coherent = !!(memory.memoryTypes[type].propertyFlags &
                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+    CHECK(coherent);
+#endif
     VkImportMemoryHostPointerInfoEXT host_pointer = {
         .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
         .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
