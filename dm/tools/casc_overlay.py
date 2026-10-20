@@ -133,12 +133,20 @@ def read_manifest(source):
     return result
 
 
-def read_data_file(data_dir, ekey, encoded_size):
+def read_data_file(data_dir, ekey, encoded_size, encoding=None):
     chunk, archive = ekey[9], ekey[10]
     filename = data_dir / data_filename(chunk, archive)
     with filename.open("rb") as stream:
         stream.seek(int.from_bytes(ekey[11:16], "big"))
         raw = stream.read(encoded_size)
+    # Indexed resources retain the original TVFS entry encoding. The default
+    # remains the historical BLTE-only VFS-root reader.
+    if encoding == "z":
+        return zlib.decompress(raw)
+    if encoding == "n":
+        return raw
+    if encoding is not None and not encoding.startswith("b"):
+        die("unsupported entry encoding " + repr(encoding))
     if raw[:4] != b"BLTE":
         die(f"expected BLTE at {filename}:{int.from_bytes(ekey[11:16], 'big'):#x}")
     header_size = struct.unpack(">I", raw[4:8])[0]

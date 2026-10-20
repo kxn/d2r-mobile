@@ -842,6 +842,7 @@ static void restore(const char *directory, VkFormat format) {
 }
 #ifdef DM_NATIVE_IMPORTED_IMAGE
 #include "native_import.inc"
+#include "resource_bake.inc"
 #endif
 static int fixture_main(int argc, char **argv) {
   uint16_t endian = 1;
@@ -850,12 +851,23 @@ static int fixture_main(int argc, char **argv) {
         (!strcmp(argv[1], "--bake") || !strcmp(argv[1], "--restore")
 #ifdef DM_NATIVE_IMPORTED_IMAGE
          || !strcmp(argv[1], "--native-bake") ||
-         !strcmp(argv[1], "--native-import")
+         !strcmp(argv[1], "--native-import") ||
+         !strcmp(argv[1], "--resource-bake") ||
+         !strcmp(argv[1], "--verify-resource-input")
 #endif
              ));
 #ifdef DM_NATIVE_IMPORTED_IMAGE
-  native_mode =
-      !strcmp(argv[1], "--native-bake") || !strcmp(argv[1], "--native-import");
+  native_mode = !strcmp(argv[1], "--native-bake") ||
+                !strcmp(argv[1], "--native-import") ||
+                !strcmp(argv[1], "--resource-bake");
+  if (!strcmp(argv[1], "--verify-resource-input")) {
+    resource_input r = resource_open(argv[2]);
+    resource_close(&r);
+    printf("{\"test\":\"native-resource-input\",\"result\":\"passed\","
+           "\"checks\":%u,\"GPU_executed\":false}\n",
+           checks);
+    return 0;
+  }
 #endif
   if (!init()) {
     if (messenger)
@@ -875,32 +887,39 @@ static int fixture_main(int argc, char **argv) {
 #endif
   };
   unsigned used = 0;
-  for (unsigned n = 0; n < sizeof formats / sizeof *formats; n++) {
 #ifdef DM_NATIVE_IMPORTED_IMAGE
-    if (native_mode && formats[n] != VK_FORMAT_ASTC_4x4_UNORM_BLOCK &&
-        formats[n] != VK_FORMAT_ASTC_6x6_UNORM_BLOCK &&
-        formats[n] != VK_FORMAT_ASTC_4x4_SRGB_BLOCK &&
-        formats[n] != VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
-      continue;
+  if (!strcmp(argv[1], "--resource-bake")) {
+    resource_bake(argv[2]);
+    used = 1;
+  } else
 #endif
-    if (!supported(formats[n])) {
-      printf("{\"format\":%u,\"result\":\"unsupported_format\"}\n", formats[n]);
-      continue;
-    }
+    for (unsigned n = 0; n < sizeof formats / sizeof *formats; n++) {
 #ifdef DM_NATIVE_IMPORTED_IMAGE
-    if (native_mode) {
-      if (!strcmp(argv[1], "--native-bake"))
-        native_bake(argv[2], formats[n]);
+      if (native_mode && formats[n] != VK_FORMAT_ASTC_4x4_UNORM_BLOCK &&
+          formats[n] != VK_FORMAT_ASTC_6x6_UNORM_BLOCK &&
+          formats[n] != VK_FORMAT_ASTC_4x4_SRGB_BLOCK &&
+          formats[n] != VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
+        continue;
+#endif
+      if (!supported(formats[n])) {
+        printf("{\"format\":%u,\"result\":\"unsupported_format\"}\n",
+               formats[n]);
+        continue;
+      }
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+      if (native_mode) {
+        if (!strcmp(argv[1], "--native-bake"))
+          native_bake(argv[2], formats[n]);
+        else
+          native_import(argv[2], formats[n]);
+      } else
+#endif
+          if (!strcmp(argv[1], "--bake"))
+        bake(argv[2], formats[n]);
       else
-        native_import(argv[2], formats[n]);
-    } else
-#endif
-        if (!strcmp(argv[1], "--bake"))
-      bake(argv[2], formats[n]);
-    else
-      restore(argv[2], formats[n]);
-    used++;
-  }
+        restore(argv[2], formats[n]);
+      used++;
+    }
   CHECK((used || native_mode) && !errors);
   VK(vkDeviceWaitIdle(device));
   if (pipeline)

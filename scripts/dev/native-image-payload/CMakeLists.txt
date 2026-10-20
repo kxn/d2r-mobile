@@ -23,6 +23,18 @@ target_compile_definitions(native_image_payload PRIVATE MBEDTLS_CONFIG_FILE="dm_
 target_compile_options(native_image_payload PRIVATE -O2 -g -Wall -Wextra -Werror)
 target_link_libraries(native_image_payload PRIVATE ${CMAKE_DL_LIBS} m)
 
+# Record source identity inside native resource metadata; compiler/tool/ELF
+# fingerprints remain in the outer build record, not inferred from this string.
+set(DM_NATIVE_PRODUCER_INPUTS CMakeLists.txt fixture.c native_import.inc resource_bake.inc resource_format.h sample.comp)
+set(DM_NATIVE_PRODUCER_CONTENT "")
+foreach(input IN LISTS DM_NATIVE_PRODUCER_INPUTS)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${input}")
+  file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/${input}" input_sha)
+  string(APPEND DM_NATIVE_PRODUCER_CONTENT "${input}:${input_sha}\n")
+endforeach()
+string(SHA256 DM_NATIVE_PRODUCER_SHA "${DM_NATIVE_PRODUCER_CONTENT}")
+target_compile_definitions(native_image_payload PRIVATE DM_NATIVE_RESOURCE_PRODUCER_SHA="${DM_NATIVE_PRODUCER_SHA}")
+
 if(DM_BUILD_NATIVE_IMPORTED_IMAGE)
   target_compile_definitions(native_image_payload PRIVATE DM_NATIVE_IMPORTED_IMAGE=1)
 endif()
@@ -32,6 +44,7 @@ if(DM_BUILD_NATIVE_IMAGE_EMBEDDED)
   add_library(native_image_payload_embed OBJECT fixture.c "${SPV}")
   target_include_directories(native_image_payload_embed PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${ROOT}/dm/third_party/volk" "${ROOT}/dm/third_party/runtime-codecs")
   target_compile_definitions(native_image_payload_embed PRIVATE DM_NATIVE_IMAGE_EMBED=1 MBEDTLS_CONFIG_FILE="dm_sha_config.h")
+  target_compile_definitions(native_image_payload_embed PRIVATE DM_NATIVE_RESOURCE_PRODUCER_SHA="${DM_NATIVE_PRODUCER_SHA}")
   target_compile_options(native_image_payload_embed PRIVATE -O2 -g -Wall -Wextra -Werror)
   if(DM_BUILD_NATIVE_IMPORTED_IMAGE)
     target_compile_definitions(native_image_payload_embed PRIVATE DM_NATIVE_IMPORTED_IMAGE=1)

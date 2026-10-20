@@ -56,6 +56,20 @@ def source_fixture(root):
 
 
 class ArchiveNames(unittest.TestCase):
+    def test_declared_resource_encodings_preserve_default_BLTE(self):
+        with tempfile.TemporaryDirectory(prefix="casc-resource-encoding-") as directory:
+            data=Path(directory)
+            content=b"owned original encoding contract\0" * 37
+            for archive, encoding in enumerate(("n", "z", "b:z"), 10):
+                encoded=casc.encode_by_espec(content,encoding)
+                key=casc.ekey_for(encoded,0,archive,0)
+                (data/casc.data_filename(0,archive)).write_bytes(encoded)
+                self.assertEqual(casc.read_data_file(data,key,len(encoded),encoding=encoding),content)
+                if encoding=="b:z":
+                    self.assertEqual(casc.read_data_file(data,key,len(encoded)),content)
+            with self.assertRaises(SystemExit):
+                casc.read_data_file(data,key,len(encoded),encoding="unknown")
+
     def test_format_and_cli_compatibility(self):
         for chunk in [0, 9, 10, 17, 99, 100, 255]:
             for archive in range(10):
