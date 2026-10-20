@@ -710,6 +710,14 @@ Pool 上尚无有效内容的新数组采用已知 ASTC4 物理编码，保留�
 优先使用驱动已有诊断能力。现场 `shared-game-format-277f74f-mali-v1/`；原
 c8 APK、驱动和 34 项模块／资源校验恢复，进程已退出，不提供性能收益结论。
 
+同 APK／驱动的现成 Mesa 日志已进一步捕获 kernel CSF group1 progress
+timeout；带 `sync` 和不带 `sync` 各一次均复现，最先报告的子队列分别为
+1 和 0，不能仅据此归因片元 shader。四项 Android Mesa 诊断属性均已恢复，
+游戏及原驱动再次恢复并停止。现成故障解码器另有独立缺陷：直接将累计
+extract 游标加到 64KiB ring 地址，运行多圈后越界并在写出详情前崩溃。
+正在修复已有解码器的环形范围和错误检查；这项工具修复不等于 GPU 根因
+修复。记录为 `shared-format-277f74f-driver-diagnostic-pair-root-review.json`。
+
 另有已确认的保护边界：原 packaged 图像直接 `mprotect` 的两个入口未等待
 同 host 页上已有的 FS 写租约；kernel `pread` 与新保护交错可能返回 EFAULT。
 新观察握手必须等待旧页依赖、已有 FS 租约和 BUSY 发布后再完成只读保护，
