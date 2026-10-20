@@ -275,3 +275,42 @@ not a matched performance/thermal baseline. Original shared window1MiB,
 f830,6217,.60,2750×1260 and6dir CAS restore are unchanged. DRAFT false and
 no device operation during preparation; root publishes a separate ROOT input.
 This does not enable ADPF, SDP, LLDB or any additional timing/sampling path.
+
+## Optional existing ADPF OFF → ON → OFF experiment
+
+This is absent/OFF by default and does not change26b runtime, clocks, CPU
+placement or renderer. An explicitly enabled `adpf_experiment` in the reviewed
+native short mode reuses the already complete baseline official8s Perfetto as
+OFF1. Only `MainActivity`'s existing `performance_hint_reference=false` Intent
+is sent to the same PID. Actual available1/active1, progressing reports,
+zero new failures and a real `nvn-translate` TID are prerequisites for the second
+existing8s Perfetto window. Return OFF requires actual active0 before OFF2's8s
+window. Both report boundaries verify mode; a policy that failed mid-window is
+never accepted as an ON measurement.
+
+Unsupported/session-error or changed stationary scope is recorded explicitly as
+not applicable, not success or zero overhead. Tool errors, thermal background
+suspend and replacement PID fail. Every path attempts OFF restoration on the
+same owned PID; actual active0 is mandatory. Cleanup reads hint status without
+requiring the old PSO/view, so those applicability failures do not prevent
+restoration. A replacement PID never receives an Intent. Original save2/stop
+and full original APK/six-directory restoration remain in the parent finally.
+No new sampler/timer/GPU duration measurement is added. Existing runtime hint
+reports are API inputs; throughput and CPU placement are judged only with the
+original official tools. API acceptance or temporarily higher FPS is not proof
+of lower power/temperature, and no default policy enable is recommended.
+
+PSO-count equality does not prove identical shader variants, weather or work
+counts. Full original before/after state is retained; actual variants,
+per-guest operations, imagery and per-core frequency/topology must be reviewed
+before attributing a difference to ADPF. An accepted ABA recording means the
+policy/session and official windows ran as specified, not causal throughput,
+power or thermal benefit.
+
+
+The combined80a tool successor preserves the073e704 ADPF helper, test and
+run-game hook bytes exactly, with the81bba48 exact80a gate intact. Historical
+26b labels above are inherited descriptions; actualruntime is pinned80a by
+that unchangedgate. Preparation staysDRAFT false. Root must first finish and
+accept the separate80a short realgame transaction before considering this
+optional policy experiment. No runtime, rawmodule, renderer or resource changes.

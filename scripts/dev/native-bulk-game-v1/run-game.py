@@ -248,6 +248,14 @@ def proof(path, digest):
         candidate.validate(p, pinned, read, require)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
+    if p.get('adpf_experiment', {}).get('enabled'):
+        require(p['adpf_experiment']['enabled'] is True and 'native_candidate_validation' in p,
+                'ADPF experiment needs explicittrue and reviewed26b short mode')
+        require(set(p['adpf_experiment']) == {'enabled', 'scheduler_helper'}, 'ADPF experiment fields')
+        require(pinned(p['adpf_experiment']['scheduler_helper']) == HERE / 'capture-sustained-scheduler.py',
+                'exact official scheduler wrapper required')
+        for q in [HERE / 'adpf_experiment.py', HERE / 'capture-sustained-scheduler.py']:
+            p['controller_sources'][str(q)] = sha(q)
     return p
 
 
@@ -389,6 +397,12 @@ def phase_game(dev, out, phase, p, token):
             d['performance_stable_target60_PSO_variants_all_windows'] = tools_result[
                 'stable_target60_PSO_variants_all_windows']
             save()
+            if p.get('adpf_experiment', {}).get('enabled'):
+                adpf = module('source_pinned_optional_ADPF', HERE / 'adpf_experiment.py')
+                d['adpf_experiment_report'] = str(out / 'optional-adpf/adpf-result.json')
+                save()
+                d['adpf_experiment'] = adpf.run(dev, own, p, out, report, d, m)
+                save()
             # All Simpleperf/Perfetto windows and owned cleanup finish before
             # the optional all-stop LLDB snapshot below. Never mix their scopes.
             read_state(dev, out, 'after-tools')
@@ -539,6 +553,11 @@ def main():
             'same_window_CPU_and_Surface_events': 'Perfetto only; stat/record are separate windows',
             'game_Surface_actual_frame_timeline_may_be_absent': True}
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
+    if p.get('adpf_experiment', {}).get('enabled'):
+        plan['optional_ADPF'] = {'enabled': True, 'default': 'OFF',
+            'first_OFF': 'existing original8s Perfetto baseline',
+            'subsequent': 'samePID hintON8s then originalOFF8s; actualsession/TID required',
+            'not_claimed': 'defaultenable, CPUaffinity/clockoverride or heat/powerbenefit'}
     if p.get('official_gpu_tools'):
         plan['official_gpu'] = {'optional': True, 'tool': 'SDP2026.9 Realtime GUI',
             'official_seconds': 12, 'Perfetto_subset_seconds': 8, 'before_LLDB': True,
