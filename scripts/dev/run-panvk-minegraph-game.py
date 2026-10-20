@@ -20,7 +20,7 @@ RESOURCE_READY=R/'.local/build/panvk-minegraph-original-bc-control-v5/compositio
 RESOURCE_SHA='41ce2605b2150669081aa1978094d1296168d4c95c88c2bb0b21c7e6ff970e13'
 DUMP_DIR='files/runtime/temp/pandecode'
 DUMP_PREFIX='/data/data/'+PKG+'/files/runtime/temp/pandecode/cs'
-PROPERTIES={'debug.mesa.panvk.debug':'startup,dump,kbase_diag','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
+PROPERTIES={'debug.mesa.panvk.debug':'startup,kbase_diag','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
 DUMP_SOFT_LIMIT=256*1024*1024
 LAYER_KEYS=['enable_gpu_debug_layers','gpu_debug_app','gpu_debug_layers','gpu_debug_layers_gles','gpu_debug_layer_app']
 # Same existing inventory/CAS checks; preserve real Diablo II paths containing spaces.
