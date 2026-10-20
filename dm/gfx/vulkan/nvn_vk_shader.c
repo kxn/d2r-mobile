@@ -1682,7 +1682,11 @@ static int dispatch_pool_collect(void *context,vk_pool_requirement_sink sink,voi
   return vk_shader_pool_ranges_state(stages,&S,1,sink,out);
 }
 void vk_dispatch(const p_dispatch *p) {
-  if(V.options.pool_defer_publication) {
+  int cpu_preflight=V.options.pool_defer_publication;
+#ifdef DM_VULKAN_SHARED_POOLS
+  cpu_preflight|=vk_pool_shared_active();
+#endif
+  if(cpu_preflight) {
     vk_shader *stages[6]={0};vk_program_shaders(S.program,stages);
     vk_shader_cpu_sources(stages,&S,1);
   }

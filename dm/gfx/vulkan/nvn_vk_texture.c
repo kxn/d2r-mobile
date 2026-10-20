@@ -876,6 +876,22 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
       (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
     ci.flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
   i->description = ci;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(vk_pool_shared_mode() && t->has_layout && t->mem && t->L.size) {
+    // Full GPU clears may deliberately skip the initial CPU upload. Observe
+    // the CPU source version independently of that upload, before any image
+    // writer: untracked is unknown, never evidence of a later CPU edit.
+    // Outer preflight already imported/pinned storage before this borrow;
+    // the readonly check cannot submit, wait or replace physical storage.
+    if(!shared_image_backing((uintptr_t)t->mem,t->L.size) ||
+        !vk_pool_shared_image_source((uintptr_t)t->mem,t->L.size,0))
+      die("Shared image initial observation missing ordered source preflight");
+    i->shared_dirty_scope=nvn_dirty_scope_acquire(t->mem,t->L.size);
+    if(!i->shared_dirty_scope)die("Shared image initial dirty scope admission failed");
+    i->stamp=nvn_dirty_now();
+    nvn_dirty_protect(t->mem,t->L.size);
+  }
+#endif
   image_allocate(i);
   i->next = images;
   images = i;
@@ -1037,7 +1053,11 @@ static void image_upload(image *i) {
   }
 #ifdef DM_VULKAN_SHARED_POOLS
   if(vk_pool_shared_mode() && i->initialized && !i->cpu_rebuildable)
-    die("Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not implemented");
+    die("Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not implemented serial=%llu format=%#x target=%d source=%p bytes=%llu scope=%d stamp=%llu now=%llu epoch=%llu external=%d",
+        (unsigned long long)t->serial,t->d.format,t->d.target,t->mem,
+        (unsigned long long)t->L.size,!!i->shared_dirty_scope,
+        (unsigned long long)i->stamp,(unsigned long long)nvn_dirty_now(),
+        (unsigned long long)nvn_dirty_change_epoch(),i->external_access);
 #endif
   image_upload_contents(i);
 }

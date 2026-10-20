@@ -378,6 +378,7 @@ int vk_ghost_replaying(void);
 
 #ifdef DM_VULKAN_SHARED_POOLS
 int vk_pool_shared_mode(void);
+int vk_pool_shared_active(void);
 void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate);
 #endif
 

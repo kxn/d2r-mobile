@@ -24,9 +24,9 @@ static void shared_image_dirty_test(void) {
   memset(data,0,4u<<20);
   NVNmemoryPoolBuilder b;NVNmemoryPool pool;
   CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
-  CALL(nvnMemoryPoolBuilderSetStorage,&b,data,4u<<20);
+  CALL(nvnMemoryPoolBuilderSetStorage,&b,data,2u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
-  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&b));CHECK(!nvn_dirty_tracked(data,4u<<20));
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&b));CHECK(!nvn_dirty_tracked(data,2u<<20));
   NVNtexture textures[2];NVNtextureBuilder tb;
   for(unsigned n=0;n<2;n++) {
     CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
@@ -38,9 +38,88 @@ static void shared_image_dirty_test(void) {
     CHECK(((tex_t *)&textures[n])->L.size<=4096);
   }
   uint8_t red[]={255,0,0,255},green[]={0,255,0,255},blue[]={0,0,255,255};
+  // A packaged render target may be first defined entirely by the GPU. No CPU
+  // upload ever ran, but later sampling must retain that definition and track
+  // subsequent source writes conservatively (including same-value stores).
+  NVNtexture first_clear;
+  CALL(nvnTextureBuilderSetStorage,&tb,&pool,65536);
+  CHECK(CALL(nvnTextureInitialize,&first_clear,&tb));
+  CHECK(!nvn_dirty_tracked(data+65536,4096));
+  dirty_range_fill(data+65536,4096,red);
+  uint64_t cu,cr,cu2,cr2;mtl_pkg_stats(&cu,&cr);
+  mtl_sub_begin();
+  p_set_rt target={.n=1,.color={ (const tex_t *)&first_clear }};
+  p_clear_color clear={.index=0,.mask=15,.rgba={0,1,0,1}};
+  vk_target_clear_color(&target,NULL,&clear);
+  vk_internal_wait(vk_internal_commit());
+  CHECK(nvn_dirty_tracked(data+65536,((tex_t *)&first_clear)->L.size));
+  CHECK(vk_test_texture_rebuildable(((tex_t *)&first_clear)->serial)==0);
+  shared_image_pixels(&first_clear,green);
+  mtl_pkg_stats(&cu2,&cr2);CHECK(cu2==cu && cr2==cr);
+  // An unrelated tracked page changes the global epoch, not this image's
+  // source generation. The original negative proof must still preserve GPU.
+  dirty_range_fill(data,4096,blue);
+  shared_image_pixels(&textures[0],blue); // real separate image establishes scope
+  data[0]=blue[0]; // fault even for an unchanged byte; other-page publication
+  shared_image_pixels(&first_clear,green);
+  if(negative && !strcmp(negative,"first-clear-cpu")) {
+    data[65536]=255; // same value as before GPU green; must NOT be swallowed
+    shared_image_pixels(&first_clear,green);
+    die("Same-value CPU store after first GPU clear was incorrectly ignored");
+  }
+  if(negative && !strcmp(negative,"first-clear-neighbor")) {
+    CHECK(((tex_t *)&first_clear)->L.size<4096);
+    data[65536+((tex_t *)&first_clear)->L.size]=0x42; // same OS page, outside image
+    shared_image_pixels(&first_clear,green);
+    die("Ambiguous same-page neighbor write was incorrectly accepted");
+  }
+  if(negative && !strcmp(negative,"first-clear-change")) {
+    data[65536]=127; // real CPU value change; partial retile is still unsupported
+    shared_image_pixels(&first_clear,green);
+    die("CPU change after first GPU clear was incorrectly accepted");
+  }
+  // Both ordinary outer operations must prepare a never-imported image Pool
+  // even though successful shared startup deliberately makes defer=0.
+  CHECK(!V.options.pool_defer_publication);
+  uint8_t control[3][0x880];memset(control[0],0,sizeof control[0]);
+  memset(control[1],7,sizeof control[1]);memset(control[2],8,sizeof control[2]);
+  const float vertices[]={-1,-1,3,-1,-1,3};memcpy(data+(512u<<10),vertices,sizeof vertices);
+  for(unsigned graphics=0;graphics<2;graphics++) {
+    NVNmemoryPoolBuilder fresh_builder;NVNmemoryPool fresh_pool;
+    CALL(nvnMemoryPoolBuilderSetDefaults,&fresh_builder);CALL(nvnMemoryPoolBuilderSetDevice,&fresh_builder,&device);
+    uint8_t *source=data+((2+graphics)<<20);dirty_range_fill(source,4096,red);
+    CALL(nvnMemoryPoolBuilderSetStorage,&fresh_builder,source,1u<<20);
+    CALL(nvnMemoryPoolBuilderSetFlags,&fresh_builder,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    CHECK(CALL(nvnMemoryPoolInitialize,&fresh_pool,&fresh_builder));
+    NVNtexture image;CALL(nvnTextureBuilderSetStorage,&tb,&fresh_pool,0);
+    CALL(nvnTextureBuilderSetFlags,&tb,NVN_TEXTURE_FLAGS_IMAGE);CHECK(CALL(nvnTextureInitialize,&image,&tb));
+    int ready,shadow;uint32_t flags;extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
+    CHECK(vk_test_fixed_shared_pool((uintptr_t)source,&ready,&shadow,&flags));CHECK(!ready && !shadow);
+    mtl_set_tex_pool_n(32);mtl_reg_tex(17,(const tex_t *)&image,NULL);
+    NVNprogram program;NVNshaderData stages[]={{.control=control[0]},{.control=control[graphics?2:1]}};
+    CHECK(CALL(nvnProgramInitialize,&program,&device));
+    CHECK(CALL(nvnProgramSetShaders,&program,graphics?2:1,graphics?stages:stages+1));
+    S=(vk_state){.program=(const prog_t *)&program,.depth_range={0,1},.chmask={~0u}};
+    S.img[graphics?1:5][0]=17;S.targets=(p_set_rt){.n=1,.color={(const tex_t *)&first_clear}};
+    NVNpolygonState ps;CALL(nvnPolygonStateSetDefaults,&ps);CALL(nvnPolygonStateSetCullFace,&ps,NVN_FACE_NONE);S.poly=*(const poly_st *)&ps;
+    NVNcolorState cs;CALL(nvnColorStateSetDefaults,&cs);S.color=*(const color_st *)&cs;
+    NVNdepthStencilState ds;CALL(nvnDepthStencilStateSetDefaults,&ds);CALL(nvnDepthStencilStateSetDepthTestEnable,&ds,0);CALL(nvnDepthStencilStateSetDepthWriteEnable,&ds,0);CALL(nvnDepthStencilStateSetStencilTestEnable,&ds,0);S.ds=*(const ds_st *)&ds;
+    NVNvertexAttribState attr;CALL(nvnVertexAttribStateSetDefaults,&attr);CALL(nvnVertexAttribStateSetFormat,&attr,NVN_FORMAT_RG32F,0);S.attr[0]=*(const va_st *)&attr;
+    NVNvertexStreamState stream;CALL(nvnVertexStreamStateSetDefaults,&stream);CALL(nvnVertexStreamStateSetStride,&stream,8);S.stream[0]=*(const vs_st *)&stream;
+    S.vertex[0]=(NVNbufferRange){(uintptr_t)data+(512u<<10),sizeof vertices};
+    S.has_viewport=S.has_scissor=1;S.viewport[0][2]=S.viewport[0][3]=16;S.scissor=(p_scissor){0,0,16,16};
+    vk_pipeline_state_changed();mtl_sub_begin();
+    if(graphics) {p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3};vk_draw(&draw,NULL);}
+    else {p_dispatch dispatch={4,4,1};vk_dispatch(&dispatch);}
+    vk_internal_wait(vk_internal_commit());
+    CHECK(vk_test_fixed_shared_pool((uintptr_t)source,&ready,&shadow,&flags));CHECK(ready && !shadow);
+    shared_image_pixels(&image,graphics?(const uint8_t[]){0,64,255,255}:(const uint8_t[]){255,0,128,255});
+    S=(vk_state){0};CALL(nvnProgramFinalize,&program);CALL(nvnTextureFinalize,&image);CALL(nvnMemoryPoolFinalize,&fresh_pool);
+  }
+  CALL(nvnTextureFinalize,&first_clear);
   dirty_range_fill(data,4096,red);
   shared_image_pixels(&textures[0],red);shared_image_pixels(&textures[1],red);
-  CHECK(nvn_dirty_tracked(data,4096));CHECK(!nvn_dirty_tracked(data+65536,4096));
+  CHECK(nvn_dirty_tracked(data,4096));// The first-clear scope remains alive until original image retirement.
   uint64_t uploads,reuploads,u2,r2;mtl_pkg_stats(&uploads,&reuploads);
   for(unsigned n=0;n<4;n++)shared_image_pixels(&textures[n&1],red);
   mtl_pkg_stats(&u2,&r2);CHECK(u2==uploads && r2==reuploads); // no everydraw reupload
