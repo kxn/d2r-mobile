@@ -66,7 +66,7 @@ def caller_images(thread, token=0):
                                   'tex.has_layout',
                                   'handle', 'memory', 'native_pool', 'native_entry',
                                   'initialized', 'levels', 'layers'])}
-        row['original_NVNever_layout_bytes'] = raw_field(thread.GetProcess(), child(i, 'tex.layout'), 8)
+        row['NVN_packaged_layout_bytes'] = raw_field(thread.GetProcess(), child(i, 'tex.layout'), 8)
         ep = child(i, 'native_entry')
         if ep.IsValid() and ep.GetValueAsUnsigned():
             entry = ep.Dereference()
