@@ -959,3 +959,24 @@ CFT 条目与原 RomFS 相同，避免此前 ASTC→BC 格式检查提前阻断�
 核验通过，临时资源清理完成。本机记录 `panvk-original-fork-ui-game-v4/result.json`。
 此前 v3 在启动前遇到缓存文件清单过长导致 ADB `error: closed`，未运行游戏，
 失败记录保留；v4 仅将哈希请求分批，并非另一项驱动改动。本次不提供性能结论。
+
+## 022d625：图像绑定的静态分类
+
+Mali 当前默认包进一步更新为 `022d625`，源码保存在
+`codex/readback-fixture-class-restore-v1` 分支。它在 `36a9781` 上增加图像 binding
+索引的构造期分类：三个每次绘制访问图像的入口只枚举已知图像索引，仍执行
+当前句柄、注册、脏页、CPU effects 和 hazard 检查，不预测动态资源内容。
+全图像 schema 保留连续扫描，未知或无效 schema 保留原错误路径；每个 shader
+增加 16B，NDK 编译确认相关热函数栈不变。测试自身的 readback 分类恢复修复
+包含在同一提交历史中，与运行时优化分开记录。
+
+完整 canonical APK、994 项输入、1744 项实际 NDK 依赖和六库已归档；原始 NSO
+重新生成并单独 verify。普通 UID 真机回归通过原 legacy ASTC／CPU prefilter
+字节与生命周期检查；Android 没有另跑宿主 1030 项分类边界测试，也没有启用
+Android 校验层。真实游戏默认 OFF 路径到达营地，截图中的人物、地形、血球和
+药水正常，通过 fresh save2 后停机并保留为当前包。记录为
+`image-binding-022d625-default-promote-mali-v1/root-result.json`。
+
+该修改省去重复分类，不减少实际纹理上传或 shader 采样；截图中的 48.7 FPS
+不是与旧包匹配的工具对照，不能报告为该修改的涨帧收益。官方 Simpleperf 的
+翻译线程候选对照另行记录，持续游玩散热仍未验收。
