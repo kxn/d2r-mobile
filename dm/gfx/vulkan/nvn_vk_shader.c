@@ -147,6 +147,17 @@ typedef struct {
 // Same-context immutable content cache. Full keys are compared even when
 // hashes collide; payloads and resource dependencies are still resolved first.
 enum { DESCRIPTOR_HISTORY_SLOTS=256 };
+// Only a location hint into this submission's existing history. Never retain
+// an entry pointer: a colliding slot may realloc/replace it before the next
+// draw. Actual descriptors/dependencies are always resolved before looking up
+// the current slot and comparing every immutable value below.
+enum { DESCRIPTOR_SHADER_HINT_SLOTS=16 };
+typedef struct {
+  const vk_shader *shader;
+  VkDescriptorSetLayout layout;
+  unsigned history_slot;
+} descriptor_shader_hint;
+_Static_assert(sizeof(descriptor_shader_hint)==24,"Descriptor location hint cost");
 typedef struct {
   const vk_shader *shader;
   VkDescriptorSetLayout layout;
@@ -224,6 +235,7 @@ struct vk_shader_submission {
   descriptor_content descriptor_last[6];
   descriptor_history_entry *descriptor_history[DESCRIPTOR_HISTORY_SLOTS];
   uint64_t descriptor_history_epoch;
+  descriptor_shader_hint descriptor_shader_hints[DESCRIPTOR_SHADER_HINT_SLOTS];
   descriptor_batch *descriptor_batches[128];
   int storage_bias_reference;
   int driver_reference;
@@ -238,6 +250,30 @@ static void descriptor_history_release(vk_shader_submission *state) {
   }
 }
 static vk_shader_submission *binding_state;
+#ifdef DM_VULKAN_TEST_EMBED
+// Owned path-coverage assertion only; absent from production builds.
+static unsigned descriptor_shader_hint_test_hits;
+unsigned vk_test_descriptor_shader_hint_hits(void) { return descriptor_shader_hint_test_hits; }
+#endif
+static descriptor_shader_hint *descriptor_shader_hint_slot(vk_shader *s,VkDescriptorSetLayout layout) {
+  uintptr_t key=((uintptr_t)s>>4)^((uintptr_t)layout>>4);
+  key^=key>>9;
+  return &binding_state->descriptor_shader_hints[key&(DESCRIPTOR_SHADER_HINT_SLOTS-1)];
+}
+static descriptor_history_entry *descriptor_shader_hint_find(vk_shader *s,VkDescriptorSetLayout layout,
+    const descriptor_value *values,size_t bytes) {
+  const descriptor_shader_hint *hint=descriptor_shader_hint_slot(s,layout);
+  if(hint->shader!=s || hint->layout!=layout)return NULL;
+  descriptor_history_entry *entry=binding_state->descriptor_history[hint->history_slot];
+  if(!entry || entry->epoch!=binding_state->descriptor_history_epoch ||
+      entry->shader!=s || entry->layout!=layout || memcmp(entry->values,values,bytes))return NULL;
+  return entry;
+}
+static void descriptor_shader_hint_remember(vk_shader *s,VkDescriptorSetLayout layout,
+    descriptor_history_entry **history) {
+  *descriptor_shader_hint_slot(s,layout)=(descriptor_shader_hint){
+    s,layout,(unsigned)(history-binding_state->descriptor_history)};
+}
 typedef struct {
   storage_copy storage_copies[128];
   unsigned storage_copy_count;
@@ -768,6 +804,7 @@ void vk_shader_recycle(vk_shader_submission *state) {
     die("Vulkan recycling recording descriptor resources");
   memset(state->driver_last,0,sizeof state->driver_last);
   memset(state->descriptor_last,0,sizeof state->descriptor_last);
+  memset(state->descriptor_shader_hints,0,sizeof state->descriptor_shader_hints);
   if(!++state->descriptor_history_epoch)die("Vulkan descriptor history epoch overflow");
   // Completed contexts need no content history. Bound idle CPU cache storage;
   // active/in-flight contexts keep their immutable sets and exact keys intact.
@@ -825,6 +862,56 @@ void vk_shader_recycle(vk_shader_submission *state) {
     state->descriptor_current = NULL;
   }
 }
+#ifdef DM_VULKAN_TEST_EMBED
+unsigned vk_test_descriptor_shader_hint_edges(void) {
+  vk_shader_submission *saved=binding_state,*state=calloc(1,sizeof *state);
+  if(!state)die("Descriptor hint owned state allocation");
+  vk_shader shaders[33]={0};descriptor_value value={11,16,32},changed={11,32,32};
+  VkDescriptorSetLayout layout=(VkDescriptorSetLayout)(uintptr_t)16;
+  binding_state=state;state->descriptor_history_epoch=7;
+  descriptor_history_entry *entry=calloc(1,sizeof *entry+sizeof value);
+  if(!entry)die("Descriptor hint owned entry allocation");
+  atomic_fetch_add(&descriptor_history_bytes,sizeof *entry+sizeof value);
+  *entry=(descriptor_history_entry){.shader=&shaders[0],.layout=layout,
+    .set=(VkDescriptorSet)(uintptr_t)22,.epoch=7,.capacity=1};
+  entry->values[0]=value;state->descriptor_history[9]=entry;
+  descriptor_shader_hint_remember(&shaders[0],layout,state->descriptor_history+9);
+  unsigned checks=0;
+#define HINT_CHECK(x) do{if(!(x))die("Descriptor hint edge failed line %d",__LINE__);checks++;}while(0)
+  HINT_CHECK(descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value)==entry);
+  HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&changed,sizeof changed));
+  HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],(VkDescriptorSetLayout)(uintptr_t)32,&value,sizeof value));
+  entry->epoch=6;HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value));entry->epoch=7;
+  entry->shader=&shaders[1];HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value));entry->shader=&shaders[0];
+  state->descriptor_history[9]=NULL;HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value));
+  state->descriptor_history[9]=entry;
+  // Two independently allocated entries may replace the SAME slot; no old
+  // entry pointer can survive the current slot lookup, even when realloc moves.
+  descriptor_history_entry *replacement=malloc(sizeof *entry+sizeof value);
+  if(!replacement)die("Descriptor hint owned replacement allocation");
+  memcpy(replacement,entry,sizeof *entry+sizeof value);free(entry);entry=replacement;
+  state->descriptor_history[9]=entry;
+  HINT_CHECK(descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value)==replacement);
+  unsigned first=33,collision=33;
+  for(unsigned a=0;a<33 && first==33;a++)for(unsigned b=a+1;b<33;b++)
+    if(descriptor_shader_hint_slot(&shaders[a],layout)==descriptor_shader_hint_slot(&shaders[b],layout)) {
+      first=a;collision=b;break;
+    }
+  HINT_CHECK(first<33 && collision<33);
+  entry->shader=&shaders[first];
+  descriptor_shader_hint_remember(&shaders[first],layout,state->descriptor_history+9);
+  descriptor_shader_hint_remember(&shaders[collision],layout,state->descriptor_history+9);
+  HINT_CHECK(!descriptor_shader_hint_find(&shaders[first],layout,&value,sizeof value));
+  descriptor_shader_hint_remember(&shaders[0],layout,state->descriptor_history+9);
+  binding_state=NULL;vk_shader_recycle(state);binding_state=state;
+  HINT_CHECK(state->descriptor_history_epoch==8);
+  HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value));
+  for(unsigned n=0;n<DESCRIPTOR_SHADER_HINT_SLOTS;n++)HINT_CHECK(!state->descriptor_shader_hints[n].shader);
+  descriptor_history_release(state);free(state);binding_state=saved;
+#undef HINT_CHECK
+  return checks;
+}
+#endif
 // Only completed/recycled arenas enter this list. Active constants and
 // immutable in-flight descriptors retain arenas on their submission context.
 void vk_shader_trim_idle_arenas(void) {
@@ -1292,6 +1379,7 @@ static __attribute__((noinline)) VkDescriptorSet descriptor_create_selected(
     entry->shader=s;entry->layout=layout;entry->set=set;
     entry->hash=hash;entry->epoch=binding_state->descriptor_history_epoch;
     memcpy(entry->values,values,key_bytes);
+    descriptor_shader_hint_remember(s,layout,history);
   }
   shader_recorded.descriptor_content_misses += 1;
   return set;
@@ -1520,6 +1608,22 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
   descriptor_history_entry **history=NULL;
   uint64_t hash=0;
   if(!descriptor_content_reference() && !atomic_load(&descriptor_history_reference)) {
+    // Keep the original stage-last HIT above completely unchanged. On its
+    // MISS, shader/layout locality can avoid hashing every descriptor. This
+    // is only a hint: slot
+    // replacement/recycle and any resolved handle/offset/range change reject.
+    descriptor_history_entry *hinted=descriptor_shader_hint_find(s,layout,values,key_bytes);
+    if(hinted) {
+#ifdef DM_VULKAN_TEST_EMBED
+      descriptor_shader_hint_test_hits++;
+#endif
+      // Preserve the original stage-last locality as well: after A/B/A,
+      // consecutive A draws must regain the cheapest unchanged first check.
+      last->shader=s;last->layout=layout;last->set=hinted->set;memcpy(last->values,values,key_bytes);
+      shader_recorded.descriptor_history_hits += 1;
+      shader_recorded.descriptor_content_hits += 1;
+      return hinted->set;
+    }
     hash=descriptor_history_hash(s,layout,values);
     history=&binding_state->descriptor_history[hash&(DESCRIPTOR_HISTORY_SLOTS-1)];
     descriptor_history_entry *entry=*history;
@@ -1527,6 +1631,7 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
         entry->hash==hash && entry->shader==s && entry->layout==layout &&
         !memcmp(entry->values,values,key_bytes)) {
       last->shader=s;last->layout=layout;last->set=entry->set;memcpy(last->values,values,key_bytes);
+      descriptor_shader_hint_remember(s,layout,history);
       shader_recorded.descriptor_history_hits += 1;
       shader_recorded.descriptor_content_hits += 1;return entry->set;
     }

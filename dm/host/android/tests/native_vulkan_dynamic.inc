@@ -107,3 +107,83 @@ static void dynamic_uniform_test(const void *vertex) {
   vk_dynamic_uniform_narrow_reference(original_narrow);
   vk_descriptor_template_reference(original_template);
 }
+
+// The original NVN draw/readback path, with real A/B/A shaders and full-value
+// changes after a hint has been established. This is not a timing benchmark.
+static void descriptor_shader_hint_test(const void *vertex) {
+  extern unsigned vk_test_descriptor_shader_hint_edges(void);
+  extern unsigned vk_test_descriptor_shader_hint_hits(void);
+  if(!getenv("DM_DESCRIPTOR_SHADER_HINT_GPU_ONLY"))checks+=vk_test_descriptor_shader_hint_edges();
+  uint8_t controls[2][0x880];NVNprogram programs[2];
+  for(unsigned n=0;n<2;n++) {
+    memset(controls[n],n?47:39,sizeof controls[n]);
+    NVNshaderData data[]={{.control=vertex},{.control=controls[n]}};
+    CHECK(CALL(nvnProgramInitialize,&programs[n],&device));
+    CHECK(CALL(nvnProgramSetShaders,&programs[n],2,data));
+  }
+  uint8_t *storage;CHECK(!posix_memalign((void **)&storage,65536,786432));memset(storage,0,786432);
+  NVNmemoryPoolBuilder mb;NVNmemoryPool pool;
+  CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&mb,storage,786432);
+  CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));
+  NVNtextureBuilder tb;NVNtexture texture;
+  CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
+  CALL(nvnTextureBuilderSetTarget,&tb,NVN_TEXTURE_TARGET_2D);CALL(nvnTextureBuilderSetWidth,&tb,16);
+  CALL(nvnTextureBuilderSetHeight,&tb,16);CALL(nvnTextureBuilderSetFormat,&tb,NVN_FORMAT_RGBA8);
+  CALL(nvnTextureBuilderSetStorage,&tb,&pool,524288);CHECK(CALL(nvnTextureInitialize,&texture,&tb));
+  NVNcommandBuffer local;CHECK(CALL(nvnCommandBufferInitialize,&local,&device));
+  CALL(nvnCommandBufferAddCommandMemory,&local,&pool,131072,393216);
+  NVNdepthStencilState ds;CALL(nvnDepthStencilStateSetDefaults,&ds);
+  CALL(nvnDepthStencilStateSetDepthTestEnable,&ds,0);CALL(nvnDepthStencilStateSetDepthWriteEnable,&ds,0);
+  CALL(nvnDepthStencilStateSetStencilTestEnable,&ds,0);
+  NVNpolygonState poly;CALL(nvnPolygonStateSetDefaults,&poly);CALL(nvnPolygonStateSetCullFace,&poly,NVN_FACE_NONE);
+  NVNcolorState color;CALL(nvnColorStateSetDefaults,&color);NVNchannelMaskState mask;CALL(nvnChannelMaskStateSetDefaults,&mask);
+  const NVNtexture *targets[]={&texture};float viewport[]={0,0,16,16};
+  NVNcopyRegion region={0,0,0,16,16,1};uint8_t pixels[1024];
+  vk_state saved=S;uint64_t ignored[4];int specialization;
+  vk_uniform_specialization_stats(ignored,ignored+1,ignored+2,ignored+3,&specialization);
+  vk_uniform_specialization_enabled(0);
+  unsigned initial_hits=vk_test_descriptor_shader_hint_hits();
+  for(unsigned iteration=0;iteration<24;iteration++) {
+    // Include real same-address CPU changes, static/narrow/extended offsets,
+    // both update paths, forced history collisions and disabled history.
+    float values[2]={iteration&1?.75f:.25f,iteration&1?.25f:.75f};
+    for(unsigned n=0;n<2;n++){dm_guest_write_prepare(storage+n*65536,4);memcpy(storage+n*65536,values+n,4);}
+    vk_dynamic_uniform_reference(iteration%3==0);vk_dynamic_uniform_narrow_reference(iteration%3!=2);
+    vk_descriptor_history_reference(iteration%6==4);vk_descriptor_history_test_hash(iteration%6==3);
+    vk_descriptor_template_reference(iteration&1);vk_descriptor_reuse_reference(iteration%6==5);
+    CALL(nvnCommandBufferBeginRecording,&local);
+    CALL(nvnCommandBufferSetRenderTargets,&local,1,targets,NULL,NULL,NULL);
+    CALL(nvnCommandBufferSetViewports,&local,0,1,viewport);
+    CALL(nvnCommandBufferBindDepthStencilState,&local,&ds);CALL(nvnCommandBufferBindPolygonState,&local,&poly);
+    CALL(nvnCommandBufferBindColorState,&local,&color);CALL(nvnCommandBufferBindChannelMaskState,&local,&mask);
+    CALL(nvnCommandBufferBindVertexAttribState,&local,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&local,0,NULL);
+    for(unsigned draw=0;draw<8;draw++) {
+      unsigned which=draw&1,bank=(draw>=4)^((iteration>>1)&1);
+      CALL(nvnCommandBufferBindProgram,&local,&programs[which],NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+      CALL(nvnCommandBufferSetScissor,&local,draw*2,0,2,16);
+      CALL(nvnCommandBufferBindUniformBuffer,&local,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)(storage+bank*65536),65536);
+      CALL(nvnCommandBufferBindUniformBuffer,&local,NVN_SHADER_STAGE_FRAGMENT,5,(uintptr_t)(storage+(1-bank)*65536),65536);
+      CALL(nvnCommandBufferDrawArrays,&local,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+    }
+    submit(CALL(nvnCommandBufferEndRecording,&local));
+    CALL(nvnTextureReadTexels,&texture,NULL,&region,pixels);
+    for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
+      unsigned draw=x/2,which=draw&1,bank=(draw>=4)^((iteration>>1)&1);
+      unsigned high=values[bank]>.5f;const uint8_t *pixel=pixels+(y*16+x)*4;
+      CHECK(abs((int)pixel[0]-(high?191:64))<=1);
+      if(which)CHECK(abs((int)pixel[1]-(high?64:191))<=1 && abs((int)pixel[2]-(high?64:191))<=1 && pixel[3]==255);
+      else CHECK(pixel[1]==(high?0:255) && pixel[2]==(high?255:0) && pixel[3]==255);
+    }
+  }
+  CHECK(vk_test_descriptor_shader_hint_hits()>initial_hits);
+  CHECK(vk_validation_error_count()==0);
+  vk_descriptor_history_reference(0);vk_descriptor_history_test_hash(0);
+  vk_descriptor_template_reference(0);vk_descriptor_reuse_reference(0);
+  vk_dynamic_uniform_reference(0);vk_dynamic_uniform_narrow_reference(0);
+  vk_uniform_specialization_enabled(specialization);S=saved;vk_pipeline_state_changed();
+  CALL(nvnCommandBufferFinalize,&local);CALL(nvnTextureFinalize,&texture);
+  for(unsigned n=0;n<2;n++)CALL(nvnProgramFinalize,&programs[n]);
+  CALL(nvnMemoryPoolFinalize,&pool);free(storage);
+}
