@@ -62,6 +62,26 @@ static void nr_previous_writer_astc(NVNtexture *native,NVNtexture *reference,NVN
       S=*graphics;nr_draw(reference,4,output,expected_pixels);
       CHECK(memcmp(previous_pixels,expected_pixels,sizeof expected_pixels));
     }
+    if(mode==2) {
+      // The unknown case must change real pixels too. Produce the alternate
+      // valid ASTC version first, verify its GPU FS result differs from the
+      // reference, then restore the saved version through unknown COMPUTE in
+      // the SAME recording as the following FS consumer (no intermediate wait).
+      uint8_t block[16];dm_guest_write_prepare(storage+linear_offset+changed->offset,changed->size);
+      memcpy(storage+linear_offset+changed->offset,linear+changed->offset,changed->size);
+      uint8_t *raw=storage+linear_offset+changed->offset;
+      memcpy(block,raw,16);memcpy(raw,raw+16,16);memcpy(raw+16,block,16);
+      CALL(nvnMemoryPoolFlushMappedRange,pool,linear_offset+changed->offset,changed->size);
+      mtl_sub_begin();NVNtextureView v=nr_view(4);
+      p_copy_b2t alternate={.tex=(const tex_t *)native,.src=(uintptr_t)raw,
+        .view=*(const view_t *)&v,.has_view=1,.r={0,0,0,changed->width,changed->height,1}};
+      vk_texture_copy_b2t(&alternate,0,0);vk_internal_wait(vk_internal_commit());
+      S=*graphics;nr_draw(native,4,output,actual_pixels);
+      if(!memcmp(expected_pixels,actual_pixels,sizeof actual_pixels))
+        die("Unknown-writer ASTC fault oracle needs actual different GPU pixels");
+      dm_guest_write_prepare(raw,changed->size);memcpy(raw,linear+changed->offset,changed->size);
+      CALL(nvnMemoryPoolFlushMappedRange,pool,linear_offset+changed->offset,changed->size);
+    }
     mtl_sub_begin();
     // Clear only unrelated reference/readback setup BEFORE the real producer.
     // The candidate must keep and synchronize the writer created below.
@@ -83,9 +103,9 @@ static void nr_previous_writer_astc(NVNtexture *native,NVNtexture *reference,NVN
       if(mode==2)vk_buffer_shader_written(address,payload_size,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     }
     CHECK(!vk_pool_native_acquire_independent(address,payload_size));
-    vk_internal_wait(vk_internal_commit());
+    if(mode!=2)vk_internal_wait(vk_internal_commit());
     CHECK(vk_test_native_writer_stages(address,payload_size)&producer);
-    mtl_sub_begin();S=*graphics;S.program=(const prog_t *)&primer;
+    if(mode!=2)mtl_sub_begin();S=*graphics;S.program=(const prog_t *)&primer;
     S.ubo[1][0]=(p_bind_buf){.addr=(uintptr_t)black,.size=16};S.targets=(p_set_rt){.n=1,.color={(const tex_t *)output}};
     vk_pipeline_state_changed();vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
     CHECK(vk_render_active());
@@ -114,5 +134,5 @@ static void nr_previous_writer_astc(NVNtexture *native,NVNtexture *reference,NVN
   S=*graphics;vk_pipeline_state_changed();
   CALL(nvnProgramFinalize,&primer);CALL(nvnProgramFinalize,&compute);CALL(nvnProgramFinalize,&copy_compute);
   unsigned delta=checks-begin;CHECK(delta==39);
-  printf("{\"test\":\"native-previous-writer-ASTC-pending-FS\",\"checks\":%u,\"positive_cases\":2,\"unknown_negative_cases\":1,\"mips\":[4,5,6],\"old_TRANSFER_and_COMPUTE_histories_retained\":true,\"resident_scope_history_preserved\":true,\"current_recording_denied\":true,\"both_positive_FS_versions_changed\":true,\"FS_pixels_reference_equal\":true,\"CS_pixels_reference_equal\":true,\"T2B_compressed_blocks_exact\":true,\"result\":\"passed\"}\n",checks-begin);
+  printf("{\"test\":\"native-previous-writer-ASTC-pending-FS\",\"checks\":%u,\"positive_cases\":2,\"unknown_negative_cases\":1,\"mips\":[4,5,6],\"old_TRANSFER_and_COMPUTE_histories_retained\":true,\"resident_scope_history_preserved\":true,\"unknown_current_writer_changed_pixels\":true,\"unknown_without_intermediate_fence\":true,\"current_recording_denied\":true,\"both_positive_FS_versions_changed\":true,\"FS_pixels_reference_equal\":true,\"CS_pixels_reference_equal\":true,\"T2B_compressed_blocks_exact\":true,\"result\":\"passed\"}\n",checks-begin);
 }

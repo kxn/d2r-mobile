@@ -219,6 +219,16 @@ void vk_texture_pass_begin(void) {
   }
 }
 static void image_dependencies(const image_request *requests,size_t count,int preserve_render,int covered) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  // Image read-cache proofs cannot cover VkBuffer aliases. Prepare their
+  // actual RAW/WAR/WAW dependencies BEFORE the consumer, including covered
+  // image reads and conservative/unknown Buffer writers. Post-draw access
+  // recording is too late when that path must close a physical pass.
+  for(size_t k=0;k<count;k++) {
+    const image_request *q=&requests[k];
+    if(q->owner->native_entry)native_image_prepare(q->owner,q->range,q->stages,q->access);
+  }
+#endif
   if(!preserve_render) vk_render_end();
   int explicit_order=!!(V.nvn_barrier&
       (NVN_BARRIER_ORDER_PRIMITIVES_BIT|NVN_BARRIER_ORDER_INDIRECT_DATA_BIT));

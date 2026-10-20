@@ -24,6 +24,7 @@ def validate_native_rows(rows,manifest):
  assert resident[0]['mips']==9 and resident[0]['rounds']==3 and resident[0]['game_modules_executed'] is False
  for key in ('actual_ASTC_GPU','CPU_UNCACHED','GPU_changed_FS_reference_equal','CPU_restore_all_mips_exact','explicit_and_noFlush','same_value_Flush','three_chunks_without_explicit_host_wait','owner_and_mip_history_retained'):assert resident[0][key] is True
  assert previous[0]['resident_scope_history_preserved'] is True
+ assert previous[0]['unknown_current_writer_changed_pixels'] is True and previous[0]['unknown_without_intermediate_fence'] is True
  lane=[r for r in rows if r.get('native_allocation_lane') is True]
  assert len(lane)==1 and lane[0]['imports']==1 and lane[0]['import_bytes']==135168 and lane[0]['metadata_bytes']==184
  for key in ('same_physical_pages_as_Buffer_imports','no_payload_copy','window_two_unions','last_release_collected'):assert lane[0][key] is True

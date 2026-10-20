@@ -191,6 +191,7 @@ static void image_shared_alias_write(image *i) {
 }
 #endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+static void native_image_prepare(image *,VkImageSubresourceRange,VkPipelineStageFlags,VkAccessFlags);
 static void native_image_record(image *,VkImageSubresourceRange,VkPipelineStageFlags,VkAccessFlags);
 #endif
 #include "nvn_vk_image_dependencies.inc"
