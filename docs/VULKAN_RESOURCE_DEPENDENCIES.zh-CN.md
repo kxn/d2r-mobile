@@ -1786,3 +1786,24 @@ publication、逐子资源读写依赖与 token 生命周期不变；布局相�
 计数：control bracket 增 30,544，native 增 1,959,057；该 ADB bracket 包围独立
 8 秒 record，不是精确帧分母，不能把全部差额算成可消除 CPU 时间。driver command
 recording/command-pool 保留内存可能受益，但实际 CPU/PSS/吞吐均待同条件对照。
+
+
+### Shared linear alias 的纯几何负证明
+
+共享 Buffer/可选 CPU 证明继续执行原 linear-vs-optimal-image 别名守卫。仅当区间
+与 alias AVL 的任何节点都不相交时，可在32槽 exact-range direct-map 中记录
+负证明；绝不把当前 initialized/encoding 不符合条件的交叠节点缓存为安全。
+树插入/删除（含物理替换、退休与同址新身份）推进 owner epoch；溢出永久禁用
+缓存，不能 epoch ABA。节点地址、image指针、内容、stage/visibility 都不存入。
+
+每次 pool 初始化、资源引用、dirty/source 检查及真正读写依赖仍按原顺序执行；
+只有重复 AVL 搜索可省。alias index 与该证明同属现有 recording owner，
+不宣称任意线程并发录制安全。生产增加776B静态元数据（32×24B条目+8Bepoch），
+无逐 image/node 字段、锁或分配。无交叠首次查询做原几何搜索；真实几何交叠
+还需原 eligible 搜索，最多多一遍冷/拒绝路径搜索。direct-map collision只丢命中。
+
+依据6bc同闭合99Hz NvN样本：native binding子树134/632中alias leaf12；
+全部NvN alias leaf21，不能把父20%或21样本全算成可消除时间。原 descriptor
+last/history、dynamic UBO、texture recipe/snapshot、retained Pool地址与page
+bitmap证明均保留，不以descriptor命中跳过真实资源工作。实际CPU/热/FPS
+收益待原官方同条件对照；native GENERAL策略与实验默认开关不变。

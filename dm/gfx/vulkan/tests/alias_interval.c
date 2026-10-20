@@ -1,6 +1,7 @@
 // Exercise the same metadata index used by image alias guards. The oracle is
 // the old full-list predicate, including uint64 end overflow and live flags.
 #include "../nvn_vk_alias_interval.h"
+#include "../nvn_vk_alias_negative.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +11,7 @@ static unsigned long checks;
 #define CHECK(v) do {checks++;if(!(v)) {fprintf(stderr,"alias index check %s:%d: %s\n",__FILE__,__LINE__,#v);abort();}}while(0)
 typedef struct item {alias_range_node node;uint64_t start,bytes,serial;int live,initialized,astc;} item;
 static item items[COUNT];static alias_range_node *root;
+static alias_negative_cache negative={.epoch=1};
 static uint64_t seed=0xf39bac1234d678e1ULL;
 static uint64_t random64(void) {seed^=seed<<13;seed^=seed>>7;seed^=seed<<17;return seed;}
 static int eligible(const alias_range_node *n,int shared) {
@@ -30,7 +32,12 @@ static int indexed(uint64_t a,uint64_t b,int shared) {
   return alias_range_overlap(root,a,a+b,eligible,shared);
 }
 static void query(uint64_t a,uint64_t b) {
-  for(int shared=0;shared<2;shared++)CHECK(original(a,b,shared)==indexed(a,b,shared));
+  for(int shared=0;shared<2;shared++) {
+    int reference=original(a,b,shared);CHECK(reference==indexed(a,b,shared));
+    int cached=!b?0:b>UINT64_MAX-a?1:
+        alias_negative_overlap(&negative,root,a,a+b,eligible,shared);
+    CHECK(reference==cached);
+  }
 }
 static unsigned verify(const alias_range_node *n,const alias_range_node *lo,
                        const alias_range_node *hi,uint64_t *max_end) {
@@ -50,14 +57,34 @@ static void add(unsigned k,uint64_t start,uint64_t bytes,uint64_t serial) {
   i->node=(alias_range_node){.start=start,.end=start+bytes,.max_end=start+bytes,
       .serial=serial,.owner=i,.height=1};
   int inserted=0;root=alias_range_insert(root,&i->node,&inserted);CHECK(inserted);
+  alias_negative_changed(&negative);
 }
 static void remove_item(unsigned k) {
   item *i=&items[k];CHECK(i->live);int removed=0;root=alias_range_remove(root,&i->node,&removed);
-  CHECK(removed);i->live=0;memset(&i->node,0,sizeof i->node);
+  CHECK(removed);alias_negative_changed(&negative);i->live=0;memset(&i->node,0,sizeof i->node);
 }
 int main(void) {
   _Static_assert(sizeof(alias_range_node)==64,"ARM64 and x86_64 node cost");
+  _Static_assert(sizeof(alias_negative_cache)==776,"global negative metadata cost");
   query(0,0);query(UINT64_MAX,1);query(UINT64_MAX,0);
+  add(0,4096,64,1);query(8192,64);
+  CHECK(alias_negative_matches(&negative,8192,8256)); // actual cached empty geometry
+  add(1,8192,64,2);CHECK(!alias_negative_matches(&negative,8192,8256));query(8192,64);
+  remove_item(1);query(8192,64);CHECK(alias_negative_matches(&negative,8192,8256));
+  add(1,8192,64,3);CHECK(!alias_negative_matches(&negative,8192,8256));query(8192,64);
+  remove_item(1);query(8192,64);CHECK(alias_negative_matches(&negative,8192,8256));
+  // Ineligible overlaps MUST NOT cache absence: initialized/encoding flip
+  // without a tree change must immediately become a conflict.
+  items[0].initialized=0;query(4096,64);CHECK(!alias_negative_matches(&negative,4096,4160));
+  items[0].initialized=1;items[0].astc=0;query(4096,64);items[0].astc=1;query(4096,64);
+  query(4080,16);query(4080,17);query(4160,16); // growth/partial/endpoints
+  uint64_t collide=8192+512;CHECK(alias_negative_slot(8192,8256)==alias_negative_slot(collide,collide+64));
+  query(collide,64);CHECK(!alias_negative_matches(&negative,8192,8256));query(8192,64);
+  negative.epoch=UINT64_MAX;alias_negative_changed(&negative);CHECK(!negative.epoch);
+  query(8192,64);CHECK(!alias_negative_matches(&negative,8192,8256));
+  alias_negative_changed(&negative);CHECK(!negative.epoch); // never ABA-reenable
+  negative=(alias_negative_cache){.epoch=1};remove_item(0);
+
   // Duplicate starts/serials remain distinct pointer identities; insert sorted
   // and reverse keys, then delete roots with two children and each duplicate.
   for(unsigned k=0;k<COUNT;k++)add(k,4096+(k/4)*64,32,k/8);

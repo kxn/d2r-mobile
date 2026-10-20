@@ -151,6 +151,8 @@ static int image_mip_tracked(const image *i) {
 #ifdef DM_VULKAN_SHARED_POOLS
 static image *shared_gpu_aliases;
 static alias_range_node *shared_gpu_alias_ranges;
+#include "nvn_vk_alias_negative.h"
+static alias_negative_cache shared_alias_negative={.epoch=1};
 static unsigned astc_copy_live;
 static void image_shared_alias_remove(image *i) {
   if(!i->shared_alias_linked)return;
@@ -159,6 +161,7 @@ static void image_shared_alias_remove(image *i) {
   int removed=0;
   shared_gpu_alias_ranges=alias_range_remove(shared_gpu_alias_ranges,&i->shared_alias_range,&removed);
   if(!removed)die("Shared GPU image alias index lifetime");
+  alias_negative_changed(&shared_alias_negative);
   i->shared_alias_range=(alias_range_node){0};
   *at=i->shared_alias_next;i->shared_alias_next=NULL;i->shared_alias_linked=0;
 }
@@ -185,6 +188,7 @@ static void image_shared_alias_write(image *i) {
   int inserted=0;
   shared_gpu_alias_ranges=alias_range_insert(shared_gpu_alias_ranges,&i->shared_alias_range,&inserted);
   if(!inserted)die("Shared GPU image alias index duplicate");
+  alias_negative_changed(&shared_alias_negative);
   i->shared_alias_linked=1;i->shared_alias_next=shared_gpu_aliases;shared_gpu_aliases=i;
 }
 #endif
@@ -1986,9 +1990,19 @@ int vk_texture_shared_linear_conflict(uint64_t address,uint64_t bytes) {
   if(bytes>UINT64_MAX-address)return 1;
   if(!shared_gpu_alias_ranges)return 0;
   // Shared mode is fixed before guest execution, not a per-node property.
-  return alias_range_overlap(shared_gpu_alias_ranges,address,address+bytes,
-                             image_shared_alias_eligible,vk_pool_shared_active());
+  return alias_negative_overlap(&shared_alias_negative,shared_gpu_alias_ranges,
+      address,address+bytes,image_shared_alias_eligible,vk_pool_shared_active());
 }
+#ifdef DM_VULKAN_TEST_EMBED
+// Functional proof oracle only: allow the same empty-tree geometric query to
+// populate its valid negative entry, so first-ever real writers are tested too.
+int vk_test_shared_alias_negative_prime(uint64_t address,uint64_t bytes) {
+  if(!bytes || bytes>UINT64_MAX-address)return 0;
+  if(alias_negative_overlap(&shared_alias_negative,shared_gpu_alias_ranges,
+      address,address+bytes,image_shared_alias_eligible,vk_pool_shared_active()))return 0;
+  return alias_negative_matches(&shared_alias_negative,address,address+bytes);
+}
+#endif
 static int image_copy_encoding_eligible(const alias_range_node *node,int ignored) {
   (void)ignored;const image *i=node->owner;
   return i->initialized && (i->astc_copy_encoding || i->bc_copy_decoded);
