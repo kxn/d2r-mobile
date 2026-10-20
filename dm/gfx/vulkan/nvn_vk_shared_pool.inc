@@ -81,6 +81,7 @@ static void shared_pool_materialize(pool *p) {
 int vk_pool_shared_mode(void) {mtl_init();return shared_active;}
 static void shared_device_probe(void) {
   if(!shared_requested)return;
+  if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
   extern int dm_gfx_shared_owner_ready(void);
   if(!dm_gfx_shared_owner_ready()) {LOG("[shared pool] startup legacy: dedicated NVN owner unavailable");return;}
   if(!shared_extension || !vkGetMemoryHostPointerPropertiesEXT) {LOG("[shared pool] startup legacy: external host import unavailable");return;}

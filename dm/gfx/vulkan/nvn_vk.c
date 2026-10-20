@@ -1686,6 +1686,19 @@ static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, in
   pool_adds++;
   pthread_mutex_unlock(&V.resources);
 }
+int vk_pool_shared_destination(uint64_t address,uint64_t size) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(!shared_active || !size)return 0;
+  if(size>UINT64_MAX-address)return -1;
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);
+  int shared=p && p->shared?(p->shared_closing?-1:1):0;
+  if(!p)for(pool *v=pools;v;v=v->next)
+    if(v->shared && range_overlap(address,size,(uintptr_t)v->guest,v->size)){shared=-1;break;}
+  pthread_mutex_unlock(&V.resources);return shared;
+#else
+  (void)address;(void)size;return 0;
+#endif
+}
 void mtl_pool_add(const void *mem, uint64_t size) { pool_add_metadata(mem,size,0,0); }
 void mtl_pool_add_flags(const void *mem, uint64_t size, int flags) {
   pool_add_metadata(mem,size,(uint32_t)flags,1);

@@ -11,6 +11,7 @@
 #include "../../../gfx/vulkan/nvn_vk_extrap.h"
 #include "hle.h"
 #include <math.h>
+#include <float.h>
 #include <unistd.h>
 static void *(*bootstrap)(const char *);
 extern void crash_thread_init(void);
@@ -611,6 +612,8 @@ static void fixed_shared_dependency_test(void) {
   printf("{\"test_details\":\"fixed-shared-range-ownership\",\"mode\":\"%s\",\"actual_properties\":%u,\"cache_admission_injected\":%s,\"no_actual_noncoherent_claim\":true}\n",mode,properties,cache?"true":"false");
 }
 
+#include "native_vulkan_query.inc"
+
 static void fixed_shared_buffer_test(void) {
   CHECK(vk_pool_shared_mode());
   CHECK(!setenv("DM_VULKAN_SHARED_POOLS","0",1)); // cannot change selected mode
@@ -750,6 +753,14 @@ int dm_vulkan_test_main(void) {
     printf("{\"test\":\"fixed-shared-cold-policy\",\"mode\":\"%s\",\"window_bytes\":%llu,\"mirror\":%d,\"defer\":%d,\"checks\":%u,\"result\":\"passed\"}\n",expected,
         (unsigned long long)V.options.pool_window_bytes,V.options.pool_mirror_reference,V.options.pool_defer_publication,checks);
     return 0;
+  }
+  if(getenv("DM_FIXED_SHARED_QUERY_REPORT_TEST")) {
+    CHECK(vk_pool_shared_mode());gpu_query_report_test();
+    printf("{\"test\":\"GPU-native-NVN-query-publication\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+  if(getenv("DM_FIXED_SHARED_QUERY_MATH_TEST")) {
+    CHECK(vk_pool_shared_mode());gpu_query_math_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"GPU-native-query-math\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
   }
   if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {
     CHECK(vk_pool_shared_mode());

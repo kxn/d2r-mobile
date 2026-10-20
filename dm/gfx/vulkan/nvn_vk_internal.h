@@ -380,3 +380,19 @@ int vk_ghost_replaying(void);
 int vk_pool_shared_mode(void);
 void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate);
 #endif
+
+// Fixed shared Pool counter publication; no CPU writeback for registered destinations.
+typedef struct {VkQueryPool pool;uint32_t index;} vk_query_native_source;
+// 1=complete live shared range;0=no shared overlap;-1=closing/partial/wrapping.
+int vk_pool_shared_destination(uint64_t address,uint64_t size);
+int vk_query_native_supported(void);
+#ifdef DM_VULKAN_SHARED_POOLS
+int vk_query_clock_parameters(float period,uint32_t bits,uint32_t *multiplier,int32_t *shift);
+void vk_query_native_publish(uint64_t address,VkQueryPool timestamp,uint32_t slot,
+    const vk_query_native_source *prefix,uint32_t count,uint32_t samples);
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_counter_native_test_observer(void (*observe)(uint64_t,uint32_t,uint64_t,uint64_t));
+int vk_query_native_test_dispatch(vk_buffer *source,vk_buffer *destination,uint64_t offset,
+    float period,uint32_t bits,uint32_t count,uint32_t samples);
+#endif
+#endif
