@@ -4227,8 +4227,6 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   // All guest/internal/stream/present submits reach this one enqueue point.
   // A recycled recording can never inherit a negative result across it.
   r->pending_read_size=0;
-  *pending_tail = s;
-  pending_tail = &s->next;
 #ifdef DM_VULKAN_SHARED_POOLS
   if(r->cpu_effect_write_count) {
     if(atomic_load_explicit(&pending_cpu_effect_submissions,memory_order_relaxed)==~0u)
@@ -4236,6 +4234,8 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
     atomic_fetch_add_explicit(&pending_cpu_effect_submissions,1,memory_order_release);
   }
 #endif
+  *pending_tail = s;
+  pending_tail = &s->next;
   atomic_fetch_add(&in_flight, 1);
   pthread_cond_broadcast(&completion_cv);
   pthread_mutex_unlock(&completion_mu);
