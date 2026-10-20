@@ -143,6 +143,13 @@ def preserve_dump(dev,path,d,out):
  require(local==values and inventory(dev,DUMP_DIR)==values,'dump transfer identity mismatch')
  d['dump_archive']=record(archive);d['dump_pulled_only_after_game_stopped']=True;d['dump_transport_hashed_and_verified']=True;journal(path,d)
 
+def native_log_text(dev,*args):
+ # Bounded log byte ranges may end/start inside a UTF-8 character. Preserve
+ # strict Device text decoding for all identities/hashes/JSON; only diagnostic
+ # native-log display and ASCII sentinel matching replace partial characters.
+ data=subprocess.check_output(dev.command+['shell',shlex.join(['run-as',PKG,*args])],timeout=180)
+ return data.decode('utf-8',errors='replace').strip()
+
 def launch_once(dev,path,d,out):
  own=None;client=None;ambiguous=False;native_identity=False
  def current():return dev.adb('shell','pidof '+PKG+' || true')
@@ -163,11 +170,11 @@ def launch_once(dev,path,d,out):
    client=subprocess.Popen(d['launch_command'],stdout=log,stderr=subprocess.STDOUT,cwd=R);deadline=time.monotonic()+100
    while client.poll()is None:
     now=observe()
-    native=dev.app('sh','-c','if test -f files/runtime/native.log; then tail -c 65536 files/runtime/native.log; fi')
+    native=native_log_text(dev,'sh','-c','if test -f files/runtime/native.log; then tail -c 65536 files/runtime/native.log; fi')
     d['dump_last_observed_bytes']=dump_bytes(dev)
     if d['dump_last_observed_bytes']>=DUMP_SOFT_LIMIT:d['dump_soft_bound_reached']=True;journal(path,d);break
     if own and not native_identity:
-     header=dev.app('sh','-c','if test -f files/runtime/native.log; then head -c 4096 files/runtime/native.log; fi')
+     header=native_log_text(dev,'sh','-c','if test -f files/runtime/native.log; then head -c 4096 files/runtime/native.log; fi')
      native_identity=('Android native start pid='+own+'\n'in header)
      if native_identity:d['native_log_first_PID_verified']=True;journal(path,d)
     if native_identity:
@@ -181,7 +188,7 @@ def launch_once(dev,path,d,out):
   require(not d.get('dump_soft_bound_reached'),'diagnostic soft output bound reached; incomplete capture preserved')
   require(not d.get('native_failure_seen') and client.returncode==0,'original native startup failed, preserve diagnostic')
   require(own and observe()==own,'original game PID absent/replaced')
-  native=dev.app('cat','files/runtime/native.log');(out/'native.log').write_text(native)
+  native=native_log_text(dev,'cat','files/runtime/native.log');(out/'native.log').write_text(native)
   raw=dev.app('cat','files/runtime/game-state.jsonl');(out/'game-state.jsonl').write_text(raw)
   state=json.loads(raw.splitlines()[-1]);(out/'HUD-state.json').write_text(json.dumps(state,indent=2)+'\n')
   # Preserve actual image before later assertions, even if a mode assertion fails.
@@ -195,10 +202,12 @@ def launch_once(dev,path,d,out):
   require('[vulkan loader] provider=panvk direct ICD='in native and 'driverID=20'in native and 'FATAL'not in native,'provider/driver identity mismatch')
   require(read(out/'launch.json')['actual_vulkan_provider']=='panvk' and read(out/'launch.json')['requested_legacy_astc_copy']is False,'legacy/resource mode mismatch')
   d['actual_original_game_HUD_reached']=True;d['real_game_modules_executed']=True;d['namespace_load_succeeded']=True;d['visual_acceptance_pending']=True;journal(path,d)
+ except BaseException as e:
+  d['primary_launch_error']=repr(e);journal(path,d);raise
  finally:
   if client and client.poll()is None:client.terminate();client.wait(timeout=10)
   for remote,local in [('files/runtime/native.log','native.log'),('files/runtime/game-state.jsonl','game-state.jsonl')]:
-   try:(out/local).write_text(dev.app('sh','-c','if test -f "$1"; then cat "$1"; fi','sh',remote))
+   try:(out/local).write_text((native_log_text if remote.endswith('native.log') else lambda d,*a:d.app(*a))(dev,'sh','-c','if test -f "$1"; then cat "$1"; fi','sh',remote))
    except Exception as e:d.setdefault('log_errors',[]).append(repr(e))
   try:(out/'crash-logcat.txt').write_text(dev.adb('logcat','-b','crash','-d','-v','threadtime','-t','200'))
   except Exception as e:d.setdefault('log_errors',[]).append(repr(e))
@@ -276,7 +285,7 @@ def main():
   dev.app('mkdir',DUMP_DIR);dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',DUMP_DIR+'/'+OWNER,token)
   publish_properties(dev,path,d)
   d['phase']='published';journal(path,d);launch_once(dev,path,d,a.output);d['phase']='actual-original-HUD-pending-visual-review'
- except BaseException as e:d['phase']='failed-preserved';d['error']=repr(e)
+ except BaseException as e:d['phase']='failed-preserved';d['error']=d.get('primary_launch_error',repr(e));d['raised_exception_after_launch_finally']=repr(e)
  finally:
   if d.get('properties_touched'):
    try:restore_properties(dev,path,d)
