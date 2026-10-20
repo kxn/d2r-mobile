@@ -578,6 +578,18 @@ Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not
 本次共享游戏的稳定 PSS、FPS 或温度对照，不能据此宣称内存、帧率或散热
 改善。下一步先修正图像源追踪生命周期，再验证真实游戏；生产仍保留原路径。
 
+后继独立候选 `c075d41` 补齐首次 GPU 定义的源追踪、shared/defer0 下的
+draw/dispatch 准备、ReadTexels 原 owner 任务路由，以及 raw/image 别名检查和
+用途升级后的 CPU authority。983 项输入和六库再次闭合后，已从原始 NSO
+重新生成并验证模块，执行第二次真实共享游戏测试。它仍在主菜单失败：
+serial 2267、格式 `0x79`（ASTC 4×4 UNORM）、源范围 24064B；此时 scope=1、
+stamp=3404，所以首次未跟踪并非全部根因。Android 系统 tombstone 与同
+BuildID ELF 的 LLVM 符号化确定失败调用为 `vk_texture_copy_t2t` 的
+`image_upload(s)`，即纹理复制的源对象。此前具体哪个操作取得 GPU 写入
+权属仍待查明，不能据格式直接断言源来自 CPU，也不能直接删除保护条件。
+没有取得内存端点或游戏性能对照；已再次校验恢复 c8、全部模块及旧驱动，
+游戏停止。失败和系统栈证据在本机 `shared-game-c075d41-mali-v1/`。
+
 ### 独立 ASTC 原生图像存储导入
 
 另一个默认关闭的实验已通过普通应用 UID 真机功能验证：驱动源码分支
