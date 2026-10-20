@@ -50,6 +50,13 @@ run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-
     '-DDM_RENDERDOC_INCLUDE_DIR=' + str(ROOT/'.local/tools/Arm_Performance_Studio_2026.5/renderdoc_for_arm_gpus/include'),
     '-DDM_ANDROID_RUNTIME_OPT_LEVEL=' + args.opt_level)
 run('cmake', '--build', ROOT / '.local/build/android-native', '-j'+str(args.native_jobs), '--target', 'dmhost_android')
+# A CMake selection alone does not prove the conditional oracle was compiled.
+# Fail before packaging when the app entry is present but its body is absent.
+native_window_selected = 'DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE:BOOL=ON' in (ROOT/'.local/build/android-native/CMakeCache.txt').read_text()
+native_previous_astc_compiled = b'native-previous-writer-ASTC-pending-FS' in (ROOT/'.local/build/android-native/libdmhost_android.so').read_bytes()
+if native_window_selected and not native_previous_astc_compiled:
+    raise RuntimeError('Native window fixture selected but actual ASTC previous-writer body absent from host ELF')
+
 rows = {row['键']: row for row in csv.DictReader((ROOT / 'dm/i18n/ui_text.tsv').open(), delimiter='\t')}
 shutil.rmtree(OUT / 'res', ignore_errors=True)
 for resource in sorted((SOURCE/'res').rglob('*')):
@@ -156,6 +163,7 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
           'native_resources_compiled':args.native_resources,
+          'native_previous_writer_ASTC_oracle_compiled':native_previous_astc_compiled,
           'native_window_app_fixture_compiled':'DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE:BOOL=ON' in (native_build/'CMakeCache.txt').read_text(),
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),

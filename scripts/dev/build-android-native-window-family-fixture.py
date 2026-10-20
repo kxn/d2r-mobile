@@ -24,6 +24,10 @@ manifest=A.base_apk.with_suffix('.apk.build.json');m=json.loads(manifest.read_te
 assert m['contains_game_binary'] is False and m['tlsdesc'] is True
 for k in ('fixed_shared_pools_compiled','shared_import_windows_compiled','native_window_app_fixture_compiled','native_resources_compiled'):assert m[k] is True,k
 assert sha(A.base_apk)==m['apk_sha256'] and len(m['native_library_sha256'])==6
+assert m['native_previous_writer_ASTC_oracle_compiled'] is True
+with zipfile.ZipFile(A.base_apk) as base_contents:
+ assert b'native-previous-writer-ASTC-pending-FS' in base_contents.read('lib/arm64-v8a/libdmhost_android.so'), 'Actual new ASTC body absent: old family-only ELF rejected'
+
 for name,digest in m['source_inputs'].items():
  p=Path(name);p=p if p.is_absolute() else ROOT/p
  assert p.is_file() and sha(p)==digest,str(p)
