@@ -3,6 +3,7 @@
 // executor.
 #include "../../gfx/vulkan/nvn_vk_window.h"
 #include "../../gfx/vulkan/nvn_vk_renderdoc.h"
+#include "../../gfx/vulkan/nvn_vk_loader.h"
 #include "dm.h"
 #include "guest_heap_startup.h"
 #include "platform.h"
@@ -785,7 +786,6 @@ JNIEXPORT jint JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedIm
   (void)klass;
 #ifdef DM_VULKAN_SHARED_POOLS
   static _Atomic int selected;
-  extern int vk_loader_is_initialized(void);
   if(mode<0 || mode>1 || vk_loader_is_initialized() || atomic_exchange(&selected,1))
     return 78;
   const char *path=(*env)->GetStringUTFChars(env,directory,NULL);

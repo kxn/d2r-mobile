@@ -42,6 +42,10 @@ void vk_loader_set_driver(const char *name,const char *directory,const char *hoo
   // Driver selection is startup-only; onNewIntent never changes it.
   pthread_mutex_unlock(&loader_mutex);
 }
+int vk_loader_is_initialized(void) {
+  pthread_mutex_lock(&loader_mutex);int active=initialized;
+  pthread_mutex_unlock(&loader_mutex);return active;
+}
 static void library_path(char *out,const char *directory,const char *name) {
   char canonical[PATH_MAX];
   struct stat st;
