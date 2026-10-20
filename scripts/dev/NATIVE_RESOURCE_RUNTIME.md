@@ -15,11 +15,14 @@ fixed 992-byte record, SHA-bound original compact ASTC input, declaration, opaqu
 payload and metadata. It preserves the source file header except layoutData and
 rebuilds every full mip-table span from actual physical offsets, including gaps
 and final allocation padding. It never re-encodes ASTC or implements swizzling.
-The versioned eight bytes are `DMN`, byte version1, little-endian u32 entry ID.
+The current eight bytes are `DMN`, byte version2, little-endian u32 family ID.
+Version1/full-only tables remain supported with their matching version1 marker.
 The whole DMN namespace is reserved: unknown versions never reach Tegra parsing.
 
-Each 1040-byte table entry binds an exact NVN description to the complete Vulkan
-recipe and native producer record. The 160-byte header binds the selected
+Each 1040-byte table entry binds an exact full NVN description to the complete
+Vulkan recipe and native producer record. Version2 adds one 16-byte family record
+per entry: the original packaged layout8, explicit thumbnailMip and a reserved
+zero word. The 160-byte header binds the selected
 native content, actual driver ELF SHA, and producer-source SHA. Startup also
 checks actual driver/layout/device UUIDs. These are additional checks, not a
 substitute for the build provenance. Before binding each image, the renderer
@@ -84,7 +87,7 @@ Every reacquire invalidates previous read proofs, including same-value CPU
 writes. No "file origin means read-only" or "Flush means no-op" shortcut exists.
 
 Actual native shader/transfer accesses reuse the existing Pool dependency
-engine (`vk_buffer_shader_read`, `vk_transfer_buffer_dependencies`), because
+engine (`vk_buffer_native_image_read`, `vk_transfer_buffer_dependencies`), because
 image-only histories would miss VkBuffer aliases. Native transfer writers
 publish actual physical mip ranges through original writer/writeback metadata;
 shared completion does the original fence-ordered NC Invalidate, with no CPU
@@ -117,9 +120,9 @@ requires selecting the original byte-layout pack at startup.
 
 ## Costs and remaining acceptance gates
 
-Runtime metadata is **160 + 1040 × entry_count bytes**, retained for process
-lifetime after a validated copy; at the hard 65536-entry limit it is about
-65 MiB. Startup temporarily holds the file snapshot plus the installed copy.
+Version2 runtime metadata is **160 + 1056 × family_count bytes**, retained for
+process lifetime after a validated copy; at the hard 65536-family limit it is
+about 66 MiB. Compatibility version1 remains 160 + 1040 × entry_count bytes. Startup temporarily holds the file snapshot plus the installed copy.
 Image access state and the original per-submission dependency bookkeeping also
 remain. The consumer still pays the game's original file/decompression write
 into its shared Pool; "one backing" does not mean zero loading work.
@@ -136,10 +139,23 @@ from these source changes or from host correctness checks.
 ThumbnailBase64 remains compact linear ASTC, with its original mip/count table
 and bytes. The generic native destination B2T path can upload such linear blocks
 into a view of the full native image; it is not memcpy of opaque native bytes.
-We must still verify the real game's thumbnail Builder dimensions/levels and
-whether it reuses layoutData on a separately reduced image. The table currently
-requires an exact full recipe; a smaller Builder using the same marker must get
-an explicit separately baked variant, not an inferred reinterpretation.
+Version2 accepts two exact Builder descriptions for a family. The full shape
+uses the verified opaque native recipe. The one tail shape explicitly declared
+by thumbnailMip uses the original packaged layout8 and the original NVN backend.
+HLE restores its original pkg_block_h/layout bytes before Initialize, so its
+StorageSize/Alignment/GetViewOffset and CPU source decoding retain the original
+semantics; the marker itself is never used as a Tegra block height. Both direct
+CPU packaged initialization and original linear B2T remain legitimate. No
+native-ready flag is assigned to the tail, and its small conventional VkImage
+allocation/conversion still exists. This is a declared source encoding, not a
+runtime prediction, an assumed static texture, or a full-native-memory claim.
+
+Unknown intermediate shapes/flags/versions are rejected. A nonempty thumbnail
+whose thumbnailMip is0 or missing has the same full Builder shape: this protocol
+cannot distinguish its linear versus opaque source origin. The tool leaves
+such assets in the original pack by refusing to select them (33 entries in the
+current full4 cache), rather than pretending they are native. Actual full/tail
+game calls and storage/streaming behavior still need real-game acceptance.
 
 The new NVN binding/ownership path still needs its own ordinary-UID GPU oracle
 (including native-to-legacy and legacy-to-native copies, CPU stream publication,

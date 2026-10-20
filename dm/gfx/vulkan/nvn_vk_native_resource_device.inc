@@ -48,7 +48,7 @@ static void native_resource_install(void) {
   if(!vk_loader_native_driver_digest(identity.driver_sha256))die("Native resource active driver ELF is not authenticated");
   int fd=open(native_resource_path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);struct stat st;
   if(fd<0 || fstat(fd,&st) || !S_ISREG(st.st_mode) || st.st_size<(off_t)sizeof(nvn_native_table) ||
-     st.st_size>(off_t)(sizeof(nvn_native_table)+(size_t)NVN_NATIVE_MAX_ENTRIES*sizeof(nvn_native_entry)))
+     st.st_size>(off_t)(sizeof(nvn_native_table)+(size_t)NVN_NATIVE_MAX_ENTRIES*(sizeof(nvn_native_entry)+sizeof(nvn_native_family))))
     die("Native resource table file bounds");
   size_t bytes=(size_t)st.st_size,done=0;uint8_t *data=malloc(bytes);
   if(!data)die("Native resource table allocation");

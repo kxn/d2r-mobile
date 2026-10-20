@@ -47,11 +47,12 @@ int nvn_native_table_install(const void *data,size_t bytes,const uint8_t pack[32
   if(!data || !pack || !identity || bytes<sizeof(nvn_native_table) ||
      atomic_load_explicit(&selected,memory_order_acquire))return 0;
   // Own an immutable snapshot before validating; never retain caller storage.
-  if(bytes>sizeof(nvn_native_table)+(size_t)NVN_NATIVE_MAX_ENTRIES*sizeof(nvn_native_entry))return 0;
+  if(bytes>sizeof(nvn_native_table)+(size_t)NVN_NATIVE_MAX_ENTRIES*(sizeof(nvn_native_entry)+sizeof(nvn_native_family)))return 0;
   nvn_native_table *t=malloc(bytes);if(!t)return 0;memcpy(t,data,bytes);
-  if(memcmp(t->magic,"DMNTBL1",8) || t->version!=1 || t->header_bytes!=sizeof *t ||
+  if(!((t->version==1 && !memcmp(t->magic,"DMNTBL1",8)) ||
+       (t->version==2 && !memcmp(t->magic,"DMNTBL2",8))) || t->header_bytes!=sizeof *t ||
      !t->count || t->count>NVN_NATIVE_MAX_ENTRIES || t->entry_bytes!=sizeof(nvn_native_entry) ||
-     t->file_bytes!=bytes || bytes!=sizeof *t+(size_t)t->count*sizeof(nvn_native_entry) ||
+     t->file_bytes!=bytes || bytes!=sizeof *t+(size_t)t->count*(sizeof(nvn_native_entry)+(t->version==2?sizeof(nvn_native_family):0)) ||
      memcmp(t->pack_sha256,pack,32) || memcmp(t->driver_sha256,identity->driver_sha256,32) ||
      memcmp(t->producer_sha256,identity->producer_sha256,32))goto fail;
   uint8_t expected[32],sum[32];memcpy(expected,t->digest,32);memset(t->digest,0,32);
@@ -59,20 +60,51 @@ int nvn_native_table_install(const void *data,size_t bytes,const uint8_t pack[32
   if(memcmp(sum,expected,32))goto fail;
   const nvn_native_entry *entries=(const void *)(t+1);
   for(uint32_t n=0;n<t->count;n++)if(entries[n].id!=n+1 || !valid_recipe(entries+n,identity))goto fail;
+  if(t->version==2) {
+    const nvn_native_family *families=(const void *)(entries+t->count);
+    for(uint32_t n=0;n<t->count;n++)if(families[n].reserved || families[n].source_layout[0]>5 ||
+        nvn_native_layout_is_marker(families[n].source_layout) ||
+        families[n].thumbnail_mip>=entries[n].description.levels)goto fail;
+  }
   const nvn_native_table *none=NULL;
   if(!atomic_compare_exchange_strong_explicit(&selected,&none,t,memory_order_release,memory_order_relaxed))goto fail;
   return 1;
 fail:free(t);return 0;
 }
-const nvn_native_entry *nvn_native_layout_resolve(const uint8_t p[8],const nvn_texdesc *d) {
-  if(!nvn_native_layout_is_marker(p) || p[3]!=1 || !d)return NULL;
-  const nvn_native_table *t=atomic_load_explicit(&selected,memory_order_acquire);if(!t)return NULL;
+static const nvn_native_entry *family_entry(const uint8_t p[8],const nvn_native_table **table) {
+  if(!nvn_native_layout_is_marker(p))return NULL;
+  const nvn_native_table *t=atomic_load_explicit(&selected,memory_order_acquire);
+  if(!t || p[3]!=t->version)return NULL;
   uint32_t id=(uint32_t)p[4]|(uint32_t)p[5]<<8|(uint32_t)p[6]<<16|(uint32_t)p[7]<<24;
   if(!id || id>t->count)return NULL;
-  const nvn_native_entry *e=(const void *)(t+1);e+=id-1;
-  nvn_texdesc normalized=*d;normalized.samples=normalized.samples?normalized.samples:1;
-  nvn_texdesc expected=e->description;expected.samples=expected.samples?expected.samples:1;
-  return memcmp(&normalized,&expected,sizeof expected)?NULL:e;
+  if(table)*table=t;
+  return (const nvn_native_entry *)(t+1)+id-1;
+}
+static int description_equal(const nvn_texdesc *a,const nvn_texdesc *b) {
+  nvn_texdesc x=*a,y=*b;x.samples=x.samples?x.samples:1;y.samples=y.samples?y.samples:1;
+  return !memcmp(&x,&y,sizeof x);
+}
+const nvn_native_entry *nvn_native_layout_resolve(const uint8_t p[8],const nvn_texdesc *d) {
+  const nvn_native_entry *e=family_entry(p,NULL);return e && d && description_equal(d,&e->description)?e:NULL;
+}
+int nvn_native_layout_classify(const uint8_t p[8],const nvn_texdesc *d,nvn_texdesc *source,uint8_t source_layout[8]) {
+  const nvn_native_table *t=NULL;const nvn_native_entry *e=family_entry(p,&t);if(!e || !d)return 0;
+  if(description_equal(d,&e->description))return 1;
+  if(t->version!=2)return 0;
+  const nvn_native_family *families=(const void *)((const nvn_native_entry *)(t+1)+t->count);
+  const nvn_native_family *f=&families[e->id-1];unsigned level=f->thumbnail_mip;if(!level)return 0;
+  nvn_texdesc tail=e->description;tail.width>>=level;tail.height>>=level;
+  if(!tail.width)tail.width=1;
+  if(!tail.height)tail.height=1;
+  tail.levels-=level;
+  // The incoming Builder carries the family marker, so pkg_block_h is0 just
+  // as for the full Builder. Restore the original source only AFTER matching.
+  if(!description_equal(d,&tail))return 0;
+  tail.samples=d->samples; // preserve the caller default0 versus explicit1
+  tail.pkg_block_h=f->source_layout[0]+1;
+  if(source)*source=tail;
+  if(source_layout)memcpy(source_layout,f->source_layout,8);
+  return 2;
 }
 int nvn_native_layout_storage(const uint8_t p[8],const nvn_texdesc *d,nvn_texlayout *out) {
   const nvn_native_entry *e=nvn_native_layout_resolve(p,d);if(!e || !out)return 0;

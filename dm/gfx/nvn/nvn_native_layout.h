@@ -28,6 +28,11 @@ typedef struct {
   uint8_t magic[8]; uint32_t version,header_bytes,count,entry_bytes;
   uint64_t file_bytes; uint8_t pack_sha256[32],driver_sha256[32],producer_sha256[32],digest[32];
 } nvn_native_table;
+// v2: one record after the entries, by family ID. Only the explicitly declared
+// thumbnail-tail shape may use the original source encoding; never infer it
+// from a small image size or reinterpret linear bytes as native opaque data.
+typedef struct {uint8_t source_layout[8];uint32_t thumbnail_mip,reserved;} nvn_native_family;
+_Static_assert(sizeof(nvn_native_family)==16,"native family metadata ABI");
 typedef struct { uint8_t layout[16],device[16],driver[16];
   uint8_t driver_sha256[32],producer_sha256[32]; } nvn_native_identity;
 _Static_assert(sizeof(nvn_native_recipe)==992,"native producer ABI");
@@ -47,3 +52,9 @@ const nvn_native_entry *nvn_native_layout_resolve(const uint8_t layout[8],
                                                 const nvn_texdesc *);
 int nvn_native_layout_storage(const uint8_t layout[8],const nvn_texdesc *,
                               nvn_texlayout *);
+
+// 1: exact opaque full image, 2: exact declared thumbnail tail in the original
+// NVN source encoding, 0: unknown/incompatible. Outputs are only set for tail.
+// This does not certify immutable bytes or GPU initialization.
+int nvn_native_layout_classify(const uint8_t layout[8],const nvn_texdesc *,
+                              nvn_texdesc *source,uint8_t source_layout[8]);
