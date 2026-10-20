@@ -243,3 +243,12 @@ if(DM_VULKAN_SHARED_IMPORT_WINDOWS)
   target_compile_definitions(dmhost_android PRIVATE DM_VULKAN_SHARED_IMPORT_WINDOWS=1)
   target_compile_definitions(native_vulkan_test PRIVATE DM_VULKAN_SHARED_IMPORT_WINDOWS=1)
 endif()
+
+# Owned ordinary-UID wrapper only; never changes normal nativeTests/game setup.
+option(DM_VULKAN_SHARED_WINDOW_APP_FIXTURE "Embed cold ordinary-UID shared-window oracle JNI" OFF)
+if(DM_VULKAN_SHARED_WINDOW_APP_FIXTURE)
+  if(NOT DM_VULKAN_SHARED_POOLS OR NOT DM_VULKAN_SHARED_IMPORT_WINDOWS)
+    message(FATAL_ERROR "Shared-window app oracle requires shared Pools and import windows")
+  endif()
+  target_sources(dmhost_android PRIVATE tests/shared_window_fixture_jni.c)
+endif()

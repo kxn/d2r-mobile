@@ -15,14 +15,20 @@ ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument('--shared-pools',action='store_true',help='compile default-OFF fixed shared Pool/early guest heap experiment')
 parser.add_argument('--shared-import-windows',action='store_true',help='compile experimental shared range imports; requires --shared-pools and cold nonzero pool window bytes')
+parser.add_argument('--shared-window-app-fixture',action='store_true',help='embed owned cold shared-window JNI only; requires both shared build flags')
 parser.add_argument('--native-jobs',type=int,choices=range(1,65),default=4,help='parallel native build jobs (default4)')
 parser.add_argument('--tlsdesc', action='store_true', help='Native dynamic TLS, without wrap.sh; requires elfdesc game rewrites')
 parser.add_argument('--opt-level', choices=['1', '2', '3'], default='3', help='native host optimization; preserves debug symbols and frame pointers')
 parser.add_argument('--renderdoc-api', action='store_true', help='optional official application-API capture, not custom timing')
 args = parser.parse_args()
+if args.shared_window_app_fixture and not (args.shared_pools and args.shared_import_windows):
+    parser.error("--shared-window-app-fixture requires --shared-pools and --shared-import-windows")
 if args.shared_import_windows and not args.shared_pools:
     parser.error("--shared-import-windows requires --shared-pools")
-OUT = ROOT / '.local/build/android-apk'
+if args.shared_window_app_fixture:
+    if subprocess.check_output(['git','-C',str(ROOT),'status','--porcelain','--untracked-files=no'],text=True):
+        parser.error('Freeze tracked source before canonical owned app build')
+OUT = ROOT / '.local/build/android-apk' 
 SDK = ROOT / '.local/android-sdk'
 BUILD = SDK / 'build-tools/36.0.0'
 JAR = SDK / 'platforms/android-36/android.jar'
@@ -40,6 +46,7 @@ def run(*args):
 
 run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-native',
     '-DDM_ANDROID_TLS_DESC=' + ('ON' if args.tlsdesc else 'OFF'),
+    '-DDM_VULKAN_SHARED_WINDOW_APP_FIXTURE=' + ('ON' if args.shared_window_app_fixture else 'OFF'),
     '-DDM_VULKAN_SHARED_IMPORT_WINDOWS=' + ('ON' if args.shared_import_windows else 'OFF'),
     '-DDM_VULKAN_SHARED_POOLS=' + ('ON' if args.shared_pools else 'OFF'),
     '-DDM_ANDROID_RENDERDOC_API=' + ('ON' if args.renderdoc_api else 'OFF'),
@@ -145,11 +152,13 @@ opus_provenance={'upstream':json.loads(opus_upstream.read_text()),
                  'source_checksums_sha256':sha(ROOT/'dm/third_party/opus/SHA256SUMS'),
                  'cmake_rules_sha256':sha(ROOT/'dm/third_party/opus_fixed.cmake'),
                  'generated_config_sha256':sha(opus_config)}
-manifest={'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhost_android.so'),
+manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),
+          'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhost_android.so'),
           'tlsdesc':args.tlsdesc,'host_opt_level':args.opt_level,'contains_game_binary':False,
           'official_renderdoc_api':args.renderdoc_api,
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
+          'shared_window_app_fixture_compiled':args.shared_window_app_fixture,
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,
