@@ -122,6 +122,12 @@ void vk_loader_initialize(void) {
         if(!getenv("DM_VULKAN_VALIDATE"))
           die("Layered PanVK requires explicit cold validation mode");
         panvk_shader_cache(driver_path);
+        // Keep this temporary driver's PSO files inside its transaction-owned
+        // directory too; do not add/overwrite the production cache.
+        char cache[PATH_MAX];
+        if(snprintf(cache,sizeof cache,"%s/shader-cache",driver_directory)>=(int)sizeof cache ||
+           setenv("DM_VULKAN_PIPELINE_CACHE_DIR",cache,1))
+          die("Layered PanVK diagnostic PSO cache path");
         strcpy(layered_debug_library,driver_path);
       }
       driver_tools=dlopen(library,RTLD_NOW|RTLD_LOCAL);
