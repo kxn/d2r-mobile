@@ -2704,6 +2704,11 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
     vk_render_texture_read(&desc.texture,stage);
     i=image_get(&desc.texture);
   }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(i->native_entry && !storage && stage==VK_SHADER_STAGE_FRAGMENT_BIT)
+    native_image_use_consumer(i,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT);
+  else
+#endif
   image_upload(i);
   const view_t *v=has_view?&view:NULL;
   if (vk_trace_frame_active() && V.trace_directory) {

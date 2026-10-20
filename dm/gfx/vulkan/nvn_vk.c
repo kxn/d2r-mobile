@@ -1538,6 +1538,15 @@ static void init_device(void) {
 #endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   native_resource_options(available,extension_count_device);
+#ifdef DM_VULKAN_TEST_EMBED
+  int native_pending_fixture=getenv("DM_NATIVE_PENDING_ACQUIRE_FIXTURE")!=NULL;
+  if(native_pending_fixture) {
+    int found=0;
+    for(unsigned n=0;n<extension_count_device;n++)
+      if(!strcmp(available[n].extensionName,VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME))found=1;
+    if(!found)die("Pending-acquire RGBA fixture requires real queue-family-foreign support");
+  }
+#endif
 #endif
   free(available);
   vk_loader_check_device(V.physical,have_driver_properties);
@@ -1618,6 +1627,10 @@ static void init_device(void) {
     for(unsigned n=0;n<sizeof native_extensions/sizeof *native_extensions;n++)
       device_extensions[dc.enabledExtensionCount++]=native_extensions[n];
   }
+#ifdef DM_VULKAN_TEST_EMBED
+  else if(native_pending_fixture)
+    device_extensions[dc.enabledExtensionCount++]=VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME;
+#endif
 #endif
   VK_CHECK(vkCreateDevice(V.physical, &dc, NULL, &V.device));
   volkLoadDevice(V.device);
@@ -2389,6 +2402,33 @@ static void buffer_cpu_written(pool *owner,uint64_t address,uint64_t size) {
   }
 }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+// Owner-only negative proof for moving an external image acquire before the
+// pending secondary. Reject even earlier READS of the physical pages: a queue
+// ownership transfer can affect aliases, not just this VkImage's own history.
+// Existing retained histories suffice; no last-query or content prediction.
+int vk_pool_native_acquire_independent(uint64_t address,uint64_t size) {
+  if(!address || !size || size>UINT64_MAX-address || !recording_resources ||
+      V.nvn_barrier || recording_resources->submission_barrier_reference ||
+      atomic_load(&buffer_memory_reference) || vertex_buffer_write_overflow ||
+      buffer_transfer_pending)return 0;
+  uint64_t page=(uint64_t)getpagesize(),end=address+size;
+  if(!page || (page&(page-1)) || end>UINT64_MAX-(page-1))return 0;
+  // The import/cache/protection envelope also covers neighbouring bytes in
+  // the first/last host page, even across distinct logical NVN Pools.
+  address&=~(page-1);end=(end+page-1)&~(page-1);size=end-address;
+  // Availability/publication must not be moved across a real CPU effect or
+  // writeback. This is a query, never a submission, wait or cache operation.
+  if(recording_cpu_write(address,size) || pending_cpu_write(address,size))return 0;
+  // Do not use Buffer-only visibility bits to dismiss an aliased producer.
+  unsigned first=buffer_write_start(address);
+  if(first<vertex_buffer_write_count && vertex_buffer_writes[first].address<address+size)return 0;
+  for(pool_gpu_access *use=recording_resources->gpu_accesses;use;use=use->next) {
+    uint64_t base=(uintptr_t)use->owner->guest,limit=base+use->owner->size;
+    uint64_t lo=address>base?address:base,hi=end<limit?end:limit;
+    if(lo<hi && bitmap_overlaps(use->pages,lo-base,hi-lo))return 0;
+  }
+  return 1;
+}
 // Named VkBuffer barriers do not prove visibility through an aliased VkImage.
 // An actual writer-generation is only a negative-test key: no new data or CPU
 // publication is inferred. Saturation disables reuse permanently.

@@ -300,6 +300,10 @@ void vk_buffer_sync_snapshot(vk_buffer_sync_stats *out);
 // Recording thread: includes unflushed, flushed and in-flight CPU writes.
 // Neither waits nor reads GPU contents.
 int vk_pool_pending_writes(uint64_t address, uint64_t size);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+// Owner-only, no waits: full retained Pool/Buffer publication and access proof.
+int vk_pool_native_acquire_independent(uint64_t address,uint64_t size);
+#endif
 uint64_t vk_recording_serial(void);
 uint64_t vk_completed_serial(void);
 int vk_async_submissions(void);

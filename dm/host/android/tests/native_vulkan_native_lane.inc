@@ -2,6 +2,58 @@
 // producer recipe. Original full/tail/ASTC family test remains separate.
 typedef struct {void *destination,*source;size_t bytes;} native_lane_readback;
 static void native_lane_readback_done(void *context) {native_lane_readback *r=context;memcpy(r->destination,r->source,r->bytes);}
+static void native_pending_acquire_gpu_cases(VkImage image,void *binding,uint64_t address,uint64_t image_bytes,NVNmemoryPool *pool) {
+  uint8_t controls[2][0x880];memset(controls[0],0,sizeof controls[0]);memset(controls[1],1,sizeof controls[1]);
+  NVNprogram program;NVNshaderData stages[]={{.control=controls[0]},{.control=controls[1]}};
+  CHECK(CALL(nvnProgramInitialize,&program,&device));CHECK(CALL(nvnProgramSetShaders,&program,2,stages));
+  float *color=(void *)(bytes+(3u<<20));color[0]=0;color[1]=1;color[2]=0.25f;color[3]=1;
+  CALL(nvnMemoryPoolFlushMappedRange,pool,3u<<20,16);
+  NVNtexture targets[2];
+  for(unsigned n=0;n<2;n++) {
+    NVNtextureBuilder tb;CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
+    CALL(nvnTextureBuilderSetWidth,&tb,16);CALL(nvnTextureBuilderSetHeight,&tb,16);CALL(nvnTextureBuilderSetFormat,&tb,NVN_FORMAT_RGBA8);
+    CALL(nvnTextureBuilderSetStorage,&tb,pool,n?(ptrdiff_t)(address-(uintptr_t)bytes):2u<<20);
+    CHECK(CALL(nvnTextureInitialize,&targets[n],&tb));
+  }
+  NVNcolorState cs;NVNpolygonState ps;NVNdepthStencilState ds;
+  CALL(nvnColorStateSetDefaults,&cs);CALL(nvnPolygonStateSetDefaults,&ps);CALL(nvnPolygonStateSetCullFace,&ps,NVN_FACE_NONE);
+  CALL(nvnDepthStencilStateSetDefaults,&ds);CALL(nvnDepthStencilStateSetDepthTestEnable,&ds,0);CALL(nvnDepthStencilStateSetDepthWriteEnable,&ds,0);
+  CALL(nvnDepthStencilStateSetStencilTestEnable,&ds,0);
+  S=(vk_state){.program=(const prog_t *)&program,.depth_range={0,1},.chmask={~0u},.has_viewport=1,.has_scissor=1};
+  S.color=*(const color_st *)&cs;S.poly=*(const poly_st *)&ps;S.ds=*(const ds_st *)&ds;
+  S.viewport[0][2]=S.viewport[0][3]=16;S.scissor=(p_scissor){0,0,16,16};
+  // First case is an independent pending pass. Real uniform reads of the
+  // native bytes, an explicit order boundary, and a real aliased attachment
+  // writer must each retain the old split. No history is injected by a stub.
+  for(unsigned test=0;test<4;test++) {
+    S.targets=(p_set_rt){.n=1,.color={(const tex_t *)&targets[test==3]}};
+    S.ubo[1][0]=(p_bind_buf){.addr=test==1?address:(uintptr_t)color,.size=16};
+    vk_pipeline_state_changed();mtl_sub_begin();vk_buffer *out=vk_temp_buffer(4096);
+    p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3};vk_draw(&draw,NULL);CHECK(vk_render_active());
+    if(test==2)V.nvn_barrier=NVN_BARRIER_ORDER_PRIMITIVES_BIT;
+    extern int vk_test_native_pending_acquire(VkImage,void *,uint64_t,uint64_t,VkBuffer);
+    CHECK(vk_test_native_pending_acquire(image,binding,address,image_bytes,out->handle)==(test==0));
+    if(test==2)vk_barrier();
+    VkBufferMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+      .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+      .buffer=out->handle,.offset=0,.size=4096};
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&host,0,NULL);
+    uint8_t actual[4096];native_lane_readback publication={actual,out->map,sizeof actual};
+    vk_completion_write(native_lane_readback_done,&publication,actual,sizeof actual);
+    vk_internal_wait(vk_internal_commit());
+    for(unsigned n=0;n<sizeof actual;n+=4)CHECK(actual[n]==255 && !actual[n+1] && !actual[n+2] && actual[n+3]==255);
+    // The positive/order/image-alias passes also rendered the original mock
+    // shader's green output correctly; alias-UBO values are intentionally opaque.
+    if(test!=1) {
+      uint8_t rendered[1024];NVNcopyRegion region={0,0,0,16,16,1};
+      CALL(nvnTextureReadTexels,&targets[test==3],NULL,&region,rendered);
+      for(unsigned n=0;n<sizeof rendered;n+=4)CHECK(!rendered[n] && rendered[n+1]==255 && rendered[n+2]==64 && rendered[n+3]==255);
+    }
+  }
+  for(unsigned n=0;n<2;n++)CALL(nvnTextureFinalize,&targets[n]);
+  CALL(nvnProgramFinalize,&program);CHECK(!vk_validation_error_count());
+}
 static void native_lane_gpu_test(void) {
   CHECK(vk_pool_shared_mode() && V.options.pool_window_bytes==65536);
   NVNmemoryPoolBuilder pb;NVNmemoryPool memory;
@@ -57,7 +109,21 @@ static void native_lane_gpu_test(void) {
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&alias,0,NULL,0,NULL);
   void *raw;uint64_t offset;vk_buffer *source;
   void *saved_raw;uint64_t saved_offset;uint64_t saved_address=(uintptr_t)bytes+524288;
+  int pending_fixture=getenv("DM_NATIVE_PENDING_ACQUIRE_FIXTURE")!=NULL;
+  if(pending_fixture) {
+    VkImageMemoryBarrier release=general;release.oldLayout=release.newLayout=VK_IMAGE_LAYOUT_GENERAL;
+    release.srcQueueFamilyIndex=V.queue_family;release.dstQueueFamilyIndex=VK_QUEUE_FAMILY_FOREIGN_EXT;
+    release.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;release.dstAccessMask=0;
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,0,NULL,1,&release);
+  }
   vk_pool_operation_end(operation);vk_internal_wait(vk_internal_commit());
+  if(pending_fixture) {
+    native_pending_acquire_gpu_cases(image,binding,address,needs.size,&memory);
+    vkDestroyImage(V.device,image,NULL);vk_pool_native_image_release(binding);vk_pool_native_image_collect();
+    vk_test_native_allocation_stats(&count,&allocated);CHECK(count==initial_count && allocated==initial_bytes);
+    CALL(nvnMemoryPoolFinalize,&memory);CHECK(!vk_validation_error_count());
+    printf("{\"test\":\"native-pending-acquire-real-RGBA\",\"result\":\"passed\",\"checks\":%u,\"independent_preserved\":true,\"buffer_read_alias_split\":true,\"image_writer_alias_split\":true,\"explicit_order_split\":true,\"ASTC_executed\":false}\n",checks);return;
+  }
   uint8_t *opaque=malloc(needs.size);CHECK(opaque);
   // Use a standard readback to obtain bytes rather than reading device tiling.
   mtl_sub_begin();vk_pool_requirement copy_ranges[2]={{address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0},

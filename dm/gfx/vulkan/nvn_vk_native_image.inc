@@ -116,17 +116,51 @@ static int native_pool_operation(const tex_t *t,VkPipelineStageFlags stages,int 
   vk_pool_requirement requirement={(uintptr_t)t->mem,entry->recipe.image_size,0,stages,writable,0};
   return vk_pool_operation_begin_ranges(&requirement,1);
 }
-static void native_image_use(image *i) {
+static int native_acquire_alias_writer(const alias_range_node *node,int unused) {
+  (void)node;(void)unused;return 1;
+}
+static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFlags stages,VkAccessFlags access) {
+  VkCommandBuffer command=vk_render_pending_primary();
+  if(!command || stages!=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT || access!=VK_ACCESS_SHADER_READ_BIT ||
+      i->use_clock>image_pass_begin_clock || vk_mip_clear_pending())return VK_NULL_HANDLE;
+  uintptr_t address=(uintptr_t)i->tex.mem,bytes=i->tex.L.size;
+  if(!vk_pool_native_acquire_independent(address,bytes))return VK_NULL_HANDLE;
+  uintptr_t page=(uintptr_t)getpagesize(),end=address+bytes;
+  if(!page || (page&(page-1)) || end>UINTPTR_MAX-(page-1))return VK_NULL_HANDLE;
+  address&=~(page-1);end=(end+page-1)&~(page-1);
+  // The Pool history alone does not describe private optimal-image writers.
+  // Their original alias index remains authoritative. Reject all overlapping
+  // writers (including old ones), rather than assume an upload made them inert.
+  if(alias_range_overlap(shared_gpu_alias_ranges,address,end,
+      native_acquire_alias_writer,1))return VK_NULL_HANDLE;
+  for(size_t n=native_range_first(address);n<native_range_count && native_ranges[n].first<end;n++) {
+    const native_address_range *range=&native_ranges[n];
+    if(range->end>address && range->owner!=i && range->owner->use_clock>image_pass_begin_clock)
+      return VK_NULL_HANDLE;
+  }
+  // Only independent first use moves. Earlier Buffer alias accesses, CPU
+  // publication, unknown/order barriers or image writers keep the original
+  // end-pass path. Ownership still returns to FOREIGN at every chunk end;
+  // this is not a new immutable-resource or CPU-writing contract.
+  return command;
+}
+static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAccessFlags access) {
   if(!i->native_entry)return;
   if(!i->native_acquired) {
-    vk_render_end();
+    VkCommandBuffer command=native_acquire_pending_primary(i,stages,access);
+    if(!command) {vk_render_end();command=V.cmd;}
     // GENERAL is the real external producer state, not an UNDEFINED discard.
     VkImageMemoryBarrier acquire={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
       .oldLayout=VK_IMAGE_LAYOUT_GENERAL,.newLayout=VK_IMAGE_LAYOUT_GENERAL,
       .srcQueueFamilyIndex=VK_QUEUE_FAMILY_FOREIGN_EXT,.dstQueueFamilyIndex=V.queue_family,
       .image=i->handle,.subresourceRange={i->aspect,0,i->levels,0,1},
-      .dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT};
-    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      .dstAccessMask=access};
+    // Keep the existing external handoff source here. Although the ownership
+    // acquire source is normatively ignored, this exact provider consumes it;
+    // removing its wait also changes the previous chunk's release/acquire
+    // implementation ordering. This candidate narrows only the known actual
+    // destination and moves the proven-independent barrier before the pass.
+    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,stages,
       0,0,NULL,0,NULL,1,&acquire);
     i->layout=VK_IMAGE_LAYOUT_GENERAL;i->layout_scope=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     // A new external publication invalidates all previous content ordering
@@ -138,6 +172,38 @@ static void native_image_use(image *i) {
   }
 
 }
+static void native_image_use(image *i) {
+  native_image_use_consumer(i,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT);
+}
+#ifdef DM_VULKAN_TEST_EMBED
+// A real imported fresh RGBA image exercises the same acquire/alias planner
+// without weakening the production ASTC table/producer validator. The pending
+// NVN pass is real; a subsequent standard transfer checks the source pixels.
+// This test is not an ASTC producer or a fragment-sampling oracle.
+int vk_test_native_pending_acquire(VkImage handle,void *allocation,uint64_t address,uint64_t bytes,
+                                  VkBuffer output) {
+  if(native_acquired_images)die("Pending-acquire fixture requires no other acquired native images");
+  nvn_native_entry entry={0};image_access cells[3]={0};
+  image own={.handle=handle,.native_entry=&entry,.aspect=VK_IMAGE_ASPECT_COLOR_BIT,
+    .levels=1,.layers=1,.layout=VK_IMAGE_LAYOUT_GENERAL,.access=cells,
+    .tex={.mem=(void *)(uintptr_t)address,.L={.size=bytes}}};
+  native_range_add(&own);
+  native_image_use_consumer(&own,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT);
+  int preserved=vk_render_active();vk_render_end();
+  // The real consumer below is a transfer. Preserve an explicit chain from
+  // the acquire destination rather than pretend a fragment sample was issued.
+  VkMemoryBarrier ready={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+    .srcAccessMask=VK_ACCESS_MEMORY_READ_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT};
+  vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+    0,1,&ready,0,NULL,0,NULL);
+  vk_pool_native_image_use(allocation,address,bytes,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  VkBufferImageCopy copy={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},.imageExtent={32,32,1}};
+  vkCmdCopyImageToBuffer(V.cmd,handle,VK_IMAGE_LAYOUT_GENERAL,output,1,&copy);
+  vk_native_images_release();native_range_remove(&own);
+  return preserved;
+}
+#endif
 static void native_image_create(image *i,const nvn_native_entry *entry) {
   const nvn_native_recipe *r=&entry->recipe;
   VkExternalMemoryImageCreateInfo external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
