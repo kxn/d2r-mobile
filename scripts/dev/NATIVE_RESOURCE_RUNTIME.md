@@ -256,3 +256,14 @@ real CPU packaged thumbnail tails and linear B2T into the tail, neighbors,
 Finalize and mapping survival. A reference image exists only for this functional
 comparison, not in the production memory saving. Passing an isolated fixture
 would not prove real-game Builder/streaming acceptance or performance.
+
+The 14dae packaged-image protection path still has an independently identified
+concurrent FS-lease gap: the first scope/protect and final upload protection do
+not yet wait an existing same-host-page pread lease. This composite retains that
+known boundary; the owned tail test has no concurrent FS syscall and cannot
+certify the gap. The subsequent common protection-gate fix must be separately
+integrated before claiming safe real-game streaming. Also, actual game Builder
+ordering is unproven: it must set the DMN layout before Size/Alignment queries,
+and allocate the native alignment (at least4KiB) rather than the old512-byte
+source alignment. Initialize/Bind continue rejecting mismatched offsets/size;
+there is no rounding, late allocation replacement or game-address patch.
