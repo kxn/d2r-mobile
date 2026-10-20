@@ -27,6 +27,7 @@ static unsigned write_count;
 void dm_fault_hook_register(int (*fn)(void *,int,void *)) { if(fault_count==8)die("fixture fault hooks");fault_handlers[fault_count++]=fn; }
 void dm_guest_write_prep_register(void (*fn)(void *,size_t)) { if(write_count==8)die("fixture write hooks");write_handlers[write_count++]=fn; }
 void dm_guest_write_prepare(void *ptr,size_t size) { for(unsigned i=0;i<write_count;i++)write_handlers[i](ptr,size); }
+#include "../../../host/guest_write_lease.inc"
 static void fault_handler(int signal,siginfo_t *info,void *context) {
   for(unsigned i=0;i<fault_count;i++)if(fault_handlers[i](info->si_addr,info->si_code==SEGV_ACCERR,context))return;
   _exit(128+signal);
