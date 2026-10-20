@@ -1283,6 +1283,16 @@ Adreno735 同一 APK、驱动、原 BC/UI4/950 资源、固定 0.75 倍率的营
 `shared-import-windows-eddb4ca-q-root-actual-review.json`，分组数据为
 `shared-import-windows-eddb4ca-q-pair-memory-analysis-agent.json`。
 
+随后独立普通 UID 包复用原 NVN 窗口和 ASTC 用例本体，在同一 Adreno735 的
+真实 memfd 堆、64KiB 窗口和 `3c8710be` 驱动上通过。实际 ASTC4 物理编码、
+fresh BC3 array 转为 ASTC4、mip/layer/ROI 保留及 canonical 字节不变均命中，
+不是 Lavapipe 的 unsupported 分支。终端 rc0；驱动两种私有路径按实际文件
+设备号、inode、大小、SHA 及同一活进程 maps 核对。独立包与临时文件已清理，
+原生产包和文件未变。记录为 `shared-window-android-oracle-v3-root-actual-review.json`。
+前两轮仅工具路径后置条件失败，原结果保留；没有因此修改原 GPU 字节断言、
+Java/JNI 包或渲染代码。这补齐独立 ASTC 路径覆盖，仍不是 ASTC 真游戏或
+持续游玩验证，也没有新增 Android VVL/SYNC 或性能结论。
+
 ## PanVK：完整 API 重放已复现原 GPU 挂起
 
 未修改的 kbase fork 驱动 `c5ecf526` 在关闭共享的原游戏中也会挂起。
@@ -1304,3 +1314,12 @@ Mali 游戏保持停止。接下来只针对原驱动现成的 BC 解码路线�
 路线变化会改变图像内存要求，必须先用官方 replay 的内存重绑定建立共同
 基线，不能拿旧 allocation 直接套用，也不能把分配方式和解码路线同时变化
 冒称单变量结果。
+
+首次 gfx/rebind 实测还暴露了官方 SDK 的能力缺口：重放器给缓冲加入
+SHADER_DEVICE_ADDRESS，但捕获设备未启用 BDA，出现真实
+`VUID-VkBufferCreateInfo-None-09499`。因此本次不能作为合法解码路线对照，
+compute 轮被拒绝、未执行。原包和完整库存的只读复核及属性恢复均闭合；
+被 SIGINT 打断的首次收尾核验保留在原记录中，补充只读核验单独归档。
+记录为 `panvk-bc-rebind-gfx-v1-mali-v1/actual-independent-review.json`。
+需先解决现成工具的 feature/allocator 配置，不能据该 VUID 宣称游戏或驱动
+新增回归。
