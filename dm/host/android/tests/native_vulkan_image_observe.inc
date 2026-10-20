@@ -41,11 +41,31 @@ static void shared_image_cpu_observation_test(void) {
   observe_copy_original=vkCmdCopyBufferToImage;vkCmdCopyBufferToImage=observe_copy_after_cpu;
   shared_image_pixels(&texture,red); // real original GPU command consumes OLD staging
   vkCmdCopyBufferToImage=observe_copy_original;CHECK(!observe_kernel_destination);
+  int ready=0,shadow=0;uint32_t properties=0;
+  if(!legacy) {
+    CHECK(vk_test_fixed_shared_pool((uintptr_t)data,&ready,&shadow,&properties));
+    CHECK(!ready && !shadow); // CPU conversion and VkImage use need no guest VkBuffer
+  }
   CHECK(!memcmp(data,next,t->L.size)); // a newer source is already present
   CHECK(!close(observe_kernel_fd));
   shared_image_pixels(&texture,green); // old capture must not swallow the FS write
   uint64_t a,before,c,d;mtl_pkg_stats(&a,&before);
   shared_image_pixels(&texture,green);mtl_pkg_stats(&c,&d);CHECK(a==c && before==d);
+  if(!legacy) {
+    CHECK(vk_test_fixed_shared_pool((uintptr_t)data,&ready,&shadow,&properties));
+    CHECK(!ready && !shadow);
+    // The first actual linear GPU consumer must still import the same bytes,
+    // without invalidating the existing image's CPU-write/snapshot proof.
+    mtl_sub_begin();vk_buffer *source;uint64_t offset;
+    CHECK(vk_pool_address_stage((uintptr_t)data,t->L.size,(void **)&source,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+    vk_buffer_use use={(uintptr_t)data,t->L.size,0};vk_transfer_buffer_dependencies(&use,1);
+    vk_buffer *result=vk_temp_buffer(t->L.size);VkBufferCopy copy={offset,0,t->L.size};
+    vkCmdCopyBuffer(V.cmd,source->handle,result->handle,1,&copy);
+    vk_buffer_transfer_written();vk_internal_wait(vk_internal_commit());
+    CHECK(!memcmp(result->map,next,t->L.size));
+    CHECK(vk_test_fixed_shared_pool((uintptr_t)data,&ready,&shadow,&properties));
+    CHECK(ready && !shadow);shared_image_pixels(&texture,green);
+  }
   CALL(nvnTextureFinalize,&texture);
   // Exercise the same protected CPU phase's BC fallback without lying about
   // device capabilities: the existing owned force-decode selector creates a
