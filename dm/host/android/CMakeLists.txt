@@ -155,6 +155,19 @@ target_compile_definitions(dmhost_android PRIVATE main=dm_android_main DM_VULKAN
 target_compile_options(dmhost_android PRIVATE -fvisibility=hidden)
 target_link_options(dmhost_android PRIVATE -Wl,-Bsymbolic)
 target_link_libraries(dmhost_android PRIVATE android)
+
+# Dedicated, default-OFF ordinary UID native image contract fixture.
+option(DM_ANDROID_NATIVE_IMAGE_FIXTURE "Build owned native image fixture entry" OFF)
+if(DM_ANDROID_NATIVE_IMAGE_FIXTURE)
+  set(DM_BUILD_NATIVE_IMAGE_PAYLOAD ON CACHE BOOL "Owned API fixture" FORCE)
+  set(DM_BUILD_NATIVE_IMPORTED_IMAGE ON CACHE BOOL "Owned PanVK native contract" FORCE)
+  set(DM_BUILD_NATIVE_IMAGE_EMBEDDED ON CACHE BOOL "Cold app entry" FORCE)
+  add_subdirectory("${HOST}/../../scripts/dev/native-image-payload"
+                   "${CMAKE_CURRENT_BINARY_DIR}/native-image-payload")
+  target_sources(dmhost_android PRIVATE $<TARGET_OBJECTS:native_image_payload_embed>)
+  target_compile_definitions(dmhost_android PRIVATE DM_ANDROID_NATIVE_IMAGE_FIXTURE=1)
+endif()
+
 function(dm_add_driver_tools)
   set(BUILD_SHARED_LIBS ON)
   add_subdirectory("${GFX}/../third_party/libadrenotools" adrenotools)

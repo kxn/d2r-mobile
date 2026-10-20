@@ -19,6 +19,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOperationMode(int mode);
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
+    private static native void nativeNativeImageTest(String directory, String mode, boolean validation);
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -234,6 +235,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeQueryPerDrawReference(getIntent().getBooleanExtra("query_per_draw_reference", false));
         nativePipelinePrepareMode(getIntent().getBooleanExtra("validate", false) ? 2 :
                 getIntent().getBooleanExtra("pipeline_prepare_reference", false) ? 1 : 0);
+        if (getIntent().getBooleanExtra("native_image_test", false)) {
+            if (getIntent().getBooleanExtra("run_game", true) ||
+                    getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                    getIntent().getBooleanExtra("fixed_shared_pool_test", false) || !panvkDriver ||
+                    getIntent().getBooleanExtra("vulkan_test_validation", true))
+                throw new IllegalArgumentException("Native image requires exclusive cold PanVK test, explicit validation=false and run_game=false");
+            String imageMode = getIntent().getStringExtra("native_image_mode");
+            if (!"--native-bake".equals(imageMode) && !"--native-import".equals(imageMode))
+                throw new IllegalArgumentException("Unknown native image fixture mode");
+            new Thread(() -> nativeNativeImageTest(root.getAbsolutePath(), imageMode, false),
+                    "owned-native-image").start();
+        }
         if (getIntent().getBooleanExtra("fixed_shared_pool_test", false)) {
             if (!getIntent().getBooleanExtra("run_vulkan_tests", false) ||
                     getIntent().getBooleanExtra("run_game", true) ||

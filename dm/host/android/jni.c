@@ -746,6 +746,48 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   dm_vulkan_test_main();
 }
 
+// Cold standalone byte oracle. Never calls the game, original NVN tests or NSO loader.
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeNativeImageTest(
+    JNIEnv *env, jclass klass, jstring directory, jstring mode, jboolean validation) {
+  (void)klass;
+#ifdef DM_ANDROID_NATIVE_IMAGE_FIXTURE
+  extern int vk_loader_is_initialized(void);
+  extern void vk_loader_initialize(void);
+  static int selected;
+  if (selected || vk_loader_is_initialized() || validation)
+    die("Native image fixture requires fresh process and explicitly unavailable direct-ICD validation");
+  selected=1;
+  const char *path=(*env)->GetStringUTFChars(env,directory,NULL);
+  const char *kind=(*env)->GetStringUTFChars(env,mode,NULL);
+  if(!path || !kind) die("Native image fixture strings unavailable");
+  if(strcmp(kind,"--native-bake") && strcmp(kind,"--native-import"))
+    die("Native image fixture mode invalid");
+  char output[4096];
+  if(snprintf(output,sizeof output,"%s/native-image-test.log",path)>=(int)sizeof output)
+    die("Native image fixture path too long");
+  int error=dm_fixture_output_open(output);
+  if(error) _exit(error);
+  printf("{\"native_image_app_configuration\":true,\"uid\":%u,"
+         "\"mode\":\"%s\",\"validation_layer\":\"disabled_explicitly\","
+         "\"synchronization_validation\":\"disabled_explicitly\","
+         "\"game_modules_executed\":false}\n",(unsigned)getuid(),kind);
+  if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
+     setenv("PANVK_DM_NATIVE_IMAGE_IMPORT","true",1))
+    die("Native image fixture startup environment");
+  vk_loader_initialize();
+  int dm_native_image_fixture_run(const char*,const char*,PFN_vkGetInstanceProcAddr,int);
+  int rc=dm_native_image_fixture_run(kind,path,vkGetInstanceProcAddr,0);
+  printf("{\"native_image_app_terminal\":true,\"mode\":\"%s\",\"rc\":%d,"
+         "\"game_modules_executed\":false}\n",kind,rc);
+  (*env)->ReleaseStringUTFChars(env,mode,kind);
+  (*env)->ReleaseStringUTFChars(env,directory,path);
+  fflush(NULL);
+#else
+  (void)env;(void)directory;(void)mode;(void)validation;
+  die("Native image fixture unavailable in this build");
+#endif
+}
+
 // Only an explicit isolated native fixture selects this compile-time experiment.
 JNIEXPORT jboolean JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeFixedSharedPoolFixture(
     JNIEnv *env,jclass klass,jint kind) {

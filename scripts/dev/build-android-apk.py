@@ -125,6 +125,12 @@ inputs.update([ROOT/'dm/host/android/CMakeLists.txt',ROOT/'dm/gfx/vulkan/CMakeLi
 inputs.update([ROOT/'dm/gfx/vulkan/builtins.cmake',ROOT/'dm/gfx/vulkan/build_builtin.py'])
 inputs.update(p for p in (ROOT/'dm/gfx/vulkan/shaders').iterdir() if p.is_file())
 inputs.update(native_build.glob('nvn_vk_*_spv.json'))
+# Optional dedicated owned native-image code and generated SPIR-V are actual
+# compiler inputs outside dm/. Keep their full content in APK provenance.
+if (native_build/'native-image-payload/native_sample_spv.h').is_file():
+    inputs.update(p for p in (ROOT/'scripts/dev/native-image-payload').iterdir() if p.is_file())
+    inputs.add(native_build/'native-image-payload/native_sample_spv.h')
+
 inputs.update(touch_assets)
 inputs.update(hud_assets)
 inputs.add(ROOT/'dm/ios/Sources/TouchArt/native_art_manifest.json')
