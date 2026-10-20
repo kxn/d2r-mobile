@@ -332,23 +332,39 @@ void vk_native_images_release(void) {
   }
 }
 
-static void native_image_record(image *i,VkImageSubresourceRange range,VkPipelineStageFlags stages,VkAccessFlags access) {
+static void native_image_prepare(image *i,VkImageSubresourceRange range,VkPipelineStageFlags stages,VkAccessFlags access) {
+#if defined(DM_VULKAN_TEST_EMBED) && defined(DM_VULKAN_TEST_POSTRECORD_NATIVE_ALIAS)
+  // Isolated host fault build only: reproduce the former post-consumer order.
+  // Never compiled by the canonical or Android wrapper build.
+  return;
+#endif
+  if(!stages || !access)return;
   native_image_use(i);
-  if(!stages || !access)return; // metadata-only normalization is not a GPU access
-  if(i->native_use_serial!=vk_recording_serial()) {
-    i->native_use_serial=vk_recording_serial();i->native_recorded_stages=0;
-  }
-  // Reuse the existing pool dependency engine for linear/image aliases. The
-  // same canonical bytes and actual shader/transfer stages participate in
-  // WAR/RAW/WAW ordering; image-only histories would miss VkBuffer writers.
   const nvn_native_recipe *recipe=&i->native_entry->recipe;
   const nvn_native_mip *first=&recipe->mips[range.baseMipLevel];
   const nvn_native_mip *last=&recipe->mips[range.baseMipLevel+range.levelCount-1];
   uint64_t address=(uintptr_t)i->tex.mem+first->offset;
   uint64_t bytes=last->offset+last->size-first->offset;
   if(image_writes(access)) {
+    vk_buffer_native_image_write_dependency(address,bytes,stages,access);
     vk_buffer_use use={address,bytes,1};vk_transfer_buffer_dependencies(&use,1);
   } else native_image_alias_read(i,stages);
+}
+static void native_image_record(image *i,VkImageSubresourceRange range,VkPipelineStageFlags stages,VkAccessFlags access) {
+  native_image_use(i);
+  if(!stages || !access)return; // metadata-only normalization is not a GPU access
+  if(i->native_use_serial!=vk_recording_serial()) {
+    i->native_use_serial=vk_recording_serial();i->native_recorded_stages=0;
+  }
+  const nvn_native_recipe *recipe=&i->native_entry->recipe;
+#if defined(DM_VULKAN_TEST_EMBED) && defined(DM_VULKAN_TEST_POSTRECORD_NATIVE_ALIAS)
+  const nvn_native_mip *first=&recipe->mips[range.baseMipLevel];
+  const nvn_native_mip *last=&recipe->mips[range.baseMipLevel+range.levelCount-1];
+  if(image_writes(access)) {
+    vk_buffer_use use={(uintptr_t)i->tex.mem+first->offset,last->offset+last->size-first->offset,1};
+    vk_transfer_buffer_dependencies(&use,1);
+  } else native_image_alias_read(i,stages);
+#endif
   if(stages&~i->native_recorded_stages) {
     vk_pool_native_image_use(i->native_pool,(uintptr_t)i->tex.mem,i->tex.L.size,stages);
     i->native_recorded_stages|=stages;

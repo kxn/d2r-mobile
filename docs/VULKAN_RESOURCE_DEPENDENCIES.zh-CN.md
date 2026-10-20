@@ -1797,3 +1797,8 @@ recording/command-pool 保留内存可能受益，但实际 CPU/PSS/吞吐均待
 `pool_cpu_written` / `pool_cpu_generation` 是 GPU 写入后 CPU shadow 未知的记录，不能充当 host 写入 epoch；显式 Flush 入口也不能证明不存在合法的 no-Flush CPU 写入。此实验不新增只读预测或内容比对。
 
 验证必须分别记录：host LVP 使用明确 test-only provider override 的真实 imported RGBA 多 mip、前序 TRANSFER/COMPUTE、跨 chunk 访问、CPU 变化／同值 Flush／coherent no-Flush、延迟 Buffer 物化与完整 GPU 读回；AA185 实际 ASTC 全 mip 和真实游戏仍需独立验收。host 结果不能替代 ASTC 真机正确性或整帧性能收益。
+
+
+驻留后继把 native Buffer/image 别名准备放到 `image_dependencies` 的实际 request 入口、所有 read-covered 快路之前。`vk_texture_shader_record` 在 Draw/Dispatch 后调用，只能记录访问、producer 和生命周期；未知 writer 若在那里才关闭 pass 并同步，已经晚于消费。native 写入还保留原 Buffer/Pool 的 WAR 跟踪，并用实际目的 access 的全局 memory barrier 补齐跨 VkImage 别名 WAW；write-only 目的不冒充后续 Buffer read visibility。
+
+隔离 host fault build 可通过 `DM_VULKAN_TEST_POSTRECORD_NATIVE_ALIAS` 恢复旧的 post-record 排序（仅 TEST_EMBED）。真实“GPU 绿 -> 同 recording 未知 compute 恢复红 -> FS”在 LVP 上正负版本均得到正确像素；这明确表示软件 GPU 没有检出故障，不能把其通过当有效的硬件排序负控。AA185 严格 ASTC oracle 和真实游戏验收完成前继续作为待验候选。

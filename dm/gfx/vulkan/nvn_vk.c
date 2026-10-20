@@ -2473,7 +2473,8 @@ VkPipelineStageFlags vk_test_native_writer_stages(uint64_t address,uint64_t size
   return stages;
 }
 #endif
-uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages,uint64_t previous) {
+static uint64_t buffer_native_image_dependency(uint64_t address,uint64_t size,
+    VkPipelineStageFlags stages,VkAccessFlags access,uint64_t previous) {
   if(native_writer_generation && previous==native_writer_generation)return previous;
   VkCommandBuffer command=VK_NULL_HANDLE;
   VkPipelineStageFlags producers=0,known=VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -2499,11 +2500,25 @@ uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineSt
   }
   if(producers) {
     VkMemoryBarrier barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,
-      .dstAccessMask=(stages&VK_PIPELINE_STAGE_TRANSFER_BIT)?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_SHADER_READ_BIT};
+      .dstAccessMask=access};
     vkCmdPipelineBarrier(command,producers,stages,0,1,&barrier,0,NULL,0,NULL);
-    vk_buffer_producers_visible(producers,stages);
+    // A WAW destination write is not visibility for later Buffer reads.
+    if(access&(VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_TRANSFER_READ_BIT|
+        VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_MEMORY_READ_BIT))
+      vk_buffer_producers_visible(producers,stages);
   }
   return native_writer_generation;
+}
+uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages,uint64_t previous) {
+  return buffer_native_image_dependency(address,size,stages,
+    (stages&VK_PIPELINE_STAGE_TRANSFER_BIT)?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_SHADER_READ_BIT,previous);
+}
+void vk_buffer_native_image_write_dependency(uint64_t address,uint64_t size,
+    VkPipelineStageFlags stages,VkAccessFlags access) {
+  // Named VkBuffer barriers do not cover a different aliased VkImage. Keep
+  // actual writer availability/destination access in a global memory barrier;
+  // the original Pool dependency engine separately retains reader/WAR scopes.
+  (void)buffer_native_image_dependency(address,size,stages,access,0);
 }
 #endif
 static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStageFlags producers) {

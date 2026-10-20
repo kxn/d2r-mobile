@@ -107,6 +107,20 @@ static void native_acquire_scope_gpu_test(void) {
   for(unsigned order=0;order<(previous_writer?6u:3u);order++) {
     unsigned producer=order>=3?order-3:0;
     VkPipelineStageFlags producer_stage=producer?VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT:VK_PIPELINE_STAGE_TRANSFER_BIT;
+    if(resident && order==5) {
+      // A genuinely different payload is already visible before the unknown
+      // compute writer restores red, in the SAME recording as its FS consumer.
+      uint8_t *green=bytes+(3u<<20)+262144,*saved=bytes+(3u<<20)+327680;
+      for(unsigned n=0;n<4096;n+=4){green[n]=green[n+2]=0;green[n+1]=green[n+3]=255;}
+      memcpy(saved,original_payload,needs.size);
+      CALL(nvnMemoryPoolFlushMappedRange,&pool,(3u<<20)+262144,4096);
+      CALL(nvnMemoryPoolFlushMappedRange,&pool,(3u<<20)+327680,needs.size);
+      mtl_sub_begin();NVNtextureView v=nr_view(0);p_copy_b2t green_copy={.tex=(const tex_t *)&source,
+        .src=(uintptr_t)green,.view=*(const view_t *)&v,.has_view=1,.r={0,0,0,32,32,1}};
+      vk_texture_copy_b2t(&green_copy,0,0);vk_internal_wait(vk_internal_commit());
+      uint8_t pixels[1024];S=graphics_state;nr_draw(&source,0,&output,pixels);
+      for(unsigned n=0;n<sizeof pixels;n+=4)CHECK(!pixels[n] && pixels[n+1]==255 && !pixels[n+2] && pixels[n+3]==255);
+    }
     if(order>=3) {
       mtl_sub_begin();
       // Original ReadTexels above deliberately records an unbounded staging
@@ -126,7 +140,7 @@ static void native_acquire_scope_gpu_test(void) {
         // native backing bytes. No opaque layout/codec is guessed or copied
         // to a second payload: its actual image contents remain unchanged.
         S=(vk_state){.program=(const prog_t *)&copy_compute};
-        S.ssbo[5][0]=(p_bind_buf){.addr=address,.size=needs.size};
+        S.ssbo[5][0]=(p_bind_buf){.addr=resident && order==5?(uintptr_t)bytes+(3u<<20)+327680:address,.size=needs.size};
         S.ssbo[5][1]=(p_bind_buf){.addr=address,.size=needs.size};
         vk_pipeline_state_changed();vk_dispatch(&(p_dispatch){1,1,1});
         // Conservative unknown-stage metadata for this REAL GPU write must
@@ -138,10 +152,10 @@ static void native_acquire_scope_gpu_test(void) {
       // acquire before it must still be rejected. This check has GPU work,
       // and the subsequent cross-chunk sample verifies the actual pixels.
       CHECK(!vk_pool_native_acquire_independent(address,needs.size));
-      vk_internal_wait(vk_internal_commit());
+      if(!(resident && order==5))vk_internal_wait(vk_internal_commit());
       CHECK(vk_test_native_writer_stages(address,needs.size)&producer_stage);
     }
-    mtl_sub_begin();
+    if(!(resident && order==5))mtl_sub_begin();
     if(resident && order) {
       uint64_t retained_clock=0;
       CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==2);
