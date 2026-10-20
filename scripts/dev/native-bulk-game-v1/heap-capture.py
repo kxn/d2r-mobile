@@ -44,14 +44,18 @@ def proof(p, pinned, read, require):
     cfg['symbol_paths'] = [str(runtime.parent), str(driver.parent)]
     command = capture_command(cfg, 'PRINT_ONLY_EMPTY_DIR')
     printed = subprocess.run(command[:-2] + ['--print-config'], check=True, capture_output=True, text=True).stdout
-    require('no_running: true' in printed and 'block_client: true' not in printed and 'sampling_interval_bytes: 65536' in printed, 'official effective config changed')
+    require('no_running: true' in printed and 'block_client: true' in printed
+            and 'block_client_timeout_us: 100000' in printed
+            and 'sampling_interval_bytes: 262144' in printed
+            and 'shmem_size_bytes: 33554432' in printed, 'official effective config changed')
     cfg['effective_config'] = printed
     return {str(q): hashlib.sha256(q.read_bytes()).hexdigest() for q in [Path(__file__), *OFFICIAL.iterdir(), *HERE.glob('heap-*.sql')] if q.is_file()}
 
 
 def capture_command(cfg, output):
     return [sys.executable, cfg['helper'], 'android', '-n', 'com.d2rmobile.nativeport',
-            '--no-running', '--no-block-client', '--shmem-size', '8388608', '-i', '65536',
+            '--no-running', '--block-client', '--block-client-timeout', '100000',
+            '--shmem-size', '33554432', '-i', '262144',
             '-c', '5000', '-d', '180000', '--no-android-tree-symbolization',
             '--traceconv-binary', cfg['traceconv'], '-o', str(output)]
 

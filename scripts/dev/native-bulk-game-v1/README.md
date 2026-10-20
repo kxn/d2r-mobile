@@ -59,8 +59,27 @@ ready line and validates collector UID2000/executable/full command line/trace
 path/starttime before the unchanged launcher. At the original after-route
 endpoint, it requests the official helper's SIGINT and waits for its remote stop,
 raw pull, symbolization and owned trace removal before the existing LLDB counter
-snapshot and meminfo. It uses 64KiB sampling, 8MiB shared buffer, 5s dumps and a
-180s bound, with `--no-block-client` (the official default would stall malloc).
+snapshot and meminfo. This successor uses256KiB sampling,32MiB shared buffer,5s dumps and a180s
+session bound, with official `--block-client --block-client-timeout100000`
+(the actual argv separates the option from its100000us argument). This is a
+perturbing allocation-attribution diagnostic, never a FPS/heat optimization.
+The prior a22 no-block actual Q control is preserved: startup capture returned
+CLIENT_ERROR_HIT_TIMEOUT with a single dump. It is distinct from old Mali error2.
+
+The new configuration reduces sample/unwind generation, adds24MiB transient
+ring capacity to absorb startup bursts/larger stack records, and allows finite
+retries instead of stopping after one write attempt. Timeout units are
+microseconds:100000us is the nominal100ms budget. In officialv49 GetMaxTries,
+this becomes1000 attempts with100us retry sleeps; write/lock work is additional,
+so it is NOT a hard100ms wall-clock limit. The180s official session and owned
+cleanup remain; no infinite blocking is requested. Do not compare this profile's
+PSS with the unprofiled pair. If it still fails, stop after control and inspect
+original profiler errno logs before any further configuration trial.
+
+`buffer_overran=true` is derived from kHitTimeout by the official producer;
+it alone cannot distinguish full ring, try-lock failure or a stack message
+larger than the ring. The actual old Q partial is a rejection fixture, not a
+source for attributing the48MiB end-of-route native/control malloc difference.
 
 Tool validity is separate from runtime validity. Official trace_processor
 queries and convert-text output must confirm the original PID, startup capture,

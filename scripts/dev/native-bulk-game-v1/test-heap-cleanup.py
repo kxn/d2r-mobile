@@ -25,6 +25,14 @@ class HeapTests(unittest.TestCase):
         self.assertFalse(result['accepted'])
         self.assertTrue(any('INVALID_STACK_BOUNDS' in r for r in result['reasons']))
 
+    def test_actual_Q_timeout_partial_rejected(self):
+        root=Path('/home/dl/d2r-mobile/.local/logs/native-bulk-56c91f7-heap-control-only-v1/control/official-heap-profile')
+        result=h.assess(h.read_csv((root/'health.csv').read_text()),h.read_csv((root/'snapshots.csv').read_text()),(root/'official-textproto.txt').read_text(),24935)
+        self.assertFalse(result['accepted'])
+        self.assertTrue(any('CLIENT_ERROR_HIT_TIMEOUT' in value for value in result['reasons']))
+        self.assertNotIn('official-client-error:CLIENT_ERROR_INVALID_STACK_BOUNDS',result['reasons'])
+        self.assertEqual(result['target_dump_count'],1)
+
     def test_health_gate(self):
         rows = [{'name': 'heapprofd_missing_packet', 'severity': 'error', 'value': '0'}]
         dumps = [{'pid': '12345', 'heap_name': 'libc.malloc', 'ts': '1'},
