@@ -4,16 +4,23 @@ static uint64_t query_integer_reference(uint64_t raw,float period,uint32_t bits)
   CHECK(vk_query_clock_parameters(period,bits,&multiplier,&shift));
   if(bits<64)raw&=(UINT64_C(1)<<bits)-1;
   __uint128_t product=(__uint128_t)raw*multiplier;
-  if(shift>=0)product<<=shift;
+  if(shift>=0) {
+    // A product beyond128bits is already far above625*UINT64_MAX.
+    if(shift>=128 || product>(~(__uint128_t)0>>shift))return UINT64_MAX;
+    product<<=shift;
+  }
   product/=625;
   if(shift<0)product=-shift>=128?0:product>>-shift;
-  CHECK(product<=UINT64_MAX);return (uint64_t)product;
+  return product>UINT64_MAX?UINT64_MAX:(uint64_t)product;
 }
 static void gpu_query_math_test(void) {
-  const float periods[]={1,13,19.2f,52,76.92308f,0x1.000002p-20f,0x1p-126f,0x1p-149f,0x1p30f,0x1p40f,0x1.fffffep48f};
+  const float periods[]={1,13,19.2f,52,76.92308f,0x1.000002p-20f,0x1p-126f,0x1p-149f,0x1p30f,0x1p40f,0x1.fffffep48f,FLT_MAX};
   const uint32_t widths[]={1,16,31,32,33,48,63,64};
-  const uint64_t raw_values[]={0,1,625,UINT32_MAX,UINT64_C(0x100000001),UINT64_C(0x123456789abc),UINT64_C(0x00ffffffffffffff),UINT64_MAX};
-  uint64_t source_values[4];unsigned cases=0,rejected=0;
+  const uint64_t raw_values[]={0,1,625,UINT32_MAX,UINT64_C(0x100000001),UINT64_C(0x123456789abc),UINT64_C(0x00ffffffffffffff),UINT64_MAX,UINT64_MAX-1,
+    UINT64_C(0x7fffffffffffffff),UINT64_C(0x8000000000000000),
+    UINT64_C(12489982394828155300),UINT64_C(12489982394828155301),UINT64_C(12489982394828155302),
+    UINT64_C(12489982394828155303),UINT64_C(12489982394828155304)};
+  uint64_t source_values[4];unsigned cases=0,rejected=0,max_results=0,mali_boundary_cases=0;
   vk_buffer source={0},destination={0};
   vk_buffer_create(&source,sizeof source_values,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   vk_buffer_create(&destination,64,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -33,19 +40,27 @@ static void gpu_query_math_test(void) {
       uint64_t actual[2];memcpy(actual,(uint8_t *)destination.map+4,sizeof actual);
       uint64_t expected[2]={source_values[1]+source_values[2]+source_values[3],query_integer_reference(raw_values[i],periods[p],widths[w])};
       CHECK(!memcmp(actual,expected,sizeof actual));
+      if(expected[1]==UINT64_MAX)max_results++;
+      uint32_t period_bits;memcpy(&period_bits,&periods[p],4);
+      if(period_bits==0x4299d89eu && widths[w]==64 && raw_values[i]>=UINT64_C(12489982394828155300) && raw_values[i]<=UINT64_C(12489982394828155304)) {
+        mali_boundary_cases++;
+        const uint64_t boundary_expected[]={UINT64_MAX-3,UINT64_MAX-1,UINT64_MAX,UINT64_MAX,UINT64_MAX};
+        CHECK(actual[1]==boundary_expected[raw_values[i]-UINT64_C(12489982394828155300)]);
+      }
       uint32_t before,after;memcpy(&before,destination.map,4);memcpy(&after,(uint8_t *)destination.map+20,4);
       CHECK(before==0xcccccccc && after==0xcccccccc);cases++;
     }
   }
-  const float invalid[]={0,-1,INFINITY,NAN,FLT_MAX};
+  const float invalid[]={0,-0.0f,-1,INFINITY,NAN};
   for(unsigned k=0;k<sizeof invalid/sizeof *invalid;k++) {uint32_t mul;int32_t shift;
     CHECK(!vk_query_clock_parameters(invalid[k],64,&mul,&shift));
     CHECK(!vk_query_native_test_dispatch(&source,&destination,4,invalid[k],64,3,1));}
   uint32_t mul;int32_t shift;CHECK(!vk_query_clock_parameters(1,0,&mul,&shift));
   CHECK(!vk_query_clock_parameters(1,65,&mul,&shift));
-  CHECK(!vk_query_clock_parameters(76.92308f,64,&mul,&shift));
-  CHECK(rejected>0);vk_buffer_destroy(&source);vk_buffer_destroy(&destination);
-  printf("{\"test_details\":\"GPU-native-query-u32-pair-math\",\"cases\":%u,\"capability_rejections\":%u,\"shader_int64\":false,\"shader_float64\":false}\n",cases,rejected);
+  CHECK(vk_query_clock_parameters(76.92308f,64,&mul,&shift));
+  CHECK(vk_query_clock_parameters(FLT_MAX,64,&mul,&shift));
+  CHECK(!rejected && max_results>0 && mali_boundary_cases==5);vk_buffer_destroy(&source);vk_buffer_destroy(&destination);
+  printf("{\"test_details\":\"GPU-native-query-u32-pair-math\",\"cases\":%u,\"capability_rejections\":%u,\"max_or_saturated_results\":%u,\"actual_Mali_boundary_cases\":%u,\"Mali_period_bits\":1117378718,\"overflow_policy\":\"Android-u64-saturate\",\"shader_int64\":false,\"shader_float64\":false}\n",cases,rejected,max_results,mali_boundary_cases);
 }
 
 enum { QUERY_OBSERVATIONS=4096 };
@@ -53,11 +68,17 @@ typedef struct {uint64_t address,raw,sum,expected[2];uint32_t type;} query_obser
 static query_observation query_observed[QUERY_OBSERVATIONS];
 static unsigned query_observed_count;
 static int query_observed_overflow;
+static unsigned query_observed_saturated;
 static void query_observe_original_cpu(uint64_t address,uint32_t type,uint64_t raw,uint64_t sum) {
   // Only this fixture enables the callback. Retain the original CPU expression
   // as a byte oracle without writing any guest/Pool output in completion.
   if(query_observed_count==QUERY_OBSERVATIONS){query_observed_overflow=1;return;}
-  uint64_t ticks=(uint64_t)((long double)raw*V.props.limits.timestampPeriod*0.0192L);
+  long double scaled=(long double)raw*V.props.limits.timestampPeriod*0.0192L;
+  // The old expression is an oracle only in its C-defined range. Explicit
+  // saturation outside it matches the frozen Android __fixunstfdi object.
+  uint64_t ticks;
+  if(scaled>=0x1p64L){ticks=UINT64_MAX;query_observed_saturated++;}
+  else ticks=(uint64_t)scaled;
   query_observed[query_observed_count++]=(query_observation){.address=address,.raw=raw,.sum=sum,
     .expected={type==NVN_COUNTER_TYPE_SAMPLES_PASSED?sum:ticks,ticks},.type=type};
 }
@@ -162,5 +183,5 @@ static void gpu_query_report_test(void) {
   stream_submit_test(controls[0],controls[1]);
   CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&memory);
   CHECK(vk_validation_error_count()==0);
-  printf("{\"test_details\":\"GPU-native-query-original-CPU-byte-oracle\",\"timestamp_reports\":%u,\"sample_prefixes\":4,\"legacy_CPU_expression_exact\":true,\"streaming_regression\":true,\"image_freshness_acceptance\":false}\n",count+2);
+  printf("{\"test_details\":\"GPU-native-query-original-CPU-byte-oracle\",\"timestamp_reports\":%u,\"sample_prefixes\":4,\"legacy_CPU_expression_exact\":%s,\"defined_saturating_reference\":true,\"saturated_reports\":%u,\"streaming_regression\":true,\"image_freshness_acceptance\":false}\n",count+2,query_observed_saturated?"false":"true",query_observed_saturated);
 }
