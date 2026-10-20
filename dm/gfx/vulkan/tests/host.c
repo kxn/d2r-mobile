@@ -16,7 +16,9 @@ uint64_t now_ns(void) { return dm_platform_clock_ns(CLOCK_MONOTONIC); }
 uint64_t guest_ns(void) { return now_ns(); }
 int dm_detclock_enabled(void) { return 0; }
 void dm_guest_frame_tick(void) {}
+#ifndef DM_GUEST_HEAP_GPU_TESTS
 int dm_guest_heap_stat(unsigned long long *total,unsigned long long *free_bytes,unsigned long long *largest) { *total=*free_bytes=*largest=0;return 0; }
+#endif
 double front_display_refresh(char *name,size_t size) { if(size)name[0]=0;return 0; }
 static int (*fault_handlers[8])(void *,int,void *);
 static unsigned fault_count;

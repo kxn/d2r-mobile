@@ -353,6 +353,20 @@ static int lifecycle_suspended;
 static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup,pixel_local_shared_ds_startup;
+static int shared_guest_heap_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedGuestHeap(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"shared_guest_heap is fixed before native startup");
+    return;
+  }
+  shared_guest_heap_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int upload_dual_startup;
 static int astc_decode_startup,astc_decode_fixture;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAstcDecode(
@@ -552,6 +566,10 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   }
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
+  if(setenv("DM_GUEST_HEAP_SHARED",shared_guest_heap_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_SHARED_POOLS",shared_guest_heap_startup?"1":"0",1) ||
+      (shared_guest_heap_startup && setenv("PANVK_DM_HOST_IMPORT","true",1)))
+    die("Android shared guest heap cold request environment");
   // Freeze the optional module/descriptor policy before any game or Vulkan
   // worker exists. The backend samples this environment only once; Activity
   // recreation and later Intents must never change established PSO identities.

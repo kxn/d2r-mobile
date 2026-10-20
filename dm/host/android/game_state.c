@@ -3,6 +3,7 @@
 #include "../../gfx/vulkan/nvn_vk_window.h"
 #include "../../gfx/vulkan/nvn_vk_freeze.h"
 #include "../../gfx/vulkan/nvn_vk_pool_copy_stats.h"
+#include "dm_guest_heap.h"
 #include "../../gfx/vulkan/nvn_vk_extrap.h"
 #include "../../gfx/vulkan/nvn_vk_pixel_local_runtime.h"
 #include "dm.h"
@@ -441,6 +442,9 @@ static void observe_tick(const uint64_t *registers) {
     fprintf(state_log, ",\"image_layouts\":{\"reference\":%s,\"transitions\":%llu,\"safe_uses\":%llu,\"fallbacks\":%llu}",
       image_reference?"true":"false",(unsigned long long)image_transitions,
       (unsigned long long)image_safe_uses,(unsigned long long)image_fallbacks);
+    int shared_heap=dm_guest_heap_shared_mode();
+    fprintf(state_log,",\"guest_heap\":{\"backing_initialized\":%s,\"shared\":%s}",
+      shared_heap>=0?"true":"false",shared_heap==1?"true":"false");
     vk_pool_copy_stats copy_work;vk_pool_copy_snapshot(&copy_work);
     if(copy_work.enabled) {
       fprintf(state_log,",\"pool_copy_accounting\":{\"enabled\":true");

@@ -726,6 +726,20 @@ int dm_vulkan_test_main(void) {
   // Resumed numbering includes dropped frames; unknown frames have no timing.
   CHECK(vk_window_begin_present() == 2);
   CHECK(mtl_presented_time(2) == 0);
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_SHARED_GUEST_HEAP_FIXTURE")) {
+    // The real early selector/device -> first SVC order, not a finite injected
+    // certificate. Default host fixtures do not link SVC and keep old behavior.
+    extern int dm_guest_heap_startup_for_fixture(int) __attribute__((weak));
+    extern uint64_t svc_dispatch(int,uint64_t *,uint64_t) __attribute__((weak));
+    extern int dm_guest_heap_shared_mode(void) __attribute__((weak));
+    CHECK(!V.device && dm_guest_heap_startup_for_fixture && svc_dispatch && dm_guest_heap_shared_mode);
+    int requested=atoi(getenv("DM_SHARED_GUEST_HEAP_FIXTURE"));
+    CHECK(dm_guest_heap_startup_for_fixture(requested)==vk_pool_shared_mode());
+    uint64_t r[32]={0};r[1]=4u<<20;svc_dispatch(0x01,r,0);CHECK(!r[0]);bytes=(void *)(uintptr_t)r[1];
+    CHECK(dm_guest_heap_shared_mode()==vk_pool_shared_mode());
+  } else
+#endif
   CHECK(!posix_memalign((void **)&bytes, 65536, 4 << 20));
   memset(bytes, 0, 4 << 20);
   NVNdeviceBuilder db;

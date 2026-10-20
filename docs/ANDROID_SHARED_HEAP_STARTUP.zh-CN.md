@@ -1,6 +1,6 @@
 # 早期 shared guest heap 候选（默认关闭）
 
-此分支基于固定 shared Buffer 实验 b54c7127 / core 200bc，而非主线全功能验收。
+本组合以主线 c8e7a25 为基础，逐项合入固定 shared core 200bc、Event/Query、cold policy e452、image-only dirty 9d50 和 heap b6 核心；不是主线全功能/真机验收。
 它只把原 HLE 所有的 heap backing 在第一次发布 guest AS **之前**选为 shared anonymous；
 不寻找 malloc 来源，不按游戏调用地址分类，不在 NVN Initialize 后重映射已有数据，
 不移动或保护 driver 的 vkMapMemory 映射，不自动导入整个 heap。
@@ -15,12 +15,16 @@ image-only dirty 注册是另一个候选，本分支不会把 packaged image �
 - 显式 `DM_GUEST_HEAP_SHARED=1` 且编译 `DM_VULKAN_SHARED_POOLS=1` 时才调用现有
   `vk_pool_shared_mode()`；复用同一个 `mtl_init()` / device / immutable probe。
   backend cold probe 必须仅在成功后才选择 whole/window0/mirror0/defer0；失败必须保留原 window16 等配置。
-  该后端修正在独立 PanVK 候选中，不能以仅 b54 构建当作已组合验收。
+  此组合已合入该 cold 后端修正；源码组合/host 验证不能代替设备支持。
   probe 不支持（含同步 owner 不可用）则在任何 guest 执行前冻结整次 legacy/private，
   不以 capability 不支持导致游戏 fatal，不允许首 Pool 再 promote。
 - 该基础的 shared request 还要求 `DM_VULKAN_SHARED_POOLS=1`；本候选不新增 Java/UI 默认。
   probe 初始化需要已选 provider、Surface 和 runtime paths，不能移到早于 nativeStart 的 JNI setter。
-  本分支只有 cold env 接口，未另接 Android Intent，不能当作已部署游戏可选项。
+  此组合新增 `--shared-guest-heap` / `--no-shared-guest-heap`（Intent `shared_guest_heap`），默认关闭，
+  Activity recreation 和 onNewIntent 不热切，JNI 在 nativeStart 一次固定。
+  `--vulkan-provider system|adreno|panvk` 独立选已核驱动；PanVK direct ICD 不允许同时请求 loader VVL。
+  请求共享不强制覆盖 window/mirror/defer；backend 成功后才切 whole，否则保留原配置。
+  game_state.guest_heap 输出真实 backing_initialized/shared；请求 ON 但实际 false 是回退，不是共享验收通过。
 - probe 的小块 CPU/GPU 双向验证不证明未来所有 Pool、内存压力或 image 契约。
   一旦实际选择 shared，后续资源错误不允许偷偷按 Pool demote 成未同步的镜像。
 
@@ -63,3 +67,28 @@ shared shrink/mmap 失败 fail closed，以及请求/支持四组合的整次启
 首次内存初始化加 once/mutex，SVC 热检查为 acquire-ready load；SetHeapSize 增加 mutex/原子 extent 发布，
 provenance 两次 acquire load 和固定范围判断。没有每帧扫描、计时器、新 sampler 或全 malloc hook。
 这不表示已降低 RSS、DRAM 或热，也不是原游戏 shared 路径验收。
+
+## 组合构建/现有设备边界
+
+规范入口新增显式编译选项（CMake 缓存不得偷偷留 ON）：
+
+```sh
+python3 scripts/dev/build-android-apk.py --tlsdesc --shared-pools --native-jobs 2
+```
+
+未传 `--shared-pools` 强制编译 OFF。请求必须在独立验证的 provider 已部署后由原 launcher cold 启动；
+本报告不授权任何设备动作。APK 不含游戏 binary/资源，真实试验仍须核同一 canonical 模块、资源、shader chain。
+主线 c8 的 sync_page 冷分离/driver scratch 缩量保留，不覆盖旧整文件。
+
+新组合 host 夹具可用真实 hle_svc 建立完整 5 GiB AS / 4 GiB shared heap，先同 device probe 后首 SVC，
+再让原 NVN Buffer、image scope、Event/Query 夹具使用 heap 内范围。
+image 正例明确 finite_test_certificate=false，不以测试证书替代生产 provenance。
+正常原始夹具仍使用原有限 owned mapping，缺失/不适当 backing 继续拒绝。
+这些是 Lavapipe (host coherent 0xf) 的字节/像素 oracle，不代表 Android 0xb。
+
+Root 实际 matrix2 只证明 owned 8 KiB：shared plain57823/shared dirty57847（12 cycles 全部对应），
+private plain57823/private dirty CPU7/GPU227 不等而 FATAL；控制器整体失败、清理成功。
+此前 matrix1 的 CPU7/GPU0 不应抄成 matrix2 的数值。没有 PFN 观测，COW 仍是源证支持的假设。
+最新实际 PanVK bdd9 独立APP被 query timestamp capability gate 拒绝；不能绕过此 guard 强开。
+因此当前设备共享 game 路径仍有阻断，正确行为是 probe0 + 原 private/legacy 配置；
+无整游戏共享验收、实际 RAM/DRAM/FPS/散热收益声明。

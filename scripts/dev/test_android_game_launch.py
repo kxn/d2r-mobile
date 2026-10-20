@@ -131,6 +131,22 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 2)
             adb.assert_not_called()
 
+    def test_shared_heap_and_provider_are_explicit_cold_requests(self):
+        self.assertNotIn('shared_guest_heap', self.launch_command([]))
+        for option,value in (('--shared-guest-heap','true'),('--no-shared-guest-heap','false')):
+            command=self.launch_command([option,'--vulkan-provider','panvk'])
+            i=command.index('shared_guest_heap');self.assertEqual(command[i-1:i+2],['--ez','shared_guest_heap',value])
+            i=command.index('vulkan_provider');self.assertEqual(command[i-1:i+2],['--es','vulkan_provider','panvk'])
+        for options in (['--attach','--shared-guest-heap'],['--attach','--no-shared-guest-heap'],
+                        ['--attach','--vulkan-provider','panvk'],['--attach','--custom-vulkan-driver'],
+                        ['--vulkan-provider','panvk','--validate'],
+                        ['--vulkan-provider','panvk','--custom-vulkan-driver']):
+            with self.subTest(options=options),patch('sys.argv',[str(LAUNCHER),*options]), \
+                    patch('subprocess.check_output') as adb,contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2);adb.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

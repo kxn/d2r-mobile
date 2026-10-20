@@ -28,6 +28,8 @@ present_modes.add_argument('--shader-present',dest='shader_present',action='stor
 present_modes.add_argument('--reference-present',dest='shader_present',action='store_false',help='use the original Vulkan blit presentation')
 parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
+parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
+parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk'],help='cold explicit system/Adreno-tools/PanVK direct ICD; requires separately verified private driver')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
@@ -112,6 +114,12 @@ if args.native_opus is None:
     args.native_opus = not args.opus_shadow
 if args.external_profile is None:
     args.external_profile = not (args.gpu_profile or args.validate)
+if args.attach and (args.shared_guest_heap is not None or args.vulkan_provider is not None or args.custom_vulkan_driver):
+    parser.error('--shared-guest-heap/--vulkan-provider/custom-driver are startup-only and cannot be used with --attach')
+if args.custom_vulkan_driver and args.vulkan_provider not in (None,'adreno'):
+    parser.error('--custom-vulkan-driver conflicts with --vulkan-provider other than adreno')
+if args.vulkan_provider=='panvk' and args.validate:
+    parser.error('PanVK direct ICD does not compose loader validation')
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.pool_window_bytes is not None:
@@ -195,6 +203,10 @@ if not args.attach:
               '--ez', 'validate', str(args.validate).lower()]
     if args.operation_mode is not None:
         launch += ['--es', 'operation_mode', args.operation_mode]
+    if args.shared_guest_heap is not None:
+        launch += ['--ez','shared_guest_heap',str(args.shared_guest_heap).lower()]
+    if args.vulkan_provider is not None:
+        launch += ['--es','vulkan_provider',args.vulkan_provider]
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     if args.pixel_local is not None:
@@ -321,8 +333,17 @@ while time.monotonic() < deadline:
                     if not args.attach and state.get('sample_liveness',{}).get('reference') != args.dead_sample_queries_reference:
                         raise SystemExit('sample query liveness policy did not apply')
                     if (not args.attach and args.pool_window_bytes is not None and
-                            state.get('pool_windows',{}).get('window_bytes') != args.pool_window_bytes):
+                            state.get('pool_windows',{}).get('window_bytes') != (0 if state.get('guest_heap',{}).get('shared') else args.pool_window_bytes)):
                         raise SystemExit('pool backing window policy did not apply')
+                    if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
+                        raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
+                    if args.vulkan_provider is not None:
+                        marker={'system':'[vulkan loader] system','adreno':'[vulkan loader] custom=','panvk':'[vulkan loader] provider=panvk direct ICD='}[args.vulkan_provider]
+                        if marker not in log:raise RuntimeError('Actual Vulkan provider did not match explicit request')
+                    if not args.attach and args.shared_guest_heap is False and state.get('guest_heap',{}).get('shared') is not False:
+                        raise RuntimeError('Actual guest heap does not match explicit private request')
+                    if state.get('guest_heap',{}).get('shared') and state.get('pool_windows',{}).get('window_bytes') != 0:
+                        raise RuntimeError('Actual shared heap requires the fixed whole-pool policy')
                     if (not args.attach and args.pixel_local_shared_ds is not None and
                             state.get('pixel_local',{}).get('shared_readonly_ds') != args.pixel_local_shared_ds):
                         raise SystemExit('pixel-local shared DS startup policy did not apply')
@@ -354,6 +375,10 @@ while time.monotonic() < deadline:
                               'attachment_usage_reference': (True if 'color attachment usage: format capability reference' in log else
                                                              False if 'color attachment usage: actual attachment only' in log else None),
                               'eager_pool_mirrors_reference':state.get('pool_mirrors',{}).get('reference'),
+                              'requested_shared_guest_heap':args.shared_guest_heap,
+                              'actual_guest_heap':state.get('guest_heap'),
+                              'requested_vulkan_provider':args.vulkan_provider or ('adreno' if args.custom_vulkan_driver else 'system'),
+                              'actual_vulkan_provider':('panvk' if '[vulkan loader] provider=panvk direct ICD=' in log else 'adreno' if '[vulkan loader] custom=' in log else 'system' if '[vulkan loader] system' in log else 'unknown'),
                               'requested_pool_window_bytes':args.pool_window_bytes,
                               'requested_defer_pool_publication':args.defer_pool_publication,
                               'actual_defer_pool_publication':state.get('pool_publication',{}).get('deferred',False),

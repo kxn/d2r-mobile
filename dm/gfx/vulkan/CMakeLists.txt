@@ -48,3 +48,12 @@ option(DM_VULKAN_SHARED_POOLS "Build fixed lazy whole shared-pool experiment" OF
 if(DM_VULKAN_SHARED_POOLS)
   target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SHARED_POOLS=1)
 endif()
+
+option(DM_GUEST_HEAP_GPU_TESTS "Link real memory SVC into owned host GPU fixture" OFF)
+if(DM_GUEST_HEAP_GPU_TESTS)
+  if(NOT DM_VULKAN_SHARED_POOLS)
+    message(FATAL_ERROR "DM_GUEST_HEAP_GPU_TESTS requires DM_VULKAN_SHARED_POOLS")
+  endif()
+  target_sources(vulkan_host_test PRIVATE "${HOST}/hle_svc.c" tests/guest_heap_svc_stubs.c)
+  target_compile_definitions(vulkan_host_test PRIVATE DM_GUEST_HEAP_GPU_TESTS=1)
+endif()

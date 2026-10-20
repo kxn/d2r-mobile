@@ -41,6 +41,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeShaderPresent(boolean enabled);
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
+    private static native void nativeSharedGuestHeap(boolean enabled);
     private static native void nativePoolDeferPublication(boolean enabled);
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
@@ -136,6 +137,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // lifetime. Explicit SDK/shadow references remain available; Activity
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
+            nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             // Source-proved subpasses fall back when recipes, resources or
             // dependencies do not qualify. Shared-depth remains opt-in.
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", true));
@@ -301,6 +303,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent.hasExtra("shared_guest_heap")) {
+            android.util.Log.w("D2RPool", "shared_guest_heap is startup-only; cold restart required");
+            intent.removeExtra("shared_guest_heap");
+        }
+        if (intent.hasExtra("vulkan_provider") || intent.hasExtra("custom_vulkan_driver")) {
+            android.util.Log.w("D2RVulkan", "Vulkan provider is startup-only; cold restart required");
+            intent.removeExtra("vulkan_provider");intent.removeExtra("custom_vulkan_driver");
+        }
         if (intent.hasExtra("defer_pool_publication")) {
             android.util.Log.w("D2RPool", "defer_pool_publication is startup-only; cold restart required");
             intent.removeExtra("defer_pool_publication");

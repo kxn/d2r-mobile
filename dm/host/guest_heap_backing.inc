@@ -31,6 +31,10 @@ int dm_guest_heap_readable(uint64_t a, size_t n) {
     size_t cur = atomic_load_explicit(&g_heap_cur, memory_order_acquire);
     return a >= b && n <= cur && a - b <= cur - n;
 }
+int dm_guest_heap_shared_mode(void) {
+    if (!atomic_load_explicit(&g_mem_ready, memory_order_acquire)) return -1;
+    return g_heap_selection == 2;
+}
 int dm_guest_shared_heap_contains(uintptr_t a, size_t n) {
     if (!n || !atomic_load_explicit(&g_mem_ready, memory_order_acquire) ||
         g_heap_selection != 2) return 0;

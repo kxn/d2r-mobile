@@ -13,11 +13,15 @@ static void shared_image_pixels(NVNtexture *t,const uint8_t rgba[4]) {
 static void shared_image_dirty_test(void) {
   CHECK(vk_pool_shared_mode());
   size_t allocation=(4u<<20)+65536;
-  uint8_t *raw=mmap(NULL,allocation,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
-  CHECK(raw!=MAP_FAILED);uint8_t *data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
-  memset(data,0,4u<<20);
+  int actual_heap=getenv("DM_SHARED_GUEST_HEAP_FIXTURE")!=NULL;
+  uint8_t *raw=NULL,*data=bytes;
   const char *negative=getenv("DM_SHARED_IMAGE_NEGATIVE");
-  if(!negative || strcmp(negative,"provenance"))vk_test_shared_image_backing(data,4u<<20);
+  if(!actual_heap) {
+    raw=mmap(NULL,allocation,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+    CHECK(raw!=MAP_FAILED);data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
+    if(!negative || strcmp(negative,"provenance"))vk_test_shared_image_backing(data,4u<<20);
+  }
+  memset(data,0,4u<<20);
   NVNmemoryPoolBuilder b;NVNmemoryPool pool;
   CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&b,data,4u<<20);
@@ -66,7 +70,8 @@ static void shared_image_dirty_test(void) {
   CHECK(vk_test_fixed_shared_pool((uintptr_t)data,&ready,&shadow,&flags));CHECK(ready && !shadow);
   CALL(nvnTextureFinalize,&textures[0]);CALL(nvnTextureFinalize,&textures[1]);CALL(nvnMemoryPoolFinalize,&pool);
   CHECK(!nvn_dirty_tracked(data,4096));memset(data,0x81,4096); // scopes restored RW, original mapping still valid
-  vk_test_shared_image_backing(NULL,0);CHECK(!munmap(raw,allocation));
+  vk_test_shared_image_backing(NULL,0);if(raw)CHECK(!munmap(raw,allocation));
   CHECK(!vk_validation_error_count());
+  printf("{\"test_configuration\":\"shared-image-provenance\",\"actual_early_heap\":%s,\"finite_test_certificate\":%s}\n",actual_heap?"true":"false",actual_heap?"false":"true");
   printf("{\"test\":\"shared-image-only-dirty\",\"checks\":%u,\"result\":\"passed\",\"actual_memory_flags\":%u,\"game_modules_executed\":false}\n",checks,flags);
 }
