@@ -17,31 +17,13 @@
 // iOS 上不带「扩展虚拟寻址」权限时一次最多能预留 6 GB（真机实读：6 GB 成、7 GB 不成），所以不能留得更宽——
 // 留到 8 GB 的话，签不了那项权限的开发者账号（免费账号）出的包在这一步就退出。
 // Reserve one whole block of guest address space, partitioned the Horizon way (address values are the real addresses returned by the host's mmap).
-// It only takes address space, not memory.
+// The default private PROT_NONE reservation is address space only; the opt-in
+// shared heap has separate shmem commitment (see guest_heap_backing.inc).
 // Size 5 GB: the game needs the first 1 GB (alias region, stacks) + one whole heap block (application memory pool of 3285 MiB, see APP_POOL below),
 // about 4.2 GB in total; on iOS without the "extended virtual addressing" entitlement a single reservation can be at most 6 GB
 // (read on a real device: 6 GB succeeds, 7 GB fails), so it cannot be made any wider --
 // with an 8 GB reservation, builds from developer accounts that cannot sign that entitlement (free accounts) would exit at this step.
-#define RESERVE (5ull << 30)
-static uint8_t *g_as;              // ASLR 区基址 = 整块 | ASLR region base = the whole block
-static uint8_t *g_heap; static size_t g_heap_cur, g_heap_cap; static int g_heap_rejects;
-// 地址段整个落在客体堆当前已开放（可读写）的范围内：这种读不用陷内核核对，直接 memcpy（diag.c tk_rd 等每拍读客体内存的地方用）
-// The address range lies entirely within the currently opened (readable and writable) part of the guest heap: such reads need no kernel trap to check, memcpy directly (used where guest memory is read every tick, such as diag.c tk_rd)
-int dm_guest_heap_readable(uint64_t a, size_t n) { uint64_t b = (uint64_t)(uintptr_t)g_heap; size_t cur = g_heap_cur; return g_heap && a >= b && n <= cur && a - b <= cur - n; }
-static uint8_t *g_alias; static size_t g_alias_cap;
-static uint8_t *g_stack; static size_t g_stack_cap;
-
-static void mem_init(void) {
-    if (g_as) return;
-    g_as = mmap(NULL, RESERVE, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    if (g_as == MAP_FAILED) die("reserve guest AS");
-    // 固定划分（都在预留块内）：alias 512MB、stack 256MB、heap 其余从 2GB 处起
-    // Fixed partition (all inside the reserved block): alias 512MB, stack 256MB, heap the rest starting at 2GB
-    g_alias = g_as + 0x10000000; g_alias_cap = 0x20000000;
-    g_stack = g_as + 0x30000000; g_stack_cap = 0x10000000;
-    g_heap  = g_as + 0x40000000; g_heap_cap  = RESERVE - 0x40000000;   // 4 GB，容得下游戏那一整块约 3.2 GB 的堆 | 4 GB, enough to hold the game's single heap block of about 3.2 GB
-    LOG("guest AS %p +%#llx  heap %p alias %p stack %p", g_as, (unsigned long long)RESERVE, g_heap, g_alias, g_stack);
-}
+#include "guest_heap_backing.inc"
 
 // 应用内存池 = Switch（4 GB 机型）给应用的 3285 MB。游戏启动（main+0x1b66160）把 QueryMemoryInfo 报的总量整块设成堆、失败就减 2 MB 重试，
 // 整块交给自己的 StandardAllocator（main+0x32137a0）——所以堆大小 = 池 − 映像占用，宿主报多少它就只有多少。
@@ -95,7 +77,7 @@ HLE_FORCE("_ZN2nn3mem17StandardAllocator8AllocateEmm", "照原版分配，只在
 
 // 内存账（memstat.m）用：客体地址空间整块范围（未初始化时 base = NULL）
 // For memory accounting (memstat.m): the range of the whole guest address space block (base = NULL when not initialized)
-void svc_guest_range(uint8_t **base, size_t *size) { *base = g_as; *size = RESERVE; }
+void svc_guest_range(uint8_t **base, size_t *size) { *base = atomic_load_explicit(&g_mem_ready, memory_order_acquire) ? g_as : NULL; *size = RESERVE; }
 
 enum { I_CoreMask=0, I_PriorityMask=1, I_AliasAddr=2, I_AliasSize=3, I_HeapAddr=4, I_HeapSize=5,
        I_TotalMem=6, I_UsedMem=7, I_DebuggerAttached=8, I_ResourceLimit=9, I_IdleTick=10, I_RandomEntropy=11,
@@ -134,12 +116,10 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         size_t size = regs[1];
         if (size > g_heap_cap) { LOG("SetHeapSize OOM: req %#zx > cap %#zx", size, g_heap_cap); regs[0] = 0xD401; return 0; }
         if (size + image_bytes() > app_pool()) { g_heap_rejects++; regs[0] = 0x10801; return 0; }   // 超出应用内存池：ResultLimitReached。游戏启动时按 2 MB 递减重试直到放得下（main+0x1b66184） | exceeds the application memory pool: ResultLimitReached. At startup the game retries in 2 MB decrements until it fits (main+0x1b66184)
-        int rc = 0;
-        if (size > g_heap_cur) rc = mprotect(g_heap + g_heap_cur, size - g_heap_cur, PROT_READ | PROT_WRITE);
-        else if (size < g_heap_cur) rc = mprotect(g_heap + size, g_heap_cur - size, PROT_NONE);
+        int rc = guest_heap_resize(size);
+        if (rc) { LOG("SetHeapSize protection failed: req %#zx errno=%d", size, errno); regs[0] = 0xD401; return 0; }
         if (g_flag.svc) LOG("SetHeapSize %#zx -> base %p mprotect=%d errno=%d", size, g_heap, rc, errno);
         { static int said; if (!said && size) { said = 1; LOG("SetHeapSize：首次设堆成功 %zu MB（应用内存池 %llu MB − 映像 %zu MB；此前被拒 %d 次）", size >> 20, (unsigned long long)(app_pool() >> 20), image_bytes() >> 20, g_heap_rejects); } }
-        g_heap_cur = size;
         regs[0] = 0; regs[1] = (uint64_t)g_heap; return 0;
     }
     case 0x02: regs[0] = 0; return 0;   // SetMemoryPermission
