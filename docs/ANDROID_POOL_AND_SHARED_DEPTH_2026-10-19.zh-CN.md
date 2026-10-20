@@ -1237,6 +1237,70 @@ meminfo 的 PSS 为 2,777,433KiB，不同运行的旧 7c 端点为 2,747,035KiB�
 
 窗口候选须复用操作预留、物理 span、真实完成及重收集流程，预留完整
 descriptor／VBO／IBO 和 retile 目标及其 storage 对齐前缀；跨窗需求必须由
-一个连续 VkBuffer 满足。当前尚无该候选的 GPU／Android 验收或驻留收益。
+一个连续 VkBuffer 满足。后续候选及分阶段验证见下节。
 LLDB 退出后原营地、存档、停机与完整生产恢复均已闭合，工具服务和端口
 转发已清理。证据：`shared-image-cpu-only-0b36faa-materialize-debug-v1-analysis-agent.json`。
+
+## Turnip：共享池按实际 Buffer 范围注册
+
+独立候选 `eddb4ca` 在 `0b36faa` 的同一 memfd 上按需注册连续窗口，不创建
+镜像或内容快照。新范围无重叠时直接补充；跨越旧窗口的完整 binding 必须先
+完成已有 GPU 和 CPU effects、清理旧引用，再将必要范围合为一个 VkBuffer。
+合并不搬运内容，但会等待并重新注册，不能称为无额外成本。既有 operation
+admission 在借出物理句柄前收集完整依赖；不通过截短 descriptor 或忽略 retile
+写入来减少注册量。旧节点退休后的真实内存依赖保留。
+
+源码审查还修正了 CPU 观察者与首次窗口发布之间的竞态：在 resources 短锁内
+取得 backing 存在性和属性快照，在锁外进入完成等待。五组精确版本的 host
+GPU／失败回退检查通过；999 个构建输入、1749 个实际 NDK 依赖、APK 六库及
+从原始 ExeFS 生成的 28 项部署产物已独立核验。旧 `982487c` 包只留作已知
+竞态的参考，未部署。最终闭合记录为
+`shared-import-windows-eddb4ca-root-closure-review.json`。
+
+Adreno735 同一 APK、驱动、原 BC/UI4/950 资源、固定 0.75 倍率的营地对照
+已经取得两个官方 meminfo 端点：
+
+| 模式 | 活跃共享注册范围 | TOTAL PSS |
+| --- | ---: | ---: |
+| 整池，窗口 0 | 1113 MiB | 2,770,623 KiB |
+| 按需，窗口 16 MiB | 499 MiB | 2,193,647 KiB |
+
+观察到注册范围少 614 MiB、总 PSS 端点少 563.45 MiB。两次均执行原始 ARM64
+游戏、原营地及五段触控走位、原存档后停止。窗口版还通过冷启动重叠导入的
+双向 GPU 字节检查。第一轮窗口走位因脚本 5 秒时限未完成而保留为失败；仅
+窗口补测将每段时限放宽至 15 秒，目标、半径和输入方式不变，未重采整池。
+因此这仍是顺序端点比较，不是完全匹配的因果或峰值内存测试。
+
+两个 memfd 映射仍须合计内核 PSS，不能把两份 RSS 当物理副本；活跃注册
+范围也不等于唯一物理 RAM。实际双映射 PSS 为 2,164,444→1,525,728 KiB，
+主要差异位于导入视图；宿主 malloc PSS 增加 23,960 KiB，Graphics 分组增加
+37,660 KiB，不能忽略这些成本。线性池比较、镜像、快照及搬运计数均为零，
+不包括纹理转换。原生产包、模块、资源、驱动和缓存已精确恢复，进程停止。
+
+当前原 BC 真游戏检查不能代替原生 ASTC 窗口传播验证，更不能证明持续游玩
+散热或 6GB 设备已经达标。原始工具输出、两份 VMA 的 inode/offset、相同
+场景坐标及完整恢复已再次独立核验；记录为
+`shared-import-windows-eddb4ca-q-root-actual-review.json`，分组数据为
+`shared-import-windows-eddb4ca-q-pair-memory-analysis-agent.json`。
+
+## PanVK：完整 API 重放已复现原 GPU 挂起
+
+未修改的 kbase fork 驱动 `c5ecf526` 在关闭共享的原游戏中也会挂起。
+官方 GFXReconstruct 已从 vkCreateInstance 开始取得完整启动前缀，没有
+裁剪快照重建；独立普通 UID 重放不运行游戏模块和 NVN 翻译线程，仍能复现
+最终第 186 次提交的 DeviceLost。Core 和同步校验没有 VUID，不等于已经
+证明所有 Shader 或调用语义正确。
+
+同一捕获、APK 和驱动，官方 `--sync` 的逐提交等待，以及再加
+`--serialize-render-passes` 的应用绘制执行屏障，均未消除该最终提交的失败。
+末次提交虽没有应用 Dispatch，但 52 次 B2T 全部上传七张 BC3 图像；原驱动
+内部实际执行 compute raw copy 和片元 BC 解码。应用层计数和执行屏障不能
+假定覆盖这些驱动内部调用，不能据此断言不存在 compute 或内部依赖问题。
+
+最后一轮实际记录为
+`panvk-gfxr-renderpass-serialize-v1-mali-v1/actual-independent-review.json`。
+所有测试工具已退出、独立包已卸载，原生产包、资源及 46,011 项缓存核验未变，
+Mali 游戏保持停止。接下来只针对原驱动现成的 BC 解码路线做合法对照：
+路线变化会改变图像内存要求，必须先用官方 replay 的内存重绑定建立共同
+基线，不能拿旧 allocation 直接套用，也不能把分配方式和解码路线同时变化
+冒称单变量结果。
