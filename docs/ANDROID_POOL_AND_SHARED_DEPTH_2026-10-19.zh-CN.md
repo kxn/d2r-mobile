@@ -1189,7 +1189,7 @@ FPS、带宽或散热收益。两次窗口内 PSO 均稳定，但窗口间 PSO �
 和缓存，进程已停止。证据：
 `shared-alias-7c60ff4-actual-game-CPU99-acceptance-agent.json`。
 
-## Turnip：只用于图像 CPU 转换的池不提前注册（待真机验收）
+## Turnip：只用于图像 CPU 转换的池不提前注册
 
 独立候选 `0b36faa` 包含上述索引，继续处理整池导入的驻留成本。图像 CPU
 读取准备不再顺带创建整个池的 VkBuffer；真正的线性 GPU Buffer 访问才注册。
@@ -1199,7 +1199,20 @@ FPS、带宽或散热收益。两次窗口内 PSO 均稳定，但窗口间 PSO �
 
 冷启动两页 GPU 检查复用同一映射构造，先将 guest 设为只读，再导入 RW
 映射、执行原 copy／fill 并从 guest 核对字节。host 真实堆、原 NVN GPU、
-原保护负控及异步／串行回归已通过；Android 真游戏、整池注册和实际 PSS
-仍待验证，未替换可玩版本。原 ASTC 传播对未注册池仍保守回退，不能宣称
-覆盖及性能不变。详见候选分支的 `ANDROID_SHARED_IMAGE_CPU_ONLY_POOLS.zh-CN.md`
-和本机 `shared-image-cpu-only-v1-final-host-results.json`。
+原保护负控及异步／串行回归已通过。冻结的完整 Android 包随后在 Adreno735
+原游戏中完成同一 guest-RO 探针、实际 shared=1、营地和五段原触控走位，
+画面检查通过；完成两次原存档后停止，生产 APK、资源、驱动和缓存精确恢复。
+
+本次营地仍实际注册四池、共 1,167,065,088 字节；没有减少导入字节。官方
+meminfo 的 PSS 为 2,777,433KiB，不同运行的旧 7c 端点为 2,747,035KiB，
+不能当作受控内存对照。两个 memfd 映射已按相同设备号、inode 和文件偏移
+核对，合计内核 PSS 为 2,169,068KiB；不得把两份 RSS 当成两份物理副本，
+也不能遗漏导入视图的 PSS。线性池拷贝计数均为零，但不包含纹理转换成本。
+
+机制只对未被线性 GPU 访问的图像池省掉提前注册；当前真实场景的混合大池
+最终仍由 Buffer 访问整池注册，因此不能报告内存、发热或 FPS 改善。下一步
+沿既有 operation admission 和 canonical span 收窄共享注册范围，不通过恢复
+镜像或删除数据依赖绕过问题。原 ASTC 传播对未注册池仍保守回退，不能宣称
+覆盖及性能不变。此候选未替换可玩版本。详见本机
+`shared-image-cpu-only-0b36faa-actual-q-acceptance-agent.json` 及
+`shared-image-cpu-only-0b36faa-root-actual-review.json`。
