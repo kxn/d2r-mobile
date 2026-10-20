@@ -1593,3 +1593,113 @@ OBS_TICK 而保守拒绝停止；随后独立核对同 PID/UID、Activity STOPPE
 GPU timeout；因此它尚不能作为 Mali 的可用驱动。已通过现有 Mesa
 pandecode 保存本次任务的完整 CS，Mali 已恢复系统驱动、原资源及 PSO
 并停止。当前数据只能定位到未完成任务，不能证明具体 shader 或死锁点。
+
+### 10 月 21 日：官方 Surface 完成节奏与翻译线程 CPU 对照
+
+`bcbd751` 的普通 ASTC4／native 布局整游戏对照另用官方 Perfetto、
+Simpleperf stat 与 99Hz 用户态调用栈完成采集。实际设备为 Adreno 735，
+相同 APK、AA185、6,217 项资源、16MiB window、固定 3D 0.60、输出
+2750×1260；两端 PID 分别为 29165／31763。官方采集在 LLDB 之前，
+没有将调试暂停后的截图 FPS 混入吞吐结果。两端原游戏路线、存档两次、
+停机、原包／六目录／PSO 恢复及工具清理均已完成。
+
+下表来自各自约 8 秒的 Perfetto 窗口，Surface、调度运行和 CPU 频率是
+同窗数据；没有从 Simpleperf 的独立窗口借用帧数。
+
+| 官方 Perfetto 指标 | 普通 ASTC4 | native 布局 |
+| --- | ---: | ---: |
+| 实际游戏 Surface 的完成节奏（Hz） | 31.74 | 34.41 |
+| NVN command replay 均值墙钟（ms／回放区间） | 25.03 | 22.97 |
+| NVN command replay 均值实际 CPU（ms／回放区间） | 24.96 | 22.79 |
+| 回放实际运行 CPU／墙钟 | 99.73% | 99.20% |
+| 回放运行区间加权 CPU 频率（MHz） | 1,572 | 1,722 |
+
+这里的完成节奏来自唯一游戏 Surface 的 `PresentFenceSignaled` 连续
+间隔，不是游戏模拟 tick，也不是独立 GPU shader 时间。该 SurfaceView
+没有 `actual_frame_timeline_slice` 行；不能改用显示器全局 SurfaceFlinger
+或 Activity 事务计数充当游戏帧。
+
+本轮观察到完成节奏约提高 8.41%，但 native 回放 CPU 频率也高约 9.6%。
+窗口内目标均稳定为 60，PSO／变体数没有变化；跨端 PSO 是 184／178，
+路线终点、相机及实际命令负载仍有差别。因此这是一次真实观察，尚不能
+把涨幅归因于 native 布局，也不能宣称已经等频省 CPU 或解决持续发热。
+
+能直接确定的是，回放区间几乎都在实际运行 CPU，24.96／22.79ms 不能
+解释为同等时长的 GPU 等待。它超过 60Hz 的 16.67ms 间隔，是当前应继续
+降低的 CPU 工作；这不表示整个程序没有 GPU 等待，或 GPU 已无瓶颈。
+例如 present call 墙钟仍为 5.99／5.62ms，而实际 CPU 只有
+0.60／0.49ms。不同线程、嵌套区间及可重叠工作不能相加成整帧成本。
+本轮没有 GPU 带宽、shader 硬件计数器或纯 GPU 执行时间，不能据此认定
+已经从带宽受限变成纯 CPU 受限。
+
+Simpleperf 是另外的 8 秒 stat 和 8 秒 99Hz 调用栈窗口，不能把其 CPU
+总量除以上表 Perfetto 的完成数来算每帧收益。stat 中翻译线程 task-clock
+为 6,811.73→6,559.84ms（−3.70%），用户态 cycles 却为
+9.960→10.730G（+7.73%）；完成线程 task-clock 为
+311.03→535.58ms。两线程实际 CPU 合计只少约 0.38%，整个目标 PID 的
+受监测线程 CPU 合计反而多约 11.21%。这些不是关键路径墙钟相加，
+但足以阻止“native 已证明净省 CPU”的结论。
+
+99Hz 翻译线程用户态记录分别有 639／622 个样本，主要方向仍是公共
+绑定和绘制准备：`shader_bindings_selected_impl` inclusive 为
+20.50%／21.70%，`texture_view_binding` 为 8.76%／8.84%，
+`alias_range_overlap` self 为 3.91%／3.70%。嵌套 inclusive 比例不能相加，
+也不能直接乘到另一窗口的 CPU 时间。具名去重排／解码／上传调用链只
+命中 5／4 个样本，且可能包含元数据或上传快速路径；它没有证明重排
+完全消失，也没有显示一次性转换避免已经削掉稳态的主要绑定热点。
+官方记录均没有丢样或截断标记，但单帧样本和未展开祖先仍存在，不能
+把“未命中”写成零成本。
+
+这些结果支持继续处理已观察到的重复绑定、别名证明与状态准备工作，
+并另取硬件 GPU Profile 判断带宽／shader 成本。原生图像 GENERAL 布局
+相关的后续源码候选尚未完成真机对照，不计为已有收益。上节独立内存
+端点的 native PSS **仍多 102.44MiB**、malloc Alloc 多 52.50MiB；本轮较快
+的完成节奏不抵消该成本，批量 native 的净内存／持续散热仍未验收。
+本轮 performance hint 为 reference、active=0，present worker 关闭，
+这些只描述本次实验设置，不能推广为所有正常用户启动的策略。
+
+本机可核查的官方结果与原始捕获哈希保存在：
+
+- `.local/logs/native-bulk-game-bcbd751-throughput-cpu-v2-root-Perfetto-review.json`
+- `.local/logs/native-bulk-bcbd751-throughput-cpu-v2-analysis/official-CPU-stat-99Hz-comparison-agent-v1.json`
+
+### 10 月 21 日：默认 malloc backtrace 的实际 ANR 及归因边界
+
+随后唯一一次官方默认 backtrace 诊断，只从包内 wrapper 去掉
+`backtrace_full`；生产六个库、原 NSO、资源和 AA185 不变。PID 9352
+确认官方 enabled／导出 handler，已导出的日志没有 UNKNOWN POINTER 或
+选项错误。这只证明该窗口没有重现第一次 full unwinder 的登记错误，
+不证明堆覆盖完整。它未完成原 HUD／路线，也未发送 SIG47 或生成可分析
+的 heap dump，因此 held allocation、未知／短栈字节均未测得，不能填零，
+也不能解释上面的 52.50MiB 增量。官方 malloc 路线目前没有可用的完整堆归因。
+
+本次最终原因由系统 exit-info 和官方 bugreport 确认为 **reason 6 ANR**：
+窗口失焦 `FocusEvent(hasFocus=false)` 等待 60,004ms 后被系统结束。
+这不是 OOM，也不能只写成“启动慢，超过 90 秒”。原始失败报告保留；
+对已经退出的进程沿原事务 CAS 检查恢复原包、六目录和 PSO，没有为
+存档重新启动游戏，也没有把该诊断的 RSS／帧率写成优化收益。
+
+官方 `adb bugreport` 随后成功导出真实目标 ANR，弥补了直接读取系统
+ANR 文件被拒权、`dumpsys activity lastanr` 没有线程栈的缺口。用 exact
+bc ELF 与 AA185 补符号后：
+
+- `nvn-translate` TID 9547 在 Turnip `tu_spirv_to_nir`／NIR copy-propagation
+  的 `ralloc_size` 分配中执行 `malloc_debug` 的默认
+  `_Unwind_Backtrace`，确证诊断展开已进入翻译／驱动编译关键路径。
+- `dm-pso-cache` TID 9548 等待 `cache_mutex`；源码在 pipeline 创建期间
+  持有该锁，与翻译线程正在编译相符，但捕获没有给出实际锁 owner。
+  `dm-gpu-complete` 在完成线程条件变量上等待，不是已捕获的 GPU fence 栈。
+- 标为主 TID 9352 的栈含 ART SIGQUIT／ANR dump 和 libunwindstack 初始化，
+  没有原始 `nativeSuspend` 调用链。实际系统库的 `debug_malloc+360`
+  对应恢复信号屏蔽的 `rt_sigprocmask`，不是 allocator 互斥锁入口；不能
+  仅凭 waiting-channel 的 futex 字样宣称 allocator 锁死。
+
+因此更支持诊断展开扰动了编译／翻译和关联等待，但单次栈不能给出其
+时间占比，也没有证明 60 秒锁环。原 UI 究竟卡在 `onPause` 图形排空还是
+其他事件、是否为死锁或极端诊断成本，仍不能下结论。它不用于正常版本
+CPU/GPU 等待或帧率瓶颈的判断，不据此修改生产 TLS、allocator 或 NVN
+同步；停止 malloc 参数重试。
+
+真实目标 trace、exact ELF、官方符号化输出和边界说明见
+`.local/logs/malloc-debug-default-v3-anr-stack-audit-v1/result.json`
+（SHA256 `049ec3760f00cfa7af0fdf5290591ca1fdbc9369f4ce04e4f74a494256548314`）。
