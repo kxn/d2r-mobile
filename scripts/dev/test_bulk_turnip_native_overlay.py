@@ -114,6 +114,25 @@ class Bulk(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'empty'):
             bulk.unique_entries([])
 
+    def test_original_case_preserved_in_pack_normalized_only_for_CASC(self):
+        entries = [{'logical': 'data/hd/character/owned_HRT.texture'}]
+        self.assertEqual(bulk.unique_entries(entries, allow_original_case=True),
+                         ['data/hd/character/owned_hrt.texture'])
+        self.assertEqual(entries[0]['logical'], 'data/hd/character/owned_HRT.texture')
+        entries.append({'logical': 'data/hd/character/owned_hrt.texture'})
+        with self.assertRaisesRegex(ValueError, 'duplicate'):
+            bulk.unique_entries(entries, allow_original_case=True)
+
+    def test_source_CFT_matches_global_pinned_index(self):
+        key = bytes.fromhex('aa' * 16)
+        index = {'data/owned': (key, 19, 73)}
+        info = dict(logical='data/owned', ekey=key.hex(), encoded_bytes=19, decoded_bytes=73)
+        bulk.source_index_matches(index, 'data/owned', info)
+        for change in [{'logical': 'data/other'}, {'ekey': 'bb' * 16},
+                       {'encoded_bytes': 20}, {'decoded_bytes': 74}]:
+            with self.assertRaises(ValueError):
+                bulk.source_index_matches(index, 'data/owned', info | change)
+
     def test_hash_memo_once_and_mutation_rejected(self):
         path = self.root / 'archive'
         path.write_bytes(b'owned large source')

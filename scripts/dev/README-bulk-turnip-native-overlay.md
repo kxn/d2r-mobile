@@ -31,7 +31,10 @@ The initial selector is Act1 environment plus character textures, single-layer
 `array_closure.groups[*].members` are excluded. Only selected descriptor
 `format`, `layoutData` and necessary matching `thumbnailBase64` may change;
 other selected metadata, unselected descriptors, full TVFS path/CFT positions,
-original unselected files and all upstream UI are preserved and checked.
+original unselected files and all upstream UI are preserved and checked. Original
+descriptor filename case is preserved; only CASC lookup names are normalized,
+and case-alias duplicates are rejected. Each source EKey and encoded/decoded
+length must equal its entry in the pinned full ASTC index.
 
 Composition hashes every distinct source archive once, rechecks immutable file
 identity before publishing, and materializes one native texture at a time. It

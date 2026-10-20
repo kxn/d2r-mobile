@@ -94,9 +94,9 @@ def normalized(name):
     return name
 
 
-def unique_entries(entries):
+def unique_entries(entries, allow_original_case=False):
     require(isinstance(entries, list) and 1 <= len(entries) <= 65536, 'empty/oversized entries')
-    names = [normalized(e['logical']) for e in entries]
+    names = [normalized(e['logical'].lower() if allow_original_case else e['logical']) for e in entries]
     require(len(set(names)) == len(names), 'duplicate logical entries')
     return names
 
@@ -213,6 +213,13 @@ def merge_descriptor(before, astc, native):
     return sorted(changed)
 
 
+def source_index_matches(index, logical, info):
+    require(info['logical'] == logical and logical in index, 'source logical differs from pinned index')
+    key, encoded, decoded = index[logical]
+    require((info['ekey'], info['encoded_bytes'], info['decoded_bytes']) ==
+            (key.hex(), encoded, decoded), 'source CFT differs from pinned source index')
+
+
 def read_indexed(folder, original_row, info, expected):
     row = list(original_row)
     key = bytes.fromhex(info['ekey'])
@@ -251,7 +258,7 @@ def compose(a):
         require(h.file(ui / item['relative']) == item['sha256'], 'upstream UI baseline changed')
     record = json.loads((pack / 'native-pack.json').read_text())
     h.file(pack / 'native-pack.json')
-    names = unique_entries(record['entries'])
+    names = unique_entries(record['entries'], allow_original_case=True)
     require(record['complete'] is True and record['family_protocol'] == 2 and
             names == [e['logical'] for e in prepared['entries']], 'native/source pack selection/order differs')
     require(h.file(a.packer) == record['tool_sha256'], 'original family packer changed')
@@ -298,6 +305,8 @@ def compose(a):
     for name, item in context['verified_archives'].items():
         require(name == Path(name).name, 'unsafe source archive name')
         (astc_inputs / 'data' / name).symlink_to(Path(item['archive']['path']).resolve())
+    source_index = casc.read_prebuilt(Path(context['source_index']['path']))
+    source_index_matches(source_index, CACHE, context['source_cache'])
     source_cache_bytes = source_cache_path.read_bytes()
     read_indexed(astc_inputs, manifest[CACHE], context['source_cache'], source_cache_bytes)
     source_cache = json.loads(source_cache_bytes)
@@ -338,9 +347,10 @@ def compose(a):
             require(wire_entry == table[160 + (number - 1) * 1040:160 + number * 1040], 'table entry is not reproduced producer entry')
             family = struct.pack('<QII', detail['original_layout_data'], detail['thumbnail_mip'], 0)
             require(family == table[160 + len(names) * 1040 + (number - 1) * 16:160 + len(names) * 1040 + number * 16], 'table original-tail family differs')
-            require(h.file(pack / name) == detail['texture_sha256'] and digest(texture) == detail['texture_sha256'], 'packaged texture differs')
+            require(h.file(pack / detail['logical']) == detail['texture_sha256'] and digest(texture) == detail['texture_sha256'], 'packaged texture differs')
             astc = Path(specification['texture']).read_bytes()
             require(digest(astc) == source['source_texture']['sha256'], 'ASTC source differs')
+            source_index_matches(source_index, name, source['source_texture'])
             read_indexed(astc_inputs, manifest[name], source['source_texture'], astc)
             original_texture = touch_layout._read_entry(str(raw), manifest[name])
             require(len(original_texture) >= 36 and original_texture[:4] == b'<DE(' and
