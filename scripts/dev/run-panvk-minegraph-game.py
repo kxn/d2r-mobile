@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One reversible original-BC original022 driver compatibility start. Offline by default.
+"""One reversible native Mesa pandecode original-BC diagnostic. Offline by default.
 Uses existing directory CAS, ordinary first-PID ownership and original save2 helper.
 Original BC/current-identical upstream UI overlay only; no APK/module changes, old capture, measurement or GPU-import.
 """
@@ -9,15 +9,19 @@ R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
-READY=R/'.local/logs/panvk-minegraph-703db0e-static-hardware-v2-source-ready-agent.json'
-READY_SHA='edcbcc0f465f712c889e51daf64b767b6b136699a47f5c464d78e048d62b9930'
-DRIVER_SHA='df9ba8326b353812bbe36b3306f9ce6c833764c2538e85cacf91a12ccd9566a9'
+READY=R/'.local/logs/panvk-minegraph-pandecode-file-v1-source-ready-agent.json'
+READY_SHA='8779d7162bf7dc2dda36a4904fae38ce2c4850b16baa109fa331cd16f8391dc3'
+DRIVER_SHA='feebdd70a1aa4d6aa4ae26269aee69d565ed20d6e414ead5014e8637a34247ed'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
 LOCK='files/runtime/.astc6-full-controller-lock'
 CHAIN='cbd8d2da0b0f';OWNER='.minegraph-game-owner';DIRS={'driver':'files/runtime/vulkan-panfrost','temp':'files/runtime/temp','cache':'cache','overlay':'files/runtime/romfs_overlay'}
 RESOURCE_READY=R/'.local/build/panvk-minegraph-original-bc-control-v5/composition.json'
 RESOURCE_SHA='41ce2605b2150669081aa1978094d1296168d4c95c88c2bb0b21c7e6ff970e13'
+DUMP_DIR='files/runtime/temp/pandecode'
+DUMP_PREFIX='/data/data/'+PKG+'/files/runtime/temp/pandecode/cs'
+PROPERTIES={'debug.mesa.panvk.debug':'startup,dump','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
+DUMP_SOFT_LIMIT=256*1024*1024
 LAYER_KEYS=['enable_gpu_debug_layers','gpu_debug_app','gpu_debug_layers','gpu_debug_layers_gles','gpu_debug_layer_app']
 # Same existing inventory/CAS checks; preserve real Diablo II paths containing spaces.
 def inventory(dev,path):
@@ -46,6 +50,7 @@ def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':
 def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
  require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
+ require(d['diagnostic_only'] and d['only_delta_from_static_hardware_v2_driver_source']==['src/panfrost/genxml/decode_common.c'],'not official pandecode output-only adaptation')
  require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build'],'not the static unsupported-HAL platform candidate')
  for key in ['source_identity','build_only_adaptation','generated_version','host_codegen','ELF','driver']:
   r=d[key];require(sha(r['path'])==r['sha256'],'driver provenance changed: '+key)
@@ -93,8 +98,53 @@ def owned(values,d,label,partial=False):
  if label=='driver':require((values.get('libvulkan_panfrost.so')in(None,DRIVER_SHA) if partial else values.get('libvulkan_panfrost.so')==DRIVER_SHA) and all(k in (OWNER,'libvulkan_panfrost.so')or k.startswith('shader-cache/')for k in values),'candidate driver differs')
  return True
 
+def get_property(dev,key):
+ # Preserve the exact property value; remove only adb's line terminator.
+ raw=subprocess.check_output(dev.command+['shell','getprop',key],timeout=15)
+ return raw.decode().removesuffix('\n').removesuffix('\r')
+
+def publish_properties(dev,path,d):
+ require(all(len(v.encode())<92 for v in PROPERTIES.values()),'Android property value too long')
+ d['properties_before']={k:get_property(dev,k)for k in PROPERTIES};d['properties_touched']=[];journal(path,d)
+ for key,value in PROPERTIES.items():
+  # Mark intent before mutation, so a transport exception cannot skip restore.
+  d['properties_touched'].append(key);journal(path,d)
+  dev.adb('shell',shlex.join(['setprop',key,value]));require(get_property(dev,key)==value,'property write rejected: '+key)
+ d['properties_published']=True;journal(path,d)
+
+def restore_properties(dev,path,d):
+ dev.stopped()
+ for key in reversed(d.get('properties_touched',[])):
+  dev.adb('shell',shlex.join(['setprop',key,d['properties_before'][key]]));require(get_property(dev,key)==d['properties_before'][key],'property restore mismatch: '+key)
+ d['exact_touched_property_values_restored']=True;journal(path,d)
+
+def dump_bytes(dev):
+ raw=dev.app('sh','-c','if test -d "$1"; then find "$1" -type f -name "cs.*" -exec stat -c %s {} +; fi','sh',DUMP_DIR)
+ require(all(v.isdecimal()for v in raw.splitlines()),'unexpected dump size output')
+ return sum(int(v)for v in raw.splitlines())
+
+def preserve_dump(dev,path,d,out):
+ # No command stream transfer while the original game is running.
+ dev.stopped();values=inventory(dev,DUMP_DIR)
+ if values is None:d['dump_absent']=True;journal(path,d);return
+ require(values.get(OWNER)==d['owner_sha256']and all(k==OWNER or re.fullmatch(r'cs\.[A-Za-z0-9_.:-]+\.ctx-[0-9]+\.[0-9]+',k)for k in values),'unknown diagnostic dump file')
+ d['dump_remote_SHA256']=values;d['dump_file_count']=len(values)-1;journal(path,d)
+ archive=out/'native-pandecode.tar'
+ with archive.open('wb')as f:subprocess.run(dev.command+['exec-out','run-as',PKG,'tar','cf','-','-C',DUMP_DIR,'.'],stdout=f,stderr=subprocess.PIPE,check=True,timeout=60)
+ local={}
+ with tarfile.open(archive,'r')as tf:
+  for member in tf.getmembers():
+   if member.isdir():require(member.name in ('.','./'),'unexpected dump tar directory');continue
+   name=member.name.removeprefix('./');require(member.isfile()and name in values and name not in local and '/'not in name,'unsafe/duplicate dump tar entry')
+   h=hashlib.sha256()
+   with tf.extractfile(member)as f:
+    for block in iter(lambda:f.read(1024*1024),b''):h.update(block)
+   local[name]=h.hexdigest()
+ require(local==values and inventory(dev,DUMP_DIR)==values,'dump transfer identity mismatch')
+ d['dump_archive']=record(archive);d['dump_pulled_only_after_game_stopped']=True;d['dump_transport_hashed_and_verified']=True;journal(path,d)
+
 def launch_once(dev,path,d,out):
- own=None;client=None;ambiguous=False
+ own=None;client=None;ambiguous=False;native_identity=False
  def current():return dev.adb('shell','pidof '+PKG+' || true')
  def observe():
   nonlocal own,ambiguous
@@ -113,8 +163,14 @@ def launch_once(dev,path,d,out):
    client=subprocess.Popen(d['launch_command'],stdout=log,stderr=subprocess.STDOUT,cwd=R);deadline=time.monotonic()+100
    while client.poll()is None:
     now=observe()
-    native=dev.app('sh','-c','if test -f files/runtime/native.log; then cat files/runtime/native.log; fi')
-    if own and 'Android native start pid='+own+'\n'in native:
+    native=dev.app('sh','-c','if test -f files/runtime/native.log; then tail -c 65536 files/runtime/native.log; fi')
+    d['dump_last_observed_bytes']=dump_bytes(dev)
+    if d['dump_last_observed_bytes']>=DUMP_SOFT_LIMIT:d['dump_soft_bound_reached']=True;journal(path,d);break
+    if own and not native_identity:
+     header=dev.app('sh','-c','if test -f files/runtime/native.log; then head -c 4096 files/runtime/native.log; fi')
+     native_identity=('Android native start pid='+own+'\n'in header)
+     if native_identity:d['native_log_first_PID_verified']=True;journal(path,d)
+    if native_identity:
      (out/'native.log').write_text(native)
      if 'FATAL'in native or 'Vulkan PanVK ICD load:'in native:d['native_failure_seen']=True;break
     if own and not now:d['owned_process_exited_during_launch']=True;break
@@ -122,6 +178,7 @@ def launch_once(dev,path,d,out):
    if client.poll()is None:
     client.terminate();client.wait(timeout=10)
   d['launcher_returncode']=client.returncode;journal(path,d)
+  require(not d.get('dump_soft_bound_reached'),'diagnostic soft output bound reached; incomplete capture preserved')
   require(not d.get('native_failure_seen') and client.returncode==0,'original native startup failed, preserve diagnostic')
   require(own and observe()==own,'original game PID absent/replaced')
   native=dev.app('cat','files/runtime/native.log');(out/'native.log').write_text(native)
@@ -157,6 +214,7 @@ def launch_once(dev,path,d,out):
    require(current()==own,'PID changed during save');dev.adb('shell','am','force-stop',PKG);dev.stopped();d['fresh_save2_then_stopped']=True
   else:d['already_exited_no_save_restart']=True
   native=(out/'native.log').read_text()if(out/'native.log').exists()else''
+  preserve_dump(dev,path,d,out)
   d['namespace_load_blocked']=('Vulkan PanVK ICD load:'in native);d['libhardware_load_error']=('libhardware.so'in native and d['namespace_load_blocked']);journal(path,d)
 
 def restore(dev,path,d):
@@ -173,6 +231,7 @@ def restore(dev,path,d):
 
 def clean(dev,path,d):
  dev.stopped();require(d['original_directories_restored'],'restore required')
+ require(not d.get('launch_attempted')or d.get('dump_transport_hashed_and_verified')or d.get('dump_absent'),'unretrieved native dump must remain in owned staging after stock restore')
  stage=d['stage'];require(dev.app('cat',stage+'/'+OWNER)==d['token'],'stage ownership changed')
  require(not dev.app('find',stage,'-type','l'),'stage contains symlink')
  for label in DIRS:
@@ -193,7 +252,7 @@ def clean(dev,path,d):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE original022 original-BC/current-identical-upstreamUI real-game compatibility baseline; new driver requirements; no oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'ONE native Mesa pandecode output-only diagnostic original022 originalBC; dump cache/mprotect perturbation, NOT performance/stability or sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
@@ -214,9 +273,14 @@ def main():
    d['intent']='backup-'+label;journal(path,d)
    if d['old_'+label]is not None:rename_dir(dev,target,stage+'/backup/'+label,d['old_'+label])
    v=inventory(dev,stage+'/incoming/'+label);owned(v,d,label);d['intent']='publish-'+label;journal(path,d);rename_dir(dev,stage+'/incoming/'+label,target,v)
+  dev.app('mkdir',DUMP_DIR);dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',DUMP_DIR+'/'+OWNER,token)
+  publish_properties(dev,path,d)
   d['phase']='published';journal(path,d);launch_once(dev,path,d,a.output);d['phase']='actual-original-HUD-pending-visual-review'
  except BaseException as e:d['phase']='failed-preserved';d['error']=repr(e)
  finally:
+  if d.get('properties_touched'):
+   try:restore_properties(dev,path,d)
+   except BaseException as e:d['cleanup_errors'].append(repr(e))
   if claimed:
    try:restore(dev,path,d);clean(dev,path,d)
    except BaseException as e:d['cleanup_errors'].append(repr(e))
