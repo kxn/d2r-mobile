@@ -124,6 +124,9 @@ static __attribute__((noinline)) void image_record_cells(image *i,VkImageSubreso
 static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,
                           VkAccessFlags access,int visibility_proven) {
   int writing=!!image_writes(access);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(i->native_entry)native_image_record(i,r,stages,access);
+#endif
   if(writing) {i->cpu_rebuildable=0;image_astc_proof(i,0);
 #ifdef DM_VULKAN_SHARED_POOLS
     i->shared_writer=1;i->shared_writer_source=0;i->shared_writer_region=(NVNcopyRegion){0};

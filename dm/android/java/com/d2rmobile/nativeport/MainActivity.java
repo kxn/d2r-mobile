@@ -45,6 +45,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativeSharedGuestHeap(boolean enabled);
+    private static native void nativeNativeResources(String table, String packSha256, String producerSha256);
     private static native void nativePoolDeferPublication(boolean enabled);
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
@@ -162,6 +163,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
+            nativeNativeResources(getIntent().getStringExtra("native_resource_table"),
+                    getIntent().getStringExtra("native_resource_pack_sha256"),
+                    getIntent().getStringExtra("native_resource_producer_sha256"));
             // Source-proved subpasses fall back when recipes, resources or
             // dependencies do not qualify. Shared-depth remains opt-in.
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", true));
@@ -331,6 +335,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (sharedImageFixture || intent.hasExtra("shared_image_test")) {
             android.util.Log.w("D2RPool", "Shared image oracle is cold-process-only; ignoring new Intent");
             return;
+        }
+        for (String key : new String[]{"native_resource_table", "native_resource_pack_sha256", "native_resource_producer_sha256"}) {
+            if (intent.hasExtra(key)) {
+                android.util.Log.w("D2RNativeResources", "native resources require a cold restart");
+                intent.removeExtra(key);
+            }
         }
         if (intent.hasExtra("shared_guest_heap")) {
             android.util.Log.w("D2RPool", "shared_guest_heap is startup-only; cold restart required");
