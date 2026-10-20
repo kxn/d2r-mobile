@@ -78,8 +78,8 @@ static int native_validate(const uint8_t *data, size_t bytes, VkFormat format,
   for (unsigned n = 0; n < LEVELS; n++) {
     const native_slice *s = &h->slices[n];
     const part *p = &h->common.parts[n];
-    if (p->level != n || p->layer || p->width != mip(13, n) ||
-        p->height != mip(9, n) || p->offset != s->offset ||
+    if (p->level != n || p->layer || p->width != mip(FIXTURE_WIDTH, n) ||
+        p->height != mip(FIXTURE_HEIGHT, n) || p->offset != s->offset ||
         p->size != s->size || !s->size || s->offset < previous ||
         s->offset > h->image_size || s->size > h->image_size - s->offset)
       return 0;
@@ -118,7 +118,7 @@ static void native_bake(const char *directory, VkFormat format) {
       previous = slice.offset + slice.size;
       h.slices[level] = slice;
       h.common.parts[level] = (part){
-          level, 0, mip(13, level), mip(9, level), slice.offset, slice.size};
+          level, 0, mip(FIXTURE_WIDTH, level), mip(FIXTURE_HEIGHT, level), slice.offset, slice.size};
       size_t bytes;
       uint8_t *linear = linear_source(format, level, 0, &bytes);
       (void)bytes;
@@ -126,7 +126,7 @@ static void native_bake(const char *directory, VkFormat format) {
           .sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
           .pHostPointer = linear,
           .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1},
-          .imageExtent = {mip(13, level), mip(9, level), 1}};
+          .imageExtent = {mip(FIXTURE_WIDTH, level), mip(FIXTURE_HEIGHT, level), 1}};
       VkCopyMemoryToImageInfoEXT info = {
           .sType = VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
           .dstImage = i.image,
@@ -139,7 +139,7 @@ static void native_bake(const char *directory, VkFormat format) {
           .sType = VK_STRUCTURE_TYPE_IMAGE_TO_MEMORY_COPY_EXT,
           .pHostPointer = output + h.data_offset + slice.offset,
           .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1},
-          .imageExtent = {mip(13, level), mip(9, level), 1}};
+          .imageExtent = {mip(FIXTURE_WIDTH, level), mip(FIXTURE_HEIGHT, level), 1}};
       VkCopyImageToMemoryInfoEXT exported = {
           .sType = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_MEMORY_INFO_EXT,
           .flags = VK_HOST_IMAGE_COPY_MEMCPY_EXT,
@@ -273,12 +273,24 @@ static void native_query_negatives(VkFormat format) {
       .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
   const VkImageUsageFlagBits forbidden[] = {VK_IMAGE_USAGE_STORAGE_BIT,
                                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+#ifndef DM_NATIVE_TURNIP_HOST_ASTC
+                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+#endif
+  };
   for (unsigned n = 0; n < sizeof forbidden / sizeof *forbidden; n++) {
     query.usage = usage | forbidden[n];
     CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
           VK_ERROR_FORMAT_NOT_SUPPORTED);
   }
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+  // The explicit Turnip profile permits transfer aliases; default PanVK keeps
+  // its original narrower rejection. Pixel/byte oracles below are unchanged.
+  query.usage = usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) == VK_SUCCESS);
+  ext.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
+  CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) == VK_ERROR_FORMAT_NOT_SUPPORTED);
+  ext.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+#endif
   query.usage = usage;
   query.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
   CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
@@ -360,6 +372,9 @@ static void native_import(const char *directory, VkFormat format) {
                                         VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     int coherent = !!(memory.memoryTypes[type].propertyFlags &
                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+    CHECK(coherent);
+#endif
     VkImportMemoryHostPointerInfoEXT host_pointer = {
         .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
         .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
@@ -370,6 +385,12 @@ static void native_import(const char *directory, VkFormat format) {
                                   .allocationSize = pool_bytes,
                                   .memoryTypeIndex = type};
     VK(vkAllocateMemory(device, &alloc, NULL, &i.allocation));
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+    image invalid = native_unbound(format, &h);
+    CHECK(vkBindImageMemory(device, invalid.image, i.allocation, offset+1) == VK_ERROR_INVALID_EXTERNAL_HANDLE);
+    CHECK(vkBindImageMemory(device, invalid.image, i.allocation, pool_bytes) == VK_ERROR_INVALID_EXTERNAL_HANDLE);
+    vkDestroyImage(device,invalid.image,NULL);
+#endif
     VK(vkBindImageMemory(device, i.image, i.allocation, offset));
     void *mapped;
     VK(vkMapMemory(device, i.allocation, 0, VK_WHOLE_SIZE, 0, &mapped));

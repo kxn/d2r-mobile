@@ -14,7 +14,7 @@ for name,value in manifest['native_library_sha256'].items():
 OUT.mkdir(parents=True,exist_ok=True)
 unsigned=OUT/'unsigned.apk';aligned=OUT/'aligned.apk';apk=OUT/'native-image-fixture.apk'
 commands=[]
-# Direct PanVK ICD cannot compose Android VVL; omit only that unused optional
+# This direct-ICD fixture does not compose Android VVL; omit only that unused optional
 # layer, recording its original bytes explicitly. Six host/loader libs stay exact.
 omitted={"lib/arm64-v8a/libVkLayer_khronos_validation.so"}
 def run(*args):
@@ -22,7 +22,7 @@ def run(*args):
 # aapt2 keeps the original Java package-qualified Activity when renaming the
 # manifest package. The compiled manifest below is verified before signing.
 run(TOOLS/'aapt2','link','-I',SDK/'platforms/android-36/android.jar','--manifest',
-    ROOT/'dm/android/AndroidManifest.xml','--rename-manifest-package','com.d2rmobile.nativeimagefixture',
+    ROOT/'dm/android/AndroidManifest.xml','--rename-manifest-package','com.d2rmobile.turniphostimagefixture',
     '-o',unsigned,ROOT/'.local/build/android-apk/resources.zip')
 with zipfile.ZipFile(BASE) as source,zipfile.ZipFile(unsigned,'a',compression=zipfile.ZIP_DEFLATED) as target:
     present=set(target.namelist())
@@ -31,7 +31,7 @@ with zipfile.ZipFile(BASE) as source,zipfile.ZipFile(unsigned,'a',compression=zi
         target.writestr(entry,source.read(entry.filename))
 xml=run(TOOLS/'aapt2','dump','xmltree',unsigned,'--file','AndroidManifest.xml')
 (OUT/'AndroidManifest.xmltree.txt').write_text(xml)
-assert 'com.d2rmobile.nativeimagefixture' in xml
+assert 'com.d2rmobile.turniphostimagefixture' in xml
 assert 'com.d2rmobile.nativeport.MainActivity' in xml
 assert '".MainActivity"' not in xml
 run(TOOLS/'zipalign','-f','-P','16','4',unsigned,aligned)
@@ -48,7 +48,7 @@ with zipfile.ZipFile(BASE) as source,zipfile.ZipFile(apk) as target:
     native_names={n for n in target.namelist() if n.startswith('lib/arm64-v8a/') and n.endswith('.so')}
     assert native_names=={'lib/arm64-v8a/'+n for n in manifest['native_library_sha256']}
     assert len(native_names)==6
-result={'package':'com.d2rmobile.nativeimagefixture','activity':'com.d2rmobile.nativeport.MainActivity',
+result={'package':'com.d2rmobile.turniphostimagefixture','activity':'com.d2rmobile.nativeport.MainActivity',
     'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),
     'apk_sha256':sha(apk),'base_apk_sha256':sha(BASE),'manifest_xmltree_sha256':sha(OUT/'AndroidManifest.xmltree.txt'),
     'base_build_manifest_sha256':sha(BASE.with_suffix('.apk.build.json')),'packager_sha256':sha(Path(__file__)),

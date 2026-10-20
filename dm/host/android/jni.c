@@ -771,9 +771,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeNativeIm
          "\"mode\":\"%s\",\"validation_layer\":\"disabled_explicitly\","
          "\"synchronization_validation\":\"disabled_explicitly\","
          "\"game_modules_executed\":false}\n",(unsigned)getuid(),kind);
-  if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
-     setenv("PANVK_DM_NATIVE_IMAGE_IMPORT","true",1))
-    die("Native image fixture startup environment");
+  if(setenv("TU_DM_HOST_IMPORT","true",1))
+    die("Native Turnip image fixture startup environment");
   vk_loader_initialize();
   int dm_native_image_fixture_run(const char*,const char*,PFN_vkGetInstanceProcAddr,int);
   int rc=dm_native_image_fixture_run(kind,path,vkGetInstanceProcAddr,0);

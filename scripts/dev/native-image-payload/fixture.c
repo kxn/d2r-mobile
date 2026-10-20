@@ -23,6 +23,11 @@ static unsigned checks, errors;
     }                                                                          \
   } while (0)
 #define VK(c) CHECK((c) == VK_SUCCESS)
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+enum { FIXTURE_WIDTH=8, FIXTURE_HEIGHT=8 };
+#else
+enum { FIXTURE_WIDTH=13, FIXTURE_HEIGHT=9 };
+#endif
 enum { LEVELS = 4, LAYERS = 1, REGIONS = LEVELS * LAYERS, MAX_FILE = 16 << 20 };
 static VkInstance instance;
 static VkPhysicalDevice physical;
@@ -186,10 +191,27 @@ static int init(void) {
   vkGetPhysicalDeviceProperties2(physical, &p);
   properties = p.properties;
 #ifdef DM_NATIVE_IMPORTED_IMAGE
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+  if (native_mode && native_driver.driverID != VK_DRIVER_ID_MESA_TURNIP) {
+    puts("{\"result\":\"unsupported\",\"reason\":\"Turnip ASTC host-image contract requires actual Mesa Turnip\"}");
+    return 0;
+  }
+#else
   if (native_mode && native_driver.driverID != VK_DRIVER_ID_MESA_PANVK) {
     puts("{\"result\":\"unsupported\",\"reason\":\"DM native image producer v1 "
          "requires exact PanVK driver contract\"}");
     return 0;
+  }
+#endif
+#endif
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+  if(native_mode) {
+  printf("{\"native_device_identity\":true,\"driverID\":%u,\"vendorID\":%u,\"deviceID\":%u,\"width\":%u,\"height\":%u,\"mips\":%u,\"layout_UUID\":\"",
+         native_driver.driverID, properties.vendorID, properties.deviceID, FIXTURE_WIDTH, FIXTURE_HEIGHT, LEVELS);
+  for(unsigned n=0;n<16;n++)printf("%02x",host.optimalTilingLayoutUUID[n]);
+  printf("\",\"device_UUID\":\"");for(unsigned n=0;n<16;n++)printf("%02x",ids.deviceUUID[n]);
+  printf("\",\"driver_UUID\":\"");for(unsigned n=0;n<16;n++)printf("%02x",ids.driverUUID[n]);
+  printf("\"}\n");
   }
 #endif
   CHECK(host.copySrcLayoutCount <= 64 && host.copyDstLayoutCount <= 64);
@@ -258,7 +280,7 @@ static VkImageCreateInfo recipe(VkFormat format) {
 #endif
                              .imageType = VK_IMAGE_TYPE_2D,
                              .format = format,
-                             .extent = {13, 9, 1},
+                             .extent = {FIXTURE_WIDTH, FIXTURE_HEIGHT, 1},
                              .mipLevels = LEVELS,
                              .arrayLayers = LAYERS,
                              .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -379,7 +401,7 @@ static void expected(VkFormat format, uint32_t level, uint32_t layer,
 }
 static uint8_t *linear_source(VkFormat format, uint32_t level, uint32_t layer,
                               size_t *size) {
-  uint32_t w = mip(13, level), h = mip(9, level),
+  uint32_t w = mip(FIXTURE_WIDTH, level), h = mip(FIXTURE_HEIGHT, level),
            block = (format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
                     format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
                        ? 6
@@ -500,8 +522,8 @@ static void bake(const char *directory, VkFormat format) {
   for (uint32_t layer = 0; layer < LAYERS; layer++)
     for (uint32_t level = 0; level < LEVELS; level++) {
       part *p = &h.parts[layer * LEVELS + level];
-      *p = (part){level,         layer, mip(13, level),
-                  mip(9, level), total, opaque_size(&i, level, layer)};
+      *p = (part){level,         layer, mip(FIXTURE_WIDTH, level),
+                  mip(FIXTURE_HEIGHT, level), total, opaque_size(&i, level, layer)};
       total = (total + p->size + 63) & ~UINT64_C(63);
       size_t bytes;
       uint8_t *linear = linear_source(format, level, layer, &bytes);
@@ -580,7 +602,7 @@ static int validate_pack(const uint8_t *data, size_t bytes, VkFormat format) {
   for (unsigned n = 0; n < REGIONS; n++) {
     const part *p = &h->parts[n];
     if (p->level != n % LEVELS || p->layer != n / LEVELS ||
-        p->width != mip(13, p->level) || p->height != mip(9, p->level) ||
+        p->width != mip(FIXTURE_WIDTH, p->level) || p->height != mip(FIXTURE_HEIGHT, p->level) ||
         p->offset != previous || !p->size || p->offset > bytes ||
         p->size > bytes - p->offset)
       return 0;
@@ -650,7 +672,7 @@ static void sample_all(image *i, VkFormat format) {
       .maxLod = LEVELS - 1};
   VK(vkCreateSampler(device, &si, NULL, &sampler));
   VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                           .size = 13 * 9 * 4,
+                           .size = FIXTURE_WIDTH * FIXTURE_HEIGHT * 4,
                            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
   VK(vkCreateBuffer(device, &bi, NULL, &output));
   VkMemoryRequirements needs;
@@ -730,7 +752,7 @@ static void sample_all(image *i, VkFormat format) {
       vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
       vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
                               pipeline_layout, 0, 1, &set, 0, NULL);
-      uint32_t push[] = {mip(13, level), mip(9, level), layer, level};
+      uint32_t push[] = {mip(FIXTURE_WIDTH, level), mip(FIXTURE_HEIGHT, level), layer, level};
       vkCmdPushConstants(command, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
                          0, sizeof push, push);
       vkCmdDispatch(command, (push[0] + 7) / 8, (push[1] + 7) / 8, 1);
@@ -754,7 +776,7 @@ static void sample_all(image *i, VkFormat format) {
           expected(format, level, layer, x, y, rgba);
           CHECK(!memcmp((uint8_t *)mapped + (y * push[0] + x) * 4, rgba, 4));
         }
-      for (uint32_t n = push[0] * push[1]; n < 13 * 9; n++)
+      for (uint32_t n = push[0] * push[1]; n < FIXTURE_WIDTH * FIXTURE_HEIGHT; n++)
         CHECK(((uint32_t *)mapped)[n] == 0xccccccccu);
       VK(vkResetFences(device, 1, &fence));
       VK(vkResetCommandPool(device, commands, 0));

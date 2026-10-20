@@ -238,9 +238,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (getIntent().getBooleanExtra("native_image_test", false)) {
             if (getIntent().getBooleanExtra("run_game", true) ||
                     getIntent().getBooleanExtra("run_vulkan_tests", false) ||
-                    getIntent().getBooleanExtra("fixed_shared_pool_test", false) || !panvkDriver ||
+                    getIntent().getBooleanExtra("fixed_shared_pool_test", false) || !"adreno".equals(driverProvider) ||
                     getIntent().getBooleanExtra("vulkan_test_validation", true))
-                throw new IllegalArgumentException("Native image requires exclusive cold PanVK test, explicit validation=false and run_game=false");
+                throw new IllegalArgumentException("Native image requires exclusive cold Turnip test, explicit validation=false and run_game=false");
             String imageMode = getIntent().getStringExtra("native_image_mode");
             if (!"--native-bake".equals(imageMode) && !"--native-import".equals(imageMode))
                 throw new IllegalArgumentException("Unknown native image fixture mode");
