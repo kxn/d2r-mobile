@@ -838,3 +838,29 @@ ASTC6 各 307 项检查通过：九级整图的块读取与采样、五级缩略
 本机记录为 `native-family-fbd09b2-mali-root-review.json`。这是有限对象的
 真实 GPU 正确性结果；原游戏 Builder 的查询/分配顺序、原 packaged 保护
 握手以及单资源真实游戏加载仍需验证，没有整游戏内存、FPS 或散热收益结论。
+
+## 1a5280a：系统驱动 ASTC 开关的官方工具结果
+
+同一 `1a5280a` APK、原始模块、全 ASTC4 资源和 `cbd8d2da0b0f` shader chain，
+在 Mali 上分别关闭、开启 legacy ASTC copy，各采集独立的 gatord 8 秒和
+Simpleperf stat 8 秒。保持系统 Vulkan、非共享 guest heap、固定 0.75 比例及
+2772×1240 输出；两侧均通过原摇杆营地路线、原生命周期 fresh save2 后停止，
+最终恢复并验证 `c8e7a25` APK、模块、资源和私有驱动文件。系统截图命令超时的
+首轮在采样前退出，失败记录保留；有效数据是本机 `legacy-astc-1a5280a-mali-arm-pair-v2`。
+
+Streamline 官方导出的整窗 GPU 外部读/写，OFF 为 4.300/2.766 GB/s，ON 为
+4.233/2.630 GB/s；纹理外读分别为 2.740/2.756 GB/s。按 fine quad 作描述性
+归一后，纹理外读仍基本不变。OFF 的温控目标在 20/30 FPS 间切换，ON 为
+20 FPS，Uniform 特化变体数也为 33/31，故这些数字不能作为 ASTC 的净收益或涨帧结论。
+完整 0–8 秒及 1–7 秒区间均保留；没有选择最好区间，也没有以内部 L2 流量
+冒充 DRAM：LS→L2 的写流量约 6.2–6.4 GB/s，与外部写是不同测量边界。
+本机分析记录 `legacy-astc-1a5280a-official-descriptive-comparison-agent-v2.json`。
+
+随后对同一 1a 进程补充官方 Simpleperf 99 Hz、8 秒用户态调用栈，原菜单通过
+正常触摸进入世界，采样后 fresh save2、停止并恢复 c8。1163 个样本没有丢失或
+截断，原始保留栈深度仍有差异；519 个翻译线程样本中，脏页代数查询自身仅
+4 个，不能据此把整池代数扫描当作主要 CPU 热点。绑定及访问依赖管理仍值得
+继续减负。完成线程的 40 个用户态样本里，17 个驱动叶样本的宿主调用点对应
+`vkResetCommandPool`，14 个 `memcpy` 叶样本对应 CPU effects 发布；内核没有
+被此次 `cpu-clock:u` 覆盖，不能把这些比例当作线程墙钟占比，更不能将全部
+minor faults 归于 mprotect。采样记录 `legacy-astc-1a5280a-mali-CPU99-recovered-v2`。
