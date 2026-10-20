@@ -141,6 +141,16 @@ static void shared_image_dirty_test(void) {
   vk_texture_cpu_preflight((const tex_t *)&textures[0]); // original ordered CPU observation commits/waits
   vk_internal_wait(vk_internal_commit());
   shared_image_pixels(&textures[0],blue);shared_image_pixels(&textures[1],blue);
+  // Attachment preparation promotes storage with a real complete GPU copy,
+  // but no draw follows. The source is still fully CPU rebuildable; its own
+  // temporary transfer-write record must not leave a false GPU alias behind.
+  mtl_sub_begin();vk_texture_cpu_preflight((const tex_t *)&textures[0]);
+  vk_texture_prepare_attachment((const tex_t *)&textures[0],NULL);
+  vk_internal_wait(vk_internal_commit());
+  CHECK(vk_test_texture_rebuildable(((const tex_t *)&textures[0])->serial)==1);
+  CHECK(!vk_texture_shared_linear_conflict((uintptr_t)data,4096));
+  dirty_range_fill(data,4096,red);shared_image_pixels(&textures[0],red);shared_image_pixels(&textures[1],red);
+  dirty_range_fill(data,4096,blue);shared_image_pixels(&textures[0],blue);shared_image_pixels(&textures[1],blue);
   if(negative && !strcmp(negative,"cpu-image-alias")) {
     mtl_sub_begin();vk_texture_native((const tex_t *)&textures[0]);vk_internal_wait(vk_internal_commit());
     dirty_range_fill(data,4096,red);shared_image_pixels(&textures[0],red);

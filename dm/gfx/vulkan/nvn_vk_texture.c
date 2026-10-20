@@ -702,6 +702,11 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
       VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,0);
   // Promotion preserves every mip/layer/aspect; it does not create new data.
   i->cpu_rebuildable=cpu_rebuildable;
+#ifdef DM_VULKAN_SHARED_POOLS
+  // Copying a CPU-rebuildable image during promotion does not make its
+  // packaged backing stale. Match the restored authority in the alias list.
+  if(cpu_rebuildable)image_shared_alias_remove(i);
+#endif
   vk_barrier();
   vk_completion(image_storage_destroy,old);
   LOG("[vulkan] image promotion serial=%llu flags=%#x->%#x usage=%#x->%#x",
