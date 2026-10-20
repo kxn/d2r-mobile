@@ -449,6 +449,7 @@ int vk_native_resources_active(void);
 void vk_native_allocation_stats(uint64_t *,uint64_t *,uint64_t *);
 int vk_texture_native_pool_collect(const tex_t *,VkPipelineStageFlags,int,vk_pool_requirement_sink,void *);
 int vk_pool_native_image_write_ready(void *);
+int vk_pool_native_image_queue_resident(void *);
 void vk_native_images_release(void);
 uint64_t vk_buffer_native_image_read(uint64_t,uint64_t,VkPipelineStageFlags,uint64_t);
 #endif

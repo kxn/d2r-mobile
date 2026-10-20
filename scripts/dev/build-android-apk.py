@@ -53,6 +53,9 @@ run('cmake', '--build', ROOT / '.local/build/android-native', '-j'+str(args.nati
 native_window_selected = 'DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE:BOOL=ON' in (ROOT/'.local/build/android-native/CMakeCache.txt').read_text()
 native_previous_astc_compiled = all(marker in (ROOT/'.local/build/android-native/libdmhost_android.so').read_bytes() for marker in
     (b'native-previous-writer-ASTC-pending-FS',b'native-image-only-original-NVN'))
+native_resident_astc_compiled = b'native-resident-owner-original-ASTC' in (ROOT/'.local/build/android-native/libdmhost_android.so').read_bytes()
+if native_window_selected and not native_resident_astc_compiled:
+    raise RuntimeError('Actual resident-owner ASTC body absent from host ELF')
 if native_window_selected and not native_previous_astc_compiled:
     raise RuntimeError('Actual ASTC previous-writer AND native-only test bodies absent from host ELF')
 
@@ -165,6 +168,7 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'native_previous_writer_ASTC_oracle_compiled':native_previous_astc_compiled,
           'native_window_app_fixture_compiled':native_window_selected,
           'native_image_only_ASTC_oracle_compiled':native_previous_astc_compiled,
+          'native_resident_owner_ASTC_oracle_compiled':native_resident_astc_compiled,
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,

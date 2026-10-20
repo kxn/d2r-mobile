@@ -1969,9 +1969,7 @@ const _Atomic uint64_t *vk_test_pool_initialized_counter(uint64_t address) {
   const _Atomic uint64_t *result=p?&p->initialized_bytes:NULL;
   pthread_mutex_unlock(&V.resources);return result;
 }
-// Functional test oracle only: the public span query distinguishes an empty
-// WHOLE Pool from a crossing/hole; neither CROSSING nor !materialized proves
-// that zero physical Buffer bytes intersect this narrower logical range.
+// Reused exact range oracle from the native-image-only AA wrapper.
 int vk_test_pool_has_buffer_intersection(uint64_t address,uint64_t size) {
   if(!size || size>UINT64_MAX-address)return -1;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);int found=p?0:-1;

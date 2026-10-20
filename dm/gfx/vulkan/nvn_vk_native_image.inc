@@ -145,8 +145,8 @@ static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFl
   }
   // Only independent first use moves. Current-recording Buffer alias accesses, CPU
   // publication, unknown/order barriers or image writers keep the original
-  // end-pass path. Ownership still returns to FOREIGN at every chunk end;
-  // this is not a new immutable-resource or CPU-writing contract.
+  // end-pass path. This proves only an actual acquire's placement; resident
+  // same-queue reuse makes no new immutable-resource/CPU-writing claim.
   // Known retained writers come only from older chunks: the complete current
   // recording page ledger was negative above. A VkBuffer visibility bit does
   // not order this different object. Reuse the existing global alias-memory
@@ -197,7 +197,14 @@ static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAcc
     }
     i->native_alias_generation=alias_generation;
     i->native_alias_visible_stages=alias_generation?stages:0;
-    i->native_acquired=1;i->native_next=native_acquired_images;native_acquired_images=i;
+    // First publication keeps the original external GENERAL handoff. Once
+    // this exact coherent provider owns the physical image, a later command
+    // chunk is not a new external producer. Keep all real per-mip/alias history.
+    // CPU stores still require NVN execution synchronization and happen-before
+    // the consuming QueueSubmit; neither residency nor coherence permits races.
+    // The transient list must never retain a resident image or a stack fixture.
+    if(vk_pool_native_image_queue_resident(i->native_pool))i->native_acquired=2;
+    else {i->native_acquired=1;i->native_next=native_acquired_images;native_acquired_images=i;}
   }
 
 }
@@ -206,6 +213,26 @@ static void native_image_use(image *i) {
     VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT);
 }
 #ifdef DM_VULKAN_TEST_EMBED
+// Fresh owned GPU storage is not a baked external publication. Exercise the
+// real initial transition rather than treating a native marker as initialized.
+unsigned vk_test_native_initial_general(VkImage handle) {
+  nvn_native_entry entry={0};image_access cells[3]={0};
+  image own={.handle=handle,.native_entry=&entry,.aspect=VK_IMAGE_ASPECT_COLOR_BIT,
+    .levels=1,.layers=1,.extent={32,32,1},.layout=VK_IMAGE_LAYOUT_UNDEFINED,.access=cells,
+    .description={.imageType=VK_IMAGE_TYPE_2D,.samples=VK_SAMPLE_COUNT_1_BIT}};
+  own.physical_traits=image_physical_traits(&own);
+  uint64_t before=image_layout_recorded.transitions;
+  image_general_transfer(&own);
+  if(own.layout!=VK_IMAGE_LAYOUT_GENERAL || image_layout_recorded.transitions!=before+1)
+    die("Fresh native fixture lost UNDEFINED to GENERAL initialization");
+  VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+  if(image_use_range_normalized(&own,range,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)!=VK_IMAGE_LAYOUT_GENERAL ||
+      image_use_range_normalized(&own,range,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,0)!=VK_IMAGE_LAYOUT_GENERAL ||
+      image_layout_recorded.transitions!=before+1)
+    die("Native fixture introduced sampled/transfer layout round trip");
+  return 2;
+}
 // A real imported fresh RGBA image exercises the same acquire/alias planner
 // without weakening the production ASTC table/producer validator. The pending
 // NVN pass is real; a subsequent standard transfer checks the source pixels.
@@ -216,9 +243,16 @@ int vk_test_native_pending_acquire(VkImage handle,void *allocation,uint64_t addr
   nvn_native_entry entry={0};image_access cells[3]={0};
   image own={.handle=handle,.native_entry=&entry,.native_pool=allocation,.aspect=VK_IMAGE_ASPECT_COLOR_BIT,
     .levels=1,.layers=1,.layout=VK_IMAGE_LAYOUT_GENERAL,.access=cells,
+    .extent={32,32,1},.description={.imageType=VK_IMAGE_TYPE_2D,.samples=VK_SAMPLE_COUNT_1_BIT},
     .tex={.mem=(void *)(uintptr_t)address,.L={.size=bytes}}};
+  own.physical_traits=image_physical_traits(&own);
   native_range_add(&own);
   native_image_use_consumer(&own,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT);
+  uint64_t before=image_layout_recorded.transitions;
+  if(image_use_range_normalized(&own,(VkImageSubresourceRange){own.aspect,0,1,0,1},
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)!=VK_IMAGE_LAYOUT_GENERAL ||
+      image_layout_recorded.transitions!=before)
+    die("Native acquired fixture lost GENERAL sampled layout");
   int preserved=vk_render_active();vk_render_end();
   // The real consumer below is a transfer. Preserve an explicit chain from
   // the acquire destination rather than pretend a fragment sample was issued.
@@ -280,8 +314,10 @@ static void native_image_create(image *i,const nvn_native_entry *entry) {
   i->access_generation++;native_range_add(i);native_image_use(i);
 }
 void vk_native_images_release(void) {
-  // Called at the original end of every command chunk, after render/query
-  // closure. CPU production still requires the original NVN fence/Flush rules;
+  // Only conservative transient imports enter this per-chunk list. Resident
+  // coherent imports retain queue ownership and their access histories across
+  // chunks; submission-owned Pool/token references still retire as before.
+  // Called after render/query closure. CPU production retains NVN fence/Flush rules;
   // releasing is not a CPU wait and does not authorize racing host writes.
   while(native_acquired_images) {
     image *i=native_acquired_images;native_acquired_images=i->native_next;i->native_next=NULL;

@@ -77,6 +77,8 @@ typedef struct image {
   uint64_t native_use_serial,native_alias_generation;
   VkPipelineStageFlags native_alias_visible_stages;
   VkPipelineStageFlags native_recorded_stages;
+  // 0 external, 1 transient chunk owner, 2 coherent same-queue resident.
+  // Only state 1 enters native_acquired_images; it is not a lifetime reference.
   int native_acquired;
 #endif
   uint64_t last_use;
@@ -339,6 +341,13 @@ static int image_sampled_array_layout(const image *i) {
   return !!(i->physical_traits&IMAGE_LAYOUT_SAMPLED_ARRAY);
 }
 static int image_safe_layouts(const image *i) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  // Authenticated native payloads are produced and handed off in GENERAL.
+  // Keep their sampled/transfer descriptors in that layout between FOREIGN
+  // acquire/release. Access dependencies and ownership handoffs still run;
+  // ordinary private images retain the original optimal-layout policy.
+  if(i->native_entry)return 0;
+#endif
   return !layout_reference &&
       ((i->physical_traits&IMAGE_LAYOUT_COLOR) ||
        (!sampled_array_layout_reference && (i->physical_traits&IMAGE_LAYOUT_SAMPLED_ARRAY)) ||
@@ -1046,6 +1055,17 @@ void vk_test_native_rgba_adopt(const tex_t *t,VkImage handle,VkDeviceMemory memo
   memset(i->access,0,(size_t)i->levels*3*sizeof *i->access);i->access_generation++;
   for(unsigned n=0;n<i->levels;n++)image_cell(i,0,n,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
   native_range_add(i);image_recipes_changed();
+}
+int vk_test_native_image_owner(uint64_t serial) {
+  for(image *i=images;i;i=i->next)if(i->tex.serial==serial)return i->native_acquired;
+  return -1;
+}
+VkPipelineStageFlags vk_test_native_mip_scope(uint64_t serial,unsigned level,uint64_t *use_clock) {
+  for(image *i=image_buckets[serial%8192];i;i=i->hash_next)if(i->tex.serial==serial) {
+    if(!i->native_entry || level>=i->levels)die("Native scope oracle bounds");
+    image_access *cell=image_cell(i,0,level,0);*use_clock=cell->use_clock;return cell->mip_scope;
+  }
+  die("Native scope oracle image missing");
 }
 VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t serial,unsigned level) {
   for(image *i=image_buckets[serial%8192];i;i=i->hash_next)if(i->tex.serial==serial) {
@@ -2813,6 +2833,12 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   }
   VkImageLayout binding_layout=image_use_range_normalized(i,access_range,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       image_shader_stages(stage));
+#if defined(DM_VULKAN_TEST_EMBED) && defined(DM_VULKAN_NATIVE_RESOURCES)
+  // The actual ASTC family fixture uses this real descriptor on the GPU,
+  // including after CPU publication, transfer writers and chunk handoffs.
+  if(i->native_entry && binding_layout!=VK_IMAGE_LAYOUT_GENERAL)
+    die("Native image sampled descriptor must retain GENERAL");
+#endif
   if(layout) *layout=binding_layout;
   image_request_add_normalized(i,access_range,image_shader_stages(stage),
       VK_ACCESS_SHADER_READ_BIT|(storage?VK_ACCESS_SHADER_WRITE_BIT:0));

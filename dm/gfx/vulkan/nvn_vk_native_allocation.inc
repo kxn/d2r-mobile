@@ -197,6 +197,18 @@ void vk_pool_native_image_use(void *token,uint64_t address,uint64_t bytes,VkPipe
   record_pool_use(p,address-(uintptr_t)p->guest,bytes,stages,1);
   pthread_mutex_unlock(&V.resources);
 }
+int vk_pool_native_image_queue_resident(void *token) {
+  native_image_allocation *a=token;
+  return native_resident_driver && a && !atomic_load(&a->released) &&
+      (a->storage.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+}
+#ifdef DM_VULKAN_TEST_EMBED
+// Explicit host oracle policy override, not a production driver identity claim.
+// Coherent memory and real imported allocation lifetime remain mandatory.
+int vk_test_native_resident_provider(int enabled) {
+  int previous=native_resident_driver;native_resident_driver=enabled;return previous;
+}
+#endif
 int vk_pool_native_image_write_ready(void *token) {
   native_image_allocation *a=token;
   if(!a || atomic_load(&a->released))return 0;

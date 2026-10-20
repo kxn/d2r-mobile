@@ -4,6 +4,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 static const char *native_resource_path;
+// This first residency experiment is limited to the exact coherent Turnip
+// provider whose native payload/cache contract was audited. Cold identity only.
+static int native_resident_driver;
 static uint8_t native_pack_digest[32],native_producer_digest[32];
 static VkPhysicalDeviceHostImageCopyFeaturesEXT native_host_copy={
   .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES_EXT};
@@ -57,6 +60,10 @@ static void native_resource_install(void) {
   uint8_t extra;if(read(fd,&extra,1)!=0 || close(fd))die("Native resource table changed during read");
   int installed=nvn_native_table_install(data,bytes,native_pack_digest,&identity);free(data);
   if(!installed)die("Native resource table identity/producer/pack/recipe rejected");
+  static const uint8_t coherent_turnip[32]={
+    0xaa,0x18,0x53,0x74,0xef,0x6c,0x11,0x35,0xdd,0xcb,0xff,0x08,0x50,0x6a,0xa4,0xdc,
+    0x72,0x0e,0x29,0xb8,0x2e,0x45,0xa9,0xae,0x9f,0x5c,0xe7,0x67,0xf5,0x45,0x64,0xdb};
+  native_resident_driver=!memcmp(identity.driver_sha256,coherent_turnip,32);
   // One cold identity record for the existing explicit resource contract.
   printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
   for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);

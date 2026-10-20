@@ -24,9 +24,10 @@ manifest=A.base_apk.with_suffix('.apk.build.json');m=json.loads(manifest.read_te
 assert m['contains_game_binary'] is False and m['tlsdesc'] is True
 for k in ('fixed_shared_pools_compiled','shared_import_windows_compiled','native_window_app_fixture_compiled','native_resources_compiled'):assert m[k] is True,k
 assert sha(A.base_apk)==m['apk_sha256'] and len(m['native_library_sha256'])==6
+assert m['native_resident_owner_ASTC_oracle_compiled'] is True
 assert m['native_previous_writer_ASTC_oracle_compiled'] is True and m['native_image_only_ASTC_oracle_compiled'] is True
 with zipfile.ZipFile(A.base_apk) as base_contents:
- assert all(marker in base_contents.read('lib/arm64-v8a/libdmhost_android.so') for marker in (b'native-previous-writer-ASTC-pending-FS',b'native-image-only-original-NVN')), 'Actual new ASTC body absent: old family-only ELF rejected'
+ assert all(marker in base_contents.read('lib/arm64-v8a/libdmhost_android.so') for marker in (b'native-previous-writer-ASTC-pending-FS',b'native-image-only-original-NVN',b'native-resident-owner-original-ASTC')), 'Actual new ASTC body absent: old family-only ELF rejected'
 
 for name,digest in m['source_inputs'].items():
  p=Path(name);p=p if p.is_absolute() else ROOT/p
@@ -89,7 +90,7 @@ pack=table[32:64].hex();producer=table[96:128].hex()
 assert pack=='9fb5a9d015b60a9857620419ae4fd70a4704786398a2ebaaf0f4f60f8cd72144'
 assert producer=='34ec895c3699da37f59b5af0a057ae0555934692917edd9bc62a775a9847a29f'
 result={'owned_resource_inputs':resources,'native_resource_pack_sha256':pack,'native_resource_producer_sha256':producer,
- 'native_payload_bytes':135168,'package':PKG,'activity':PKG+'.MainActivity','fixture_kind':'native-image-only-original-ASTC-family-v1','previous_writer_ASTC_fixture':True,'native_image_only_fixture':True,
+ 'native_payload_bytes':135168,'package':PKG,'activity':PKG+'.MainActivity','fixture_kind':'native-resident-owner-original-ASTC-family-v1','previous_writer_ASTC_fixture':True,'native_image_only_fixture':True,'resident_owner_ASTC_fixture':True,
  'source_revision':revision,'apk_sha256':sha(apk),'base_apk_sha256':sha(A.base_apk),
  'base_build_manifest_sha256':sha(manifest),'runtime_source_ready_sha256':sha(A.runtime_source_ready),
  'native_library_sha256':m['native_library_sha256'],'shader_files':shaders,

@@ -59,8 +59,11 @@ static void nr_tail_compare(NVNtexture *tail,unsigned first,NVNtexture *native,N
 }
 #ifdef DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE
 #include "native_vulkan_native_previous_astc.inc"
+#include "native_vulkan_native_resident_astc.inc"
 #endif
 static int native_resource_gpu_test(const char *directory) {
+  unsigned resident_added=0;
+  int resident_test=getenv("DM_NATIVE_RESIDENT_OWNER_ASTC_FIXTURE")!=NULL;
   enum {pool_bytes=4<<20,native_offset=(1<<20)+8192,reference_offset=2<<20,
     linear_offset=3<<20,vertex_offset=(3<<20)+(256<<10),output_offset=(3<<20)+(320<<10),
     alias_offset=(3<<20)+(384<<10)};
@@ -108,7 +111,8 @@ static int native_resource_gpu_test(const char *directory) {
   memcpy(storage+linear_offset,linear,linear_size);
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);
   CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);CALL(nvnMemoryPoolBuilderSetStorage,&mb,storage,pool_bytes);
-  CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CALL(nvnMemoryPoolBuilderSetFlags,&mb,(resident_test?NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED:
+    NVN_MEMORY_POOL_FLAGS_CPU_CACHED)|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));
   NVNtexture native,reference,output;
   for(unsigned n=0;n<3;n++) {
@@ -285,6 +289,8 @@ static int native_resource_gpu_test(const char *directory) {
   CALL(nvnCommandBufferCopyBufferToTexture,&cmd,(uintptr_t)storage+linear_offset+top->offset,&reference,&thumbnail,&thumbnail_region,0);
   CALL(nvnCommandBufferCopyTextureToTexture,&cmd,&reference,&thumbnail,&thumbnail_region,&native,&thumbnail,&thumbnail_region,0);
   submit(end());nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
+  if(resident_test)resident_added=nr_resident_astc(&native,&reference,&output,&pool,storage,input,linear,
+    native_offset,payload_size,linear_offset,alias_offset,&S);
   // Read original canonical native bytes through a linear NVN alias.
   CALL(nvnCommandBufferBeginRecording,&cmd);CALL(nvnCommandBufferCopyBufferToBuffer,&cmd,
     (uintptr_t)storage+native_offset,(uintptr_t)storage+alias_offset,4096,0);submit(end());
@@ -312,7 +318,7 @@ static int native_resource_gpu_test(const char *directory) {
     (unsigned long long)native_import_count,(unsigned long long)native_import_bytes,(unsigned long long)native_metadata_bytes,window_fixture?"true":"false");
   free(payload);free(linear);CHECK(vk_validation_error_count()==0);
   printf("{\"test\":\"native-resource-original-NVN\",\"checks\":%u,\"format\":%u,\"mips\":%u,\"family_version\":%u,\"tail_levels\":%u,\"memory_flags\":%u,\"atom\":%llu,\"native_offset\":%u,\"pool_bytes\":%u,\"no_pool_shadow\":true,\"full_all_mips\":true,\"tail_packaged_and_B2T\":%s,\"shared_gpu_gate\":%s,\"default_enabled\":false,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
-    checks,entry.recipe.format,entry.recipe.levels,header.version,has_tail?entry.recipe.levels-family.thumbnail_mip:0,
+    checks-resident_added,entry.recipe.format,entry.recipe.levels,header.version,has_tail?entry.recipe.levels-family.thumbnail_mip:0,
     properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,native_offset,pool_bytes,
     has_tail?"true":"false",vk_pool_shared_gpu_gate_mode()?"true":"false");return 0;
 }

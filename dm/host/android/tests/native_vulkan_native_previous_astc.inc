@@ -33,7 +33,10 @@ static void nr_previous_writer_astc(NVNtexture *native,NVNtexture *reference,NVN
   CALL(nvnMemoryPoolFlushMappedRange,pool,vertex_offset+32768,16);
   uint64_t address=(uintptr_t)storage+native_offset,serial=((const tex_t *)native)->serial;
   extern VkPipelineStageFlags vk_test_native_writer_stages(uint64_t,uint64_t);
-  extern VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t,unsigned);
+  extern VkPipelineStageFlags vk_test_native_mip_scope(uint64_t,unsigned,uint64_t *);
+  extern int vk_test_native_image_owner(uint64_t);
+  uint64_t prior_use_clock=0;
+  VkPipelineStageFlags retained_scope=vk_test_native_mip_scope(serial,5,&prior_use_clock);
   // Test-only finite Buffer scratch keeps the prior REAL opaque backing.
   // It is copied by the original GPU alias operation, not a vendor swizzler,
   // and is not a second VkImage allocation or production persistent snapshot.
@@ -91,8 +94,10 @@ static void nr_previous_writer_astc(NVNtexture *native,NVNtexture *reference,NVN
     NVNtextureView first=nr_view(4);mtl_reg_tex(71,(const tex_t *)native,(const view_t *)&first);
     S=*graphics;S.targets=(p_set_rt){.n=1,.color={(const tex_t *)output}};
     vk_pipeline_state_changed();vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
-    CHECK(vk_test_native_unused_mip_source(serial,5)==
-      (mode==2?VK_PIPELINE_STAGE_ALL_COMMANDS_BIT:VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT));
+    uint64_t actual_clock=0;
+    CHECK(vk_test_native_mip_scope(serial,5,&actual_clock)==retained_scope &&
+      actual_clock>=prior_use_clock && vk_test_native_image_owner(serial)==2);
+    prior_use_clock=actual_clock;
     compute_view=nr_view(5);mtl_reg_tex(71,(const tex_t *)native,(const view_t *)&compute_view);
     S=(vk_state){.program=(const prog_t *)&compute};S.tex[5][0]=71;S.samp[5][0]=(uint64_t)72<<20;
     S.ssbo[5][0]=(p_bind_buf){.addr=(uintptr_t)computed,.size=sizeof expected_compute};
@@ -109,5 +114,5 @@ static void nr_previous_writer_astc(NVNtexture *native,NVNtexture *reference,NVN
   S=*graphics;vk_pipeline_state_changed();
   CALL(nvnProgramFinalize,&primer);CALL(nvnProgramFinalize,&compute);CALL(nvnProgramFinalize,&copy_compute);
   unsigned delta=checks-begin;CHECK(delta==39);
-  printf("{\"test\":\"native-previous-writer-ASTC-pending-FS\",\"checks\":%u,\"positive_cases\":2,\"unknown_negative_cases\":1,\"mips\":[4,5,6],\"old_TRANSFER_and_COMPUTE_histories_retained\":true,\"current_recording_denied\":true,\"both_positive_FS_versions_changed\":true,\"FS_pixels_reference_equal\":true,\"CS_pixels_reference_equal\":true,\"T2B_compressed_blocks_exact\":true,\"result\":\"passed\"}\n",checks-begin);
+  printf("{\"test\":\"native-previous-writer-ASTC-pending-FS\",\"checks\":%u,\"positive_cases\":2,\"unknown_negative_cases\":1,\"mips\":[4,5,6],\"old_TRANSFER_and_COMPUTE_histories_retained\":true,\"resident_scope_history_preserved\":true,\"current_recording_denied\":true,\"both_positive_FS_versions_changed\":true,\"FS_pixels_reference_equal\":true,\"CS_pixels_reference_equal\":true,\"T2B_compressed_blocks_exact\":true,\"result\":\"passed\"}\n",checks-begin);
 }
