@@ -1793,3 +1793,42 @@ recording 的 Image 写入后通过已有 Buffer 进行完整 payload 的 CS 读
 崩溃，发生在尚无 native 表的 B2T 路径，候选保持待修，不默认启用。
 另一次 control 的附加 LLDB 握手失败仅为工具故障；后继移除可选调试快照，
 保留官方 CPU、系统内存和真实游戏检查，不用自制测量替代。两次均已恢复原包。
+
+### CPU 预检修正后，f830 的原游戏对照已完整结束
+
+`5d3d9df` 修正共享模式遗漏真实 CPU completion effect 的查询，并将 B2T
+必需的 render-pass 结束、重放与窗口 admission 放到最终 CPU 预检之前。
+旧代码在同一真实 callback 用例中读不到应发布的值 7；修正版及原 GPU-only
+不等待用例通过。相同固定 0.60、2750×1260、1MiB 窗口、6,217 项的普通
+ASTC4／原生 f830 两端都进入营地、完成三段行走、官方 CPU/GPU 采集和存档，
+没有再次触发该检查。原包及目录恢复，SDK 工具和游戏均已停止。
+
+| 系统端点（KiB） | 普通 ASTC4 | f830 原生布局 |
+| --- | ---: | ---: |
+| TOTAL PSS | 2,079,632 | 2,007,006 |
+| TOTAL SWAP PSS | 6,384 | 180 |
+| Graphics（已包含于 PSS） | 325,364 | 226,188 |
+| Native Heap Alloc | 168,715 | 150,527 |
+
+本次 PSS 减少 70.924MiB；它是单次真实端点，不是全部 241MiB payload
+缩减均转化成了驻留收益。两端截图人物、几何、UI 均在；两者已有彩色地面
+散点，姿态、镜头与动画也不同，不声明逐像素等价或整游戏完全正确。
+
+吞吐却退化：官方 Surface 完整间隔均值 32.143→78.585ms，GPU 时钟
+499.64→188.77MHz。相同完整间隔范围的纹理外访约 101.67→108.80MB，
+不能将每秒流量下降当成优化。NvN Running 时间约 26.10→52.12ms／完整
+间隔，最高 capacity 的 CPU7 占比约 21.28%→0.33%，不能把频率积分增加
+全称为新增 ISA 工作。8 秒内 completion-queue 等待 30→199 次，每次
+guest submission 的内部提交由 7→9；优先验证额外原生资源交接的成本。
+没有公开 thermal 状态证明降频原因，不称其为过热或纯布局退化。
+
+`external_profile` 只禁用自制计时器。hint 和 present worker 的 reference
+默认本来就为 true；本次二者关闭，不能写成因 external-profile 才被关闭。
+对照证据：`.local/logs/native-astc-linear-5d3d9df-sdp-game-pair-v2-analysis/official-pair-comparison-agent-v2.json`。
+
+后继 `7f946b5` 用真实 CPU-effect pending 数量的保守零门避免无事时每图像
+加锁；`6f8188e` 仅将已审 f830 加入 coherent 驻留资格。f830 真机独立薄包
+`9e593ef` 已通过原 447/36/40 和新增 110 项，实际使用 94,208B／9 mip
+资源，涵盖 no-Flush CPU 写及同 recording 的 Image→Buffer 全 payload CS
+读取，原包未变且清理完成。后继游戏吞吐、持续温度及 6GB 仍待验证；当前
+退速的 transient f830 实验不默认交付。
