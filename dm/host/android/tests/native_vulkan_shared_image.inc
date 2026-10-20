@@ -151,6 +151,17 @@ static void shared_image_dirty_test(void) {
     CHECK(vk_pool_address_stage((uintptr_t)data,4,(void **)&buffer,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
     die("GPU-owned image alias was incorrectly accepted");
   }
+  if(negative && !strcmp(negative,"cross-identity-upload")) {
+    mtl_sub_begin();VkImage native=vk_texture_native((const tex_t *)&textures[0]);
+    VkClearColorValue value={.float32={0,1,0,1}};
+    VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    vkCmdClearColorImage(V.cmd,native,VK_IMAGE_LAYOUT_GENERAL,&value,1,&range);
+    vk_internal_wait(vk_internal_commit());CHECK(!memcmp(data,blue,4));
+    NVNtexture fresh_alias;CALL(nvnTextureBuilderSetStorage,&tb,&pool,0);
+    CHECK(CALL(nvnTextureInitialize,&fresh_alias,&tb));
+    shared_image_pixels(&fresh_alias,green); // guest is stale blue: never upload it
+    die("New texture identity uploaded stale CPU bytes from GPU-owned image span");
+  }
   if(getenv("DM_SHARED_IMAGE_CPU_READ_TEST") || getenv("DM_SHARED_IMAGE_READBACK_TEST") ||
       (negative && !strcmp(negative,"required-cpu-read-alias"))) {
     // Real GPU content differs from its old packaged backing. A CPU proof
