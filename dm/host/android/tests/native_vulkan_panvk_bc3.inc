@@ -8,6 +8,11 @@ typedef struct {
 _Static_assert(sizeof(panvk_bc3_row)==64,"fixed little-endian fixture row");
 static void panvk_bc3_focused_test(const char *path) {
   CHECK(!mtl_pool_shared_mode());
+  const char *queued_setting=getenv("DM_PANVK_BC3_CAPTURE_QUEUED");
+  CHECK(!queued_setting || !strcmp(queued_setting,"0") || !strcmp(queued_setting,"1"));
+  int queued=queued_setting && !strcmp(queued_setting,"1");
+  // This mode changes only submission boundaries, not the52 payload regions.
+  CHECK(!queued || vk_async_submissions());
   const char *negative=getenv("DM_PANVK_BC3_CAPTURE_NEGATIVE");
   CHECK(!negative || !strcmp(negative,"wrong-texture"));
   FILE *f=fopen(path,"rb");CHECK(f);uint32_t h[8];
@@ -43,7 +48,17 @@ static void panvk_bc3_focused_test(const char *path) {
   CALL(nvnMemoryPoolBuilderSetStorage,&mb,storage,pool_size);
   CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));
-  CHECK(CALL(nvnCommandBufferInitialize,&cmd,&device));CALL(nvnCommandBufferAddCommandMemory,&cmd,&pool,0,1u<<20);
+  NVNcommandBuffer queued_commands[21];
+  if(queued) {
+    // Each live NVN stream owns a disjoint32KiB slice until the final fence.
+    // BeginRecording never needs to reuse/reset an earlier stream's bytes.
+    for(unsigned n=0;n<21;n++) {
+      CHECK(CALL(nvnCommandBufferInitialize,&queued_commands[n],&device));
+      CALL(nvnCommandBufferAddCommandMemory,&queued_commands[n],&pool,n*32768u,32768u);
+    }
+  } else {
+    CHECK(CALL(nvnCommandBufferInitialize,&cmd,&device));CALL(nvnCommandBufferAddCommandMemory,&cmd,&pool,0,1u<<20);
+  }
   NVNtexture textures[7],output;
   for(unsigned i=0;i<8;i++) {
     const panvk_bc3_row *r=NULL;
@@ -79,28 +94,63 @@ static void panvk_bc3_focused_test(const char *path) {
   NVNcolorState color;NVNpolygonState polygon;NVNdepthStencilState depth;
   CALL(nvnColorStateSetDefaults,&color);CALL(nvnPolygonStateSetDefaults,&polygon);CALL(nvnPolygonStateSetCullFace,&polygon,NVN_FACE_NONE);
   CALL(nvnDepthStencilStateSetDefaults,&depth);CALL(nvnDepthStencilStateSetDepthTestEnable,&depth,0);CALL(nvnDepthStencilStateSetDepthWriteEnable,&depth,0);
-  CALL(nvnCommandBufferBeginRecording,&cmd);
-  CALL(nvnCommandBufferSetTexturePool,&cmd,&tp);CALL(nvnCommandBufferSetSamplerPool,&cmd,&sp);
-  // All52 captured full-mip uploads remain in one real command recording.
-  for(unsigned n=0;n<52;n++) {
-    panvk_bc3_row *r=&rows[n];NVNcopyRegion region={0,0,0,r->width,r->height,1};
-    CALL(nvnCommandBufferSetCopyRowStride,&cmd,0);
-    CALL(nvnCommandBufferCopyBufferToTexture,&cmd,(uintptr_t)storage+upload_at+r->offset,&textures[r->image],&views[n],&region,0);
+  unsigned recording_count=0;
+  for(unsigned image=0;image<(queued?7u:1u);image++) {
+    NVNcommandBuffer *record=queued?&queued_commands[3*image]:&cmd;
+    CALL(nvnCommandBufferBeginRecording,record);
+    // Original case retains one52-copy+52-draw batch. Queued mode submits
+    // each image's full mip upload, draw, and rawcopy independently.
+    for(unsigned n=0;n<52;n++) {
+      panvk_bc3_row *r=&rows[n];if(queued && r->image!=image)continue;
+      NVNcopyRegion region={0,0,0,r->width,r->height,1};
+      CALL(nvnCommandBufferSetCopyRowStride,record,0);
+      CALL(nvnCommandBufferCopyBufferToTexture,record,(uintptr_t)storage+upload_at+r->offset,&textures[r->image],&views[n],&region,0);
+    }
+    if(queued) {
+      NVNcommandHandle handle=CALL(nvnCommandBufferEndRecording,record);
+      CALL(nvnQueueSubmitCommands,&queue,1,&handle);recording_count++;
+      record=&queued_commands[3*image+1];CALL(nvnCommandBufferBeginRecording,record);
+    }
+    // The consumer barrier remains before real sampling, across submissions
+    // in queued mode. Explicitly rebind every draw state and both pools.
+    CALL(nvnCommandBufferBarrier,record,NVN_BARRIER_ORDER_PRIMITIVES_BIT|NVN_BARRIER_INVALIDATE_TEXTURE_BIT);
+    CALL(nvnCommandBufferSetTexturePool,record,&tp);CALL(nvnCommandBufferSetSamplerPool,record,&sp);
+    const NVNtexture *targets[]={&output};CALL(nvnCommandBufferSetRenderTargets,record,1,targets,NULL,NULL,NULL);
+    CALL(nvnCommandBufferBindProgram,record,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+    CALL(nvnCommandBufferBindColorState,record,&color);CALL(nvnCommandBufferBindPolygonState,record,&polygon);CALL(nvnCommandBufferBindDepthStencilState,record,&depth);
+    CALL(nvnCommandBufferBindVertexAttribState,record,2,attrs);CALL(nvnCommandBufferBindVertexStreamState,record,1,&stream);CALL(nvnCommandBufferBindVertexBuffers,record,0,1,&vr);
+    CALL(nvnCommandBufferBindSeparateSamplers,record,NVN_SHADER_STAGE_FRAGMENT,0,1,&sh);
+    for(unsigned n=0;n<52;n++) {
+      panvk_bc3_row *r=&rows[n];if(queued && r->image!=image)continue;
+      float viewport[]={r->x,r->y,r->width,r->height};
+      CALL(nvnCommandBufferSetViewports,record,0,1,viewport);CALL(nvnCommandBufferSetScissor,record,r->x,r->y,r->width,r->height);
+      const NVNseparateTextureHandle *selected=negative?&handles[0]:&handles[n];
+      CALL(nvnCommandBufferBindSeparateTextures,record,NVN_SHADER_STAGE_FRAGMENT,0,1,selected);
+      CALL(nvnCommandBufferDrawArrays,record,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+    }
+    NVNcommandHandle handle=CALL(nvnCommandBufferEndRecording,record);
+    if(!queued) {submit(handle);break;}
+    CALL(nvnQueueSubmitCommands,&queue,1,&handle);recording_count++;
+    record=&queued_commands[3*image+2];CALL(nvnCommandBufferBeginRecording,record);
+    for(unsigned n=0;n<52;n++) {
+      panvk_bc3_row *r=&rows[n];if(r->image!=image)continue;
+      NVNcopyRegion region={0,0,0,r->width,r->height,1};
+      CALL(nvnCommandBufferSetCopyRowStride,record,0);
+      CALL(nvnCommandBufferCopyTextureToBuffer,record,&textures[r->image],&views[n],&region,(uintptr_t)storage+raw_at+r->offset,0);
+    }
+    handle=CALL(nvnCommandBufferEndRecording,record);
+    CALL(nvnQueueSubmitCommands,&queue,1,&handle);recording_count++;
   }
-  CALL(nvnCommandBufferBarrier,&cmd,NVN_BARRIER_ORDER_PRIMITIVES_BIT|NVN_BARRIER_INVALIDATE_TEXTURE_BIT);
-  const NVNtexture *targets[]={&output};CALL(nvnCommandBufferSetRenderTargets,&cmd,1,targets,NULL,NULL,NULL);
-  CALL(nvnCommandBufferBindProgram,&cmd,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
-  CALL(nvnCommandBufferBindColorState,&cmd,&color);CALL(nvnCommandBufferBindPolygonState,&cmd,&polygon);CALL(nvnCommandBufferBindDepthStencilState,&cmd,&depth);
-  CALL(nvnCommandBufferBindVertexAttribState,&cmd,2,attrs);CALL(nvnCommandBufferBindVertexStreamState,&cmd,1,&stream);CALL(nvnCommandBufferBindVertexBuffers,&cmd,0,1,&vr);
-  CALL(nvnCommandBufferBindSeparateSamplers,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,1,&sh);
-  for(unsigned n=0;n<52;n++) {
-    panvk_bc3_row *r=&rows[n];float viewport[]={r->x,r->y,r->width,r->height};
-    CALL(nvnCommandBufferSetViewports,&cmd,0,1,viewport);CALL(nvnCommandBufferSetScissor,&cmd,r->x,r->y,r->width,r->height);
-    const NVNseparateTextureHandle *selected=negative?&handles[0]:&handles[n];
-    CALL(nvnCommandBufferBindSeparateTextures,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,1,selected);
-    CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+  if(queued) {
+    CHECK(recording_count==21);
+    NVNsync sync;CHECK(CALL(nvnSyncInitialize,&sync,&device));
+    CALL(nvnQueueFenceSync,&queue,&sync,NVN_SYNC_CONDITION_ALL_GPU_COMMANDS_COMPLETE,1);
+    NVNsyncWaitResult waited=CALL(nvnSyncWait,&sync,UINT64_MAX);
+    CHECK(waited==NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED || waited==NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED);
+    CALL(nvnSyncFinalize,&sync);
+    // No CPU texture observation, QueueFinish or wait occurs between the21
+    // submits. Original resource-pressure waits are intentionally unchanged.
   }
-  submit(end());
   extern int vk_texture_test_bc_decoded(const tex_t *);
   for(unsigned n=0;n<7;n++)CHECK(!vk_texture_test_bc_decoded((const tex_t *)&textures[n]));
   size_t atlas_bytes=(size_t)h[4]*h[5]*4;uint8_t *atlas=malloc(atlas_bytes),*reference=malloc(256*256*4);CHECK(atlas && reference);
@@ -117,18 +167,24 @@ static void panvk_bc3_focused_test(const char *path) {
     }
     sampled_pixels+=r->width*r->height;
   }
-  // Separate real GPU T2B batch validates all raw BC bytes without recompression.
-  CALL(nvnCommandBufferBeginRecording,&cmd);
-  for(unsigned n=0;n<52;n++) {
-    panvk_bc3_row *r=&rows[n];NVNcopyRegion region={0,0,0,r->width,r->height,1};
-    CALL(nvnCommandBufferSetCopyRowStride,&cmd,0);
-    CALL(nvnCommandBufferCopyTextureToBuffer,&cmd,&textures[r->image],&views[n],&region,(uintptr_t)storage+raw_at+r->offset,0);
+  if(!queued) {
+    // Original case keeps the separate drained GPU T2B reference batch.
+    CALL(nvnCommandBufferBeginRecording,&cmd);
+    for(unsigned n=0;n<52;n++) {
+      panvk_bc3_row *r=&rows[n];NVNcopyRegion region={0,0,0,r->width,r->height,1};
+      CALL(nvnCommandBufferSetCopyRowStride,&cmd,0);
+      CALL(nvnCommandBufferCopyTextureToBuffer,&cmd,&textures[r->image],&views[n],&region,(uintptr_t)storage+raw_at+r->offset,0);
+    }
+    submit(end());
   }
-  submit(end());CHECK(!memcmp(storage+raw_at,payload,h[6]));
+  CHECK(!memcmp(storage+raw_at,payload,h[6]));
   for(unsigned n=0;n<7;n++)CALL(nvnTextureFinalize,&textures[n]);
   CALL(nvnTextureFinalize,&output);
   CALL(nvnProgramFinalize,&graphics);CALL(nvnTexturePoolFinalize,&tp);CALL(nvnSamplerPoolFinalize,&sp);CALL(nvnSamplerFinalize,&sampler);
-  CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&pool);
+  if(queued)for(unsigned n=0;n<21;n++)CALL(nvnCommandBufferFinalize,&queued_commands[n]);
+  else CALL(nvnCommandBufferFinalize,&cmd);
+  CALL(nvnMemoryPoolFinalize,&pool);
   free(atlas);free(reference);free(payload);free(storage);CHECK(vk_validation_error_count()==0);
-  printf("{\"test\":\"original022-BC3-capture-focused\",\"result\":\"passed\",\"regions\":52,\"images\":7,\"sampled_pixels\":%u,\"raw_BC_bytes\":%u,\"backend_CPU_BC_decode\":false,\"game_modules_executed\":false,\"checks\":%u}\n",sampled_pixels,h[6],checks);
+  if(queued)printf("{\"test\":\"original022-BC3-capture-queued21\",\"result\":\"passed\",\"submitted_recordings\":21,\"independent_command_objects\":21,\"command_memory_slice_bytes\":32768,\"explicit_intermediate_drains\":0,\"final_fence_waits\":1,\"regions\":52,\"images\":7,\"sampled_pixels\":%u,\"raw_BC_bytes\":%u,\"backend_CPU_BC_decode\":false,\"game_modules_executed\":false,\"checks\":%u}\n",sampled_pixels,h[6],checks);
+  else printf("{\"test\":\"original022-BC3-capture-focused\",\"result\":\"passed\",\"regions\":52,\"images\":7,\"sampled_pixels\":%u,\"raw_BC_bytes\":%u,\"backend_CPU_BC_decode\":false,\"game_modules_executed\":false,\"checks\":%u}\n",sampled_pixels,h[6],checks);
 }

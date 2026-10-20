@@ -6,7 +6,7 @@ import java.io.File;
 // Only this independent package starts the bounded functional test; no game Activity.
 public final class MainActivity extends Activity {
     static { System.loadLibrary("dmhost_android"); }
-    private static native int nativeRun(String directory, String libraries);
+    private static native int nativeRun(String directory, String libraries, boolean queued);
     private boolean started;
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -19,7 +19,11 @@ public final class MainActivity extends Activity {
             final String root=new File(requested).getCanonicalPath();
             if(!root.startsWith(getFilesDir().getCanonicalPath()+File.separator) || !new File(root).isDirectory())throw new IllegalArgumentException("Owned app files required");
             final String libraries=getApplicationInfo().nativeLibraryDir;
-            new Thread(()->{int rc=nativeRun(root,libraries);runOnUiThread(()->text.setText("BC3 fixture finished: "+rc));},"owned-BC3-fixture").start();
+            String fixtureCase=getIntent().getStringExtra("fixture_case");
+            if(fixtureCase==null)fixtureCase="single-batch";
+            if(!fixtureCase.equals("single-batch") && !fixtureCase.equals("queued21"))throw new IllegalArgumentException("Unknown fixture case");
+            final boolean queued=fixtureCase.equals("queued21");
+            new Thread(()->{int rc=nativeRun(root,libraries,queued);runOnUiThread(()->text.setText("BC3 fixture finished: "+rc));},"owned-BC3-fixture").start();
         }catch(Exception error){text.setText(error.toString());}
     }
 }
