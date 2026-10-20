@@ -1567,6 +1567,13 @@ static void init_device(void) {
   LOG("[vulkan] instance vertex divisor max=%u", V.max_vertex_divisor);
 }
 void mtl_init(void) { pthread_once(&init_once, init_device); }
+int mtl_pool_shared_mode(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  return shared_active;
+#else
+  return 0;
+#endif
+}
 // Caller holds resources. Image-only pools have no VkBuffer users; allocate
 // their coherent mirror/shadow only on an actual buffer address or writeback.
 // Publish guest/shadow as one initial snapshot, excluding completion copies.

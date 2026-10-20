@@ -53,3 +53,5 @@ int mtl_ui_ghost_rect(float r[4]);   // 上面认到的那件货的屏幕矩形�
 // Startup-only experiment; mode reports actual effective initialization policy.
 void mtl_pool_defer_publication(int enabled);
 int mtl_pool_defer_publication_mode(void);
+// Actual immutable backing policy only; never initializes a backend/device.
+int mtl_pool_shared_mode(void);

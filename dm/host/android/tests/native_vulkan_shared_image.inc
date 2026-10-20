@@ -1,6 +1,12 @@
 // Finite owned MAP_SHARED backing; never identifies arbitrary guest addresses.
 #include <sys/mman.h>
 extern void vk_test_shared_image_backing(const void *,size_t);
+extern void nvn_test_readback_observer(void (*)(int));
+static _Atomic unsigned shared_readback_calls,shared_readback_wrong_owner;
+static void shared_readback_owner(int dedicated) {
+  atomic_fetch_add(&shared_readback_calls,1);
+  if(!dedicated)atomic_store(&shared_readback_wrong_owner,1);
+}
 static void shared_image_pixels(NVNtexture *t,const uint8_t rgba[4]) {
   mtl_sub_begin();VkImageLayout layout;
   VkImage image=vk_texture_present_source((const tex_t *)t,&layout);
@@ -145,7 +151,7 @@ static void shared_image_dirty_test(void) {
     CHECK(vk_pool_address_stage((uintptr_t)data,4,(void **)&buffer,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
     die("GPU-owned image alias was incorrectly accepted");
   }
-  if(getenv("DM_SHARED_IMAGE_CPU_READ_TEST") ||
+  if(getenv("DM_SHARED_IMAGE_CPU_READ_TEST") || getenv("DM_SHARED_IMAGE_READBACK_TEST") ||
       (negative && !strcmp(negative,"required-cpu-read-alias"))) {
     // Real GPU content differs from its old packaged backing. A CPU proof
     // must not return those stale blue bytes as evidence about this image.
@@ -180,6 +186,35 @@ static void shared_image_dirty_test(void) {
     vk_internal_wait(vk_internal_commit());
     shared_image_pixels(&textures[0],green); // original GPU image path still works
     printf("{\"test_details\":\"shared-image-CPU-read-guard\",\"optional_stale_proof_declined\":true,\"same_pool_nonalias_linear_read\":true,\"GPU_image_preserved\":true}\n");
+    if(getenv("DM_SHARED_IMAGE_READBACK_TEST")) {
+      CHECK(mtl_pool_shared_mode());CHECK(!mtl_pool_defer_publication_mode());
+      uint8_t *tight=data+196608,*strided=data+262144;
+      memset(tight,0xcd,1024);memset(strided,0xcd,1280);
+      NVNcopyRegion region={.width=16,.height=16,.depth=1};
+      atomic_store(&shared_readback_calls,0);atomic_store(&shared_readback_wrong_owner,0);
+      nvn_test_readback_observer(shared_readback_owner);
+      CALL(nvnTextureReadTexels,&textures[0],NULL,&region,tight);
+      CALL(nvnTextureReadTexelsStrided,&textures[0],NULL,&region,strided,80,1280);
+      nvn_test_readback_observer(NULL); // both original synchronous jobs returned
+      CHECK(atomic_load(&shared_readback_calls)==2);
+      CHECK(!atomic_load(&shared_readback_wrong_owner));
+      for(unsigned y=0;y<16;y++) {
+        for(unsigned x=0;x<16;x++) {
+          CHECK(!memcmp(tight+64*y+4*x,green,4));
+          CHECK(!memcmp(strided+80*y+4*x,green,4));
+        }
+        for(unsigned p=64;p<80;p++)CHECK(strided[80*y+p]==0xcd);
+      }
+      // A subsequent ordinary GPU Buffer consumer sees the CPU publication.
+      mtl_sub_begin();vk_buffer *source;uint64_t start;
+      CHECK(vk_pool_address_stage((uintptr_t)tight,1024,(void **)&source,&start,VK_PIPELINE_STAGE_TRANSFER_BIT));
+      vk_buffer_use use={(uintptr_t)tight,1024,0};vk_transfer_buffer_dependencies(&use,1);
+      vk_buffer *result=vk_temp_buffer(1024);VkBufferCopy copy={start,0,1024};
+      vkCmdCopyBuffer(V.cmd,source->handle,result->handle,1,&copy);
+      vk_buffer_transfer_written();vk_internal_wait(vk_internal_commit());
+      for(unsigned n=0;n<256;n++)CHECK(!memcmp(result->map+4*n,green,4));
+      printf("{\"test_details\":\"shared-image-NVN-readback-owner\",\"dedicated_owner_jobs\":2,\"tight_and_strided_exact\":true,\"synchronous_CPU_publication\":true,\"later_GPU_consumer_exact\":true}\n");
+    }
   }
   int ready,shadow;uint32_t flags;extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
   CHECK(vk_test_fixed_shared_pool((uintptr_t)data,&ready,&shadow,&flags));CHECK(ready && !shadow);
