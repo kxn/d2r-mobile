@@ -96,3 +96,17 @@ timestampValidBits=64、timestampComputeAndGraphics=true；拒绝原因明确为
 当前组合仍保留原 guard，修正必须另行合入、构建并冻结后才能尝试真实 shared game。
 因此当前设备共享 game 路径仍有阻断，正确行为是 probe0 + 原 private/legacy 配置；
 无整游戏共享验收、实际 RAM/DRAM/FPS/散热收益声明。
+
+
+## V2 时间戳修正与仍保守的同步
+
+后续组合 V2 采用独立饱和修正：正有限 timestampPeriod、validbits 1..64 才可用；
+GPU 整数换算的超 uint64 商显式饱和至 UINT64_MAX，与冻结 Android `__fixunstfdi` 极值策略一致。
+不改驱动、timestampPeriod 或 validbits，也不伪造事件/查询值。正常原 CPU 表达式范围继续逐字节比较；
+极值使用明确饱和参考，不能把 C 未定义越界 cast 当宿主 oracle。
+这仍不是实际 G710 游戏 shared 接受；必须先重新构建并核 actual getter，后续由 root 单独授权真机。
+
+共享不是零同步：NC 0xb 的 `sync_used_run` 对每个 use->pages run 自动 Flush，
+`shared_access_host_phase` 等待全部重叠的 pending GPU users（包括读者）。这是当前正确性保护，不删除。
+实际游戏还需用原 Perfetto/Streamline 观察其串行化与热成本，并分别测 whole GUP 容量/真实驻留。
+不能仅因镜像消失就宣称 CPU/GPU 等待或 RAM/DRAM 全部消除。
