@@ -68,8 +68,11 @@ typedef struct pool {
   int cpu_exposure_full; // metadata OOM/size fallback, never drops excluded pages
 } pool;
 #ifdef DM_VULKAN_SHARED_POOLS
-static int shared_requested,shared_active,shared_extension;
+static int shared_requested,shared_active,shared_extension,shared_gpu_gate_phase;
 static uint64_t shared_alignment;
+#ifdef DM_VULKAN_TEST_EMBED
+static int shared_gpu_gate_force;
+#endif
 static void shared_device_probe(void);
 static void shared_pool_materialize(pool *);
 static void shared_cache(vk_buffer *,uint64_t,uint64_t,int);
@@ -321,6 +324,7 @@ typedef struct submit_resources {
   pool_writeback *writebacks;
 #ifdef DM_VULKAN_SHARED_POOLS
   pool_writeback *shared_publishes;
+  nvn_dirty_gpu_gate *prewrite_gate;
 #endif
   pending_cpu_copy *cpu_copies;
   pool_gpu_access *gpu_accesses;
@@ -1049,6 +1053,10 @@ static void *completion_thread(void *unused) {
         shared_cache(&w->owner->whole.buffer,r->offset,r->end-r->offset,1);free(r);}
       free(w);
     }
+    // Fence and every NC Invalidate precede the gate release. CPU effects
+    // follow it, so the completion worker can never wait for its own token.
+    nvn_dirty_gpu_gate_complete(s->resources->prewrite_gate);
+    s->resources->prewrite_gate=NULL;
 #endif
     int publish_trace=vk_system_trace_begin("Vulkan CPU publish");
     vk_profile_end(VK_TIME_GPU_WAIT, started);
@@ -3022,7 +3030,7 @@ uint64_t vk_test_shared_dependency_observed(void) {
 // Host cache maintenance / CPU effects need a CPU phase between overlapping
 // GPU users. Preserve asynchronous submission for nonoverlapping ranges.
 // Call only on the translation owner, outside resource and queue locks.
-static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes) {
+static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int protect_host_page) {
   int cache=!(p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 #ifdef DM_VULKAN_TEST_EMBED
   if(shared_dependency_test_force_cache)cache=1; // tests admission only, not NC Vk cache calls
@@ -3035,16 +3043,35 @@ static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes) {
     if(hi>p->size)die("Shared host phase exceeds allocation");
   }
   uint64_t serial=0,base=(uintptr_t)p->guest;
+  uint64_t cpu_lo=base+lo,cpu_hi=base+hi;
+  if(protect_host_page) {
+    uint64_t page=(uint64_t)getpagesize();
+    if(!page || (page&(page-1)) || cpu_hi>UINT64_MAX-(page-1))die("Shared prewrite host-page bounds");
+    cpu_lo&=~(page-1);cpu_hi=(cpu_hi+page-1)&~(page-1);
+    // mprotect affects this whole physical host page, even across Pool ends.
+    // CPU effects use the absolute envelope. GPU bitmaps remain Pool-relative.
+    lo=cpu_lo<base?0:cpu_lo-base;
+    hi=cpu_hi-base;if(hi>p->size)hi=p->size;
+  }
   pthread_mutex_lock(&completion_mu);
   for(submission *s=pending;s;s=s->next) {
     int conflict=0;
     // Stable snapshots remain valid until pending removal, after callbacks.
     for(size_t k=0;k<s->resources->cpu_effect_write_count;k++) {
       const cpu_write_range *e=&s->resources->cpu_writes[k];
-      if(range_overlap(base+lo,hi-lo,e->address,e->size)){conflict=1;break;}
+      if(range_overlap(cpu_lo,cpu_hi-cpu_lo,e->address,e->size)){conflict=1;break;}
     }
-    if(cache && !conflict)for(pool_gpu_access *u=s->resources->gpu_accesses;u;u=u->next)
-      if(u->owner==p && bitmap_overlaps(u->pages,lo,hi-lo)){conflict=1;break;}
+    if(cache && !conflict)for(pool_gpu_access *u=s->resources->gpu_accesses;u;u=u->next) {
+      if(!protect_host_page) {
+        if(u->owner==p && bitmap_overlaps(u->pages,lo,hi-lo)){conflict=1;break;}
+      } else {
+        // Distinct NVN Pool identities may cover the same host page. Protect
+        // and cache operations affect the actual mapping, not that identity.
+        uint64_t ub=(uintptr_t)u->owner->guest,ue=ub+u->owner->size;
+        uint64_t a=cpu_lo>ub?cpu_lo:ub,b=cpu_hi<ue?cpu_hi:ue;
+        if(a<b && bitmap_overlaps(u->pages,a-ub,b-a)){conflict=1;break;}
+      }
+    }
     if(conflict)serial=s->queue_serial;
   }
   pthread_mutex_unlock(&completion_mu);
@@ -3059,11 +3086,56 @@ static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes) {
   }
 }
 #endif
+#ifdef DM_VULKAN_SHARED_POOLS
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_shared_prearm_host_phase(uint64_t address,uint64_t bytes,int whole_host_page) {
+  // Fixture retains Pool and uses the original translation owner contract.
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  pthread_mutex_unlock(&V.resources);
+  if(!p || !p->shared)die("Prearm page fixture needs shared Pool");
+  shared_access_host_phase(p,address-(uintptr_t)p->guest,bytes,whole_host_page);
+}
+#endif
+static void shared_arm_prewrite(submit_resources *r) {
+  if(!shared_gpu_gate_phase)return;
+  size_t count=0;
+  for(pool_writeback *w=r->shared_publishes;w;w=w->next) {
+    int needed=!(w->owner->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+#ifdef DM_VULKAN_TEST_EMBED
+    needed|=shared_gpu_gate_force;
+#endif
+    if(!needed)continue;
+    for(writeback_range *p=w->ranges;p;p=p->next) {
+      if(count==SIZE_MAX/sizeof(nvn_dirty_gpu_range))die("Shared GPU gate range overflow");
+      count++;
+    }
+  }
+  if(!count)return;
+  nvn_dirty_gpu_range *ranges=malloc(count*sizeof *ranges);
+  if(!ranges)die("Shared GPU gate ranges allocation");
+  size_t n=0;
+  for(pool_writeback *w=r->shared_publishes;w;w=w->next) {
+    int needed=!(w->owner->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+#ifdef DM_VULKAN_TEST_EMBED
+    needed|=shared_gpu_gate_force;
+#endif
+    if(!needed)continue;
+    for(writeback_range *p=w->ranges;p;p=p->next) {
+      // Original required old GPU+CPU-effects phase, now BEFORE protection.
+      // Otherwise an old completion's CPU store could wait on this new gate
+      // while our later Flush waits for that same old completion callback.
+      shared_access_host_phase(w->owner,p->offset,p->end-p->offset,1);
+      ranges[n++]=(nvn_dirty_gpu_range){w->owner->guest+p->offset,p->end-p->offset};
+    }
+  }
+  r->prewrite_gate=nvn_dirty_gpu_gate_arm(ranges,n);free(ranges);
+}
+#endif
 static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(p->shared) {uint64_t off=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
     if(limit>p->size)limit=p->size;
-    shared_access_host_phase(p,off,limit-off);
+    shared_access_host_phase(p,off,limit-off,0);
     shared_cache(&p->whole.buffer,off,limit-off,0);return;}
 #endif
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
@@ -3623,8 +3695,12 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
       for(uint64_t word=0;word<words;word++)if(use->upload_pages[word])
         die("Vulkan backing migration acquired CPU upload input");
     }
-  } else if(r->pool_sync_reference) vk_pool_sync();
-  else sync_used_pools();
+  } else {
+#ifdef DM_VULKAN_SHARED_POOLS
+    shared_arm_prewrite(r);
+#endif
+    if(r->pool_sync_reference)vk_pool_sync();else sync_used_pools();
+  }
   atomic_store(&published_upload_page_rechecks_skipped,upload_page_rechecks_skipped);
   record_pool_upload_commands();
   VkCommandBuffer commands[2]={r->uploads,s->cmd};
@@ -3642,7 +3718,13 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   pthread_mutex_lock(&V.queue_mu);
   vk_system_trace_end(queue_lock_trace);
   int submit_trace=vk_system_trace_begin("Vulkan queue submit");
-  VK_CHECK(vkQueueSubmit(V.queue, 1, &si, s->fence));
+  VkResult submitted_result=vkQueueSubmit(V.queue, 1, &si, s->fence);
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(submitted_result!=VK_SUCCESS) {
+    nvn_dirty_gpu_gate_cancel(r->prewrite_gate);r->prewrite_gate=NULL;
+  } else nvn_dirty_gpu_gate_submitted(r->prewrite_gate);
+#endif
+  VK_CHECK(submitted_result);
   vk_system_trace_end(submit_trace);
   if(guest_submit) atomic_fetch_add(&sync_guest_submits,1);
   else { atomic_fetch_add(&sync_internal_submits,1);atomic_fetch_add(&sync_internal_readback_bytes,r->readback_bytes); }

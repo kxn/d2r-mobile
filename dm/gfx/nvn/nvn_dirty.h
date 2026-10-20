@@ -28,6 +28,10 @@ void nvn_dirty_test_poison_range(const void *addr, int lifetime);
 uint64_t nvn_dirty_test_global_epoch(uint64_t value);
 void nvn_dirty_test_lock_slots(int lock);
 #endif
+#if defined(DM_DIRTY_RANGE_TEST_HOOKS) || defined(DM_VULKAN_TEST_EMBED)
+// Functional wait placement only; callback must be async-signal-safe.
+void nvn_dirty_test_gpu_wait_hook(void (*hook)(const void *,uint64_t,void *),void *context);
+#endif
 int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp); // 覆盖页在戳之后被写过 → 1 | Covered pages were written after the stamp -> 1
 // 一次查找区间，逐个访问脏页；未跟踪或 stamp=0 时保守访问全部。
 // Find the range once and visit dirty pages; untracked memory or stamp=0
@@ -68,3 +72,18 @@ void nvn_dirty_scope_gpu_write_counted(const void *address, size_t bytes,
                                      nvn_dirty_scope_publish *token);
 int nvn_dirty_scope_publish_finish(nvn_dirty_scope_publish *token,
                                   uint64_t *own_stamp);
+
+// Linux-only NC host-cache phase. Cold enable precedes guest/FS use. Only
+// existing image-scope pages are gated; caller retains storage/scopes and waits
+// original prior GPU+CPU effects before arm. Arm owns no GPU completion proof.
+typedef struct nvn_dirty_gpu_gate nvn_dirty_gpu_gate;
+typedef struct { const void *address; size_t bytes; } nvn_dirty_gpu_range;
+int nvn_dirty_gpu_gates_enable(void);
+void *nvn_dirty_kernel_write_begin(void *address,size_t bytes);
+void nvn_dirty_kernel_write_end(void *cookie);
+nvn_dirty_gpu_gate *nvn_dirty_gpu_gate_arm(const nvn_dirty_gpu_range *ranges,size_t count);
+void nvn_dirty_gpu_gate_submitted(nvn_dirty_gpu_gate *gate);
+// Complete only after real fence AND imported-range Invalidate, before CPU
+// effects. Cancel only when the command was not submitted. Both consume token.
+void nvn_dirty_gpu_gate_complete(nvn_dirty_gpu_gate *gate);
+void nvn_dirty_gpu_gate_cancel(nvn_dirty_gpu_gate *gate);

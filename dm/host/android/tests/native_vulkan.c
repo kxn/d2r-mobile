@@ -573,10 +573,10 @@ static void review_generic_cpu_write(void *destination) {
 }
 static void fixed_shared_dependency_test(void) {
   const char *mode=getenv("DM_FIXED_SHARED_DEPENDENCY_TEST");
-  int separate=!strcmp(mode,"disjoint"),cache=!strcmp(mode,"cache-phase");
+  int separate=!strcmp(mode,"disjoint"),cache=!strcmp(mode,"cache-phase"),page=!strcmp(mode,"page-effect") || !strcmp(mode,"page-effect-roi-negative");
   int gpu_only=!strcmp(mode,"gpu-only");
-  CHECK(separate || cache || gpu_only || !strcmp(mode,"cpu-effect") || !strcmp(mode,"same-recording"));
-  uint32_t *a=(void *)(bytes+(3u<<20)),*b=separate?(void *)(bytes+(3u<<20)+4096):cache?a+1:a;
+  CHECK(separate || cache || page || gpu_only || !strcmp(mode,"cpu-effect") || !strcmp(mode,"same-recording"));
+  uint32_t *a=(void *)(bytes+(3u<<20)),*b=separate?(void *)(bytes+(3u<<20)+4096):cache?a+1:page?a+64:a;
   *a=0;*b=0;mtl_sub_begin();
   if(!strcmp(mode,"same-recording")) {
     vk_completion_write(review_generic_cpu_write,a,a,sizeof *a);review_fill_shared(a,9);vk_internal_commit();
@@ -593,6 +593,11 @@ static void fixed_shared_dependency_test(void) {
   if(!separate && !gpu_only) {
     extern void vk_test_shared_dependency_arm(int);vk_test_shared_dependency_arm(cache);
     CHECK(!pthread_create(&releaser,NULL,review_release_on_dependency,NULL));
+  }
+  if(page) {
+    extern void vk_test_shared_prearm_host_phase(uint64_t,uint64_t,int);
+    vk_test_shared_prearm_host_phase((uintptr_t)b,4,strcmp(mode,"page-effect-roi-negative")!=0);
+    CHECK(*a==7); // CPU-only prior callback in another atom of the same host page
   }
   mtl_sub_begin();review_fill_shared(b,9);uint64_t last=vk_internal_commit();CHECK(last>first);
   if(separate || gpu_only) {
@@ -776,6 +781,7 @@ int dm_vulkan_test_main(void) {
         (unsigned long long)V.options.pool_window_bytes,V.options.pool_mirror_reference,V.options.pool_defer_publication,checks);
     return 0;
   }
+  if(getenv("DM_SHARED_IMAGE_NC_GATE_FIXTURE"))return shared_image_nc_gate_test();
   if(getenv("DM_SHARED_IMAGE_DIRTY_FIXTURE")) {shared_image_dirty_test();return 0;}
   if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {
     CHECK(vk_pool_shared_mode());

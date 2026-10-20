@@ -2,6 +2,8 @@
 // 使用前查覆盖页的写代号，比上传时新就重传。NVN 语义：贴图描述符指向池内存，GPU 每次读的是当前内容
 // （实测游戏会把流式素材写进仍被采样的贴图存储，不重新登记）。
 // 信号处理约束：缺页路径只用原子操作与 mprotect，不分配、不加锁。
+// 实验 NC gate 在 Linux 另用原始 futex wait：GPU 完成线程 clear+wake，
+// 信号路径不持锁、不分配、不调用 Vulkan；未提交 owner 拒绝自等待。
 // Write-protect dirty-page tracking for guest memory: pool pages of packaged textures (CPU writes, GPU reads) are set read-only after upload, and as soon as the game writes it faults -> mark dirty, unprotect;
 // before use, check the write generation of the covered pages and re-upload if newer than at upload time. NVN semantics: a texture descriptor points to pool memory, and the GPU reads the current content every time
 // (measured: the game writes streamed assets into texture storage that is still being sampled, without re-registering).
@@ -34,7 +36,7 @@ enum { BUSY_WAIT_MS = 2000 };
 // 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
 // Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
 #define MAX_RANGE 4096   // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing
-typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes; _Atomic uint32_t *scope_refs; size_t scope_users; } range_t;
+typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes; _Atomic uint32_t *scope_refs; _Atomic uint32_t *gpu_gate; size_t scope_users; } range_t;
 static range_t g_r[MAX_RANGE];
 static _Atomic int g_nr;
 static uintptr_t g_pg, g_shift;
@@ -43,6 +45,9 @@ static _Atomic uint64_t g_now = 1;
 // every published edit, even when concurrent writers finish out of order.
 // Cache consumers retain their original per-page upload stamp.
 static _Atomic uint64_t g_changes = 1;
+static int gpu_gates_enabled; // immutable cold policy, before guest/FS and scopes
+static int gpu_gate_before_unprotect(range_t *,uintptr_t,int);
+static int gpu_gate_claim_allowed(range_t *,uintptr_t);
 static _Atomic uint64_t g_faults, g_preps;
 static _Atomic uint64_t g_adds_total;
 static _Atomic int g_live, g_live_peak;   // 在册的池数与峰值（内存读数行用） | number of registered pools and peak (for the memory readout line)
@@ -132,8 +137,20 @@ static int on_fault(void *addr, int is_write, void *uc) {
     range_t *r = is_write ? find(address(addr)) : NULL;
     if (!r) return 0;
     uintptr_t p = (address(addr) - r->base) >> g_shift;
+retry:
+    if(r->gpu_gate && !gpu_gate_before_unprotect(r,p,1))return 0;
     uint8_t st = PG_PROT;
-    if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p, 0); atomic_fetch_add(&g_faults, 1); return 1; }
+    if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) {
+        // Arm may have happened after the first check / after owner protection.
+        // We still own an RO page: release BUSY before sleeping, so the submit
+        // owner never waits on a fault which is waiting for this submission.
+        if(r->gpu_gate && !gpu_gate_claim_allowed(r,p)) {
+            atomic_store(&r->state[p],PG_PROT);
+            if(!gpu_gate_before_unprotect(r,p,1))return 0;
+            goto retry;
+        }
+        unprotect_page(r, p, 0); atomic_fetch_add(&g_faults, 1); return 1;
+    }
     if (st == PG_BUSY) return busy_wait(r, p);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
     return atomic_load(&r->gen[p]) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
 }
@@ -144,16 +161,27 @@ static void prep_write(void *addr, size_t len) {
         if (!r) { a = (a + g_pg) & ~(g_pg - 1); continue; }
         uintptr_t stop = e < r->end ? e : r->end;
         for (uintptr_t p = (a - r->base) >> g_shift, q = (stop - 1 - r->base) >> g_shift; p <= q;) {
+            if(r->gpu_gate && !gpu_gate_before_unprotect(r,p,0))
+                die("CPU prepare attempted its owner's unsubmitted GPU gate");
             uint8_t st = PG_PROT;
             if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) {
+                if(r->gpu_gate && !gpu_gate_claim_allowed(r,p)) {
+                    atomic_store(&r->state[p],PG_PROT);
+                    if(!gpu_gate_before_unprotect(r,p,0))die("CPU prepare on unsubmitted GPU gate");
+                    continue;
+                }
                 // Own only a bounded consecutive PROT prefix. Never mprotect
                 // across an unclaimed NONE/BUSY page or another range. A
                 // competing preparer must not wait while retaining a prefix:
                 // flush this run before retrying/waiting on its next page.
                 uintptr_t first = p++;
                 while (p <= q && p - first < 64) {
+                    if(r->gpu_gate && !gpu_gate_claim_allowed(r,p))break;
                     uint8_t next = PG_PROT;
                     if (!atomic_compare_exchange_strong(&r->state[p], &next, PG_BUSY)) break;
+                    if(r->gpu_gate && !gpu_gate_claim_allowed(r,p)) {
+                        atomic_store(&r->state[p],PG_PROT);break;
+                    }
                     p++;
                 }
                 if (mp(r->base + (first << g_shift), (p - first) << g_shift, PROT_READ | PROT_WRITE))
@@ -177,6 +205,7 @@ static void dirty_init(void) {
     dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write);
 }
 #include "nvn_dirty_scope.inc"
+#include "nvn_dirty_gpu_gate.inc"
 void nvn_dirty_add_range(const void *mem, size_t size) {
     pthread_once(&dirty_once, dirty_init);
     atomic_fetch_add(&g_adds_total, 1);

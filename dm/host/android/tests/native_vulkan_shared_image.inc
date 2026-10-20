@@ -414,3 +414,107 @@ static void shared_image_dirty_test(void) {
   printf("{\"test_configuration\":\"shared-image-provenance\",\"actual_early_heap\":%s,\"finite_test_certificate\":%s}\n",actual_heap?"true":"false",actual_heap?"false":"true");
   printf("{\"test\":\"shared-image-only-dirty\",\"checks\":%u,\"result\":\"passed\",\"actual_memory_flags\":%u,\"game_modules_executed\":false}\n",checks,flags);
 }
+
+// Real NC GPU oracle only. LVP writes the imported CPU VMA itself and cannot
+// stand in for an external GPU behind mprotect; coherent memory does not run
+// the Flush/Invalidate contract either. Neither is reported as a passing test.
+#ifdef __linux__
+#include <sys/eventfd.h>
+#include <errno.h>
+typedef struct {
+  volatile uint32_t *word;
+  _Atomic int finished,notified;
+  int notification;
+} shared_nc_writer;
+static void shared_nc_wait_notice(const void *page,uint64_t gate,void *opaque) {
+  (void)page;(void)gate;shared_nc_writer *w=opaque;
+  int saved=errno;
+  if(!atomic_exchange_explicit(&w->notified,1,memory_order_relaxed)) {
+    uint64_t one=1;
+    // eventfd write is the only signal-side test notification, never a lock,
+    // allocation, GPU call, or measurement. A reader waits on this exact event.
+    if(write(w->notification,&one,sizeof one)!=(ssize_t)sizeof one)_exit(97);
+  }
+  errno=saved;
+}
+static void *shared_nc_cpu_writer(void *opaque) {
+  shared_nc_writer *w=opaque;crash_thread_init();
+  *w->word=0x12985643;
+  atomic_store_explicit(&w->finished,1,memory_order_release);return NULL;
+}
+#endif
+static int shared_image_nc_gate_test(void) {
+  int shared=vk_pool_shared_mode(); // freezes/initializes the actual device first
+  uint32_t flags=0;uint64_t atom=V.props.limits.nonCoherentAtomSize;
+  int supported=shared && vk_async_submissions() && V.timeline_semaphore &&
+    V.props.deviceType!=VK_PHYSICAL_DEVICE_TYPE_CPU && atom==64;
+#ifndef __linux__
+  supported=0;
+#endif
+  if(!supported) {
+    printf("{\"test\":\"shared-image-NC-prewrite-gate\",\"result\":\"unsupported\",\"atom\":%llu,\"game_modules_executed\":false}\n",(unsigned long long)atom);
+    return 77;
+  }
+#ifdef __linux__
+  size_t allocation=131072;
+  uint8_t *raw=mmap(NULL,allocation,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+  CHECK(raw!=MAP_FAILED);uint8_t *data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
+  memset(data,0,65536);vk_test_shared_image_backing(data,65536);
+  NVNmemoryPool pool;NVNmemoryPoolBuilder pb;
+  CALL(nvnMemoryPoolBuilderSetDefaults,&pb);CALL(nvnMemoryPoolBuilderSetDevice,&pb,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&pb,data,65536);
+  CALL(nvnMemoryPoolBuilderSetFlags,&pb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&pb));
+  NVNtexture texture;NVNtextureBuilder tb;
+  CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
+  CALL(nvnTextureBuilderSetTarget,&tb,NVN_TEXTURE_TARGET_2D);
+  CALL(nvnTextureBuilderSetWidth,&tb,16);CALL(nvnTextureBuilderSetHeight,&tb,16);
+  CALL(nvnTextureBuilderSetFormat,&tb,NVN_FORMAT_RGBA8);
+  NVNpackagedTextureLayout packaged={{0}};CALL(nvnTextureBuilderSetPackagedTextureLayout,&tb,&packaged);
+  CALL(nvnTextureBuilderSetStorage,&tb,&pool,0);CHECK(CALL(nvnTextureInitialize,&texture,&tb));
+  const uint8_t zero[4]={0};shared_image_pixels(&texture,zero);
+  int ready,shadow;CHECK(vk_test_fixed_shared_pool((uintptr_t)data,&ready,&shadow,&flags));
+  CHECK(ready && !shadow);
+  if(flags!=11) {
+    CALL(nvnTextureFinalize,&texture);CALL(nvnMemoryPoolFinalize,&pool);
+    vk_test_shared_image_backing(NULL,0);CHECK(!munmap(raw,allocation));
+    printf("{\"test\":\"shared-image-NC-prewrite-gate\",\"result\":\"unsupported\",\"memory_flags\":%u,\"atom\":%llu,\"game_modules_executed\":false}\n",flags,(unsigned long long)atom);
+    return 77;
+  }
+  CHECK(getpagesize()>=4096);
+  // Pixel 1 is another exact block-linear word in the same 64-byte atom.
+  CHECK(nvn_bl_offset(4,0,0,64,16,((tex_t *)&texture)->L.tileH,0)==4);
+  *(uint32_t *)(data+16384)=0x27272727;
+  VkSemaphore gate=block_gpu_queue();
+  mtl_sub_begin();p_copy_b2t copy={.tex=(tex_t *)&texture,.src=(uintptr_t)data+16384,
+    .r={.width=1,.height=1,.depth=1}};
+  vk_texture_copy_b2t(&copy,0,0);
+  uint64_t serial=vk_internal_commit();
+  shared_nc_writer writer={.word=(void *)(data+4),.notification=eventfd(0,EFD_CLOEXEC)};
+  CHECK(writer.notification>=0);nvn_dirty_test_gpu_wait_hook(shared_nc_wait_notice,&writer);
+  pthread_t thread;CHECK(!pthread_create(&thread,NULL,shared_nc_cpu_writer,&writer));
+  uint64_t notice=0;ssize_t got;do {got=read(writer.notification,&notice,sizeof notice);}while(got<0 && errno==EINTR);
+  CHECK(got==sizeof notice && notice==1);CHECK(!atomic_load_explicit(&writer.finished,memory_order_acquire));
+  CHECK(*(uint32_t *)(data+4)==0);
+  VkSemaphoreSignalInfoKHR signal={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO_KHR,.semaphore=gate,.value=1};
+  VK_CHECK(V.signal_timeline(V.device,&signal));
+  CHECK(!pthread_join(thread,NULL));vk_internal_wait(serial);
+  nvn_dirty_test_gpu_wait_hook(NULL,NULL);CHECK(!close(writer.notification));vkDestroySemaphore(V.device,gate,NULL);
+  CHECK(atomic_load(&writer.finished));CHECK(*(uint32_t *)data==0x27272727);
+  CHECK(*(uint32_t *)(data+4)==0x12985643);
+  // The original image source path must also observe the later CPU edit, not
+  // just leave the shared bytes correct while retaining an obsolete VkImage.
+  mtl_sub_begin();VkImageLayout layout;VkImage image=vk_texture_present_source((tex_t *)&texture,&layout);
+  vk_buffer *gpu=vk_temp_buffer(1024);
+  VkBufferImageCopy readback={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},.imageExtent={16,16,1}};
+  vkCmdCopyImageToBuffer(V.cmd,image,layout,gpu->handle,1,&readback);
+  vk_internal_wait(vk_internal_commit());
+  CHECK(*(uint32_t *)gpu->map==0x27272727);CHECK(*(uint32_t *)(gpu->map+4)==0x12985643);
+  CALL(nvnTextureFinalize,&texture);CALL(nvnMemoryPoolFinalize,&pool);
+  vk_test_shared_image_backing(NULL,0);CHECK(!munmap(raw,allocation));
+  printf("{\"test\":\"shared-image-NC-prewrite-gate\",\"result\":\"passed\",\"checks\":%u,\"memory_flags\":%u,\"atom\":%llu,\"same_atom_CPU_wait\":true,\"GPU_word\":%u,\"CPU_word\":%u,\"game_modules_executed\":false}\n",checks,flags,(unsigned long long)atom,0x27272727u,0x12985643u);
+  return 0;
+#else
+  return 77;
+#endif
+}
