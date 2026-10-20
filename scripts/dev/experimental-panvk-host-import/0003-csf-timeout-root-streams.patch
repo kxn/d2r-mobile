@@ -1,0 +1,54 @@
+--- a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+@@ -136,6 +136,42 @@
+                 i + 1, count, segments[i].address, segments[i].size, begin, end);
+       pandecode_cs_binary(dev->debug.decode_ctx, segments[i].address,
+                            segments[i].size, phys_dev->kmod.dev->props.gpu_id);
++   }
++}
++
++/* Reuse the existing static decoder for all three observed root streams.
++ * A blocked queue can depend on another queue; the first CPU waiter alone
++ * does not identify the GPU work which stopped making progress. */
++static void
++kbase_decode_timeout_streams(struct panvk_gpu_queue *queue)
++{
++   struct panvk_device *dev = to_panvk_device(queue->vk.base.device);
++   if (!dev->debug.decode_ctx)
++      return;
++   struct {
++      uint64_t address;
++      uint32_t size;
++   } roots[PANVK_SUBQUEUE_COUNT];
++   for (unsigned i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
++      roots[i].address = queue->subqueues[i].kbase.last_stream_addr;
++      roots[i].size = queue->subqueues[i].kbase.last_stream_size;
++   }
++   struct panvk_physical_device *phys_dev =
++      to_panvk_physical_device(dev->vk.physical);
++   for (unsigned i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
++      uint64_t address = roots[i].address;
++      uint32_t size = roots[i].size;
++      if (!size || (address & 7) || (size & 7) ||
++          address > UINT64_MAX - size) {
++         mesa_loge("kbase: skipping invalid timeout root subqueue %u "
++                   "gpu_va 0x%" PRIx64 " size %u", i, address, size);
++         continue;
++      }
++      mesa_logi("kbase: timeout root subqueue %u gpu_va 0x%" PRIx64
++                " size %u (static CS listing, not current instruction)",
++                i, address, size);
++      pandecode_cs_binary(dev->debug.decode_ctx, address, size,
++                           phys_dev->kmod.dev->props.gpu_id);
+    }
+ }
+ 
+@@ -964,6 +1000,8 @@
+          for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++)
+             kbase_log_subqueue_state(queue, i, "timeout snapshot");
+ 
++         kbase_decode_timeout_streams(queue);
++
+          if (dev->debug.decode_ctx && insert > extract) {
+             // pandecode_user_msg(dev->debug.decode_ctx,
+             //    "\nSubqueue %d Ringbuffer Trampoline [job %lu, gpu_va: %lx, cpu=%p, Size %u bytes, to %lx]:\n",
