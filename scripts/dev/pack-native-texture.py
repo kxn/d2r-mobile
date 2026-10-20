@@ -166,9 +166,9 @@ def build(specifications, output, driver_manifest, base_cache=None, driver_query
     logicals = set()
     for n, specification in enumerate(specifications):
         entry, texture, descriptor, detail, identity = load_entry(specification, n + 1)
-        # This PanVK contract copies the ELF build ID into both UUIDs. Keep
-        # the independent full binary SHA binding as well. Never re-label an
-        # old payload with a different driver build record.
+        # Preserve the old PanVK BuildID contract only on its default path.
+        # Turnip compares all three actual queried properties independently.
+        # Both paths retain the full driver SHA and never re-label payloads.
         if actual_identity is not None:
             if identity != actual_identity:
                 raise ValueError('baked native identities differ from actual Turnip producer query')
