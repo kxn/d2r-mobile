@@ -1332,6 +1332,7 @@ static void init_device(void) {
   ci.ppEnabledExtensionNames = extensions;
   VK_CHECK(vkCreateInstance(&ci, NULL, &V.instance));
   volkLoadInstance(V.instance);
+  vk_loader_check_instance(V.instance,vk_window_attached());
   vk_window_surface_create();
   if (getenv("DM_VULKAN_VALIDATE")) {
     VkDebugUtilsMessengerEXT messenger;
@@ -1408,6 +1409,7 @@ static void init_device(void) {
 #endif
   const char *device_extensions[16];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
+  int have_driver_properties=0;
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
   VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {
@@ -1424,6 +1426,8 @@ static void init_device(void) {
   VK_CHECK(vkEnumerateDeviceExtensionProperties(
       V.physical, NULL, &extension_count_device, available));
   for (uint32_t i = 0; i < extension_count_device; i++) {
+    if (!strcmp(available[i].extensionName,VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME))
+      have_driver_properties=1;
 #ifdef DM_VULKAN_SHARED_POOLS
     if(shared_requested && !strcmp(available[i].extensionName,VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME))shared_extension=1;
 #endif
@@ -1455,6 +1459,7 @@ static void init_device(void) {
   if(getenv("DM_FIXED_SHARED_CAPABILITY_DENY"))shared_extension=0; // strict negative only
 #endif
   free(available);
+  vk_loader_check_device(V.physical,have_driver_properties);
   if (have_divisor) {
     VkPhysicalDeviceFeatures2 query = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &divisor};

@@ -12,6 +12,7 @@
 #include "dm_custom.h"
 #include <android/native_window_jni.h>
 #include <jni.h>
+#include "fixture_output.h"
 #include <sys/stat.h>
 #include <unistd.h>
 #include <math.h>
@@ -132,20 +133,27 @@ extern void vk_descriptor_reuse_reference(int reference);
 extern void vk_descriptor_history_reference(int reference);
 extern void vk_window_mailbox_present(int enabled);
 extern void vk_descriptor_template_reference(int reference);
-extern void vk_loader_set_driver(const char *directory,const char *hooks);
+extern void vk_loader_set_driver(const char *provider,const char *directory,const char *hooks);
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeVulkanDriver(
-    JNIEnv *env,jclass klass,jstring directory,jstring hooks) {
+    JNIEnv *env,jclass klass,jstring provider,jstring directory,jstring hooks) {
   (void)klass;
+  const char *kind=provider?(*env)->GetStringUTFChars(env,provider,NULL):NULL;
+  if(provider && !kind) return;
   const char *driver=directory?(*env)->GetStringUTFChars(env,directory,NULL):NULL;
-  if(directory && !driver) return;
+  if(directory && !driver) {
+    if(kind) (*env)->ReleaseStringUTFChars(env,provider,kind);
+    return;
+  }
   const char *libraries=hooks?(*env)->GetStringUTFChars(env,hooks,NULL):NULL;
   if(hooks && !libraries) {
     if(driver) (*env)->ReleaseStringUTFChars(env,directory,driver);
+    if(kind) (*env)->ReleaseStringUTFChars(env,provider,kind);
     return;
   }
-  vk_loader_set_driver(driver,libraries);
+  vk_loader_set_driver(kind,driver,libraries);
   if(libraries) (*env)->ReleaseStringUTFChars(env,hooks,libraries);
   if(driver) (*env)->ReleaseStringUTFChars(env,directory,driver);
+  if(kind) (*env)->ReleaseStringUTFChars(env,provider,kind);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTextureDirtyReference(
     JNIEnv *env,jclass klass,jboolean reference) {
@@ -702,7 +710,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
 
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
-    jboolean acquire_scope, jboolean memory_only) {
+    jboolean acquire_scope, jboolean memory_only, jboolean validation) {
   (void)klass;
   if(setenv("DM_VULKAN_ASTC_DECODE_UNORM8",astc_decode_startup?"1":"0",1) ||
       (astc_decode_fixture?setenv("DM_ASTC_DECODE_FIXTURE","1",1):unsetenv("DM_ASTC_DECODE_FIXTURE")))
@@ -717,19 +725,40 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   snprintf(file, sizeof file, "%s/vulkan-fixture", path);
   setenv("DM_VULKAN_SHADERS", file, 1);
   setenv("DM_CAPTURE_TEST_DIR", path, 1);
-  setenv("DM_VULKAN_VALIDATE", "1", 1);
-  setenv("DM_VULKAN_SYNC_VALIDATE", "1", 1);
+  if(validation) {
+    setenv("DM_VULKAN_VALIDATE", "1", 1);
+    setenv("DM_VULKAN_SYNC_VALIDATE", "1", 1);
+  } else {
+    unsetenv("DM_VULKAN_VALIDATE");
+    unsetenv("DM_VULKAN_SYNC_VALIDATE");
+  }
   snprintf(file, sizeof file, "%s/vulkan-test.log", path);
-  if (!freopen(file, "w", stderr))
-    _exit(90);
-  if (!freopen(file, "a", stdout))
-    _exit(91);
-  // 两个 FILE 各有偏移；禁用缓存，防 stderr 尾部刷新覆盖 stdout 的 JSON 结果。
-  // The FILE objects have separate offsets. Disable buffering so a final
-  // stderr flush cannot overwrite stdout's appended JSON result.
-  setvbuf(stderr, NULL, _IONBF, 0);
-  setvbuf(stdout, NULL, _IONBF, 0);
+  int output_error=dm_fixture_output_open(file);
+  if(output_error) _exit(output_error);
+  printf("{\"test_configuration\":\"vulkan\",\"validation_layer\":\"%s\","
+         "\"synchronization_validation\":\"%s\","
+         "\"zero_error_counter_does_not_imply_validation\":true}\n",
+         validation?"requested":"disabled_explicitly",
+         validation?"requested":"disabled_explicitly");
+  if(!validation) LOG("[vulkan fixture] validation layers explicitly disabled; byte/pixel assertions retained; zero counters are not VUID/SYNC coverage");
   (*env)->ReleaseStringUTFChars(env, directory, path);
   int dm_vulkan_test_main(void);
   dm_vulkan_test_main();
+}
+
+// Only an explicit isolated native fixture selects this compile-time experiment.
+JNIEXPORT jboolean JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeFixedSharedPoolFixture(
+    JNIEnv *env,jclass klass) {
+  (void)env;(void)klass;
+#ifdef DM_VULKAN_SHARED_POOLS
+  static int selected;
+  if(selected) return JNI_FALSE;
+  if(setenv("PANVK_DM_HOST_IMPORT","true",1) ||
+      setenv("DM_VULKAN_SHARED_POOLS","1",1) ||
+      setenv("DM_FIXED_SHARED_BUFFER_FIXTURE","1",1))
+    die("Fixed shared fixture startup environment");
+  selected=1;return JNI_TRUE;
+#else
+  return JNI_FALSE;
+#endif
 }

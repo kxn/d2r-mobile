@@ -575,6 +575,7 @@ static void fixed_shared_buffer_test(void) {
   buffer_cpu_read_test();
   CALL(nvnProgramFinalize,&program);CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&memory);
   CHECK(vk_pool_span_query((uintptr_t)bytes,4096,&meta)==VK_POOL_SPAN_NONE);
+  printf("{\"fixed_shared_memory\":true,\"properties\":%u,\"noncoherent_atom_size\":%llu,\"host_coherent\":%s,\"whole_pool_bytes\":%u,\"uid\":%u,\"metadata_only_before_first_use\":true,\"shadow\":false}\n",properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,(properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)?"true":"false",4u<<20,(unsigned)getuid());
   LOG("[fixed shared fixture] actual properties=%#x atom=%llu, host coherent=%u; no shadow; linear NVN-only, packaged image contract remains blocked",properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,!!(properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 }
 #endif

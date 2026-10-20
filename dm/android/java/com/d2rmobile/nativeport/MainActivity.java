@@ -19,7 +19,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOperationMode(int mode);
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
-    private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly);
+    private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
     private static native void nativeThermalLimit(int limit);
@@ -72,7 +72,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeMailboxPresent(boolean enabled);
     private static native void nativePresentWorkerReference(boolean reference, boolean sharedQueue);
     private static native void nativeBloomQuarterEnabled(boolean enabled);
-    private static native void nativeVulkanDriver(String directory, String hooks);
+    private static native void nativeVulkanDriver(String provider, String directory, String hooks);
+    private static native boolean nativeFixedSharedPoolFixture();
     private static native void nativeStreamSubmitReference(boolean reference);
     private static native void nativeStoreDescriptorReference(boolean reference);
     private static native void nativeCoverWaitReference(boolean reference);
@@ -209,9 +210,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeUniformSpecializationEnabled(getIntent().getBooleanExtra("uniform_specialization", true));
         nativeUniformPredicateEnabled(getIntent().getBooleanExtra("uniform_predicate", false));
         nativeDeferredMipClearsEnabled(getIntent().getBooleanExtra("deferred_mip_clears", false));
-        nativeVulkanDriver(getIntent().getBooleanExtra("custom_vulkan_driver", false) ?
-                new File(getFilesDir(), "runtime/vulkan-driver").getAbsolutePath() : null,
-                getApplicationInfo().nativeLibraryDir);
+        String driverProvider = getIntent().getStringExtra("vulkan_driver");
+        if (getIntent().hasExtra("vulkan_driver") && driverProvider == null)
+            throw new IllegalArgumentException("Vulkan driver provider must be a string");
+        boolean legacyCustomDriver = getIntent().getBooleanExtra("custom_vulkan_driver", false);
+        if (driverProvider != null && !driverProvider.equals("system") &&
+                !driverProvider.equals("adreno") && !driverProvider.equals("panvk"))
+            throw new IllegalArgumentException("Unknown Vulkan driver provider");
+        if (legacyCustomDriver && driverProvider != null && !driverProvider.equals("adreno"))
+            throw new IllegalArgumentException("Conflicting Vulkan driver selection");
+        if (legacyCustomDriver) driverProvider = "adreno";
+        boolean panvkDriver = "panvk".equals(driverProvider);
+        boolean appDriver = panvkDriver || "adreno".equals(driverProvider);
+        nativeVulkanDriver(driverProvider, appDriver ?
+                new File(getFilesDir(), panvkDriver ? "runtime/vulkan-panfrost" :
+                        "runtime/vulkan-driver").getAbsolutePath() : null,
+                panvkDriver ? null : getApplicationInfo().nativeLibraryDir);
         nativeStreamSubmitReference(getIntent().getBooleanExtra("stream_submit_reference", false));
         nativeStoreDescriptorReference(getIntent().getBooleanExtra("store_descriptor_reference", false));
         nativeCoverWaitReference(getIntent().getBooleanExtra("cover_wait_reference", false));
@@ -220,10 +234,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeQueryPerDrawReference(getIntent().getBooleanExtra("query_per_draw_reference", false));
         nativePipelinePrepareMode(getIntent().getBooleanExtra("validate", false) ? 2 :
                 getIntent().getBooleanExtra("pipeline_prepare_reference", false) ? 1 : 0);
+        if (getIntent().getBooleanExtra("fixed_shared_pool_test", false)) {
+            if (!getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                    getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().getBooleanExtra("async_submit", false) || !panvkDriver ||
+                    getIntent().getBooleanExtra("vulkan_test_validation", true) ||
+                    getIntent().getBooleanExtra("acquire_scope_test", false) ||
+                    getIntent().getBooleanExtra("memory_test", false))
+                throw new IllegalArgumentException("Fixed shared fixture requires exclusive tests, PanVK, async_submit, explicit validation=false and run_game=false");
+            if (!nativeFixedSharedPoolFixture())
+                throw new IllegalStateException("Fixed shared fixture unavailable or already selected");
+        }
         if (getIntent().getBooleanExtra("run_vulkan_tests", false)) {
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),
-                    getIntent().getBooleanExtra("memory_test", false)), "native-vulkan-test").start();
+                    getIntent().getBooleanExtra("memory_test", false),
+                    getIntent().getBooleanExtra("vulkan_test_validation", true)), "native-vulkan-test").start();
         }
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);
