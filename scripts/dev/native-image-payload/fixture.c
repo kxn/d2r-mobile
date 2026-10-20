@@ -601,7 +601,8 @@ static void sample_all(image *i, VkFormat format) {
       .pSetLayouts = &descriptor_layout};
   VkDescriptorSet set;
   VK(vkAllocateDescriptorSets(device, &da, &set));
-  VkDescriptorImageInfo img = {sampler, view, VK_IMAGE_LAYOUT_GENERAL};
+  VkDescriptorImageInfo img = {sampler, view,
+                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
   VkDescriptorBufferInfo buf = {output, 0, bi.size};
   VkWriteDescriptorSet writes[] = {
       {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -726,12 +727,15 @@ static void restore(const char *directory, VkFormat format) {
   pack_header h;
   memcpy(&h, data, sizeof h);
   image i = create_image(format);
+  // Validate the complete target recipe before the first upload.
+  for (unsigned n = 0; n < REGIONS; n++)
+    CHECK(opaque_size(&i, h.parts[n].level, h.parts[n].layer) ==
+          h.parts[n].size);
   transition(&i, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
   uint64_t restored_bytes = 0;
   for (unsigned n = 0; n < REGIONS; n++) {
     part *p = &h.parts[n];
     restored_bytes += p->size;
-    CHECK(opaque_size(&i, p->level, p->layer) == p->size);
     VkMemoryToImageCopyEXT copy = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
         .pHostPointer = data + p->offset,
@@ -748,6 +752,8 @@ static void restore(const char *directory, VkFormat format) {
   }
   CHECK(!munmap((void *)data,
                 size)); // File/CPU payload gone before first sample.
+  transition(&i, VK_IMAGE_LAYOUT_GENERAL,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   sample_all(&i, format);
   destroy_image(&i);
   printf("{\"restored_format\":%u,\"sampled_mips\":%u,\"sampled_layers\":%u,"

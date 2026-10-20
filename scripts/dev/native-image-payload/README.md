@@ -13,7 +13,8 @@ SPIR-V validator. Vulkan itself creates its native image layout:
    `VK_HOST_IMAGE_COPY_MEMCPY_EXT` exports it without application swizzle code.
 3. A **separate process** restores a matching image through
    `vkCopyMemoryToImageEXT` with `VK_HOST_IMAGE_COPY_MEMCPY_EXT`.
-4. The CPU payload mapping is unmapped **before** GPU sampling. The existing
+4. The CPU payload mapping is unmapped **before** GPU sampling; the image then
+   transitions to `SHADER_READ_ONLY_OPTIMAL`. The existing
    glslang-compiled compute fixture samples every texel of every mip and checks
    the original pattern plus output guards. It never measures performance.
 
