@@ -19,9 +19,18 @@ static void VKAPI_PTR observe_copy_after_cpu(VkCommandBuffer command,VkBuffer so
 }
 static void shared_image_cpu_observation_test(void) {
   int legacy=vk_legacy_astc_copy_mode() && !vk_pool_shared_active();
-  size_t size=(4u<<20)+65536;uint8_t *raw=mmap(NULL,size,PROT_READ|PROT_WRITE,(legacy?MAP_PRIVATE:MAP_SHARED)|MAP_ANONYMOUS,-1,0);
-  CHECK(raw!=MAP_FAILED);uint8_t *data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
-  if(!legacy)vk_test_shared_image_backing(data,4u<<20);
+  int actual_heap=!legacy && getenv("DM_SHARED_GUEST_HEAP_FIXTURE")!=NULL;
+  size_t size=(4u<<20)+65536;uint8_t *raw=NULL,*data=bytes;
+  if(actual_heap) {
+    extern void *dm_guest_shared_heap_import_pointer(uintptr_t,size_t) __attribute__((weak));
+    CHECK(dm_guest_shared_heap_import_pointer);
+    CHECK(dm_guest_shared_heap_import_pointer((uintptr_t)data,65536)!=data);
+    CHECK(dm_guest_shared_heap_import_pointer((uintptr_t)data,65536)!=NULL);
+  } else {
+    raw=mmap(NULL,size,PROT_READ|PROT_WRITE,(legacy?MAP_PRIVATE:MAP_SHARED)|MAP_ANONYMOUS,-1,0);
+    CHECK(raw!=MAP_FAILED);data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
+    if(!legacy)vk_test_shared_image_backing(data,4u<<20);
+  }
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,65536);
   CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
@@ -82,8 +91,9 @@ static void shared_image_cpu_observation_test(void) {
     CHECK(vk_texture_test_bc_decoded(t)==1);
   }
   vk_texture_test_force_bc_decode(0);CALL(nvnTextureFinalize,&texture);CALL(nvnMemoryPoolFinalize,&pool);
-  if(!legacy)vk_test_shared_image_backing(NULL,0);
-  CHECK(!munmap(raw,size));CHECK(!vk_validation_error_count());
+  if(!legacy && !actual_heap)vk_test_shared_image_backing(NULL,0);
+  if(raw) {CHECK(!munmap(raw,size));}
+  CHECK(!vk_validation_error_count());
   printf("{\"test_details\":\"%s\",\"paired_pread_after_CPU_capture\":true,\"first_GPU_snapshot_old\":true,\"next_GPU_upload_new\":true,\"clean_sample_no_upload\":true,\"original_BC_CPU_decode_protected\":true}\n",legacy?"legacy-image-CPU-observation":"shared-image-CPU-observation");
 }
 

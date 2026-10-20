@@ -1,5 +1,9 @@
 // Fixed startup mode, whole-pool lazy import. No borrowed-window admission,
 // mirror demotion or legacy content proof is used by a shared Pool.
+#include "nvn_vk_shared_import.h"
+#include "dm_guest_heap.h"
+extern int dm_guest_heap_probe_views_create(size_t,size_t,dm_guest_heap_probe_views *) __attribute__((weak));
+extern void dm_guest_heap_probe_views_destroy(dm_guest_heap_probe_views *) __attribute__((weak));
 static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer *fresh) {
   uint64_t address=(uintptr_t)host_pointer;
   const char *stage="external-buffer-properties";
@@ -72,8 +76,11 @@ static void shared_cache(vk_buffer *b,uint64_t offset,uint64_t bytes,int invalid
 static void shared_pool_materialize(pool *p) {
   if(p->shared_closing)die("Shared Pool address after closing");
   if(p->backings)return;
-  vk_buffer b={0};VkResult result=shared_buffer_create(p->guest,p->size,&b);
+  void *import_pointer=shared_import_host_pointer((uintptr_t)p->guest,p->size);
+  if(!import_pointer)die("Shared Pool lacks committed RW import alias");
+  vk_buffer b={0};VkResult result=shared_buffer_create(import_pointer,p->size,&b);
   if(result!=VK_SUCCESS) {vk_buffer_destroy(&b);die("Shared whole Pool import failed: %d; no online legacy fallback",result);}
+  b.map=p->guest; // CPU-facing addresses remain the original protected VMA.
   pool_materialize_metadata(p);p->whole.buffer=b;p->whole.begin=0;p->whole.end=p->size;
   if(p->backing_generation==UINT64_MAX)die("Shared generation exhausted");
   p->whole.generation=++p->backing_generation;p->backings=&p->whole;
@@ -88,10 +95,9 @@ int vk_pool_shared_materialized(uint64_t address,uint64_t bytes) {
   int ready=p && p->shared && !p->shared_closing && p->backings;
   pthread_mutex_unlock(&V.resources);return ready;
 }
-// The capability probe models the fixed shared heap's mmap-backed pages, not
-// allocator storage (Android malloc pointers may be tagged and kernel useraddr
-// import is not obliged to accept that allocator address representation).
-// This owns only a small fresh mapping; guest mappings are never replaced.
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(__ANDROID__)
+// Only standalone host fixtures without the real memory SVC use this owned
+// anonymous mapping. Android must test the production memfd pair below.
 static uint8_t *shared_probe_mapping(uint64_t alignment,uint64_t bytes) {
   uint64_t reserve=bytes+alignment;
   void *raw=mmap(NULL,reserve,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
@@ -102,6 +108,11 @@ static uint8_t *shared_probe_mapping(uint64_t alignment,uint64_t bytes) {
   if(suffix && munmap((void *)(aligned+bytes),suffix))die("Shared probe suffix unmap failed");
   return (uint8_t *)aligned;
 }
+#endif
+static void shared_probe_release(dm_guest_heap_probe_views *views,void *memory,size_t bytes) {
+  if(views->guest)dm_guest_heap_probe_views_destroy(views);
+  else if(memory && munmap(memory,bytes))die("Shared probe unmap failed");
+}
 static void shared_device_probe(void) {
   if(!shared_requested)return;
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
@@ -111,18 +122,40 @@ static void shared_device_probe(void) {
   VkPhysicalDeviceExternalMemoryHostPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
   VkPhysicalDeviceProperties2 props={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&host};
   vkGetPhysicalDeviceProperties2(V.physical,&props);shared_alignment=host.minImportedHostPointerAlignment;
+  uint64_t page_size=(uint64_t)getpagesize();
+  if(!page_size || (page_size&(page_size-1))) {LOG("[shared pool] startup legacy: invalid host page size");return;}
+  if(shared_alignment<page_size)shared_alignment=page_size;
   if(shared_alignment<4096)shared_alignment=4096;
   if(!shared_alignment || (shared_alignment&(shared_alignment-1)) || shared_alignment>(1u<<20)) {
     LOG("[shared pool] startup legacy: unsupported import alignment");return;
   }
   // Actual bytes both ways before any NVN Pool exists. This validates only
   // the small allocation/type/API path, not all future addresses or residency.
-  size_t bytes=shared_alignment*2;uint8_t *memory=NULL;
-  memory=shared_probe_mapping(shared_alignment,bytes);
-  if(!memory)return;
-  LOG("[shared pool] startup probe mapping=mmap-shared pointer=%p bytes=%zu",(void *)memory,bytes);
-  memset(memory,0x31,bytes);vk_buffer b={0};VkResult status=shared_buffer_create(memory,bytes,&b);
-  if(status!=VK_SUCCESS) {vk_buffer_destroy(&b);if(munmap(memory,bytes))die("Shared probe unmap failed");LOG("[shared pool] startup legacy: probe import=%d",status);return;}
+  size_t bytes=shared_alignment*2;uint8_t *memory=NULL,*import_pointer=NULL;
+  dm_guest_heap_probe_views views={0};
+  if(dm_guest_heap_probe_views_create && dm_guest_heap_probe_views_destroy) {
+    if(!dm_guest_heap_probe_views_create(bytes,shared_alignment,&views)) {
+      LOG("[shared pool] startup legacy: memfd pair construction errno=%d",errno);return;
+    }
+    memory=views.guest;import_pointer=views.import_alias;
+    if(mprotect(memory,bytes,PROT_READ|PROT_WRITE)) {
+      shared_probe_release(&views,memory,bytes);LOG("[shared pool] startup legacy: probe guest RW");return;
+    }
+  }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(__ANDROID__)
+  else {memory=shared_probe_mapping(shared_alignment,bytes);import_pointer=memory;}
+#endif
+  if(!memory || !import_pointer) {LOG("[shared pool] startup legacy: memfd pair API unavailable");return;}
+  memset(memory,0x31,bytes);
+  // Pin through the RW alias after the CPU-facing view has become RO, as in
+  // a texture Pool's first later Buffer access. Never relax the guest view.
+  if(views.guest && mprotect(memory,bytes,PROT_READ)) {
+    shared_probe_release(&views,memory,bytes);LOG("[shared pool] startup legacy: probe guest RO");return;
+  }
+  LOG("[shared pool] startup probe mapping=%s pointer=%p import=%p bytes=%zu",
+      views.guest?"memfd-pair-guest-RO":"host-owned-anonymous",(void *)memory,(void *)import_pointer,bytes);
+  vk_buffer b={0};VkResult status=shared_buffer_create(import_pointer,bytes,&b);
+  if(status!=VK_SUCCESS) {vk_buffer_destroy(&b);shared_probe_release(&views,memory,bytes);LOG("[shared pool] startup legacy: probe import=%d",status);return;}
   VkCommandPool pool_handle;VkCommandBuffer cmd;VkFence fence;
   VkCommandPoolCreateInfo pc={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.queueFamilyIndex=V.queue_family};
   VK_CHECK(vkCreateCommandPool(V.device,&pc,NULL,&pool_handle));
@@ -153,7 +186,7 @@ static void shared_device_probe(void) {
   shared_gpu_gate_force=getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE")!=NULL;
   if(shared_gpu_gate_force)needs_gate=1; // admission only, not NC Vk cache calls
 #endif
-  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);if(munmap(memory,bytes))die("Shared probe unmap failed");
+  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);shared_probe_release(&views,memory,bytes);
   if(valid && needs_gate) {
     uint64_t atom=V.props.limits.nonCoherentAtomSize,page=(uint64_t)getpagesize();
     if(!atom || (atom&(atom-1)) || !page || (page&(page-1)) || atom>page) {
@@ -201,15 +234,14 @@ int vk_test_fixed_shared_pool(uint64_t address,int *ready,int *shadow,uint32_t *
 }
 #endif
 
-// A real CPU conversion read, not a per-draw cache operation. Called only at
-// outer preflight before borrowing images/descriptors. Imported storage stays
-// pinned; no mirror, memcmp, upload stamp or fake clean result is introduced.
+// A real CPU conversion read, not a Buffer access. Do not pin an entire Pool
+// for CPU image conversion; a later Buffer consumer imports its RW alias.
+// References and pending CPU-effect visibility remain mandatory.
 int vk_pool_shared_image_source(uint64_t address,uint64_t bytes,int prepare) {
   if(!shared_active || !bytes)return 0;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   if(!p || !p->shared || p->shared_closing) {pthread_mutex_unlock(&V.resources);return 0;}
-  if(prepare) {shared_pool_materialize(p);p->references++;}
-  if(!p->backings) {pthread_mutex_unlock(&V.resources);return 0;}
+  if(prepare)p->references++;
   int recorded=recording_cpu_write(address,bytes);
   uint64_t serial=pending_cpu_write(address,bytes);
   pthread_mutex_unlock(&V.resources);

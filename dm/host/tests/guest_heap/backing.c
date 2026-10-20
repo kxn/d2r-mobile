@@ -39,6 +39,7 @@ static void expect_signal(void (*fn)(void),int sig) {
 }
 static void unread_committed_tail(void) {volatile uint8_t v=g_heap[8192];(void)v;}
 static void unread_shrunk(void) {volatile uint8_t v=g_heap[4096];(void)v;}
+static void write_readonly_guest(void) {g_heap[0]=0x73;}
 static void failed_reserve(void) {CHECK(dm_guest_heap_backing_select(1));reject_shared_map=1;mem_init();}
 static void failed_shrink(void) {reject_protect=1;guest_heap_resize(4096);}
 static void *initialize(void *unused) {
@@ -52,6 +53,7 @@ static void set_heap(size_t size,uint64_t result) {
 }
 static void run_mode(int shared) {
     CHECK(!dm_guest_shared_heap_contains(0,1));
+    CHECK(!dm_guest_shared_heap_import_pointer(0,1));
     CHECK(!dm_guest_heap_readable(0,1));
     uint8_t *as;size_t as_size;svc_guest_range(&as,&as_size);CHECK(!as && as_size==RESERVE);
     CHECK(!dm_guest_heap_backing_select(2));
@@ -80,6 +82,19 @@ static void run_mode(int shared) {
     CHECK(!dm_guest_shared_heap_contains(UINTPTR_MAX-3,16));
     CHECK(!dm_guest_shared_heap_contains((uintptr_t)g_alias,1));
     CHECK(!dm_guest_shared_heap_contains((uintptr_t)g_stack,1));
+    uint8_t *import=dm_guest_shared_heap_import_pointer((uintptr_t)g_heap,8192);
+    CHECK((import!=NULL)==shared);
+    if(shared) {
+        CHECK(import!=g_heap);CHECK(!(((uintptr_t)import^(uintptr_t)g_heap)&((1u<<20)-1)));
+        CHECK(import[0]==0x21 && import[4096]==0x32);
+        CHECK(!mprotect(g_heap,8192,PROT_READ));
+        import[0]=0x56;CHECK(g_heap[0]==0x56); // same backing while guest remains RO
+        expect_signal(write_readonly_guest,SIGSEGV);
+        CHECK(!mprotect(g_heap,8192,PROT_READ|PROT_WRITE));
+        g_heap[0]=0x21;CHECK(import[0]==0x21);
+        CHECK(!dm_guest_shared_heap_contains((uintptr_t)import,1));
+        CHECK(!dm_guest_shared_heap_import_pointer((uintptr_t)g_heap+8191,2));
+    }
     CHECK(!mprotect(g_alias,4096,PROT_READ|PROT_WRITE));
     CHECK(!mprotect(g_stack,4096,PROT_READ|PROT_WRITE));
     g_alias[0]=0x43;g_stack[0]=0x54;
@@ -112,7 +127,26 @@ static void startup_case(int requested,int supported,int expected) {
     CHECK(!dm_guest_heap_backing_select(!expected));CHECK(!munmap(g_as,RESERVE));
     printf("{\"test\":\"cold-heap-mode-selection\",\"requested\":%d,\"supported\":%d,\"actual_shared\":%d,\"checks\":%u}\n",requested,supported,expected,checks);fflush(stdout);
 }
+static void startup_probe_views(void) {
+    CHECK(dm_guest_heap_shared_mode()==-1);CHECK(!g_heap_import_alias);
+    dm_guest_heap_probe_views views;
+    CHECK(!dm_guest_heap_probe_views_create(0,4096,&views));
+    CHECK(!views.guest && !views.import_alias);
+    reject_shared_map=1;CHECK(!dm_guest_heap_probe_views_create(8192,4096,&views));reject_shared_map=0;
+    CHECK(!views.guest && !views.import_alias);CHECK(dm_guest_heap_shared_mode()==-1);
+    CHECK(dm_guest_heap_probe_views_create(8192,4096,&views));
+    CHECK(views.guest!=views.import_alias);CHECK(views.bytes==8192);
+    CHECK(!(((uintptr_t)views.guest^(uintptr_t)views.import_alias)&((1u<<20)-1)));
+    CHECK(!mprotect(views.guest,views.bytes,PROT_READ|PROT_WRITE));
+    memset(views.guest,0x21,views.bytes);CHECK(!memcmp(views.guest,views.import_alias,views.bytes));
+    CHECK(!mprotect(views.guest,views.bytes,PROT_READ));
+    ((uint8_t *)views.import_alias)[4096]=0x74;CHECK(((uint8_t *)views.guest)[4096]==0x74);
+    CHECK(dm_guest_heap_shared_mode()==-1);CHECK(!g_heap_import_alias);
+    dm_guest_heap_probe_views_destroy(&views);CHECK(!views.guest && !views.import_alias && !views.bytes);
+    CHECK(dm_guest_heap_shared_mode()==-1);CHECK(!g_heap_import_alias);
+}
 int main(void) {
+    startup_probe_views();
     // Every mode is a cold process: production has no reset/reselect API.
     for(int shared=0;shared<2;shared++){pid_t p=fork();CHECK(p>=0);if(!p){run_mode(shared);_exit(0);}wait_ok(p);}
     for(int requested=0;requested<2;requested++)for(int supported=0;supported<2;supported++) {

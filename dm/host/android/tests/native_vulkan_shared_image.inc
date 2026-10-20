@@ -316,8 +316,8 @@ static void shared_image_dirty_test(void) {
     shared_image_pixels(&first_clear,green);
     die("CPU change after first GPU clear was incorrectly accepted");
   }
-  // Both ordinary outer operations must prepare a never-imported image Pool
-  // even though successful shared startup deliberately makes defer=0.
+  // Both ordinary outer operations prepare a CPU image source without pinning
+  // its Pool as a Buffer, even when successful shared startup makes defer=0.
   CHECK(!V.options.pool_defer_publication);
   uint8_t control[3][0x880];memset(control[0],0,sizeof control[0]);
   memset(control[1],7,sizeof control[1]);memset(control[2],8,sizeof control[2]);
@@ -350,7 +350,7 @@ static void shared_image_dirty_test(void) {
     if(graphics) {p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3};vk_draw(&draw,NULL);}
     else {p_dispatch dispatch={4,4,1};vk_dispatch(&dispatch);}
     vk_internal_wait(vk_internal_commit());
-    CHECK(vk_test_fixed_shared_pool((uintptr_t)source,&ready,&shadow,&flags));CHECK(ready && !shadow);
+    CHECK(vk_test_fixed_shared_pool((uintptr_t)source,&ready,&shadow,&flags));CHECK(!ready && !shadow);
     shared_image_pixels(&image,graphics?(const uint8_t[]){0,64,255,255}:(const uint8_t[]){255,0,128,255});
     S=(vk_state){0};CALL(nvnProgramFinalize,&program);CALL(nvnTextureFinalize,&image);CALL(nvnMemoryPoolFinalize,&fresh_pool);
   }
@@ -530,6 +530,15 @@ static int shared_image_nc_gate_test(void) {
   CALL(nvnMemoryPoolBuilderSetStorage,&pb,data,65536);
   CALL(nvnMemoryPoolBuilderSetFlags,&pb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&pb));
+  // This finite NC fixture tests prewrite admission of an imported Buffer,
+  // not the real heap's late-import RW-alias contract. Import before image RO.
+  mtl_sub_begin();vk_buffer *admission_buffer;uint64_t admission_offset;
+  CHECK(vk_pool_address_stage((uintptr_t)data+16384,4,(void **)&admission_buffer,&admission_offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  vk_buffer_use admission_use={(uintptr_t)data+16384,4,0};vk_transfer_buffer_dependencies(&admission_use,1);
+  vk_buffer *admission_result=vk_temp_buffer(4);VkBufferCopy admission_copy={admission_offset,0,4};
+  vkCmdCopyBuffer(V.cmd,admission_buffer->handle,admission_result->handle,1,&admission_copy);
+  vk_buffer_transfer_written();vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(admission_result->map,data+16384,4));
   NVNtexture texture;NVNtextureBuilder tb;
   CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
   CALL(nvnTextureBuilderSetTarget,&tb,NVN_TEXTURE_TARGET_2D);

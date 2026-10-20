@@ -3109,7 +3109,7 @@ uint64_t vk_test_shared_dependency_observed(void) {
 // GPU users. Preserve asynchronous submission for nonoverlapping ranges.
 // Call only on the translation owner, outside resource and queue locks.
 static uint64_t shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int protect_host_page,int wait) {
-  int cache=!(p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  int cache=p->backings && !(p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 #ifdef DM_VULKAN_TEST_EMBED
   if(shared_dependency_test_force_cache)cache=1; // tests admission only, not NC Vk cache calls
 #endif
@@ -3202,7 +3202,7 @@ int vk_pool_shared_cpu_observe_prepare(uint64_t address,uint64_t bytes) {
   uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   if(!p || !p->shared || p->shared_closing) {pthread_mutex_unlock(&V.resources);return 0;}
-  shared_pool_materialize(p);p->references++;
+  p->references++;
   int recorded=recording_cpu_write(first,length);uint64_t offset=address-(uintptr_t)p->guest;
   pthread_mutex_unlock(&V.resources);
   uint64_t serial=pending_cpu_write(first,length);int reopen=V.cmd!=VK_NULL_HANDLE;
@@ -3220,7 +3220,7 @@ int vk_pool_shared_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_c
   if(!shared_active || !shared_cpu_observe_phase || !bytes)return 0;
   uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
-  if(!p || !p->shared || p->shared_closing || !p->backings) {pthread_mutex_unlock(&V.resources);return 0;}
+  if(!p || !p->shared || p->shared_closing) {pthread_mutex_unlock(&V.resources);return 0;}
   p->references++;uint64_t offset=address-(uintptr_t)p->guest;
   int recorded=recording_cpu_write(first,length);pthread_mutex_unlock(&V.resources);
   // A failed outer-preflight proof is not repaired while holding a physical
