@@ -24,10 +24,10 @@ def pinned(row):
 
 class Gate(unittest.TestCase):
  def config(self):
-  p=read(R/'.local/build/native-candidate-short-guest-v1/inputs-DRAFT.json')
+  p=read(R/'.local/build/native-candidate-short-d5-v1/inputs-DRAFT.json')
   p['phases'][1]['composition_data']=read(pinned(p['phases'][1]['composition']))
   return p
- def test_actual_reviewed_ed_80a_and6f_refs_are_accepted(self):
+ def test_actual_reviewed_d5_80a_and6f_refs_are_accepted(self):
   g.validate(self.config(),pinned,read,require)
  def test_wrong_runtime_provider_window_or_selection_rejected(self):
   for key,value in [('runtime_commit',g.BASE),('driver',{'sha256':'0'*64}),('pool_window_bytes',16777216)]:
@@ -83,7 +83,7 @@ class Gate(unittest.TestCase):
     with self.assertRaises(RuntimeError):g.validate(p,pinned,altered,require)
  def test_root_artifact_extent_exact(self):
   p=self.config();q=Path(p['native_candidate_validation']['root_review']['path'])
-  for key,value in [('native_libraries_checked',5),('raw_deployment_files_checked',27),('actual_original_raw_inputs_checked',2),('eligible_for_short_candidate_only',False),('direct_parent',g.BASE)]:
+  for key,value in [('raw_outputs',27),('raw_original_inputs',{}),('separate_verify_only_root_returncode',1),('base_runtime',g.BASE),('six_APK_libraries',{}),('APK',{})]:
    def altered(path):
     data=read(path)
     if Path(path)==q:data[key]=value

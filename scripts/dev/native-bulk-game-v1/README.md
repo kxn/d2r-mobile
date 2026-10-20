@@ -293,3 +293,18 @@ CPU可重建子集及真正预算释放；累计 allocation 释放不等于同�
 预算维护只来自HLE原guest入口，内部reopen不淘汰已由实际正负控和root源审闭合。
 仍只做一次原游戏native短验证、原路线及现成官方CPU/Perfetto/meminfo；首轮重点
 读取既有private_image_cache字段，不据短测认定512MiB最佳或6GB通过。
+
+
+### d5ecbcd 独立 descriptor history 槽位提示候选
+
+本后继只改 candidate gate、其离线负控与本段文档。原482435f事务、CPUhelper、
+launcher、资源/路线和恢复逐字节保留；runtime使用独立80a后继d5，未混773预算。
+门要求root实际canonical/raw receipt、六SO/APK和三原始NSO/28产物、独立verify-only，
+并保留实际80a短验证与6f paired资格。仍只执行native6217/f830/sharedON/.60fixed/
+2750×1260/1MiB、三点路线和独立8s官方stat/99Hz record/Perfetto，freshsave2/CAS恢复。
+
+候选只减少部分stage-last miss后的history hash；16项提示384B/context。每次资源
+解析、upload/hazard/native use/dynamicoffset与原last-key拷贝仍执行。原stage-last hit
+不维护提示。短测只提供当前实际工作量/频率/CPU热点、功能和恢复证据；80a历史短测
+不是匹配A/B，不能用父函数inclusive比例或历史historyhits冒充可省CPU/FPS/热收益。
+execution_ready保持false；root审源码后另建ROOT输入，不覆旧工具、旧报告或资源。
