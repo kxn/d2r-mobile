@@ -514,6 +514,39 @@ static void fixed_shared_close_test(void) {
   CALL(nvnMemoryPoolFinalize,&source);free(memory);vkDestroySemaphore(V.device,gate,NULL);
 }
 
+
+// Independent bounded review oracle: original completion-effect store must
+// not overtake a later ordered GPU writer of the same NVN buffer bytes.
+static pthread_mutex_t review_effect_mu=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t review_effect_cv=PTHREAD_COND_INITIALIZER;
+static int review_effect_entered,review_effect_release;
+static void review_effect_gate(void *unused) {
+  (void)unused;pthread_mutex_lock(&review_effect_mu);review_effect_entered=1;
+  pthread_cond_broadcast(&review_effect_cv);
+  while(!review_effect_release)pthread_cond_wait(&review_effect_cv,&review_effect_mu);
+  pthread_mutex_unlock(&review_effect_mu);
+}
+static void review_cpu_effect_then_gpu_write(void) {
+  uint32_t *destination=(void *)(bytes+(3u<<20));*destination=0;
+  mtl_sub_begin();vk_completion(review_effect_gate,NULL);
+  mtl_sub_event(destination,0,7);uint64_t first=vk_internal_commit();
+  pthread_mutex_lock(&review_effect_mu);
+  while(!review_effect_entered)pthread_cond_wait(&review_effect_cv,&review_effect_mu);
+  pthread_mutex_unlock(&review_effect_mu);
+  mtl_sub_begin();vk_buffer *buffer;uint64_t offset;
+  CHECK(vk_pool_address_overwrite((uintptr_t)destination,4,(void **)&buffer,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  vkCmdFillBuffer(V.cmd,buffer->handle,offset,4,9);
+  vk_buffer_transfer_written_range((uintptr_t)destination,4);
+  vk_buffer_writeback_stage((uintptr_t)destination,4,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  uint64_t last=vk_internal_commit();CHECK(last>first);
+  pthread_mutex_lock(&V.queue_mu);VK_CHECK(vkQueueWaitIdle(V.queue));pthread_mutex_unlock(&V.queue_mu);
+  pthread_mutex_lock(&review_effect_mu);review_effect_release=1;
+  pthread_cond_broadcast(&review_effect_cv);pthread_mutex_unlock(&review_effect_mu);
+  vk_internal_wait(last);
+  LOG("[fixed shared review] ordered CPUeffect7 then GPUwriter9 final=%u expected=9",*destination);
+  CHECK(*destination==9);
+}
+
 static void fixed_shared_buffer_test(void) {
   CHECK(vk_pool_shared_mode());
   CHECK(!setenv("DM_VULKAN_SHARED_POOLS","0",1)); // cannot change selected mode
@@ -569,6 +602,7 @@ static void fixed_shared_buffer_test(void) {
     dirty_range_fill(image.data,4096,(uint8_t[]){255,0,0,255});dirty_range_pixels(&image.tex[0],(uint8_t[]){255,0,0,255});
     die("Shared unsupported packaged image unexpectedly accepted");
   }
+  if(getenv("DM_FIXED_SHARED_EVENT_GPU_REVIEW"))review_cpu_effect_then_gpu_write();
   fixed_shared_close_test();
   // Backend CPU-demand fixture deliberately owns a raw host submit serial.
   // Run after all NVN Submit jobs; never reset or falsify either fence counter.
@@ -634,6 +668,13 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_FIXED_SHARED_EVENT_ONLY_REVIEW")) {
+    NVNmemoryPoolBuilder b;CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
+    CALL(nvnMemoryPoolBuilderSetStorage,&b,bytes,4u<<20);CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    CHECK(CALL(nvnMemoryPoolInitialize,&memory,&b));review_cpu_effect_then_gpu_write();
+    CALL(nvnMemoryPoolFinalize,&memory);CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"completion-effect-before-later-GPU-writer-review\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
+  }
   if(getenv("DM_FIXED_SHARED_BUFFER_FIXTURE")) {
     fixed_shared_buffer_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"fixed-shared-NVN-buffer\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
