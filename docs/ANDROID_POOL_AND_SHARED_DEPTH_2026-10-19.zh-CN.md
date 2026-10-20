@@ -1895,3 +1895,24 @@ Dalvik、EGL、Gfx 和 Native Heap 等类别，不将总增量称为 native 泄�
 
 上述均为高通固定 .60 营地测试，不能替代 iOS 对齐默认 .75 动态比例、
 野外战斗、Mali 或实际 6GB 设备的持续游玩验收。
+
+### 已保留 Buffer span 的区间查找缓存（80a71bc）
+
+当前官方 Simpleperf 中，26b 的 `pool_span_resolve` 占翻译线程用户态
+31/586 个样本。80a 在每个 submission owner 内保留至多八个已经被真实
+Buffer 消费者持有的 span，原单项热命中仍先走；miss 才查集合或原链表。
+registry epoch 变化和上下文回收/重用会清空。它仅缓存物理覆盖关系，不缓存
+CPU/GPU 数据权限，不省略初始化、脏页检查或 hazard。新增 136B/上下文，
+没有新增分配或锁。操作 admission 只能借用已保留证明，不能发布尚未持有的 pin。
+
+24 项 host GPU 用例、8 项 ASan 与 epoch/reset 缺失负控闭合；canonical
+Android 六库、fresh raw NSO 与独立 verify-only 均通过。相同 f830/6,217 项、
+.60 固定比例、2750×1260、1MiB 窗口的真实原游戏完成三段触控路线，官方
+stat/record/Perfetto 期间 PSO183/variants33 稳定；双存档、停机及原包六目录
+恢复成功。人物/HUD/几何存在，未见新增明显黑块，仍有原有地面彩色散点。
+
+候选用户态样本中该函数为 2/630，支持遍历减少；新集合/调用者可能内联，
+不能将样本减少直接当作净 CPU 节省。独立 stat 窗口 task-clock 更高，且
+26b record 窗口存在 PSO 变化；两轮不是匹配 A/B，不声明净涨帧或散热改善。
+该有界几何缓存按明确减少重复链表遍历的机制保留，后续继续用官方 Profile
+检验总成本。实际验收：`.local/logs/native-candidate-short-80a-Q735-v1-root-actual-review.json`。
