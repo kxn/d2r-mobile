@@ -49,3 +49,31 @@ timeline 阻塞下的 in-flight 保护、最终物理分配计账归零；新增
 同一用例拒绝。另复用 shared-retirement
 和 native-resident oracle 检查共享导入、GPU 别名依赖及旧物理副本生命周期。
 这些 host/Lavapipe 结果不代替 Android 原游戏、6GB 设备或功耗验收。
+
+
+## 真机集成与预算边界（2026-10-21）
+
+同一773候选已在Q735真实游戏（native6217/f830/sharedON/.60fixed）和
+Mali PHP110真实游戏（系统Vulkan/sharedOFF/原ASTC4/cbd8 shader/.75adaptive）
+完成行走、官方工具采集、原生命周期save2和环境恢复。源码作为有界前台回收机制
+合入；512MiB仍是暂定软预算，不是本轮已取得内存节省的参数结论。两次实际释放
+量均为零：Q可重建118.99MiB，Mali结束时82.20MiB，因此不为强迫命中而压低预算。
+Mali的534.37MiB私有图像总量不能全部淘汰，GPU写入内容等保护继续生效。
+
+Mali的系统showmap成功取得6270项独立VMA，PSS各项求和与TOTAL一致。
+按原guest AS日志地址定位，guest heap实际PSS约1344.31MiB，其余VMA共415.07MiB，
+其中libc_malloc约299.78MiB。dumpsys另报GL mtrack约1602.38MiB，整体PSS约3374MiB。
+这些是不同统计视角；不能把VMA allocation、镜像覆盖范围或累积snapshot再相加，
+也不能用Native Heap Alloc约1.6GiB推断它们都已驻留。
+原普通Pool确有镜像及CPUshadow路径，但showmap未暴露p->shadow指针归属，不能
+把所有libc_malloc直接标为shadow。本轮优先继续处理guest驻留与驱动资源，不把
+小型可重建缓存当作全部内存问题。
+
+Mali从初始.75动态降到结束.65；本次不是与fixed.60匹配的性能对照，截图瞬时
+FPS也不代替持续游玩/热/6GB验收。原022生产APK、模块、shader、驱动、资源和缓存
+已恢复，未把候选测试包长期留在设备上。
+
+实际root凭据：`.local/logs/mali-candidate-guest-773d530-v1-root-actual-review.json`
+（SHA256 `9fa235de5f04dfee27f5b693beba1beaa767eaae19dbef06b771d2044c54c4f8`）。
+showmap分析：`.local/logs/mali-candidate-guest-773d530-v1-analysis/official-showmap-memory-analysis-agent.json`
+（SHA256 `7fbb0eab1719b04b2da03da2cc867ee50545f8f1d9ef764209fbdff4758647c9`）。
