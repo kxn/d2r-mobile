@@ -260,3 +260,18 @@ meminfo/screenshot. Existing actual tool coverage/target/PSO checks stay intact.
 No ordinary rerun, SDP, LLDB, custom timer or second30min run is performed.
 Actual normal gameplay progress is saved; original APK and six directories are
 restored by original save2/stop/owner/hash/CAS checks.
+
+
+## Exact80a successor short candidate gate
+
+This tool-only successor retains aa7 run-game, CPU helper, launcher, lifecycle,
+resource proofs, route and cleanup byte for byte. Only candidate_gate changes
+the pinned runtime to80a and binds the actual root canonical/raw review plus
+the successful26b short transaction and its root review. The exact6f matched
+qualification remains mandatory. Both control/native compositions stay
+authenticated; execute native only, B→C→B and the same three official8s windows.
+The26b stability flag was false, so it qualifies function/cleanup only and is
+not a matched performance/thermal baseline. Original shared window1MiB,
+f830,6217,.60,2750×1260 and6dir CAS restore are unchanged. DRAFT false and
+no device operation during preparation; root publishes a separate ROOT input.
+This does not enable ADPF, SDP, LLDB or any additional timing/sampling path.
