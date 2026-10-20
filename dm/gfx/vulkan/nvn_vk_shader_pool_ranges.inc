@@ -154,9 +154,14 @@ static int compute_pool_requirement(void *context,const vk_pool_requirement *ran
 // physical pool admission and all shader/texture/temporary borrows. NVN state
 // is stable on the owner; registry descriptors are copied under its own lock.
 void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute) {
+  int packaged_only=0;
+#ifdef DM_VULKAN_SHARED_POOLS
+  int shared=!V.options.pool_defer_publication && vk_pool_shared_active();
+  packaged_only=!V.options.pool_defer_publication && !shared;
+#endif
   if(!V.options.pool_defer_publication
 #ifdef DM_VULKAN_SHARED_POOLS
-      && !vk_pool_shared_active() && !vk_legacy_astc_copy_mode()
+      && !shared && !vk_legacy_astc_copy_mode()
 #endif
       )return;
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
@@ -166,7 +171,8 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
       if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
       if(b->reg<0 || b->reg>=(b->kind==4?32:128))continue;
       uint64_t handle=b->kind==4?state->img[stage][b->reg]:state->tex[stage][b->reg];
-      tex_t t;if(vk_texture_descriptor(handle&0xfffff,&t))vk_texture_cpu_preflight(&t);
+      if(packaged_only)vk_texture_packaged_cpu_preflight(handle&0xfffff);
+      else {tex_t t;if(vk_texture_descriptor(handle&0xfffff,&t))vk_texture_cpu_preflight(&t);}
     }
   }
   if(!compute) {
