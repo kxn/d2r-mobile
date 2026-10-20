@@ -1510,3 +1510,69 @@ CPU cache、别名历史和真正的 Buffer 消费者不能随之删除。批量
 新驱动支持 BC 采样，改变了原来系统 Mali 自动采用 RGBA 的能力分支；
 这是资源包兼容路径缺口，不能当成 DEVICE_LOST。原包与 PSO 已恢复并
 停机；下一步以有来源、UI 相同的原 BC 资源确认这套驱动的绘制基线。
+
+### 10 月 21 日：纯图像导入与内存分析工具的实际边界
+
+候选 `bcbd751` 将原生 Image 的内存要求与普通 Buffer 的要求分开。仅采样、
+图像传输或映射缓存操作，不再为已有独立 Image import 的范围额外建立
+16MiB Buffer window；第一次真正的 Buffer 消费仍按原规则建立 backing。
+CPU/GPU 数据依赖、缓存同步、别名和 GPU 完成后的释放规则保留。原生
+import 区间使用已有的增强 AVL 索引，避免把省内存变成每次访问全链扫描。
+新增元数据为每个 native allocation 64B、每个 Pool 8B，不能算作免费优化。
+
+独立测试包装 `0a54ef2` 已在实际 Adreno 735／AA185、普通 UID 下通过：
+
+- 九级 ASTC mip 的原 NVN 采样和 ReadTexels，与普通 ASTC 参考一致；
+  该范围没有普通 Buffer backing。
+- 同值 CPU 写入、原 Flush/Invalidate 之后仍正确，且不建立 Buffer。
+- 随后的第一次真实 GPU Buffer copy 才建立 backing，并逐字节保留原生
+  payload；原有两个窗口合并、尾 mip 和释放检查保留。
+- 总计 447 项检查；原有旧 Buffer writer 的 40 项同步检查也通过。
+
+旧包装 `6febdbf` 的失败记录保留：它把“整个 Pool 尚无 Buffer”的
+`UNBACKED` 状态误用为“当前子范围没有 Buffer”。同 Pool 已有不相交的
+Buffer 时，公共查询返回 `CROSSING`；后继测试增加仅测试构建可用的精确
+区间相交检查，并加入部分覆盖负例，未放宽生产正确性要求。此失败不是
+生产图像被错误物化的证据。
+
+实际测试包已卸载、工具清理、原生产包及资源保持不变。该测试不执行游戏
+模块，验证层明确关闭；不能写成完整游戏、非 coherent 硬件、净 RAM、
+FPS、持续散热或 6GB 验收。整游戏对照仍使用相同的 6,217 项资源、AA185、
+16MiB window、固定 0.60 和原 PSO 种子，另行记录结果。
+
+该整游戏对照随后实际完成：两端均执行原 ARM64 模块、进入营地、完成
+三段摇杆路线并存档两次后停止，六个目录、原包与 PSO 恢复且工具清理。
+
+| 本轮 `bcbd751` 营地端点 | 普通 ASTC4 | native 布局 |
+| --- | ---: | ---: |
+| TOTAL PSS（KiB） | 2,083,374 | 2,188,271 |
+| Graphics PSS（KiB，已在 TOTAL 内） | 214,108 | 243,260 |
+| Native Heap 的 malloc Alloc（KiB） | 162,244 | 215,999 |
+| 普通 Buffer backing（MiB） | 499 | 547 |
+| 实际 native import 数 | 0 | 1,287 |
+| native import 地址 envelope（B） | 0 | 148,172,800 |
+
+本轮 native 总 PSS 仍多 102.44MiB，malloc Alloc 多 52.50MiB。native 的
+Buffer backing 比上一轮 563MiB 少 16MiB，但 live image 数也由 1,290
+变成 1,287；普通控制端本身的 PSS 也比上轮低约 73MiB。因此不能将
+跨轮 PSS 差额全部归因于本次优化。可保留的机制收益是独立图像不再
+强制物化 Buffer，而整条 native 路线仍未证明净省内存。
+
+现有表约 6.26MiB，当前 native allocation 节点 236,808B、区间容量
+65,536B，这些已知元数据不足以单独解释 52.50MiB 的 malloc 增量。
+后续需要完整的现成堆分析工具归因。两端截图未见明显黑块或几何缺失，
+但路线终点及相机时机有差别；截图 FPS 受此前 LLDB 暂停影响，不作
+吞吐率数据。批量 native 仍不以省内存或散热收益名义默认启用。
+
+分配归因方面，官方 heapprofd 冷启动实际两次均未获得可用的完整数据。
+第一次为 `CLIENT_ERROR_HIT_TIMEOUT`；一次有界重试后为
+`CLIENT_ERROR_INVALID_STACK_BOUNDS`。后者已没有 buffer overrun 报告，
+不能继续把失败归因于传输缓冲不足。两次都完成原游戏路线、存档、停止、
+原包恢复及采集器清理，但残缺堆数据不能解释此前的 malloc 增量。停止
+heapprofd 调参；后续仅尝试官方 bionic malloc_debug 的独立诊断包装，
+其分配跟踪和展开成本不作为优化前后 PSS/FPS 对照。
+
+完整 MineGraph PanVK 加静态 unsupported HAL 后，原 BC 资源也实际触发
+GPU timeout；因此它尚不能作为 Mali 的可用驱动。已通过现有 Mesa
+pandecode 保存本次任务的完整 CS，Mali 已恢复系统驱动、原资源及 PSO
+并停止。当前数据只能定位到未完成任务，不能证明具体 shader 或死锁点。
