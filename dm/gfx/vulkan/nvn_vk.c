@@ -63,6 +63,7 @@ typedef struct pool {
   VkMemoryPropertyFlags shared_properties;
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   _Atomic unsigned native_image_references;
+  struct native_image_allocation *native_allocations;
 #endif
 #endif
   pool_cpu_authority *cpu_authority;
@@ -84,6 +85,11 @@ static _Atomic unsigned legacy_encoding_guard_count;
 static _Atomic uint64_t legacy_encoding_low=UINT64_MAX,legacy_encoding_high;
 static uint64_t shared_alignment,shared_window_bytes;
 static int shared_union_visibility_pending;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+static void native_allocation_cache_locked(pool *,uint64_t,uint64_t,int);
+static void native_allocation_collect_locked(pool *);
+static int native_allocation_overlaps_locked(pool *,uint64_t,uint64_t);
+#endif
 #ifdef DM_VULKAN_TEST_EMBED
 static int shared_gpu_gate_force;
 #endif
@@ -1084,7 +1090,11 @@ static void *completion_thread(void *unused) {
     while(s->resources->shared_publishes) {
       pool_writeback *w=s->resources->shared_publishes;s->resources->shared_publishes=w->next;
       while(w->ranges) {writeback_range *r=w->ranges;w->ranges=r->next;
-        if(shared_window_bytes) {
+        if(shared_window_bytes
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+            || 1 /* native cache lane is registry-locked */
+#endif
+            ) {
           pthread_mutex_lock(&V.resources);
           shared_pool_cache_locked(w->owner,r->offset,r->end-r->offset,1,1);
           pthread_mutex_unlock(&V.resources);
@@ -1871,6 +1881,10 @@ void mtl_pool_del(const void *mem) {
   if(atomic_load(&p->native_image_references))die("Shared Pool closed before bound native images");
 #endif
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  native_allocation_collect_locked(p);
+  if(p->native_allocations)die("Native allocations survived Pool close");
+#endif
   pool_spans_destroy(p);
 #ifdef DM_VULKAN_SHARED_POOLS
   while(p->encoding_guards) {legacy_encoding_range *g=p->encoding_guards;p->encoding_guards=g->next;
@@ -3448,7 +3462,11 @@ static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
   if(p->shared) {uint64_t off=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
     if(limit>p->size)limit=p->size;
     shared_access_host_phase(p,off,limit-off,0,1);
-    if(shared_window_bytes) {
+    if(shared_window_bytes
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+        || 1 /* native cache lane is registry-locked */
+#endif
+        ) {
       pthread_mutex_lock(&V.resources);shared_pool_cache_locked(p,off,limit-off,0,1);
       pthread_mutex_unlock(&V.resources);
     } else shared_cache(&p->whole.buffer,off,limit-off,0);

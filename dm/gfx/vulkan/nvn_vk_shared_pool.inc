@@ -5,7 +5,7 @@
 #include "dm_guest_heap.h"
 extern int dm_guest_heap_probe_views_create(size_t,size_t,dm_guest_heap_probe_views *) __attribute__((weak));
 extern void dm_guest_heap_probe_views_destroy(dm_guest_heap_probe_views *) __attribute__((weak));
-static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer *fresh) {
+static VkResult shared_buffer_create_types(void *host_pointer,uint64_t bytes,vk_buffer *fresh,uint32_t image_types) {
   uint64_t address=(uintptr_t)host_pointer;
   const char *stage="external-buffer-properties";
   VkExternalMemoryBufferCreateInfo external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
@@ -36,7 +36,7 @@ static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer
       for(uint32_t k=0;k<V.mem.memoryTypeCount;k++) {
         VkMemoryPropertyFlags flags=V.mem.memoryTypes[k].propertyFlags;
         VkMemoryPropertyFlags required=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-        if((host.memoryTypeBits&needs.memoryTypeBits&(1u<<k)) && (flags&required)==required &&
+        if((host.memoryTypeBits&needs.memoryTypeBits&image_types&(1u<<k)) && (flags&required)==required &&
             ((flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || (pass && atom && !(atom&(atom-1)) &&
               !(address%atom) && !(bytes%atom)))) {type=k;break;}
       }
@@ -62,6 +62,10 @@ static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer
   return result;
 }
 
+static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer *fresh) {
+  return shared_buffer_create_types(host_pointer,bytes,fresh,UINT32_MAX);
+}
+
 static void shared_cache(vk_buffer *b,uint64_t offset,uint64_t bytes,int invalidate) {
   if(!b->shared_import || !bytes || offset>b->size || bytes>b->size-offset)
     die("Shared cache range/lifetime violation");
@@ -80,6 +84,9 @@ static void shared_cache(vk_buffer *b,uint64_t offset,uint64_t bytes,int invalid
 // cover untouched holes and visits only their actual imported intersections.
 static void shared_pool_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int invalidate,int complete) {
   if(!p->shared || offset>p->size || bytes>p->size-offset)die("Shared cache logical range");
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  native_allocation_cache_locked(p,offset,bytes,invalidate);
+#endif
   if(!shared_window_bytes) {shared_cache(&p->whole.buffer,offset,bytes,invalidate);return;}
   uint64_t at=offset,end=offset+bytes;
   for(pool_backing_span *b=p->backings;b && b->begin<end;b=b->next) {
@@ -91,6 +98,18 @@ static void shared_pool_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int 
   if(complete && at!=end)die("Shared cache range not imported");
 }
 static void shared_pool_host_barrier(pool *p,uint64_t offset,uint64_t bytes,VkPipelineStageFlags producers) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  // A named active-buffer barrier cannot publish writes through another
+  // VkDeviceMemory import bound to a native VkImage. Preserve the real alias.
+  pthread_mutex_lock(&V.resources);
+  int native_alias=native_allocation_overlaps_locked(p,offset,bytes);
+  pthread_mutex_unlock(&V.resources);
+  if(native_alias) {
+    VkMemoryBarrier barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
+    vkCmdPipelineBarrier(V.cmd,producers,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,NULL,0,NULL);
+  }
+#endif
   if(!shared_window_bytes) {
     VkBufferMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
       .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
@@ -338,44 +357,5 @@ int vk_pool_shared_image_source(uint64_t address,uint64_t bytes,int prepare) {
 
 #include "nvn_vk_shared_union.inc"
 #ifdef DM_VULKAN_NATIVE_RESOURCES
-// A persistent image reference plus original per-submission GPU-access refs.
-// Pool Finalize finishes submissions and destroys images before waiting refs.
-void *vk_pool_native_image_bind(uint64_t address,uint64_t bytes,VkImage image,
-                               const VkMemoryRequirements *needs,VkDeviceMemory *memory) {
-  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
-  if(!p || !p->shared || p->shared_closing || !needs || needs->size!=bytes)
-    die("Native image requires a live whole shared Pool");
-  shared_pool_materialize(p);
-  uint64_t offset=address-(uintptr_t)p->guest;
-  if(!needs->alignment || offset%needs->alignment ||
-     !(needs->memoryTypeBits&(1u<<p->whole.buffer.shared_memory_type)))
-    die("Native image shared allocation type/alignment mismatch");
-  VK_CHECK(vkBindImageMemory(V.device,image,p->whole.buffer.memory,offset));
-  *memory=p->whole.buffer.memory;atomic_fetch_add(&p->native_image_references,1);
-  pthread_mutex_unlock(&V.resources);return p;
-}
-void vk_pool_native_image_use(void *token,uint64_t address,uint64_t bytes,VkPipelineStageFlags stages) {
-  pthread_mutex_lock(&V.resources);pool *p=token;
-  if(p!=pool_find(address,bytes) || !p->shared || p->shared_closing)
-    die("Native image retained Pool lifetime mismatch");
-  record_pool_use(p,address-(uintptr_t)p->guest,bytes,stages,1);
-  pthread_mutex_unlock(&V.resources);
-}
-// The independent prewrite-gate change supplies this startup-frozen query.
-// A scope alone does NOT prove the command commit/completion gate is wired.
-// This integrated candidate requires the real commit/completion prewrite gate.
-// The getter reports its cold selected mode; a scope alone is insufficient.
-int vk_pool_native_image_write_ready(void *token) {
-  pool *p=token;
-  if(!p || !p->shared || !p->backings || p->shared_closing)return 0;
-  return (p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ||
-    vk_pool_shared_gpu_gate_mode();
-}
-void vk_pool_native_image_release(void *token) {
-  // Destroy is called both with resources held and from completion callbacks.
-  // Finalize finishes callbacks and closes every image before freeing Pool.
-  pool *p=token;
-  if(!p || !atomic_fetch_sub(&p->native_image_references,1))
-    die("Native image Pool reference underflow");
-}
+#include "nvn_vk_native_allocation.inc"
 #endif

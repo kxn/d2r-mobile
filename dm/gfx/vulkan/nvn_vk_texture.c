@@ -680,6 +680,16 @@ static void image_allocate(image *i) {
 }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 #include "nvn_vk_native_image.inc"
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_texture_native_binding(uint64_t serial,VkDeviceMemory *memory,uint64_t *offset) {
+  extern void vk_test_native_allocation_binding(void *,VkDeviceMemory *,uint64_t *);
+  for(image *i=image_buckets[serial%8192];i;i=i->hash_next)if(i->tex.serial==serial && i->native_entry) {
+    vk_test_native_allocation_binding(i->native_pool,memory,offset);return;
+  }
+  die("Native image binding test owner missing");
+}
+#endif
+
 #endif
 static void image_storage_destroy(void *context) {
   image *i = context;
@@ -1511,11 +1521,18 @@ typedef struct {
   const p_copy_b2t *copy;
   const tex_t *retile;
   const p_copy_t2t *astc;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  const tex_t *native_source,*native_destination;
+#endif
   uint64_t row,img;
   int write;
 } copy_pool_plan;
 static int copy_pool_collect(void *context,vk_pool_requirement_sink sink,void *sink_context) {
   const copy_pool_plan *p=context;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(!vk_texture_native_pool_collect(p->native_source,VK_PIPELINE_STAGE_TRANSFER_BIT,0,sink,sink_context) ||
+     !vk_texture_native_pool_collect(p->native_destination,VK_PIPELINE_STAGE_TRANSFER_BIT,1,sink,sink_context))return 0;
+#endif
   if(p->copy) {
     vk_pool_requirement r={p->copy->src,copy_pool_footprint(p->copy,p->row,p->img),
       0,VK_PIPELINE_STAGE_TRANSFER_BIT,p->write,0};
@@ -1538,6 +1555,9 @@ static int copy_pool_collect(void *context,vk_pool_requirement_sink sink,void *s
 static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int write) {
   if(!V.options.pool_window_bytes)return 0;
   copy_pool_plan plan={.copy=p,.retile=write?NULL:p->tex,.row=row,.img=img,.write=write};
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  plan.native_source=write?p->tex:NULL;plan.native_destination=write?NULL:p->tex;
+#endif
   return vk_pool_operation_begin(copy_pool_collect,&plan);
 }
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
@@ -1665,6 +1685,9 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(vk_pool_shared_active() && V.options.pool_window_bytes) {
     vk_mip_clear_drain();copy_pool_plan plan={.retile=p->dst,.astc=p};
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    plan.native_source=p->src;plan.native_destination=p->dst;
+#endif
     operation=vk_pool_operation_begin(copy_pool_collect,&plan);
     // Union precedes exact ASTC qualification and every physical borrow.
     astc_observation=image_astc_copy_preflight(p);
@@ -1824,6 +1847,9 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer,
     die("Vulkan synchronous read during recording");
   mtl_sub_begin();
   vk_texture_cpu_preflight(t);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  int native_operation=native_pool_operation(t,VK_PIPELINE_STAGE_TRANSFER_BIT,0);
+#endif
   image *i = image_get(t);
   if(i->astc_copy_encoding)die("ASTC propagated copy cannot ReadTexels as logical BC3 bytes");
   image_upload(i);
@@ -1855,6 +1881,9 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer,
   // Publish while this submit still owns the staging buffer. The synchronous
   // wait also keeps the callback's stack context alive through CPU publication.
   vk_completion_write(read_texels_done, &readback, dst, written);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  vk_pool_operation_end(native_operation);
+#endif
   uint64_t fence = vk_internal_commit();
   vk_internal_wait(fence);
 }
@@ -2323,6 +2352,9 @@ void vk_texture_end_submit(void) {
     free(r);
   }
   pthread_mutex_unlock(&V.resources);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  vk_pool_native_image_collect();
+#endif
 }
 // Called only by the existing recording-owner low-memory control boundary.
 // Retain logical NVN descriptors: a later use recreates and fully uploads the

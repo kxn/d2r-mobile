@@ -690,6 +690,7 @@ static void fixed_shared_buffer_test(void) {
 #endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 #include "native_vulkan_native_resource.inc"
+#include "native_vulkan_native_lane.inc"
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
@@ -800,6 +801,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_SHARED_IMPORT_WINDOW_FIXTURE")) {shared_import_windows_test();return 0;}
   if(getenv("DM_SHARED_IMAGE_NC_GATE_FIXTURE"))return shared_image_nc_gate_test();
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(getenv("DM_NATIVE_LANE_WINDOW_FIXTURE")) {native_lane_gpu_test();return 0;}
   const char *native_fixture=getenv("DM_NATIVE_RESOURCE_NVN_FIXTURE");
   if(native_fixture)return native_resource_gpu_test(native_fixture);
 #endif

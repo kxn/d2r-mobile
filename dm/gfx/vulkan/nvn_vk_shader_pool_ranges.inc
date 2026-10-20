@@ -72,6 +72,21 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
       if(buffer && !shader_pool_requirement(buffer,b->kind,vk_binding_writable(b),
           producer_stage(stage),prefix,sink,context))return 0;
     }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    // Image schemas use their existing immutable image iterator, independent
+    // of the buffer-only mask. Native payloads need physical admission too.
+    if(vk_native_resources_active())for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
+      unsigned k;if(!vk_image_binding_next(s,&it,&k))break;
+      const vk_binding *b=&s->bindings[k];
+      if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
+      if(b->count!=1)return pool_range_fail("native descriptor array count");
+      if(b->reg<0 || b->reg>=(b->kind==4?32:128))return pool_range_fail("native image register range");
+      uint64_t handle=b->kind==4?state->img[stage][b->reg]:state->tex[stage][b->reg];
+      tex_t t;
+      if(!vk_texture_descriptor(handle&0xfffff,&t))return pool_range_fail("missing native candidate image descriptor");
+      if(!vk_texture_native_pool_collect(&t,producer_stage(stage),vk_binding_writable(b),sink,context))return 0;
+    }
+#endif
   }
   return 1;
 }

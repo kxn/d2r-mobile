@@ -2,6 +2,12 @@
 // Input is a declared table produced from actual resource bake artifacts.
 #include "mbedtls/sha256.h"
 static int native_layout_checks;
+static vk_pool_requirement native_layout_requirement;
+static unsigned native_layout_requirement_count;
+static int native_layout_sink(void *context,const vk_pool_requirement *r) {
+  (void)context;native_layout_requirement=*r;native_layout_requirement_count++;return 1;
+}
+
 #define NATIVE_CHECK(x) do {if(!(x))die("Native layout fixture: %s",#x);native_layout_checks++;}while(0)
 static void native_table_rehash(nvn_native_table *table) {
   memset(table->digest,0,32);
@@ -56,6 +62,12 @@ static int native_layout_test(const char *path) {
   pool_t pool={.mem=owned,.size=owned_size};
   h_nvnTextureBuilderSetStorage(&builder,(NVNmemoryPool *)&pool,entry->recipe.image_alignment);
   NVNtexture texture={0};NATIVE_CHECK(h_nvnTextureInitialize(&texture,&builder));
+  NATIVE_CHECK(vk_texture_native_pool_collect(CTX(&texture),VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,native_layout_sink,NULL));
+  NATIVE_CHECK(native_layout_requirement_count==1 && native_layout_requirement.address==(uintptr_t)CTX(&texture)->mem &&
+      native_layout_requirement.size==entry->recipe.image_size && native_layout_requirement.stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  tex_t ordinary_for_plan=*CTX(&texture);ordinary_for_plan.has_layout=0;
+  NATIVE_CHECK(vk_texture_native_pool_collect(&ordinary_for_plan,VK_PIPELINE_STAGE_TRANSFER_BIT,1,native_layout_sink,NULL));
+  NATIVE_CHECK(native_layout_requirement_count==1);
   NVNtextureView view={0};h_nvnTextureViewSetDefaults(&view);
   for(unsigned n=0;n<entry->recipe.levels;n++) {
     h_nvnTextureViewSetLevels(&view,n,1);

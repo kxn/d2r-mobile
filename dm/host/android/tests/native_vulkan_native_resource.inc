@@ -3,6 +3,7 @@
 // not another host-native export/import operation or a guessed vendor layout.
 #include "../../../gfx/nvn/nvn_native_layout.h"
 #include "mbedtls/sha256.h"
+#include "dm_guest_heap.h"
 #include <sys/mman.h>
 typedef struct {uint32_t width,height;uint64_t offset,size;uint8_t sha256[32];} nr_input_mip;
 typedef struct {
@@ -90,9 +91,17 @@ static int native_resource_gpu_test(const char *directory) {
     CHECK(m->width==(input->width>>n) && m->height==(input->height>>n));
     CHECK(m->size==(uint64_t)((m->width+input->block-1)/input->block)*((m->height+input->block-1)/input->block)*16);
   }
-  uint8_t *raw=mmap(NULL,pool_bytes+65536,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);CHECK(raw!=MAP_FAILED);
-  uint8_t *storage=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);memset(storage,0xa5,pool_bytes);
-  vk_test_shared_image_backing(storage,pool_bytes);memcpy(storage+native_offset,payload,payload_size);
+  int window_fixture=V.options.pool_window_bytes!=0;
+  uint8_t *raw=NULL,*storage=NULL;
+  if(window_fixture) {
+    CHECK(V.options.pool_window_bytes==65536 && dm_guest_shared_heap_contains((uintptr_t)bytes,pool_bytes));
+    storage=bytes;dm_guest_write_prepare(storage,pool_bytes);
+  } else {
+    raw=mmap(NULL,pool_bytes+65536,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);CHECK(raw!=MAP_FAILED);
+    storage=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
+    vk_test_shared_image_backing(storage,pool_bytes);
+  }
+  memset(storage,0xa5,pool_bytes);memcpy(storage+native_offset,payload,payload_size);
   memcpy(storage+linear_offset,linear,linear_size);
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);
   CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);CALL(nvnMemoryPoolBuilderSetStorage,&mb,storage,pool_bytes);
@@ -146,6 +155,25 @@ static int native_resource_gpu_test(const char *directory) {
   NVNvertexStreamState stream;CALL(nvnVertexStreamStateSetDefaults,&stream);CALL(nvnVertexStreamStateSetStride,&stream,16);
   S.stream[0]=*(const vs_st *)&stream;S.vertex[0]=(NVNbufferRange){(uintptr_t)storage+vertex_offset,sizeof vertices};
   nr_samples(&native,&reference,&output,input->levels);
+  if(window_fixture) {
+    extern void vk_test_texture_native_binding(uint64_t,VkDeviceMemory *,uint64_t *);
+    VkDeviceMemory original,current;uint64_t original_offset,current_offset;
+    uint64_t serial=((const tex_t *)&native)->serial;
+    vk_test_texture_native_binding(serial,&original,&original_offset);
+    vk_pool_span_info before,after;
+    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_SINGLE);
+    for(unsigned pass=0;pass<2;pass++) {
+      mtl_sub_begin();vk_pool_requirement cross={(uintptr_t)storage+native_offset-(pass?98304:32768),
+        payload_size+(pass?196608:65536),0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+      int operation=vk_pool_operation_begin_ranges(&cross,1);
+      CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&after)==VK_POOL_SPAN_SINGLE);
+      CHECK(after.backing_generation>before.backing_generation);before=after;
+      vk_test_texture_native_binding(serial,&current,&current_offset);
+      CHECK(current==original && current_offset==original_offset);
+      vk_pool_operation_end(operation);vk_internal_wait(vk_internal_commit());
+      nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
+    }
+  }
   CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));
   NVNtexture tail;int has_tail=header.version==2 && family.thumbnail_mip;
   if(has_tail) {
@@ -235,12 +263,19 @@ static int native_resource_gpu_test(const char *directory) {
   CHECK(!memcmp(storage+alias_offset,storage+native_offset,4096));
   CHECK(!memcmp(storage+native_offset-64,(uint8_t[64]){[0 ... 63]=0xa5},64));
   CHECK(!memcmp(storage+native_offset+payload_size,(uint8_t[64]){[0 ... 63]=0xa5},64));
+  uint64_t native_import_count,native_import_bytes,native_metadata_bytes;
+  vk_native_allocation_stats(&native_import_count,&native_import_bytes,&native_metadata_bytes);
+  CHECK(native_import_count==1 && native_import_bytes>=payload_size && native_import_bytes<=payload_size+65536);
   S=(vk_state){0};vk_pipeline_state_changed();CALL(nvnSamplerFinalize,&sampler);CALL(nvnProgramFinalize,&program);
   CALL(nvnTextureFinalize,&native);CALL(nvnTextureFinalize,&reference);CALL(nvnTextureFinalize,&output);
   if(has_tail)CALL(nvnTextureFinalize,&tail);
   CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&pool);
-  CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));vk_test_shared_image_backing(NULL,0);
-  storage[native_offset]=0x42;CHECK(storage[native_offset]==0x42);CHECK(!munmap(raw,pool_bytes+65536));
+  CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));if(!window_fixture)vk_test_shared_image_backing(NULL,0);
+  storage[native_offset]=0x42;CHECK(storage[native_offset]==0x42);if(raw)CHECK(!munmap(raw,pool_bytes+65536));
+  uint64_t count_after,bytes_after,metadata_after;vk_native_allocation_stats(&count_after,&bytes_after,&metadata_after);
+  CHECK(!count_after && !bytes_after && !metadata_after);
+  printf("{\"native_allocation_lane\":true,\"imports\":%llu,\"import_bytes\":%llu,\"metadata_bytes\":%llu,\"same_physical_pages_as_Buffer_imports\":true,\"no_payload_copy\":true,\"window_two_unions\":%s,\"last_release_collected\":true}\n",
+    (unsigned long long)native_import_count,(unsigned long long)native_import_bytes,(unsigned long long)native_metadata_bytes,window_fixture?"true":"false");
   free(payload);free(linear);CHECK(vk_validation_error_count()==0);
   printf("{\"test\":\"native-resource-original-NVN\",\"checks\":%u,\"format\":%u,\"mips\":%u,\"family_version\":%u,\"tail_levels\":%u,\"memory_flags\":%u,\"atom\":%llu,\"native_offset\":%u,\"pool_bytes\":%u,\"no_pool_shadow\":true,\"full_all_mips\":true,\"tail_packaged_and_B2T\":%s,\"shared_gpu_gate\":%s,\"default_enabled\":false,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
     checks,entry.recipe.format,entry.recipe.levels,header.version,has_tail?entry.recipe.levels-family.thumbnail_mip:0,

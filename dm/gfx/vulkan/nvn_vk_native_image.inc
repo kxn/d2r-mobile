@@ -92,14 +92,29 @@ static void native_image_alias_read(image *i,VkPipelineStageFlags stages) {
   i->native_alias_generation=now;i->native_alias_visible_stages|=stages;
 }
 // The table is a layout/provenance declaration, never read-only authority.
-// Imported images have no vk_memory allocation: their original shared Pool
-// owns storage, existing submission refs retain uses, and Pool close destroys
-// all bound VkImages before freeing the imported VkDeviceMemory.
+// Imported images own a finite import of original Pool bytes (no payload
+// allocation/copy). Submission refs retain accesses; physical image retirement
+// releases its immutable native memory token before Pool/guest storage closes.
 static const nvn_native_entry *native_image_entry(const tex_t *t) {
   if(!t || !t->has_layout || !nvn_native_layout_is_marker(t->layout))return NULL;
   const nvn_native_entry *entry=nvn_native_layout_resolve(t->layout,&t->d);
   if(!entry)die("Native image layout/description is not in the startup table");
   return entry;
+}
+// Pure table/descriptor metadata, before any image, view or buffer borrow.
+int vk_texture_native_pool_collect(const tex_t *t,VkPipelineStageFlags stages,int writable,
+                                  vk_pool_requirement_sink sink,void *context) {
+  if(!t || !t->has_layout || !nvn_native_layout_is_marker(t->layout))return 1;
+  const nvn_native_entry *entry=native_image_entry(t);
+  if(!entry || !sink || !t->mem || t->L.size!=entry->recipe.image_size)return 0;
+  vk_pool_requirement requirement={(uintptr_t)t->mem,entry->recipe.image_size,0,stages,writable,0};
+  return sink(context,&requirement);
+}
+static int native_pool_operation(const tex_t *t,VkPipelineStageFlags stages,int writable) {
+  if(!V.options.pool_window_bytes || !t || !t->has_layout || !nvn_native_layout_is_marker(t->layout))return 0;
+  const nvn_native_entry *entry=native_image_entry(t);
+  vk_pool_requirement requirement={(uintptr_t)t->mem,entry->recipe.image_size,0,stages,writable,0};
+  return vk_pool_operation_begin_ranges(&requirement,1);
 }
 static void native_image_use(image *i) {
   if(!i->native_entry)return;
@@ -216,7 +231,7 @@ static void native_image_record(image *i,VkImageSubresourceRange range,VkPipelin
     for(unsigned n=range.baseMipLevel;n<range.baseMipLevel+range.levelCount;n++) {
       const nvn_native_mip *m=&i->native_entry->recipe.mips[n];
       uint64_t address=(uintptr_t)i->tex.mem+m->offset;
-      // bind/materialize has already pinned the complete shared Pool. Acquire
+      // Both finite native allocation and active operation span are pinned. Acquire
       // only a mip that is actually written, never every sampled-only asset.
       // The independent NC commit gate protects these pages through fence +
       // Invalidate. A missing gate is a hard experimental capability failure.
