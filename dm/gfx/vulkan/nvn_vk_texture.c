@@ -1020,6 +1020,36 @@ image_publish:
   return i;
 }
 static image *image_get(const tex_t *t) { return image_get_usage(t,0); }
+#if defined(DM_VULKAN_NATIVE_RESOURCES) && defined(DM_VULKAN_TEST_EMBED)
+// Owned RGBA dependency oracle only: the production table still rejects RGBA.
+// Replace a completed, never-viewed placeholder by a genuinely imported image;
+// no real producer recipe or host-native mip permutation is asserted here.
+void vk_test_native_rgba_adopt(const tex_t *t,VkImage handle,VkDeviceMemory memory,void *allocation,
+    const VkImageCreateInfo *description,const nvn_native_entry *entry) {
+  if(!handle) {(void)image_get(t);return;}
+  image *i=NULL;for(image *at=image_buckets[t->serial%8192];at;at=at->hash_next)
+    if(at->tex.serial==t->serial){i=at;break;}
+  if(!i || i->native_entry || i->views || i->last_use>vk_completed_serial() || i->shared_dirty_scope ||
+      i->format!=VK_FORMAT_R8G8B8A8_UNORM || description->format!=i->format ||
+      description->mipLevels!=i->levels || description->arrayLayers!=1 || !allocation || !entry)
+    die("Owned native RGBA adoption requires a completed untouched matching placeholder");
+  image_shared_alias_remove(i);vkDestroyImage(V.device,i->handle,NULL);vk_memory_free(i->allocation);
+  i->allocation=NULL;i->handle=handle;i->memory=memory;i->native_pool=allocation;i->native_entry=entry;
+  i->description=*description;i->description.pNext=NULL;i->initialized=1;i->layout=VK_IMAGE_LAYOUT_GENERAL;
+  i->layout_scope=0;i->physical_traits=image_physical_traits(i);
+  memset(i->access,0,(size_t)i->levels*3*sizeof *i->access);i->access_generation++;
+  for(unsigned n=0;n<i->levels;n++)image_cell(i,0,n,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
+  native_range_add(i);image_recipes_changed();
+}
+VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t serial,unsigned level) {
+  for(image *i=image_buckets[serial%8192];i;i=i->hash_next)if(i->tex.serial==serial) {
+    if(!i->native_entry || level>=i->levels || image_cell(i,0,level,0)->use_clock)
+      die("Owned acquire oracle requires an unused native mip");
+    return image_cell(i,0,level,0)->mip_scope;
+  }
+  die("Owned acquire oracle image missing");
+}
+#endif
 static image *image_get_attachment(const tex_t *t) {
   VkImageUsageFlags usage=aspect_for(t->d.format)==VK_IMAGE_ASPECT_COLOR_BIT?
       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT:VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
