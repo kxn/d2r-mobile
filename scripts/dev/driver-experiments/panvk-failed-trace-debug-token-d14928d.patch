@@ -1,0 +1,61 @@
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+index d2b5b60..71088e6 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+@@ -2948,6 +2948,14 @@ panvk_queue_submit_init_signals(struct panvk_queue_submit *submit,
+ /* This is a capture-output option, never a runtime optimization. */
+ DEBUG_GET_ONCE_BOOL_OPTION(trace_failure_only, "PANVK_TRACE_FAILURE_ONLY", false)
+ 
++static bool
++trace_failure_only_enabled(void)
++{
++   /* PANVK_DEBUG is parsed once and its existing Android property is
++    * already usable by app UIDs. Keep the cached environment option too. */
++   return PANVK_DEBUG(TRACE_FAILURE_ONLY) || debug_get_option_trace_failure_only();
++}
++
+ static void
+ panvk_queue_submit_reset_trace(struct panvk_queue_submit *submit)
+ {
+@@ -2996,7 +3004,7 @@ panvk_queue_submit_process_failed_trace(struct panvk_queue_submit *submit)
+ {
+    struct panvk_gpu_queue *queue = submit->queue;
+    struct panvk_device *dev = submit->dev;
+-   if (!PANVK_DEBUG(TRACE) || !debug_get_option_trace_failure_only() ||
++   if (!PANVK_DEBUG(TRACE) || !trace_failure_only_enabled() ||
+        !dev->debug.decode_ctx)
+       return;
+ 
+@@ -3596,7 +3604,7 @@ panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue, struct vk_queue_subm
+       }
+ 
+       panvk_queue_submit_process_signals_kbase(&submit, vk_submit);
+-      if (!PANVK_DEBUG(TRACE) || !debug_get_option_trace_failure_only())
++      if (!PANVK_DEBUG(TRACE) || !trace_failure_only_enabled())
+          panvk_queue_submit_process_debug(&submit, vk_submit);
+       goto out;
+    }
+diff --git a/src/panfrost/vulkan/panvk_instance.c b/src/panfrost/vulkan/panvk_instance.c
+index 46243d6..73688dc 100644
+--- a/src/panfrost/vulkan/panvk_instance.c
++++ b/src/panfrost/vulkan/panvk_instance.c
+@@ -41,6 +41,7 @@ static const struct debug_control panvk_debug_options[] = {
+    {"startup", PANVK_DEBUG_STARTUP},
+    {"nir", PANVK_DEBUG_NIR},
+    {"trace", PANVK_DEBUG_TRACE},
++   {"trace_failure_only", PANVK_DEBUG_TRACE_FAILURE_ONLY},
+    {"sync", PANVK_DEBUG_SYNC},
+    {"noafbc", PANVK_DEBUG_NO_AFBC},
+    {"linear", PANVK_DEBUG_LINEAR},
+diff --git a/src/panfrost/vulkan/panvk_instance.h b/src/panfrost/vulkan/panvk_instance.h
+index ccdcca6..63589bf 100644
+--- a/src/panfrost/vulkan/panvk_instance.h
++++ b/src/panfrost/vulkan/panvk_instance.h
+@@ -39,6 +39,7 @@ enum panvk_debug_flags {
+    PANVK_DEBUG_NO_BC_EAGER = 1 << 21,
+    PANVK_DEBUG_NO_BC_ZEROINIT = 1 << 22,
+    PANVK_DEBUG_BC_TRACE = 1 << 23,
++   PANVK_DEBUG_TRACE_FAILURE_ONLY = 1 << 24,
+ };
+ 
+ extern uint64_t panvk_debug;

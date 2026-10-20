@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One reversible native Mesa CSF progress original-BC diagnostic. Offline by default.
+"""One reversible bounded existing PanVK failure-only TRACE original-BC diagnostic. Offline by default.
 Uses existing directory CAS, ordinary first-PID ownership and original save2 helper.
 Original BC/current-identical upstream UI overlay only; no APK/module changes, old capture, measurement or GPU-import.
 """
@@ -9,9 +9,9 @@ R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
-READY=R/'.local/logs/panvk-error-progress-v1-source-ready-agent.json'
-READY_SHA='80674caf7f1bb966ae10eb4809beb2679b74e960dc577b5a9f91aa71460eb44f'
-DRIVER_SHA='bc996257c4395ea5fec016832087e4b2bdac2a919623ea63fd3aec32f37247dc'
+READY=R/'.local/logs/panvk-failed-trace-debug-token-v1-source-ready-agent.json'
+READY_SHA='78dfe83e095292150ee398d39d606001bdfa714b2be3c76344ff18a2a899d00c'
+DRIVER_SHA='133bfcaf739b2af3806f0b6d6452e0f426ac8b82d7c336d1902816cfdec63071'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
 LOCK='files/runtime/.astc6-full-controller-lock'
@@ -20,7 +20,7 @@ RESOURCE_READY=R/'.local/build/panvk-minegraph-original-bc-control-v5/compositio
 RESOURCE_SHA='41ce2605b2150669081aa1978094d1296168d4c95c88c2bb0b21c7e6ff970e13'
 DUMP_DIR='files/runtime/temp/pandecode'
 DUMP_PREFIX='/data/data/'+PKG+'/files/runtime/temp/pandecode/cs'
-PROPERTIES={'debug.mesa.panvk.debug':'startup,kbase_diag','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
+PROPERTIES={'debug.mesa.panvk.debug':'startup,trace,kbase_diag,trace_failure_only','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
 DUMP_SOFT_LIMIT=256*1024*1024
 LAYER_KEYS=['enable_gpu_debug_layers','gpu_debug_app','gpu_debug_layers','gpu_debug_layers_gles','gpu_debug_layer_app']
 # Same existing inventory/CAS checks; preserve real Diablo II paths containing spaces.
@@ -50,8 +50,11 @@ def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':
 def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
  require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
- require(d['diagnostic_only'] and d['only_delta_from_static_hardware_v2_driver_source']==['src/panfrost/genxml/decode_common.c','src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c'] and d['only_delta_from_feeb_driver_source']==['src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c'],'not frozen native CSF diagnostic-only adaptation')
- require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build','src/panfrost/genxml/decode_common.c','src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c'],'not the static unsupported-HAL platform candidate')
+ require(d['diagnostic_only'] and d['only_delta_from_parent_c465_source']==['src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c','src/panfrost/vulkan/panvk_instance.c','src/panfrost/vulkan/panvk_instance.h'],'not exact bounded TRACE configuration successor')
+ require('libhardware.so'not in d['needed'],'not static HAL platform candidate')
+ require(d['local_source_revision']=='d14928d7b949fef17e4f46c25daeda50d4c0625d','wrong frozen source')
+ require(d['parent_ready']['sha256']=='b918ae25d6bbb88ff04de82b046bcea26b6ec8be1a7dc2d7f5cda000f774e68c','wrong reviewed bounded tracer parent')
+ for row in [d['parent_ready'],d['source_protocol_proof'],*d['debug_token_guard_evidence'],*d['host_parser_guard_evidence'],*d['token_build_evidence']]:require(sha(row['path'])==row['sha256'],'TRACE provenance changed: '+row['path'])
  for key in ['source_identity','build_only_adaptation','generated_version','host_codegen','ELF','driver']:
   r=d[key];require(sha(r['path'])==r['sha256'],'driver provenance changed: '+key)
  require(d['driver']['sha256']==DRIVER_SHA and set(d['ICD_exports_verified'])=={'HMI','vk_icdGetInstanceProcAddr','vk_icdGetPhysicalDeviceProcAddr','vk_icdNegotiateLoaderICDInterfaceVersion'},'wrong ICD')
@@ -63,6 +66,9 @@ def proof():
   require((p.is_symlink() and str(p.readlink())==a['target']) if a['kind']=='symlink' else (p.is_file() and not p.is_symlink() and sha(p)==a['sha256']),'driver source changed: '+row['path'])
  p=read(old.PROMOTION);require(p['production_promoted_and_stopped'] and p['source_revision']=='022d6254d9de565852fa22394b6403491db86707' and not p['rollback_errors'],'production promotion mismatch')
  require(p['canonical_APK_SHA256']==APK and p['host_ELF_SHA256']==ELF and len(p['promoted_module_and_resource_hashes'])==35,'original APK/35 set')
+ cold=R/'.local/logs/panvk-existing-progress-originalBC-original022-mali-v1/cold-original-pause-no-world-proof-agent.json';require(sha(cold)=='8d4069268ce944774f19019da244fcd2afb39706a629c6376e9ce0b15d0f83bb','exact022 cold pause proof changed');cold=read(cold)
+ require(cold['exact_canonical_APK_SHA256']==APK and cold['exact_ELF']==ELF,'cold proof target mismatch')
+ for n,h in cold['compiled_producer_source_hashes'].items():require(sha(SOURCE/n)==h,'original conditional-save source changed: '+n)
  ap=R/'.local/build/image-binding-022d625-canonical-source/canonical.apk';require(sha(ap)==APK,'canonical APK changed')
  with zipfile.ZipFile(ap) as z:require(hashlib.sha256(z.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()==ELF,'canonical ELF changed')
  return d,p
@@ -150,6 +156,27 @@ def native_log_text(dev,*args):
  data=subprocess.check_output(dev.command+['shell',shlex.join(['run-as',PKG,*args])],timeout=180)
  return data.decode('utf-8',errors='replace').strip()
 
+def failure_only_banner(native):
+ matches=re.findall(r'^\[MESA-PANVK\] panvk_debug: ([^\n]+)$',native,re.M)
+ return bool(matches) and all(set(v.split('|'))=={'startup','trace','kbase_diag','trace_failure_only'}for v in matches)
+
+def activity_stopped(activities,pid):
+ # Exact target record only; whitespace never consumes the next line/block.
+ for block in re.split(r'(?=^[ \t]*\*[ \t]+Hist[ \t]+#[0-9]+:)',activities,flags=re.M):
+  head=block.splitlines()[0]if block.splitlines()else''
+  if not re.match(r'^[ \t]*\*[ \t]+Hist[ \t]+#[0-9]+:',head):continue
+  if not re.search(re.escape(PKG)+r'/\.MainActivity(?:[ \t}]|$)',head):continue
+  if re.search(r'\bapp=ProcessRecord\{[^\n]*[ \t]'+re.escape(pid)+':'+re.escape(PKG)+r'/',block) and re.search(r'^[ \t]*(?:mState|state)=STOPPED\b',block,re.M):return True
+ return False
+
+def cold_pause_proof(before,after,activities,pid):
+ # Exact frozen original022 JNI: if dm_ingame_now(), its unconditional save
+ # LOG precedes dm_gfx_suspend(). LOG is unbuffered stderr. Fresh positive
+ # drain completion + no save LOG proves that branch was not taken on pause.
+ if 'Android native start pid='+pid+'\n'not in before or not after.startswith(before):return False
+ fresh=after[len(before):]
+ return ('[dm] [nvn] 图形挂起：在途 GPU 工作已清空' in fresh and 'Android background save 'not in fresh and activity_stopped(activities,pid))
+
 def launch_once(dev,path,d,out):
  own=None;client=None;ambiguous=False;native_identity=False
  def current():return dev.adb('shell','pidof '+PKG+' || true')
@@ -177,6 +204,11 @@ def launch_once(dev,path,d,out):
      header=native_log_text(dev,'sh','-c','if test -f files/runtime/native.log; then head -c 4096 files/runtime/native.log; fi')
      native_identity=('Android native start pid='+own+'\n'in header)
      if native_identity:d['native_log_first_PID_verified']=True;journal(path,d)
+    if native_identity and not d.get('failure_only_token_actual'):
+     config=native_log_text(dev,'head','-c','65536','files/runtime/native.log')
+     if '[MESA-PANVK] panvk_debug:'in config:
+      require(failure_only_banner(config),'actual cached failure-only TRACE token absent; stop diagnostic')
+      d['failure_only_token_actual']=True;journal(path,d)
     if native_identity:
      (out/'native.log').write_text(native)
      if 'FATAL'in native or 'Vulkan PanVK ICD load:'in native:d['native_failure_seen']=True;break
@@ -201,6 +233,7 @@ def launch_once(dev,path,d,out):
   require(state['game_output']==state['surface_output']=={'width':2772,'height':1240}and state['guest_heap']['shared']is False,'output/shared mode mismatch')
   require('[vulkan loader] provider=panvk direct ICD='in native and 'driverID=20'in native and 'FATAL'not in native,'provider/driver identity mismatch')
   require(read(out/'launch.json')['actual_vulkan_provider']=='panvk' and read(out/'launch.json')['requested_legacy_astc_copy']is False,'legacy/resource mode mismatch')
+  require(d.get('failure_only_token_actual'),'actual failure-only configuration never confirmed')
   d['actual_original_game_HUD_reached']=True;d['real_game_modules_executed']=True;d['namespace_load_succeeded']=True;d['visual_acceptance_pending']=True;journal(path,d)
  except BaseException as e:
   d['primary_launch_error']=repr(e);journal(path,d);raise
@@ -218,9 +251,25 @@ def launch_once(dev,path,d,out):
   if now:
    require(not ambiguous and own and now==own,'unowned/replacement PID: preserve transaction')
    cmd=[sys.executable,str(R/'scripts/dev/android-game-background-save.py'),'--serial',d['serial'],'--report',str(out/'fresh-save.json')]
-   with(out/'fresh-save.txt').open('w')as f:subprocess.run(cmd,check=True,stdout=f,stderr=subprocess.STDOUT,timeout=45)
-   f=read(out/'fresh-save.json');require(f['fresh_original_lifecycle_save']and f['save_commits']==2 and f['pid']==int(own),'no fresh original save2')
-   require(current()==own,'PID changed during save');dev.adb('shell','am','force-stop',PKG);dev.stopped();d['fresh_save2_then_stopped']=True
+   before_save=native_log_text(dev,'cat','files/runtime/native.log')
+   require('Android native start pid='+own+'\n'in before_save,'same-PID save log absent')
+   try:
+    with(out/'fresh-save.txt').open('w')as f:save_result=subprocess.run(cmd,check=False,stdout=f,stderr=subprocess.STDOUT,timeout=45)
+    save_rc=save_result.returncode
+   except subprocess.TimeoutExpired:
+    d['original_save_helper_timed_out']=True;save_rc=None
+   after_pid=current()
+   if not after_pid:d['already_exited_during_pause_no_save_restart']=True
+   else:
+    require(after_pid==own,'PID changed after original pause attempt')
+    if save_rc==0:
+     f=read(out/'fresh-save.json');require(f['fresh_original_lifecycle_save']and f['save_commits']==2 and f['pid']==int(own),'no fresh original save2')
+     d['fresh_save2_then_stopped']=True
+    else:
+     after_save=native_log_text(dev,'cat','files/runtime/native.log');activities=dev.adb('shell','dumpsys','activity','activities');(out/'pause-activities.txt').write_text(activities);(out/'pause-native.log').write_text(after_save)
+     require(cold_pause_proof(before_save,after_save,activities,own),'original save failed without exact same-PID positive no-world suspend proof')
+     d['cold_original_pause_no_world_save_required']=True
+    require(current()==own,'PID changed during save');dev.adb('shell','am','force-stop',PKG);dev.stopped()
   else:d['already_exited_no_save_restart']=True
   native=(out/'native.log').read_text()if(out/'native.log').exists()else''
   preserve_dump(dev,path,d,out)
@@ -261,7 +310,7 @@ def clean(dev,path,d):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE bounded native Mesa CSF progress diagnostic original022 originalBC; no static DUMP; error decoder range/order repair only, NOT GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'ONE bounded existing PanVK TRACE_FAILURE_ONLY+kbase_diag diagnostic original022 originalBC; no DUMP, no resources decode, incomplete conservative earlier prefix only; NOT live PC/GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False

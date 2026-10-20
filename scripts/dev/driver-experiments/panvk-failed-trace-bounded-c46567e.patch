@@ -1,0 +1,1020 @@
+diff --git a/src/panfrost/genxml/cs_builder.h b/src/panfrost/genxml/cs_builder.h
+index 81ac410..8ab251b 100644
+--- a/src/panfrost/genxml/cs_builder.h
++++ b/src/panfrost/genxml/cs_builder.h
+@@ -2758,10 +2758,13 @@ struct cs_tracing_ctx {
+    bool enabled;
+    struct cs_index ctx_reg;
+    unsigned tracebuf_addr_offset;
++   /* Optional diagnostic-only capacity metadata. RUN execution is unchanged. */
++   bool bounded;
++   unsigned remaining_offset;
+ };
+ 
+ static inline void
+-cs_trace_preamble(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
++cs_trace_preamble_unbounded(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+                   struct cs_index scratch_regs, unsigned trace_size)
+ {
+    assert(trace_size > 0 && util_is_aligned(trace_size, 64) &&
+@@ -2779,6 +2782,53 @@ cs_trace_preamble(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+    cs_flush_stores(b);
+ }
+ 
++/* Preserve the original address across RUN as the eligibility token: the
++ * original tracer already requires that register to survive RUN. No extra
++ * persistent register or duplicated RUN instruction is needed. */
++static inline void
++cs_trace_preamble(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
++                  struct cs_index scratch_regs, unsigned trace_size)
++{
++   if (!ctx->bounded) {
++      cs_trace_preamble_unbounded(b, ctx, scratch_regs, trace_size);
++      return;
++   }
++
++   struct cs_index remaining = cs_reg32(b, scratch_regs.reg + 2);
++   struct cs_index addr = cs_reg64(b, scratch_regs.reg);
++   cs_load32_to(b, remaining, ctx->ctx_reg, ctx->remaining_offset);
++   cs_add_imm32(b, remaining, remaining, -(int32_t)trace_size);
++   cs_if(b, MALI_CS_CONDITION_GEQUAL, remaining) {
++      cs_store32(b, remaining, ctx->ctx_reg, ctx->remaining_offset);
++      cs_trace_preamble_unbounded(b, ctx, scratch_regs, trace_size);
++   }
++   cs_else(b) {
++      cs_move32_to(b, remaining, 0);
++      cs_store32(b, remaining, ctx->ctx_reg, ctx->remaining_offset);
++      cs_move64_to(b, addr, 0);
++      cs_flush_stores(b);
++   }
++}
++
++static inline void
++cs_trace_payload_start(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
++                        struct cs_if_else *state, struct cs_index addr)
++{
++   if (ctx->bounded)
++      cs_if_start(b, state, MALI_CS_CONDITION_NEQUAL, addr);
++}
++
++static inline void
++cs_trace_payload_end(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
++                      struct cs_if_else *state)
++{
++   if (ctx->bounded) {
++      cs_if_end(b, state);
++      /* Restore the caller's block before returning from this helper. */
++      cs_flush_pending_if(b);
++   }
++}
++
+ #define cs_trace_field_offset(__type, __field)                                 \
+    (int16_t)(offsetof(struct cs_##__type##_trace, __field) -                   \
+              sizeof(struct cs_##__type##_trace))
+@@ -2811,6 +2861,8 @@ cs_trace_run_fragment2(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+     * won't point to the right instruction. */
+    cs_load_ip_to(b, data);
+    cs_run_fragment2(b, enable_tem, tile_order);
++   struct cs_if_else payload_if;
++   cs_trace_payload_start(b, ctx, &payload_if, tracebuf_addr);
+    cs_store64(b, data, tracebuf_addr, cs_trace_field_offset(run_fragment2, ip));
+ 
+    ASSERTED unsigned sr_count = 0;
+@@ -2828,6 +2880,7 @@ cs_trace_run_fragment2(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+    assert(sr_count == CS_RUN_FRAGMENT2_SR_COUNT);
+ 
+    cs_flush_stores(b);
++   cs_trace_payload_end(b, ctx, &payload_if);
+ }
+ #else
+ struct cs_run_fragment_trace {
+@@ -2855,11 +2908,14 @@ cs_trace_run_fragment(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+     * won't point to the right instruction. */
+    cs_load_ip_to(b, data);
+    cs_run_fragment(b, enable_tem, tile_order);
++   struct cs_if_else payload_if;
++   cs_trace_payload_start(b, ctx, &payload_if, tracebuf_addr);
+    cs_store64(b, data, tracebuf_addr, cs_trace_field_offset(run_fragment, ip));
+ 
+    cs_store(b, cs_reg_tuple(b, 40, 7), tracebuf_addr, BITFIELD_MASK(7),
+             cs_trace_field_offset(run_fragment, sr));
+    cs_flush_stores(b);
++   cs_trace_payload_end(b, ctx, &payload_if);
+ }
+ #endif
+ 
+@@ -2903,6 +2959,8 @@ cs_trace_run_fullscreen(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+     * won't point to the right instruction. */
+    cs_load_ip_to(b, data);
+    cs_run_fullscreen(b, flags_override, dcd);
++   struct cs_if_else payload_if;
++   cs_trace_payload_start(b, ctx, &payload_if, tracebuf_addr);
+    cs_store64(b, data, tracebuf_addr,
+               cs_trace_field_offset(run_fullscreen, ip));
+ 
+@@ -2924,6 +2982,7 @@ cs_trace_run_fullscreen(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+    assert(sr_count == CS_RUN_FULLSCREEN_SR_COUNT);
+ 
+    cs_flush_stores(b);
++   cs_trace_payload_end(b, ctx, &payload_if);
+ }
+ 
+ #if PAN_ARCH >= 12
+@@ -2955,6 +3014,8 @@ cs_trace_run_idvs2(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+     * won't point to the right instruction. */
+    cs_load_ip_to(b, data);
+    cs_run_idvs2(b, flags_override, malloc_enable, draw_id, vertex_shading_mode);
++   struct cs_if_else payload_if;
++   cs_trace_payload_start(b, ctx, &payload_if, tracebuf_addr);
+    cs_store64(b, data, tracebuf_addr, cs_trace_field_offset(run_idvs2, ip));
+ 
+    if (draw_id.type != CS_INDEX_UNDEF)
+@@ -2967,6 +3028,7 @@ cs_trace_run_idvs2(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+    cs_store(b, cs_reg_tuple(b, 64, 2), tracebuf_addr, BITFIELD_MASK(2),
+             cs_trace_field_offset(run_idvs2, sr[64]));
+    cs_flush_stores(b);
++   cs_trace_payload_end(b, ctx, &payload_if);
+ }
+ #else
+ struct cs_run_idvs_trace {
+@@ -2998,6 +3060,8 @@ cs_trace_run_idvs(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+    cs_load_ip_to(b, data);
+    cs_run_idvs(b, flags_override, malloc_enable, varying_sel, frag_sel,
+                draw_id);
++   struct cs_if_else payload_if;
++   cs_trace_payload_start(b, ctx, &payload_if, tracebuf_addr);
+    cs_store64(b, data, tracebuf_addr, cs_trace_field_offset(run_idvs, ip));
+ 
+    if (draw_id.type != CS_INDEX_UNDEF)
+@@ -3010,6 +3074,7 @@ cs_trace_run_idvs(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+    cs_store(b, cs_reg_tuple(b, 48, 13), tracebuf_addr, BITFIELD_MASK(13),
+             cs_trace_field_offset(run_idvs, sr[48]));
+    cs_flush_stores(b);
++   cs_trace_payload_end(b, ctx, &payload_if);
+ }
+ #endif
+ 
+@@ -3038,6 +3103,8 @@ cs_trace_run_compute(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+     * won't point to the right instruction. */
+    cs_load_ip_to(b, data);
+    cs_run_compute(b, task_increment, task_axis, res_sel);
++   struct cs_if_else payload_if;
++   cs_trace_payload_start(b, ctx, &payload_if, tracebuf_addr);
+    cs_store64(b, data, tracebuf_addr, cs_trace_field_offset(run_compute, ip));
+ 
+    for (unsigned i = 0; i < 32; i += 16)
+@@ -3046,6 +3113,7 @@ cs_trace_run_compute(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+    cs_store(b, cs_reg_tuple(b, 32, 8), tracebuf_addr, BITFIELD_MASK(8),
+             cs_trace_field_offset(run_compute, sr[32]));
+    cs_flush_stores(b);
++   cs_trace_payload_end(b, ctx, &payload_if);
+ }
+ 
+ static inline void
+@@ -3069,6 +3137,8 @@ cs_trace_run_compute_indirect(struct cs_builder *b,
+     * won't point to the right instruction. */
+    cs_load_ip_to(b, data);
+    cs_run_compute_indirect(b, wg_per_task, res_sel);
++   struct cs_if_else payload_if;
++   cs_trace_payload_start(b, ctx, &payload_if, tracebuf_addr);
+    cs_store64(b, data, tracebuf_addr, cs_trace_field_offset(run_compute, ip));
+ 
+    for (unsigned i = 0; i < 32; i += 16)
+@@ -3077,6 +3147,7 @@ cs_trace_run_compute_indirect(struct cs_builder *b,
+    cs_store(b, cs_reg_tuple(b, 32, 8), tracebuf_addr, BITFIELD_MASK(8),
+             cs_trace_field_offset(run_compute, sr[32]));
+    cs_flush_stores(b);
++   cs_trace_payload_end(b, ctx, &payload_if);
+ }
+ 
+ #define cs_single_link_list_for_each_from(b, current, node_type, base_name)    \
+diff --git a/src/panfrost/genxml/decode.h b/src/panfrost/genxml/decode.h
+index e5829b0..013d935 100644
+--- a/src/panfrost/genxml/decode.h
++++ b/src/panfrost/genxml/decode.h
+@@ -49,6 +49,10 @@ struct pandecode_mapped_memory *
+ pandecode_find_mapped_gpu_mem_containing(struct pandecode_context *ctx,
+                                          uint64_t addr);
+ 
++/* Bounded diagnostic lookup; no assert, resource recursion or mprotect. */
++const void *pandecode_fetch_gpu_mem_checked(struct pandecode_context *ctx,
++                                           uint64_t addr, size_t size);
++
+ void pandecode_map_read_write(struct pandecode_context *ctx);
+ 
+ void pandecode_dump_mappings(struct pandecode_context *ctx);
+@@ -119,6 +123,8 @@ void pandecode_cs_binary_v10(struct pandecode_context *ctx, uint64_t bin,
+                              uint32_t bin_size);
+ void pandecode_cs_trace_v10(struct pandecode_context *ctx, uint64_t trace,
+                             uint32_t trace_size, uint64_t gpu_id);
++void pandecode_cs_trace_partial_v10(struct pandecode_context *ctx, uint64_t trace,
++                                    uint32_t trace_size, uint64_t gpu_id);
+ 
+ void pandecode_interpret_cs_v12(struct pandecode_context *ctx, uint64_t queue,
+                                 uint32_t size, uint64_t gpu_id, uint32_t *regs);
+@@ -126,6 +132,8 @@ void pandecode_cs_binary_v12(struct pandecode_context *ctx, uint64_t bin,
+                              uint32_t bin_size);
+ void pandecode_cs_trace_v12(struct pandecode_context *ctx, uint64_t trace,
+                             uint32_t trace_size, uint64_t gpu_id);
++void pandecode_cs_trace_partial_v12(struct pandecode_context *ctx, uint64_t trace,
++                                    uint32_t trace_size, uint64_t gpu_id);
+ 
+ void pandecode_interpret_cs_v13(struct pandecode_context *ctx, uint64_t queue,
+                                 uint32_t size, uint64_t gpu_id, uint32_t *regs);
+@@ -133,6 +141,8 @@ void pandecode_cs_binary_v13(struct pandecode_context *ctx, uint64_t bin,
+                              uint32_t bin_size);
+ void pandecode_cs_trace_v13(struct pandecode_context *ctx, uint64_t trace,
+                             uint32_t trace_size, uint64_t gpu_id);
++void pandecode_cs_trace_partial_v13(struct pandecode_context *ctx, uint64_t trace,
++                                    uint32_t trace_size, uint64_t gpu_id);
+ 
+ void pandecode_interpret_cs_v14(struct pandecode_context *ctx, uint64_t queue,
+                                 uint32_t size, uint64_t gpu_id, uint32_t *regs);
+@@ -140,6 +150,8 @@ void pandecode_cs_binary_v14(struct pandecode_context *ctx, uint64_t bin,
+                              uint32_t bin_size);
+ void pandecode_cs_trace_v14(struct pandecode_context *ctx, uint64_t trace,
+                             uint32_t trace_size, uint64_t gpu_id);
++void pandecode_cs_trace_partial_v14(struct pandecode_context *ctx, uint64_t trace,
++                                    uint32_t trace_size, uint64_t gpu_id);
+ 
+ /* Logging infrastructure */
+ static void
+diff --git a/src/panfrost/genxml/decode_common.c b/src/panfrost/genxml/decode_common.c
+index 36eea4c..d1994bf 100644
+--- a/src/panfrost/genxml/decode_common.c
++++ b/src/panfrost/genxml/decode_common.c
+@@ -64,6 +64,24 @@ pandecode_find_mapped_gpu_mem_containing_rw(struct pandecode_context *ctx,
+    return to_mapped_memory(node);
+ }
+ 
++const void *
++pandecode_fetch_gpu_mem_checked(struct pandecode_context *ctx,
++                                uint64_t addr, size_t size)
++{
++   simple_mtx_assert_locked(&ctx->lock);
++   struct rb_node *node =
++      rb_tree_search(&ctx->mmap_tree, &addr, pandecode_cmp_key);
++   if (!node)
++      return NULL;
++
++   const struct pandecode_mapped_memory *mem = to_mapped_memory(node);
++   uint64_t offset = addr - mem->gpu_va;
++   if (!mem->addr || offset > mem->length || size > mem->length - offset)
++      return NULL;
++
++   return (const uint8_t *)mem->addr + offset;
++}
++
+ struct pandecode_mapped_memory *
+ pandecode_find_mapped_gpu_mem_containing(struct pandecode_context *ctx,
+                                          uint64_t addr)
+@@ -490,6 +508,33 @@ pandecode_cs_trace(struct pandecode_context *ctx, uint64_t trace_gpu_va,
+    simple_mtx_unlock(&ctx->lock);
+ }
+ 
++void
++pandecode_cs_trace_partial(struct pandecode_context *ctx, uint64_t trace_gpu_va,
++                   uint32_t size, uint64_t gpu_id)
++{
++   simple_mtx_lock(&ctx->lock);
++
++   switch (pan_arch(gpu_id)) {
++   case 10:
++   case 11:
++      pandecode_cs_trace_partial_v10(ctx, trace_gpu_va, size, gpu_id);
++      break;
++   case 12:
++      pandecode_cs_trace_partial_v12(ctx, trace_gpu_va, size, gpu_id);
++      break;
++   case 13:
++      pandecode_cs_trace_partial_v13(ctx, trace_gpu_va, size, gpu_id);
++      break;
++   case 14:
++      pandecode_cs_trace_partial_v14(ctx, trace_gpu_va, size, gpu_id);
++      break;
++   default:
++      UNREACHABLE("Unsupported architecture");
++   }
++
++   simple_mtx_unlock(&ctx->lock);
++}
++
+ void
+ pandecode_set_disassemble(struct pandecode_context *ctx,
+                           pandecode_shader_disassemble_cb cb)
+diff --git a/src/panfrost/genxml/decode_csf.c b/src/panfrost/genxml/decode_csf.c
+index a186ca3..3fc8913 100644
+--- a/src/panfrost/genxml/decode_csf.c
++++ b/src/panfrost/genxml/decode_csf.c
+@@ -2609,26 +2609,58 @@ GENX(pandecode_cs_binary)(struct pandecode_context *ctx, uint64_t bin,
+    pandecode_map_read_write(ctx);
+ }
+ 
+-void
+-GENX(pandecode_cs_trace)(struct pandecode_context *ctx, uint64_t trace,
+-                         uint32_t trace_size, uint64_t gpu_id)
++static void
++pandecode_trace_registers(struct pandecode_context *ctx, unsigned first,
++                          const uint32_t *values, unsigned count)
++{
++   for (unsigned i = 0; i < count; i++)
++      pandecode_log(ctx, "captured r%u = 0x%08x\n", first + i, values[i]);
++}
++
++static void
++pandecode_cs_trace_mode(struct pandecode_context *ctx, uint64_t trace,
++                         uint32_t trace_size, uint64_t gpu_id, bool partial)
+ {
+    pandecode_dump_file_open(ctx);
++   if (partial && (trace & 7)) {
++      pandecode_log(ctx, "incomplete trace: unaligned trace prefix\n");
++      return;
++   }
+ 
+-   void *trace_data = pandecode_fetch_gpu_mem(ctx, trace, trace_size);
++   const void *trace_data = partial ?
++      pandecode_fetch_gpu_mem_checked(ctx, trace, trace_size) :
++      pandecode_fetch_gpu_mem(ctx, trace, trace_size);
++   if (!trace_data) {
++      pandecode_log(ctx, "incomplete trace: unmapped or out-of-range prefix\n");
++      return;
++   }
+ 
+    while (trace_size > 0) {
+       uint32_t regs[256] = {};
+-      uint64_t *ip = trace_data;
+-
+-      uint64_t *instr = pandecode_fetch_gpu_mem(ctx, *ip, sizeof(*instr));
++      if (partial && trace_size < sizeof(uint64_t)) {
++         pandecode_log(ctx, "incomplete trace: short IP header\n");
++         break;
++      }
++      const uint64_t *ip = trace_data;
++      if (partial && (*ip & 7)) {
++         pandecode_log(ctx, "incomplete trace: unaligned IP\n");
++         break;
++      }
++      const uint64_t *instr = partial ?
++         pandecode_fetch_gpu_mem_checked(ctx, *ip, sizeof(*instr)) :
++         pandecode_fetch_gpu_mem(ctx, *ip, sizeof(*instr));
++      if (!instr) {
++         pandecode_log(ctx, "incomplete trace: IP 0x%" PRIx64
++                       " unmapped or out of range\n", *ip);
++         break;
++      }
+ 
+       /* v10 and v11 has 96 registers. v12+ have 128. */
+       struct queue_ctx qctx = {
+          .nr_regs = PAN_ARCH >= 12 ? 128 : 96,
+          .regs = regs,
+-         .ip = instr,
+-         .end = instr + 1,
++         .ip = (uint64_t *)instr,
++         .end = (uint64_t *)instr + 1,
+          .gpu_id = gpu_id,
+       };
+ 
+@@ -2641,32 +2673,62 @@ GENX(pandecode_cs_trace)(struct pandecode_context *ctx, uint64_t trace,
+       switch (base.opcode) {
+ #if PAN_ARCH >= 12
+       case MALI_CS_OPCODE_RUN_IDVS2: {
+-         struct cs_run_idvs2_trace *idvs_trace = trace_data;
++         const struct cs_run_idvs2_trace *idvs_trace = trace_data;
+ 
++         if (partial && trace_size < sizeof(*idvs_trace)) {
++            pandecode_log(ctx, "incomplete trace: truncated record (%u bytes remain)\n", trace_size);
++            goto done;
++         }
+          assert(trace_size >= sizeof(*idvs_trace));
+          cs_unpack(instr, CS_RUN_IDVS2, I);
+          memcpy(regs, idvs_trace->sr, sizeof(idvs_trace->sr));
+ 
+-         if (I.draw_id_register_enable)
++         if (partial && I.draw_id_register_enable && I.draw_id >= qctx.nr_regs) {
++            pandecode_log(ctx, "incomplete trace: invalid draw-ID register\n");
++            goto done;
++         }
++         if (I.draw_id_register_enable) {
+             regs[I.draw_id] = idvs_trace->draw_id;
++            if (partial)
++               pandecode_trace_registers(ctx, I.draw_id, &regs[I.draw_id], 1);
++         }
+ 
+-         pandecode_run_idvs2(ctx, ctx->dump_stream, &qctx, &I);
++         if (partial)
++            pandecode_trace_registers(ctx, 0, idvs_trace->sr,
++                                      ARRAY_SIZE(idvs_trace->sr));
++         else
++            pandecode_run_idvs2(ctx, ctx->dump_stream, &qctx, &I);
+          trace_data = idvs_trace + 1;
+          trace_size -= sizeof(*idvs_trace);
+          break;
+       }
+ #else
+       case MALI_CS_OPCODE_RUN_IDVS: {
+-         struct cs_run_idvs_trace *idvs_trace = trace_data;
++         const struct cs_run_idvs_trace *idvs_trace = trace_data;
+ 
++         if (partial && trace_size < sizeof(*idvs_trace)) {
++            pandecode_log(ctx, "incomplete trace: truncated record (%u bytes remain)\n", trace_size);
++            goto done;
++         }
+          assert(trace_size >= sizeof(*idvs_trace));
+          cs_unpack(instr, CS_RUN_IDVS, I);
+          memcpy(regs, idvs_trace->sr, sizeof(idvs_trace->sr));
+ 
+-         if (I.draw_id_register_enable)
++         if (partial && I.draw_id_register_enable && I.draw_id >= qctx.nr_regs) {
++            pandecode_log(ctx, "incomplete trace: invalid draw-ID register\n");
++            goto done;
++         }
++         if (I.draw_id_register_enable) {
+             regs[I.draw_id] = idvs_trace->draw_id;
++            if (partial)
++               pandecode_trace_registers(ctx, I.draw_id, &regs[I.draw_id], 1);
++         }
+ 
+-         pandecode_run_idvs(ctx, ctx->dump_stream, &qctx, &I);
++         if (partial)
++            pandecode_trace_registers(ctx, 0, idvs_trace->sr,
++                                      ARRAY_SIZE(idvs_trace->sr));
++         else
++            pandecode_run_idvs(ctx, ctx->dump_stream, &qctx, &I);
+          trace_data = idvs_trace + 1;
+          trace_size -= sizeof(*idvs_trace);
+          break;
+@@ -2675,24 +2737,40 @@ GENX(pandecode_cs_trace)(struct pandecode_context *ctx, uint64_t trace,
+ 
+ #if PAN_ARCH >= 14
+       case MALI_CS_OPCODE_RUN_FRAGMENT2: {
+-         struct cs_run_fragment2_trace *frag_trace = trace_data;
++         const struct cs_run_fragment2_trace *frag_trace = trace_data;
+ 
++         if (partial && trace_size < sizeof(*frag_trace)) {
++            pandecode_log(ctx, "incomplete trace: truncated record (%u bytes remain)\n", trace_size);
++            goto done;
++         }
+          assert(trace_size >= sizeof(*frag_trace));
+          cs_unpack(instr, CS_RUN_FRAGMENT2, I);
+          memcpy(&regs[0], frag_trace->sr, sizeof(frag_trace->sr));
+-         pandecode_run_fragment2(ctx, ctx->dump_stream, &qctx, &I);
++         if (partial)
++            pandecode_trace_registers(ctx, 0, frag_trace->sr,
++                                      ARRAY_SIZE(frag_trace->sr));
++         else
++            pandecode_run_fragment2(ctx, ctx->dump_stream, &qctx, &I);
+          trace_data = frag_trace + 1;
+          trace_size -= sizeof(*frag_trace);
+          break;
+       }
+ #else
+       case MALI_CS_OPCODE_RUN_FRAGMENT: {
+-         struct cs_run_fragment_trace *frag_trace = trace_data;
++         const struct cs_run_fragment_trace *frag_trace = trace_data;
+ 
++         if (partial && trace_size < sizeof(*frag_trace)) {
++            pandecode_log(ctx, "incomplete trace: truncated record (%u bytes remain)\n", trace_size);
++            goto done;
++         }
+          assert(trace_size >= sizeof(*frag_trace));
+          cs_unpack(instr, CS_RUN_FRAGMENT, I);
+          memcpy(&regs[40], frag_trace->sr, sizeof(frag_trace->sr));
+-         pandecode_run_fragment(ctx, ctx->dump_stream, &qctx, &I);
++         if (partial)
++            pandecode_trace_registers(ctx, 40, frag_trace->sr,
++                                      ARRAY_SIZE(frag_trace->sr));
++         else
++            pandecode_run_fragment(ctx, ctx->dump_stream, &qctx, &I);
+          trace_data = frag_trace + 1;
+          trace_size -= sizeof(*frag_trace);
+          break;
+@@ -2700,46 +2778,80 @@ GENX(pandecode_cs_trace)(struct pandecode_context *ctx, uint64_t trace,
+ #endif
+ 
+       case MALI_CS_OPCODE_RUN_FULLSCREEN: {
+-         struct cs_run_fullscreen_trace *fs_trace = trace_data;
++         const struct cs_run_fullscreen_trace *fs_trace = trace_data;
+ 
++         if (partial && trace_size < sizeof(*fs_trace)) {
++            pandecode_log(ctx, "incomplete trace: truncated record (%u bytes remain)\n", trace_size);
++            goto done;
++         }
+          assert(trace_size >= sizeof(*fs_trace));
+          cs_unpack(instr, CS_RUN_FULLSCREEN, I);
++         if (partial && I.dcd + 1 >= qctx.nr_regs) {
++            pandecode_log(ctx, "incomplete trace: invalid fullscreen DCD register\n");
++            goto done;
++         }
+          regs[I.dcd + 0] = (uint32_t)(fs_trace->dcd);
+          regs[I.dcd + 1] = (uint32_t)(fs_trace->dcd >> 32);
+          uint32_t sr_idx = 0;
+-         u_foreach_bit64(b, CS_RUN_FULLSCREEN_SR_MASK)
++         if (partial)
++            pandecode_trace_registers(ctx, I.dcd, &regs[I.dcd], 2);
++         u_foreach_bit64(b, CS_RUN_FULLSCREEN_SR_MASK) {
+             regs[b] = fs_trace->sr[sr_idx++];
+-         pandecode_run_fullscreen(ctx, ctx->dump_stream, &qctx, &I);
++            if (partial)
++               pandecode_trace_registers(ctx, b, &regs[b], 1);
++         }
++         if (!partial)
++            pandecode_run_fullscreen(ctx, ctx->dump_stream, &qctx, &I);
+          trace_data = fs_trace + 1;
+          trace_size -= sizeof(*fs_trace);
+          break;
+       }
+ 
+       case MALI_CS_OPCODE_RUN_COMPUTE: {
+-         struct cs_run_compute_trace *comp_trace = trace_data;
++         const struct cs_run_compute_trace *comp_trace = trace_data;
+ 
++         if (partial && trace_size < sizeof(*comp_trace)) {
++            pandecode_log(ctx, "incomplete trace: truncated record (%u bytes remain)\n", trace_size);
++            goto done;
++         }
+          assert(trace_size >= sizeof(*comp_trace));
+          cs_unpack(instr, CS_RUN_COMPUTE, I);
+          memcpy(regs, comp_trace->sr, sizeof(comp_trace->sr));
+-         pandecode_run_compute(ctx, ctx->dump_stream, &qctx, &I);
++         if (partial)
++            pandecode_trace_registers(ctx, 0, comp_trace->sr,
++                                      ARRAY_SIZE(comp_trace->sr));
++         else
++            pandecode_run_compute(ctx, ctx->dump_stream, &qctx, &I);
+          trace_data = comp_trace + 1;
+          trace_size -= sizeof(*comp_trace);
+          break;
+       }
+ 
+       case MALI_CS_OPCODE_RUN_COMPUTE_INDIRECT: {
+-         struct cs_run_compute_trace *comp_trace = trace_data;
++         const struct cs_run_compute_trace *comp_trace = trace_data;
+ 
++         if (partial && trace_size < sizeof(*comp_trace)) {
++            pandecode_log(ctx, "incomplete trace: truncated record (%u bytes remain)\n", trace_size);
++            goto done;
++         }
+          assert(trace_size >= sizeof(*comp_trace));
+          cs_unpack(instr, CS_RUN_COMPUTE_INDIRECT, I);
+          memcpy(regs, comp_trace->sr, sizeof(comp_trace->sr));
+-         pandecode_run_compute_indirect(ctx, ctx->dump_stream, &qctx, &I);
++         if (partial)
++            pandecode_trace_registers(ctx, 0, comp_trace->sr,
++                                      ARRAY_SIZE(comp_trace->sr));
++         else
++            pandecode_run_compute_indirect(ctx, ctx->dump_stream, &qctx, &I);
+          trace_data = comp_trace + 1;
+          trace_size -= sizeof(*comp_trace);
+          break;
+       }
+ 
+       default:
++         if (partial) {
++            pandecode_log(ctx, "incomplete trace: unsupported packet opcode %u\n", base.opcode);
++            goto done;
++         }
+          assert(!"Invalid trace packet");
+          break;
+       }
+@@ -2747,7 +2859,25 @@ GENX(pandecode_cs_trace)(struct pandecode_context *ctx, uint64_t trace,
+       pandecode_log(ctx, "\n");
+    }
+ 
++done:
++   if (partial)
++      pandecode_log(ctx, "incomplete capture: only a conservative published-prefix snapshot; no live register/WAIT-PC claim\n");
+    fflush(ctx->dump_stream);
+-   pandecode_map_read_write(ctx);
++   if (!partial)
++      pandecode_map_read_write(ctx);
++}
++void
++GENX(pandecode_cs_trace)(struct pandecode_context *ctx, uint64_t trace,
++                         uint32_t trace_size, uint64_t gpu_id)
++{
++   pandecode_cs_trace_mode(ctx, trace, trace_size, gpu_id, false);
++}
++
++void
++GENX(pandecode_cs_trace_partial)(struct pandecode_context *ctx, uint64_t trace,
++                                 uint32_t trace_size, uint64_t gpu_id)
++{
++   pandecode_cs_trace_mode(ctx, trace, trace_size, gpu_id, true);
+ }
++
+ #endif
+diff --git a/src/panfrost/lib/wrap.h b/src/panfrost/lib/wrap.h
+index 8e15c2e..2bc07f9 100644
+--- a/src/panfrost/lib/wrap.h
++++ b/src/panfrost/lib/wrap.h
+@@ -58,6 +58,10 @@ void pandecode_cs_binary(struct pandecode_context *ctx, uint64_t binary_gpu_va,
+ void pandecode_cs_trace(struct pandecode_context *ctx, uint64_t trace_gpu_va,
+                         uint32_t size, uint64_t gpu_id);
+ 
++/* Incomplete failure capture: instruction and captured registers only. */
++void pandecode_cs_trace_partial(struct pandecode_context *ctx, uint64_t trace_gpu_va,
++                                uint32_t size, uint64_t gpu_id);
++
+ void pandecode_abort_on_fault(struct pandecode_context *ctx, uint64_t jc_gpu_va,
+                               uint64_t gpu_id);
+ 
+diff --git a/src/panfrost/vulkan/csf/panvk_cmd_buffer.h b/src/panfrost/vulkan/csf/panvk_cmd_buffer.h
+index 25c9718..7e83fdc 100644
+--- a/src/panfrost/vulkan/csf/panvk_cmd_buffer.h
++++ b/src/panfrost/vulkan/csf/panvk_cmd_buffer.h
+@@ -202,6 +202,7 @@ struct panvk_cs_subqueue_context {
+    struct {
+       struct {
+          uint64_t cs;
++         uint32_t remaining;
+       } tracebuf;
+       uint64_t kbase_progress_addr;
+    } debug;
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+index 5ba8056..2b02b67 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_cmd_buffer.c
+@@ -815,6 +815,9 @@ init_cs_builders(struct panvk_cmd_buffer *cmdbuf)
+             .ctx_reg = cs_subqueue_ctx_reg(b),
+             .tracebuf_addr_offset =
+                offsetof(struct panvk_cs_subqueue_context, debug.tracebuf.cs),
++            .bounded = phys_dev->kbase_node_path[0] != '\0',
++            .remaining_offset =
++               offsetof(struct panvk_cs_subqueue_context, debug.tracebuf.remaining),
+          };
+       }
+    }
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_exception_handler.c b/src/panfrost/vulkan/csf/panvk_vX_exception_handler.c
+index 2d95816..62b4ef3 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_exception_handler.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_exception_handler.c
+@@ -138,6 +138,9 @@ generate_tiler_oom_handler(struct panvk_device *dev,
+       .ctx_reg = cs_subqueue_ctx_reg(&b),
+       .tracebuf_addr_offset =
+          offsetof(struct panvk_cs_subqueue_context, debug.tracebuf.cs),
++            .bounded = to_panvk_physical_device(dev->vk.physical)->kbase_node_path[0] != '\0',
++            .remaining_offset =
++               offsetof(struct panvk_cs_subqueue_context, debug.tracebuf.remaining),
+    };
+ 
+ #if PAN_ARCH < 14
+diff --git a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+index 9905076..d2b5b60 100644
+--- a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+@@ -435,6 +435,34 @@ kbase_log_subqueue_state(struct panvk_gpu_queue *queue, uint32_t subqueue,
+                           subq->kbase.last_job_offset);
+ }
+ 
++/* Error diagnostics must not turn a CSF failure into a CPU decoder fault.
++ * Ring counters are monotonic; an old request using them as local offsets
++ * can point outside the registered ring. Do not reinterpret or split such
++ * a request: the existing state logs remain available without DUMP. */
++static void
++kbase_dump_ring_diagnostic(struct panvk_device *dev,
++                           const struct panvk_subqueue *subq,
++                           uint64_t offset, uint64_t bytes,
++                           uint32_t gpu_id, const char *reason)
++{
++   if (!PANVK_DEBUG(DUMP) || !dev->debug.decode_ctx) {
++      mesa_loge("kbase: %s ring decode skipped: DUMP disabled or no decoder",
++                reason);
++      return;
++   }
++
++   if (offset >= KBASE_RINGBUF_SIZE || !bytes ||
++       bytes > KBASE_RINGBUF_SIZE - offset) {
++      mesa_loge("kbase: %s ring decode skipped: offset %" PRIu64
++                ", size %" PRIu64 ", ring %u (outside contiguous ring range)",
++                reason, offset, bytes, KBASE_RINGBUF_SIZE);
++      return;
++   }
++
++   pandecode_cs_binary(dev->debug.decode_ctx, subq->kbase.ringbuf_dev + offset,
++                        bytes, gpu_id);
++}
++
+ static VkResult
+ kbase_init_seqnos(struct panvk_gpu_queue *queue)
+ {
+@@ -980,10 +1008,10 @@ kbase_subqueue_wait_seqno(struct panvk_gpu_queue *queue, uint32_t subqueue,
+                last_job_offset, subq->kbase.ringbuf_dev + last_job_offset,
+                last_last_job_offset, subq->kbase.ringbuf_dev + last_last_job_offset);
+             struct panvk_physical_device *phys_dev = to_panvk_physical_device(dev->vk.physical);
+-            pandecode_cs_binary(dev->debug.decode_ctx,
+-                                 subq->kbase.ringbuf_dev + last_last_job_offset,
+-                                 insert - last_last_job_offset,
+-                                 phys_dev->kmod.dev->props.gpu_id);
++            kbase_dump_ring_diagnostic(dev, subq, last_last_job_offset,
++                                        insert - last_last_job_offset,
++                                        phys_dev->kmod.dev->props.gpu_id,
++                                        "watchdog timeout");
+          }
+ 
+          return vk_queue_set_lost(&queue->vk,
+@@ -1009,7 +1037,7 @@ kbase_subqueue_wait_seqno(struct panvk_gpu_queue *queue, uint32_t subqueue,
+       if (cqs_ret < 0) {
+          int error_type = kbase_kmod_csf_wait_event(dev->kmod.dev, remaining);
+ 
+-         if (dev->debug.decode_ctx && insert > extract && error_type) {
++         if (insert > extract && error_type) {
+             // pandecode_user_msg(dev->debug.decode_ctx,
+             //    "\nSubqueue %d Ringbuffer Trampoline [job %lu, gpu_va: %lx, cpu=%p, Size %u bytes, to %lx]:\n",
+             //    subqueue, subq->kbase.emitted_jobs, subq->kbase.ringbuf_dev + offset,
+@@ -1021,10 +1049,13 @@ kbase_subqueue_wait_seqno(struct panvk_gpu_queue *queue, uint32_t subqueue,
+                last_job_offset, subq->kbase.ringbuf_dev + last_job_offset,
+                last_last_job_offset, subq->kbase.ringbuf_dev + last_last_job_offset);
+             struct panvk_physical_device *phys_dev = to_panvk_physical_device(dev->vk.physical);
+-            pandecode_cs_binary(dev->debug.decode_ctx,
+-                                 subq->kbase.ringbuf_dev + extract,
+-                                 insert - extract,
+-                                 phys_dev->kmod.dev->props.gpu_id);
++            kbase_log_queue_syncobjs(queue);
++            for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++)
++               kbase_log_subqueue_state(queue, i, "CSF event snapshot");
++
++            kbase_dump_ring_diagnostic(dev, subq, extract, insert - extract,
++                                        phys_dev->kmod.dev->props.gpu_id,
++                                        "CSF event");
+          }
+          prev_error_type = error_type;
+       }
+@@ -1456,6 +1487,9 @@ finish_subqueue_tracing(struct panvk_gpu_queue *queue,
+          pan_kmod_vm_bind(dev->kmod.vm, PAN_KMOD_VM_OP_MODE_IMMEDIATE, &op, 1);
+       assert(!ret);
+ 
++#ifdef HAVE_PAN_KMOD_KBASE
++      if (!gpu_queue_uses_kbase(dev))
++#endif
+       panvk_as_free(dev, dev->as.priv_heap, subq->tracebuf.addr.dev,
+                     subq->tracebuf.size + pgsize);
+    }
+@@ -1535,6 +1569,14 @@ init_subqueue_tracing(struct panvk_gpu_queue *queue,
+ 
+    subq->tracebuf.size = debug_get_num_option("PANVK_CS_TRACEBUF_SIZE",
+                                               DEFAULT_CS_TRACEBUF_SIZE);
++#ifdef HAVE_PAN_KMOD_KBASE
++   if (gpu_queue_uses_kbase(dev) &&
++       (subq->tracebuf.size > DEFAULT_CS_TRACEBUF_SIZE ||
++        subq->tracebuf.size <= MIN_CS_TRACEBUF_SIZE ||
++        !util_is_power_of_two_nonzero(subq->tracebuf.size)))
++      return panvk_errorf(dev, VK_ERROR_INITIALIZATION_FAILED,
++                          "Bounded kbase TRACE requires a power-of-two buffer >512KiB and <=2MiB");
++#endif
+    assert(subq->tracebuf.size > MIN_CS_TRACEBUF_SIZE &&
+           util_is_power_of_two_nonzero(subq->tracebuf.size));
+ 
+@@ -1553,36 +1595,55 @@ init_subqueue_tracing(struct panvk_gpu_queue *queue,
+                           "Failed to CPU map tracebuf");
+    }
+ 
+-   /* Add a guard page. */
+-   uint64_t pgsize = panvk_get_gpu_page_size(dev);
+-   dev_addr = panvk_as_alloc(dev, dev->as.priv_heap,
+-                             subq->tracebuf.size + pgsize, pgsize);
++#ifdef HAVE_PAN_KMOD_KBASE
++   if (gpu_queue_uses_kbase(dev)) {
++      /* kbase's BO owns its SAME_VA mapping. The original tracer capacity
++       * gate replaces the unavailable Panthor guard page on this route. */
++      struct pan_kmod_vm_op vm_op = {
++         .type = PAN_KMOD_VM_OP_TYPE_MAP,
++         .va = { .start = PAN_KMOD_VM_MAP_AUTO_VA, .size = subq->tracebuf.size },
++         .map = { .bo = subq->tracebuf.bo },
++      };
++      int ret = pan_kmod_vm_bind(dev->kmod.vm, PAN_KMOD_VM_OP_MODE_IMMEDIATE,
++                                 &vm_op, 1);
++      if (ret)
++         return panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
++                             "Failed to GPU map kbase tracebuf BO");
++      dev_addr = vm_op.va.start;
++   } else
++#endif
++   {
++      /* Add a guard page. */
++      uint64_t pgsize = panvk_get_gpu_page_size(dev);
++      dev_addr = panvk_as_alloc(dev, dev->as.priv_heap,
++                                subq->tracebuf.size + pgsize, pgsize);
+ 
+-   if (!dev_addr)
+-      return panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                          "Failed to allocate virtual address for tracebuf");
++      if (!dev_addr)
++         return panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
++                             "Failed to allocate virtual address for tracebuf");
+ 
+-   struct pan_kmod_vm_op vm_op = {
+-      .type = PAN_KMOD_VM_OP_TYPE_MAP,
+-      .va = {
+-         .start = dev_addr,
+-         .size = subq->tracebuf.size,
+-      },
+-      .map = {
+-         .bo = subq->tracebuf.bo,
+-         .bo_offset = 0,
+-      },
+-   };
++      struct pan_kmod_vm_op vm_op = {
++         .type = PAN_KMOD_VM_OP_TYPE_MAP,
++         .va = {
++            .start = dev_addr,
++            .size = subq->tracebuf.size,
++         },
++         .map = {
++            .bo = subq->tracebuf.bo,
++            .bo_offset = 0,
++         },
++      };
+ 
+-   /* If tracing is enabled, we keep the second part of the mapping unmapped
+-    * to serve as a guard region. */
+-   int ret =
+-      pan_kmod_vm_bind(dev->kmod.vm, PAN_KMOD_VM_OP_MODE_IMMEDIATE, &vm_op, 1);
+-   if (ret) {
+-      panvk_as_free(dev, dev->as.priv_heap, dev_addr,
+-                    subq->tracebuf.size + pgsize);
+-      return panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                          "Failed to GPU map ringbuf BO"); // FAILED panvk_vX_gpu_queue
++      /* If tracing is enabled, we keep the second part of the mapping unmapped
++       * to serve as a guard region. */
++      int ret =
++         pan_kmod_vm_bind(dev->kmod.vm, PAN_KMOD_VM_OP_MODE_IMMEDIATE, &vm_op, 1);
++      if (ret) {
++         panvk_as_free(dev, dev->as.priv_heap, dev_addr,
++                       subq->tracebuf.size + pgsize);
++         return panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
++                             "Failed to GPU map ringbuf BO"); // FAILED panvk_vX_gpu_queue
++      }
+    }
+ 
+    subq->tracebuf.addr.dev = dev_addr;
+@@ -1737,6 +1798,7 @@ init_subqueue(struct panvk_gpu_queue *queue, enum panvk_subqueue_id subqueue)
+       *cs_ctx = (struct panvk_cs_subqueue_context){
+          .syncobjs = panvk_priv_mem_dev_addr(queue->syncobjs),
+          .debug.tracebuf.cs = subq->tracebuf.addr.dev,
++         .debug.tracebuf.remaining = subq->tracebuf.size,
+ #if PAN_ARCH <= 11
+          /* On the VT/COMPUTE queue, the first iter_sb will skipped since
+           * cs_next_iter_sb() is called before the first use, but that's okay,
+@@ -2883,6 +2945,111 @@ panvk_queue_submit_init_signals(struct panvk_queue_submit *submit,
+    }
+ }
+ 
++/* This is a capture-output option, never a runtime optimization. */
++DEBUG_GET_ONCE_BOOL_OPTION(trace_failure_only, "PANVK_TRACE_FAILURE_ONLY", false)
++
++static void
++panvk_queue_submit_reset_trace(struct panvk_queue_submit *submit)
++{
++   struct panvk_gpu_queue *queue = submit->queue;
++   if (PANVK_DEBUG(TRACE)) {
++      /* If we're tracing, we need to reset the desc ringbufs and the CS
++       * tracebuf. */
++      for (uint32_t i = 0; i < ARRAY_SIZE(queue->subqueues); i++) {
++         panvk_priv_mem_rmw(queue->subqueues[i].context, 0,
++                            struct panvk_cs_subqueue_context, ctx) {
++            if (ctx->render.desc_ringbuf.ptr) {
++               ctx->render.desc_ringbuf.ptr =
++                  queue->render_desc_ringbuf.addr.dev;
++               ctx->render.desc_ringbuf.pos = 0;
++            }
++
++            if (ctx->debug.tracebuf.cs) {
++               ctx->debug.tracebuf.cs = queue->subqueues[i].tracebuf.addr.dev;
++               ctx->debug.tracebuf.remaining = queue->subqueues[i].tracebuf.size;
++            }
++         }
++      }
++   }
++}
++
++#ifdef HAVE_PAN_KMOD_KBASE
++/* Pure bounds policy for the existing trace, not a new tracer. PAN_ARCH10
++ * records are <=320B and each finishes with an LS-slot wait before the next
++ * reservation. kbase disables the nested tiler-OOM userspace handler. Keeping
++ * an extra maximum record out of the prefix avoids the pre-published tail. */
++static bool
++kbase_trace_safe_prefix(uint64_t base, uint64_t cursor, uint64_t second,
++                         uint64_t size,
++                         uint64_t *prefix)
++{
++   if (!base || cursor < base || cursor - base > size ||
++       ((cursor - base) & 63) || second < cursor ||
++       second - base > size || ((second - base) & 63))
++      return false;
++   *prefix = cursor - base > 320 ? (cursor - base - 320) & ~63ull : 0;
++   return true;
++}
++
++static void
++panvk_queue_submit_process_failed_trace(struct panvk_queue_submit *submit)
++{
++   struct panvk_gpu_queue *queue = submit->queue;
++   struct panvk_device *dev = submit->dev;
++   if (!PANVK_DEBUG(TRACE) || !debug_get_option_trace_failure_only() ||
++       !dev->debug.decode_ctx)
++      return;
++
++#if PAN_ARCH == 10
++   STATIC_ASSERT(sizeof(struct cs_run_idvs_trace) <= 320);
++   STATIC_ASSERT(sizeof(struct cs_run_fragment_trace) <= 320);
++   STATIC_ASSERT(sizeof(struct cs_run_fullscreen_trace) <= 320);
++   STATIC_ASSERT(sizeof(struct cs_run_compute_trace) <= 320);
++   for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
++      struct panvk_subqueue *subq = &queue->subqueues[i];
++      struct panvk_priv_bo *context_bo = panvk_priv_mem_bo(subq->context);
++      const uint32_t required = PAN_KMOD_BO_FLAG_GPU_UNCACHED;
++      if (!subq->tracebuf.bo || !subq->tracebuf.addr.host ||
++          !context_bo->bo || !(subq->tracebuf.bo->flags & required) ||
++          !(context_bo->bo->flags & required) ||
++          ((subq->tracebuf.bo->flags | context_bo->bo->flags) &
++           PAN_KMOD_BO_FLAG_WB_MMAP) || subq->tracebuf.size > DEFAULT_CS_TRACEBUF_SIZE) {
++         mesa_loge("kbase: incomplete TRACE q%u skipped: CPU/GPU uncached mapping or 2MiB bound unproven", i);
++         continue;
++      }
++      const volatile struct panvk_cs_subqueue_context *ctx =
++         panvk_priv_mem_host_addr(subq->context);
++      uint64_t first = ctx->debug.tracebuf.cs;
++      uint64_t second = ctx->debug.tracebuf.cs;
++      uint32_t remaining = ctx->debug.tracebuf.remaining;
++      if (remaining > subq->tracebuf.size) {
++         mesa_loge("kbase: incomplete TRACE q%u skipped: invalid capacity metadata", i);
++         continue;
++      }
++      /* Existing full-system barrier orders CPU payload reads after the
++       * uncached cursor observation. It does not make a failed GPU idle. */
++      kbase_gpu_wmb();
++      uint64_t prefix;
++      if (!kbase_trace_safe_prefix(subq->tracebuf.addr.dev, first, second,
++                                    subq->tracebuf.size, &prefix)) {
++         mesa_loge("kbase: incomplete TRACE q%u skipped: invalid/regressed cursor 0x%" PRIx64 "/0x%" PRIx64, i, first, second);
++         continue;
++      }
++      mesa_loge("kbase: incomplete TRACE q%u: reserved cursor 0x%" PRIx64
++                ", safe earlier prefix %" PRIu64 " bytes, excluded >=320B tail; group not proven stopped, not a live PC", i, first, prefix);
++      if (!remaining)
++         mesa_loge("kbase: incomplete TRACE q%u: capacity exhausted; later RUNs may be unrecorded", i);
++      if (prefix)
++         pandecode_cs_trace_partial(dev->debug.decode_ctx,
++                                    subq->tracebuf.addr.dev, prefix,
++                                    submit->phys_dev->kmod.dev->props.gpu_id);
++   }
++#else
++   mesa_loge("kbase: incomplete TRACE skipped: serial-prefix proof limited to PAN_ARCH10");
++#endif
++}
++#endif
++
+ #ifdef HAVE_PAN_KMOD_KBASE
+ static VkResult
+ kbase_wait_sync_targets(
+@@ -3061,6 +3228,8 @@ panvk_queue_submit_ioctl_kbase(struct panvk_queue_submit *submit,
+    struct panvk_gpu_queue *queue = submit->queue;
+    VkResult result;
+ 
++   panvk_queue_submit_reset_trace(submit);
++
+    // struct pandecode_context *decode_ctx = submit->dev->debug.decode_ctx;
+    // const struct pan_kmod_dev_props *props =
+    //    &submit->phys_dev->kmod.dev->props;
+@@ -3255,23 +3424,7 @@ panvk_queue_submit_ioctl(struct panvk_queue_submit *submit)
+    struct panvk_gpu_queue *queue = submit->queue;
+    int ret;
+ 
+-   if (PANVK_DEBUG(TRACE)) {
+-      /* If we're tracing, we need to reset the desc ringbufs and the CS
+-       * tracebuf. */
+-      for (uint32_t i = 0; i < ARRAY_SIZE(queue->subqueues); i++) {
+-         panvk_priv_mem_rmw(queue->subqueues[i].context, 0,
+-                            struct panvk_cs_subqueue_context, ctx) {
+-            if (ctx->render.desc_ringbuf.ptr) {
+-               ctx->render.desc_ringbuf.ptr =
+-                  queue->render_desc_ringbuf.addr.dev;
+-               ctx->render.desc_ringbuf.pos = 0;
+-            }
+-
+-            if (ctx->debug.tracebuf.cs)
+-               ctx->debug.tracebuf.cs = queue->subqueues[i].tracebuf.addr.dev;
+-         }
+-      }
+-   }
++   panvk_queue_submit_reset_trace(submit);
+ 
+    /* Flush pending synchronization requests before submitting the job, to
+     * make sure things are GPU-visible. */
+@@ -3437,11 +3590,14 @@ panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue, struct vk_queue_subm
+ #ifdef HAVE_PAN_KMOD_KBASE
+    if (gpu_queue_uses_kbase(submit.dev)) {
+       result = panvk_queue_submit_ioctl_kbase(&submit, vk_submit);
+-      if (result != VK_SUCCESS)
++      if (result != VK_SUCCESS) {
++         panvk_queue_submit_process_failed_trace(&submit);
+          goto out;
++      }
+ 
+       panvk_queue_submit_process_signals_kbase(&submit, vk_submit);
+-      panvk_queue_submit_process_debug(&submit, vk_submit);
++      if (!PANVK_DEBUG(TRACE) || !debug_get_option_trace_failure_only())
++         panvk_queue_submit_process_debug(&submit, vk_submit);
+       goto out;
+    }
+ #endif
