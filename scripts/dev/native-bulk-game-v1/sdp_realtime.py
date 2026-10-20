@@ -23,6 +23,7 @@ def config(row):
  c=read(pinned(row));require(c['schema']==1 and c['serial']=='10CG570J59001U1','Q tool config required')
  require(c['prepared_paused'] is True and set(c['required_metrics'])==set(REQUIRED),'unprepared GUI')
  for f in c['files']:pinned(f)
+ pinned(c['trace_processor'])
  require(c['gui']['pid']!=c['xvfb']['pid'],'distinct owned tool processes required')
  return c
 def ad(c,*args):return subprocess.check_output([c['adb'],'-s',c['serial'],*args],text=True,timeout=30).strip()
@@ -31,7 +32,11 @@ def remote_identity(c,pid):
  if not raw:return None
  lines=raw.splitlines()
  if lines[0].rsplit(')',1)[1].split()[0]=='Z':return None
- require(len(lines)==4,'remote identity unavailable')
+ if len(lines)!=4:
+  # GUI disconnection may remove exe/status between the separate proc reads.
+  again=ad(c,'shell',f'if test -f /proc/{int(pid)}/stat; then cat /proc/{int(pid)}/stat; fi')
+  if not again or again.rsplit(')',1)[1].split()[0]=='Z':return None
+  raise RuntimeError('remote identity unavailable for still-live process; preserve')
  return {'pid':int(pid),'starttime':lines[0].rsplit(')',1)[1].split()[19],
   'exe':lines[1],'sha256':lines[2].split()[0],'uids':lines[3].split()}
 def check_owners(c):
@@ -82,6 +87,45 @@ def metrics(db,a,b,out=None,definitions=None):
    'min':min(v for _,v in vv),'max':max(v for _,v in vv)}
  return result
 
+def fresh_coverage(db,after):
+ con=sqlite3.connect(f'file:{db}?mode=ro',uri=True)
+ try:
+  rows=con.execute('SELECT m.name,min(d.timestamp),max(d.timestamp),count(*) FROM tblDataLog d JOIN Metric m ON m.id=d.metric WHERE d.timestamp>? GROUP BY m.id',(after,)).fetchall()
+ finally:con.close()
+ lookup={n:(a,b,k)for n,a,b,k in rows}
+ require(all(n in lookup for n in REQUIRED),'missing fresh official counter')
+ first=max(lookup[n][0]for n in REQUIRED);last=min(lookup[n][1]for n in REQUIRED)
+ require(last>first,'no fresh common official coverage')
+ return {'epoch_us':[first,last],'observed_duration_s':(last-first)/1e6,
+  'fresh_after_epoch_us':after,'per_metric':{n:{'first_epoch_us':lookup[n][0],'last_epoch_us':lookup[n][1],'samples':lookup[n][2]}for n in REQUIRED}}
+def csv_tables(path):
+ result=[];head=None;rows=[]
+ for row in csv.reader(path.read_text().splitlines()):
+  if not row:
+   if head:result.append((head,rows));head=None;rows=[]
+  elif head is None:head=row
+  else:rows.append(dict(zip(head,row)))
+ if head:result.append((head,rows))
+ return result
+def device_window(c,trace,out):
+ tool=pinned(c['trace_processor'])
+ query=out/'official-clock-scope.sql'
+ query.write_text("SELECT * FROM clock_snapshot;\nSELECT start_ts,end_ts FROM trace_bounds;\nSELECT name,value,severity FROM stats WHERE value!=0 AND severity IN ('error','data_loss');\n")
+ data=out/'official-clock-scope.csv'
+ with data.open('w')as f,(out/'official-clock-scope.stderr').open('w')as e:subprocess.run([str(tool),'-q',str(query),str(trace)],stdout=f,stderr=e,check=True,timeout=35)
+ tabs=csv_tables(data);clocks={r['clock_name']:int(r['clock_value'])for head,rows in tabs if 'clock_name'in head for r in rows if r['snapshot_id']=='0'}
+ bounds=next(rows[0]for head,rows in tabs if 'start_ts'in head)
+ require(all(k in clocks for k in ('BOOTTIME','REALTIME')),'official clock snapshot missing')
+ require(not any(rows for head,rows in tabs if 'severity'in head),'official trace data loss/error')
+ lower=clocks['BOOTTIME'];upper=int(bounds['end_ts']);duration=(upper-lower)/1e9
+ require(7.9<=duration<=9,'official8s capture interval unavailable')
+ offset=clocks['REALTIME']-clocks['BOOTTIME']
+ # trace_bounds may include backfilled old frequency values. Use the actual
+ # trace-start clock snapshot; do not call the enlarged raw bounds8seconds.
+ return {'BOOTTIME_ns':[lower,upper],'epoch_us':[(lower+offset)/1000,(upper+offset)/1000],
+  'observed_duration_s':duration,'clock_snapshot0':clocks,
+  'raw_trace_bounds_ns':[int(bounds['start_ts']),upper],
+  'source':'Officialtraceprocessor clock_snapshot REALTIME−BOOTTIME; no host12s frame denominator'}
 def save_gui(c,path):
  require(not path.exists(),'do not overwrite .sdp')
  # Verified on the live official2026.9 GUI: Alt+F, S opens Save Session;
@@ -116,7 +160,9 @@ def close(c):
   row=c[k];actual=host_identity(row['pid'])
   if actual is None:continue
   if actual!=row:errors.append('replacement host '+k);continue
-  os.kill(row['pid'],signal.SIGTERM)
+  try:os.kill(row['pid'],signal.SIGTERM)
+  except ProcessLookupError:pass
+  except OSError as e:errors.append('GUI TERM: '+repr(e))
  # Official clients normally release their collectors; kill only the exact
  # cold-recorded processes still present, never any system service/replacement.
  for row in reversed(c['collectors']):
@@ -127,10 +173,15 @@ def close(c):
    ad(c,'shell',f'kill -TERM {row["pid"]}')
   except BaseException as e:errors.append(repr(e))
  row=c['xvfb'];actual=host_identity(row['pid'])
- if actual==row:os.kill(row['pid'],signal.SIGTERM)
+ if actual==row:
+  try:os.kill(row['pid'],signal.SIGTERM)
+  except ProcessLookupError:pass
+  except OSError as e:errors.append('Xvfb TERM: '+repr(e))
  elif actual is not None:errors.append('replacement Xvfb preserve')
  for _ in range(30):
-  alive=[r for r in c['collectors']if remote_identity(c,r['pid']) is not None]
+  try:alive=[r for r in c['collectors']if remote_identity(c,r['pid']) is not None]
+  except Exception as e:
+   errors.append('collector cleanup verification: '+repr(e));break
   hosts=[k for k in ('gui','xvfb')if host_identity(c[k]['pid']) is not None]
   if not alive and not hosts:break
   time.sleep(.2)
@@ -140,7 +191,7 @@ def close(c):
 def capture(c,pid,out,window,driver,scheduler):
  out.mkdir(exist_ok=False);report={'complete':False,'owned_PID':int(pid),'cleanup_errors':[],
   'method':'OfficialSDP2026.9 GUI9metrics + existing official8s Perfetto, no custom sampling/timing',
-  'scope':'Global system GPU counters include compositor; not per-draw/pass exclusive time.'};path=out/'official-gpu-capture.json'
+  'scope':'Global system GPU counters include compositor; not per-draw/pass exclusive time.','gpu_validity':False};path=out/'official-gpu-capture.json'
  def state(label):
   require(ad(c,'shell','pidof '+PKG+' || true')==str(pid),'owned game PID changed')
   s=json.loads(ad(c,'exec-out','run-as',PKG,'tail','-n','1','files/runtime/game-state.jsonl'))
@@ -166,11 +217,15 @@ def capture(c,pid,out,window,driver,scheduler):
   require(before['pipeline_prepare']['pipelines']==after['pipeline_prepare']['pipelines']
    and before['uniform_specialization']['variants']==after['uniform_specialization']['variants'],'GPU window PSO/variants changed')
   session=out/'official-session.sdp';save_gui(c,session);db=saved_database(session,out)
-  report['metrics']=metrics(db,report['window_start_utc_us'],report['window_end_utc_us'],out,c['metric_definitions'])
+  report['counter_common_coverage']=fresh_coverage(db,report['paused_before']['first'][1])
+  report['official_device_window']=device_window(c,trace,out)
+  a,b=report['official_device_window']['epoch_us'];lo,hi=report['counter_common_coverage']['epoch_us']
+  require(lo<=a<b<=hi,'official8s device interval outside fresh common counters')
+  report['metrics']=metrics(db,a,b,out,c['metric_definitions'])
   sidecar=read(trace.with_suffix('.json'));require(sidecar['pid']==int(pid) and sidecar['trace_sha256']==sha(trace),'official trace identity changed')
   report['official_session_sha256']=sha(session);report['official_db_sha256']=sha(db);report['official_Perfetto']=sidecar
   report['same_window_Surface_denominator']='Use actual game SurfaceView PresentFenceSignaled within this trace, official trace_processor only. Never divide12s traffic by8s frames; project SDP epoch using official clock snapshot and crop raw samples to exact trace bounds first. No full game actualFrameTimeline claim.'
-  report['complete']=True
+  report['complete']=True;report['gpu_validity']=True
  except BaseException as e:
   report['error']=repr(e);raise
  finally:

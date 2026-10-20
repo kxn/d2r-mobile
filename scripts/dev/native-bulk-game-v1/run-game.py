@@ -325,10 +325,22 @@ def phase_game(dev, out, phase, p, token):
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
         m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
+        if p.get('official_gpu_tools') and p.get('_official_gpu_disabled'):
+            d['gpu_validity'] = False
+            d['official_gpu_complete'] = False
+            d['official_gpu_skipped'] = 'Earlier optional tool failed; no GUI restart or zero-data substitution'
+            save()
         if p.get('performance_tools'):
-            if p.get('official_gpu_tools'):
+            if p.get('official_gpu_tools') and not p.get('_official_gpu_disabled'):
                 tool = module('source_pinned_official_sdp_pause', p['official_gpu_tools']['helper']['path'])
-                d['SDP_paused_before_CPU'] = tool.paused(p['official_gpu_config'])
+                try:
+                    d['SDP_paused_before_CPU'] = tool.paused(p['official_gpu_config'])
+                except Exception as e:
+                    d['gpu_validity'] = False
+                    d['official_gpu_complete'] = False
+                    d['official_gpu_error'] = 'before CPU: ' + repr(e)
+                    p['_official_gpu_disabled'] = True
+                    d['official_gpu_early_cleanup_errors'] = tool.close(p['official_gpu_config'])
                 save()
             require(pid() == own, 'PID changed before independent performance windows')
             performance_out = out / 'official-performance'
@@ -349,13 +361,24 @@ def phase_game(dev, out, phase, p, token):
             # All Simpleperf/Perfetto windows and owned cleanup finish before
             # the optional all-stop LLDB snapshot below. Never mix their scopes.
             read_state(dev, out, 'after-tools')
-        if p.get('official_gpu_tools'):
+        if p.get('official_gpu_tools') and not p.get('_official_gpu_disabled'):
             require(pid() == own, 'PID changed before official GPU window')
             tool = module('source_pinned_official_sdp_capture', p['official_gpu_tools']['helper']['path'])
-            d['official_gpu'] = tool.capture(p['official_gpu_config'], own, out / 'official-gpu',
-                p['pool_window_bytes'], p['driver']['sha256'],
-                pinned(p['official_gpu_tools']['scheduler_helper']))
-            d['official_gpu_complete'] = d['official_gpu']['complete']
+            try:
+                d['official_gpu'] = tool.capture(p['official_gpu_config'], own, out / 'official-gpu',
+                    p['pool_window_bytes'], p['driver']['sha256'],
+                    pinned(p['official_gpu_tools']['scheduler_helper']))
+                d['official_gpu_complete'] = d['official_gpu']['complete']
+                d['gpu_validity'] = d['official_gpu']['gpu_validity']
+            except Exception as e:
+                # Optional tool failure is not a game/CPU/memory failure. Preserve
+                # its evidence, close the exact owned tools, then keep original
+                # LLDB/meminfo/save2/restore. Never invent zero-bandwidth data.
+                d['official_gpu_complete'] = False
+                d['gpu_validity'] = False
+                d['official_gpu_error'] = repr(e)
+                p['_official_gpu_disabled'] = True
+                d['official_gpu_early_cleanup_errors'] = tool.close(p['official_gpu_config'])
             save()
         if p.get('counter_snapshot'):
             require(pid() == own, 'PID changed before once-only counter snapshot')

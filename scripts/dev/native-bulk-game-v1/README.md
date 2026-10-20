@@ -143,3 +143,26 @@ existing scheduler helper's failure-cleanup limits remain: a helper still live
 after its bound is reported, not silently called terminated. Source-only plan
 never starts tools or ADB. Source-pinned current prepared-session metadata is a
 single-use handoff, not permission to adopt arbitrary pre-existing tools.
+
+### SDP successor: actual device interval and independent validity
+
+The owned GUI config additionally pins `trace_processor: {path, sha256}`.
+Fresh rows are strictly newer than the paused DB maxstamp. Their per-metric
+common coverage must contain the complete official 8s capture interval, mapped
+by snapshot0 REALTIME/BOOTTIME and the trace end. Backfilled trace-bound history
+is retained but excluded from this denominator. The host 12s orchestration
+bracket is diagnostic only. Required definitions, finite/nonidle values and
+internal-gap checks remain; no offset is guessed and missing values are never
+filled with zero. The preserved first capture had valid Turnip counters covering
+this official 8s interval; it failed the former host-bracket endpoint guard.
+
+An optional SDP pause/capture failure records `gpu_validity: false` and its
+original evidence, disables subsequent SDP windows without restarting the GUI,
+and attempts exact owned-tool cleanup. Original CPU/game/memory/save2/restore
+continues; cleanup errors remain explicit. Actual game/FATAL and CPU failures
+still use the original abort rules. The next pair inputs omit `counter_snapshot`
+so no optional LLDB step blocks memory acceptance. No old failed result changes.
+
+The paired diagnostic launch uses `--external-profile`: performance hints and
+present worker are reference/inactive. Its observed approximately30FPS is not
+the ordinary default game's limit or evidence of a change in normal throughput.

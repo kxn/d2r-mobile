@@ -44,7 +44,7 @@ class SDP(unittest.TestCase):
  def test_no_device_import_and_default_OFF_hook_order(self):
   spec=importlib.util.spec_from_file_location('pair_sdp_offline',D/'run-game.py');m=importlib.util.module_from_spec(spec)
   with patch('subprocess.run',side_effect=AssertionError('device action on import')),patch('subprocess.check_output',side_effect=AssertionError('device action on import')):spec.loader.exec_module(m)
-  text=(D/'run-game.py').read_text();start=text.index('        m.original_route(');self.assertLess(text.index("        if p.get('performance_tools'):",start),text.index("        if p.get('official_gpu_tools'):",start));self.assertLess(text.index("        if p.get('official_gpu_tools'):",start),text.index("        if p.get('counter_snapshot'):",start))
+  text=(D/'run-game.py').read_text();start=text.index('        m.original_route(');self.assertLess(text.index("        if p.get('performance_tools'):",start),text.index("        if p.get('official_gpu_tools') and not p.get('_official_gpu_disabled'):",start));self.assertLess(text.index("        if p.get('official_gpu_tools') and not p.get('_official_gpu_disabled'):",start),text.index("        if p.get('counter_snapshot'):",start))
  def test_actual_helper_success_sequence_with_original_archive_and_trace(self):
   state={'valid':True,'world_input_ready':True,'scale_3d':.6,'guest_heap':{'shared':True},'pool_windows':{'window_bytes':1048576},'game_output':{'width':2750,'height':1260},'surface_output':{'width':2750,'height':1260},'frame_pacing':{'target_fps':60},'pipeline_prepare':{'pipelines':2},'uniform_specialization':{'variants':3}}
   def ad(c,*a):
@@ -61,8 +61,32 @@ class SDP(unittest.TestCase):
     self.assertIn('--seconds',args);self.assertEqual(args[args.index('--seconds')+1],'8');self.assertIn('--frame-timeline',args)
     p=Path(args[-1]);p.write_bytes(b'original official trace');s.write(p.with_suffix('.json'),{'pid':123,'trace_sha256':s.sha(p)});return Mock(poll=lambda:0,wait=lambda **kw:0)
    c={'serial':'10CG570J59001U1','metric_definitions':{n:'official unit definition '+n for n in s.REQUIRED}}
-   with patch.object(s,'ad',side_effect=ad),patch.object(s,'check_owners'),patch.object(s,'paused',return_value={'fixed':True}),patch.object(s,'toggle')as toggle,patch.object(s,'save_gui',side_effect=save),patch.object(s.subprocess,'Popen',side_effect=popen),patch.object(s.time,'sleep'),patch.object(s.time,'time_ns',side_effect=[1_000_000_000,13_000_000_000]):
-    r=s.capture(c,123,root/'out',1048576,'abcd',Path('/original-helper'));self.assertTrue(r['complete']);self.assertEqual(toggle.call_count,2);self.assertEqual(set(r['metrics']),set(s.REQUIRED))
+   with patch.object(s,'ad',side_effect=ad),patch.object(s,'check_owners'),patch.object(s,'paused',return_value={'first':[0,0]}),patch.object(s,'toggle')as toggle,patch.object(s,'save_gui',side_effect=save),patch.object(s,'device_window',return_value={'epoch_us':[1_000_000,13_000_000]}),patch.object(s.subprocess,'Popen',side_effect=popen),patch.object(s.time,'sleep'),patch.object(s.time,'time_ns',side_effect=[1_000_000_000,13_000_000_000]):
+    r=s.capture(c,123,root/'out',1048576,'abcd',Path('/original-helper'));self.assertTrue(r['complete']);self.assertTrue(r['gpu_validity']);self.assertEqual(toggle.call_count,2);self.assertEqual(set(r['metrics']),set(s.REQUIRED))
+ def test_actual_saved_shifted_counter_block_covers_official_device8s(self):
+  root=Path('/home/dl/d2r-mobile/.local/logs/native-astc-linear-6bc0b8a-sdp-game-pair-v1/control/official-gpu')
+  if not (root/'sdp.db').exists():self.skipTest('owned actual tool evidence not present')
+  cap=s.read(root/'official-gpu-capture.json');cover=s.fresh_coverage(root/'sdp.db',cap['paused_before']['first'][1])
+  a,b=1792525905724886.2,1792525913730840.2
+  self.assertLess(cover['epoch_us'][0],a);self.assertGreater(cover['epoch_us'][1],b)
+  self.assertEqual(cover['per_metric'][s.REQUIRED[0]]['samples'],238)
+  result=s.metrics(root/'sdp.db',a,b);self.assertGreater(result['Texture Memory Read BW (Bytes/Second)']['max'],0)
+  with self.assertRaisesRegex(RuntimeError,'incomplete official coverage'):s.metrics(root/'sdp.db',cap['window_start_utc_us'],cap['window_end_utc_us'])
+ def test_partial_remote_exit_snapshot_then_absent_is_clean(self):
+  # One stat line while exe/status vanish during official GUI disconnect.
+  tail=['S']+['0']*18+['1234'];raw='123 (sdpservice) '+' '.join(tail)
+  with patch.object(s,'ad',side_effect=[raw,'']):self.assertIsNone(s.remote_identity({},123))
+  with patch.object(s,'ad',side_effect=[raw,raw]),self.assertRaisesRegex(RuntimeError,'still-live'):s.remote_identity({},123)
+ def test_optional_GPU_failure_actual_hook_continues_memory_path(self):
+  # Execute the actual try/except hook from phase_game with a failing official
+  # tool; original tool error/close recorded, no synthetic success/zero metrics.
+  text=(D/'run-game.py').read_text();start=text.index("            try:\n                d['official_gpu']");end=text.index('            save()\n',start)+len('            save()\n')
+  import textwrap
+  code=textwrap.dedent(text[start:end]);tool=Mock();tool.capture.side_effect=RuntimeError('missing actual GPU counter');tool.close.return_value=[]
+  p={'official_gpu_config':{},'pool_window_bytes':1048576,'driver':{'sha256':'same'},'official_gpu_tools':{'scheduler_helper':{}}};state={};save=Mock()
+  exec(code,{'tool':tool,'p':p,'d':state,'own':'123','out':Path('/tmp'),'pinned':lambda x:Path('/original-helper'),'save':save})
+  self.assertFalse(state['gpu_validity']);self.assertFalse(state['official_gpu_complete']);self.assertTrue(p['_official_gpu_disabled']);self.assertIn('missing actual GPU counter',state['official_gpu_error']);tool.close.assert_called_once();save.assert_called_once()
+  self.assertIn("        require(pid() == own, 'PID changed before residency snapshot')",text[end:]);self.assertIn("(out / 'official-dumpsys-meminfo.txt').write_text",text[end:])
  def test_unknown_metric_units_refused(self):
   with tempfile.TemporaryDirectory()as d:
    p=Path(d)/'x';database(p)
