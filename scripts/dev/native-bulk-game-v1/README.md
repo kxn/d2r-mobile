@@ -184,3 +184,50 @@ snapshot, changed starttime, or reused PID is preserved and reported. A former
 nonzero command exit is gone only if a new stat confirms absent/zombie. No
 replacement can be claimed from a basename or one stale stat. Original failure
 results remain unchanged; cleanup follow-up is separate evidence.
+
+## Native-only 30-minute original-input follow-up
+
+`run-game.py` accepts an optional `sustained_play` object. Both prior control and
+native compositions are still fully hashed and authenticated; only native is
+published/executed. The exact accepted 6f8188e runtime, f830 driver, 6217 table,
+1 MiB windows and paired root acceptance are required. No new game binary,
+resources, rendering, sampler, timing probe, SDP GUI or LLDB code is introduced.
+
+Default route repeats the original already verified three camp points through
+`android-game-walk-to.py`. Each call retains its before/after position receipt;
+a missed target, unexpected area, changed PID or stale world stops the test and
+is not silently retried. A navigation failure alone is not a crash or thermal
+failure. Root may supply separately proven actual-input area transitions; the
+cycle must close. `resume_step` chooses a verified route point for a NEW run;
+separated runs cannot be summed into a continuous pass. Town load proves no
+combat/field/all-scene stability, and the old Mali thermal result is no Q A/B.
+
+0/10/20/30-minute checkpoints preserve original game state/PSO/target, official
+meminfo, overlay screenshot and existing PID-filtered `DmThermal` public-API
+logs. No ADB thermal service or sysfs queries are used. Four official Perfetto
+8-second windows request scheduler/frequency/app markers and Surface timelines;
+actual emitted tracks must be checked before deriving any FPS. Heavy endpoint
+observations and logcat reads are outside those windows. Host monotonic deadlines
+only bound/schedule the requested duration, not measure frame/GPU performance.
+The scheduler wrapper reuses the existing official configuration verbatim and
+adds exact UUID-output cleanup in `finally`. Perfetto retains its official
+8-second duration, host command bound38s; no claim of a separately verified
+collector PID is made on a transport failure.
+
+SIGINT/SIGTERM cooperatively request save/stop AFTER the current bounded child
+walk/capture returns, so the input child can release its touch. Alternatively,
+create `native/stop-request.json` in the report directory containing exactly
+`{"token":"<transaction_token from native/phase.json>","action":"save-stop"}`.
+Do not SIGKILL the controller. Any such stop or public-API thermal background
+suspend makes `continuous_pass=false`. No automatic resume/restart is attempted.
+The original lifecycle helper may briefly foreground the SAME PID solely to
+request a fresh save; it immediately backgrounds and confirms commits2 before
+force-stop. If it cannot confirm a save, preserve the process/backups and fail.
+An already exited process is never restarted to fake saving.
+
+Original APK, six directories (including original PSO/cache), driver, owner/CAS
+checks and cleanup are retained. Actual normal-input gameplay/save progress IS
+saved and retained; it is not restored from a backup or edited. A complete result
+requires uninterrupted route completion plus fresh same-PID save2, stop, full
+original-APK/directory restoration and cleanup. The helper's local pass flag
+alone is not this transaction-level acceptance.

@@ -6,6 +6,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
@@ -40,7 +41,7 @@ class Device:
 
 
 class LifecycleFailureTests(unittest.TestCase):
-    def exercise(self, replacement, counter_failure=False):
+    def exercise(self, replacement, counter_failure=False, sustained_failure=False):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder) / 'phase'
             dev = Device()
@@ -61,7 +62,7 @@ class LifecycleFailureTests(unittest.TestCase):
                     return 0
 
             def collect(_dev, _pid, d, report, _out, label):
-                if counter_failure:
+                if counter_failure or sustained_failure:
                     return
                 d['screenshots'] = [{'remote': '/data/local/tmp/owned.png',
                                      'screencap_requested': True}]
@@ -80,7 +81,13 @@ class LifecycleFailureTests(unittest.TestCase):
                                               'save_commits': 2, 'pid': 12345}))
                 saved.append(True)
 
-            with patch.object(t.subprocess, 'Popen', Launcher), \
+            def sustained_fail(*args):
+                if replacement:
+                    dev.pid = '54321'
+                raise RuntimeError('injected sustained thermal/tool/input failure')
+
+            with patch.object(t, 'module', return_value=SimpleNamespace(run=sustained_fail)), \
+                 patch.object(t.subprocess, 'Popen', Launcher), \
                  patch.object(t.subprocess, 'run', save), \
                  patch.object(t.m, 'screenshot_collect', collect), \
                  patch.object(t.m, 'original_route'), \
@@ -89,13 +96,15 @@ class LifecycleFailureTests(unittest.TestCase):
                 with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
                     config = {'serial': '10CG570J59001U1',
                               'pool_window_bytes': 16777216}
+                    if sustained_failure:
+                        config['sustained_play'] = {'enabled': True}
                     if counter_failure:
                         config['counter_snapshot'] = {
                             'helper_path': 'counter-helper.py',
                             'config': {'path': '/local/config.json', 'sha256': 'a' * 64}}
                     t.phase_game(dev, out, {'kind': 'control'}, config, 'test-token')
             state = json.loads((out / 'phase.json').read_text())
-            if not counter_failure:
+            if not counter_failure and not sustained_failure:
                 self.assertTrue(state['screenshot_collection_errors'])
             if replacement:
                 self.assertFalse(saved)
@@ -112,6 +121,12 @@ class LifecycleFailureTests(unittest.TestCase):
 
     def test_replacement_pid_is_never_saved_or_stopped(self):
         self.exercise(True)
+
+    def test_sustained_failure_still_saves_and_stops_owned_game(self):
+        self.exercise(False, sustained_failure=True)
+
+    def test_sustained_replacement_PID_is_not_stopped(self):
+        self.exercise(True, sustained_failure=True)
 
     def test_counter_tool_failure_still_saves_and_stops_owned_game(self):
         self.exercise(False, counter_failure=True)

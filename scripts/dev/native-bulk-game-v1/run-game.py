@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import struct
 import subprocess
 import sys
@@ -234,6 +235,13 @@ def proof(path, digest):
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
                                 R / 'scripts/dev/android-game-walk-to.py']}
+    if 'sustained_play' in p:
+        sustained = module('source_pinned_sustained_play', HERE / 'sustained_play.py')
+        sustained.validate(p, pinned, read, require)
+        p['controller_sources'].update({str(q): sha(q) for q in
+            [HERE / 'sustained_play.py', HERE / 'capture-sustained-scheduler.py']})
+        # Keep both compositions authenticated above; execute only native.
+        p['phases'] = [p['phases'][1]]
     return p
 
 
@@ -261,7 +269,7 @@ def owned(label, inv, d, p, phase):
 
 def phase_game(dev, out, phase, p, token):
     out.mkdir()
-    d = {'serial': p['serial'], 'kind': phase['kind'], 'remote_screenshot':
+    d = {'serial': p['serial'], 'kind': phase['kind'], 'transaction_token': token, 'remote_screenshot':
          '/data/local/tmp/d2r-native-bulk-' + token + '-' + phase['kind'] + '.png'}
     report = out / 'phase.json'
     save = lambda: m.journal(report, d)
@@ -323,7 +331,11 @@ def phase_game(dev, out, phase, p, token):
                 and launch['requested_legacy_astc_copy'] is False, 'shared/provider contract mismatch')
         initial = read_state(dev, out, 'before-route')
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
-        m.original_route(dev, own, d, report, out, initial, None)
+        if p.get('sustained_play'):
+            sustained = module('source_pinned_sustained_play_run', HERE / 'sustained_play.py')
+            sustained.run(dev, own, d, report, out, initial, p, m)
+        else:
+            m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
         if p.get('official_gpu_tools') and p.get('_official_gpu_disabled'):
             d['gpu_validity'] = False
@@ -433,7 +445,9 @@ def phase_game(dev, out, phase, p, token):
                     'native table unexpectedly present in standard control')
         d['original_HUD_reached'] = True
         d['game_modules_executed'] = True
-        d['scope'] = 'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance'
+        d['scope'] = ('Native-only sustained original-input route, sparse official Perfetto; '
+                      'no combat or whole-game acceptance implied' if p.get('sustained_play') else
+                      'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance')
         save()
     finally:
         if launcher is not None and launcher.poll() is None:
@@ -493,6 +507,11 @@ def main():
             'output': '2750x1260', 'pool_window_bytes': p['pool_window_bytes'],
             'profiling': False, 'recursive_RomFS_copy': False,
             'scope': 'Functional and system residency only, not sustained thermal/FPS proof'}
+    if p.get('sustained_play'):
+        plan.update(phases=['native-ASTC4'], profiling=True,
+            scope='1800s uninterrupted original-input route plus four official8s Perfetto windows; not combat proof',
+            sustained_play=p['sustained_play'], real_game_progress_saved=True,
+            restart_or_thermal_pause_cannot_be_combined=True)
     if p.get('performance_tools'):
         plan['profiling'] = True
         plan['scope'] = 'Three independent official8s stat/record/scheduler-Surface windows before LLDB; not yet measured netthroughput or thermal benefit'
@@ -542,13 +561,20 @@ def main():
     write()
     created = False
     active = None
+    if p.get('sustained_play'):
+        # Cooperative cancellation: finish the bounded existing input/tool child,
+        # then enter the original save2/stop/restore finally. No child SIGKILL.
+        def request_stop(signum, frame):
+            p['_operator_stop_requested'] = True
+        signal.signal(signal.SIGTERM, request_stop)
+        signal.signal(signal.SIGINT, request_stop)
     try:
         dev.app('sh', '-c', 'test ! -e "$1"', 'sh', stage)
         dev.app('mkdir', '-p', stage + '/backup', stage + '/incoming')
         created = True
         owner = out / 'owner'
         owner.write_text(token + '\n')
-        for phase in p['phases']:
+        for phase_index, phase in enumerate(p['phases']):
             active = phase
             name = phase['kind']
             incoming = stage + '/incoming/' + name
@@ -574,7 +600,7 @@ def main():
             dev.app('tar', 'xf', remote, '-C', incoming)
             if p.get('counter_snapshot'):
                 dev.app('chmod', '700', incoming + '/temp/d2r-lldb-server')
-            if name == 'control':
+            if phase_index == 0:
                 for label, target in DIRS:
                     if d['old_dirs'][label] is not None:
                         m.rename_dir(dev, target, stage + '/backup/' + label, d['old_dirs'][label])
@@ -604,7 +630,7 @@ def main():
                     dev.app('mkdir', '-p', str(Path(dest).parent))
                     dev.app('cp', src, dest)
                     require(dev.digest(dest) == h, 'PSO seed copy mismatch')
-            if name == 'control':
+            if phase_index == 0:
                 installer.install(dev, Path(p['apk']), p['new_apk'], out / 'install-candidate.log', require, PKG)
             dev.identity(p['new'])
             d.setdefault('phase_reports', []).append(str(out / name / 'phase.json'))
@@ -614,8 +640,13 @@ def main():
             write()
             require(phase_result.get('original_HUD_reached') and phase_result.get('fresh_save_then_stopped'),
                     'phase did not reach HUD / fresh save2')
+            if p.get('sustained_play'):
+                require(phase_result.get('sustained_play', {}).get('continuous_pass') is True,
+                        '30min sustained route did not complete')
         owner.unlink()
-        d['stage'] = 'matched-resource-original-game-functional-pair-complete'
+        d['stage'] = ('native-original-game-uninterrupted-sustained-route-complete'
+                      if p.get('sustained_play') else
+                      'matched-resource-original-game-functional-pair-complete')
         write()
     except BaseException as e:
         d['error'] = repr(e)
