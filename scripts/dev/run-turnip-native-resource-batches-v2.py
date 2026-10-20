@@ -12,7 +12,7 @@ P.add_argument('--driver',type=Path,required=True)
 P.add_argument('--resource-input',type=Path,required=True,help='complete batch prepare root')
 P.add_argument('--first-batch',type=int,required=True)
 P.add_argument('--batch-count',type=int,required=True)
-P.add_argument('--driver-query',type=Path,required=True,help='prior actual aa185 query identity; all three UUIDs must match')
+P.add_argument('--driver-query',type=Path,required=True,help='prior actual f830 fully-linear query identity; all three UUIDs must match')
 P.add_argument('--original-artifact',type=Path,help='exact locally cached original APK, verified by remote package SHA; no large exec-out pull')
 P.add_argument('--module-report',type=Path)
 P.add_argument('--resource-report',type=Path)
@@ -21,7 +21,7 @@ P.add_argument('--expected-original-elf')
 P.add_argument('--expected-shaderchain')
 P.add_argument('--output',type=Path,required=True)
 P.add_argument('--execute',action='store_true')
-a=P.parse_args();R=Path(__file__).resolve().parents[2]
+a=P.parse_args();R=Path('/home/dl/d2r-mobile') # existing shared SDK; no worktree-local tool copy
 pkg='com.d2rmobile.turniprealproducer';original='com.d2rmobile.nativeport'
 B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',a.serial]
 def sha(p):
@@ -34,7 +34,7 @@ with zipfile.ZipFile(a.artifact/'candidate.apk') as archive:
  for leaf,digest in m['native_library_sha256'].items():
   assert hashlib.sha256(archive.read('lib/arm64-v8a/'+leaf)).hexdigest()==digest
 assert len(m['native_library_sha256'])==6
-assert sha(a.driver)=='aa185374ef6c1135ddcbff08506aa4dc720e29b82e45a9ae9f5ce767f54564db'
+assert sha(a.driver)=='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
 prepared=json.loads((a.resource_input/'batch-prepare.json').read_text())
 assert prepared['complete'] and prepared['batch_max_entries']==128
 assert a.first_batch>=0 and 1<=a.batch_count<=49 and a.first_batch+a.batch_count<=len(prepared['batches'])
@@ -55,6 +55,8 @@ for index in range(a.first_batch,a.first_batch+a.batch_count):
  work.append({'index':index,'batch':batch,'manifest':manifest,'entries':entries,'input_hashes':hashes})
 expected_query=json.loads(a.driver_query.read_text())
 assert expected_query['complete'] and expected_query['driverID']==18
+assert expected_query['layout_UUID']=='ab91c540847448360a44496b50045159'
+assert expected_query['recipe']['VkFormat']==158 and expected_query['recipe']['width']==expected_query['recipe']['height']==256 and expected_query['recipe']['mipLevels']==9 and expected_query['physical_image_bytes']==94208
 assert all(re.fullmatch('[0-9a-f]{32}',expected_query[k]) for k in ('layout_UUID','device_UUID','driver_UUID'))
 baseline_bound=bool(a.original_artifact and a.module_report and a.expected_original_apk and a.expected_original_elf and a.expected_shaderchain)
 if a.execute:assert baseline_bound,'Execution requires local exact APK/ELF/28modules/shaderchain bindings'
