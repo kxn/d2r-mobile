@@ -1928,14 +1928,19 @@ void vk_pool_overwritten(uint64_t addr,uint64_t size) {
 int mtl_addr(uint64_t addr,uint64_t len,void **buf,uint64_t *off) {
   return vk_pool_address_stage(addr,len,buf,off,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 }
-int vk_pool_read(uint64_t address, size_t size, void *out) {
+static int pool_read(uint64_t address,size_t size,void *out,int optional) {
   if(V.options.pool_defer_publication && V.cmd && size && out &&
       vk_pool_cpu_prepare(address,size)<0)return -1;
   vk_mip_clear_buffer_access(address,size);
   atomic_fetch_add(&sync_cpu_reads,1);
   if (!V.cmd || !size || !out) return -1;
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_active)vk_texture_shared_linear_access(address,size);
+  if(shared_active && vk_texture_shared_linear_conflict(address,size)) {
+    if(optional)return -1;
+    vk_texture_shared_linear_access(address,size);
+  }
+#else
+  (void)optional;
 #endif
   pthread_mutex_lock(&V.resources);
   int valid=pool_find(address,size)!=NULL;
@@ -1961,6 +1966,9 @@ int vk_pool_read(uint64_t address, size_t size, void *out) {
   pthread_mutex_unlock(&V.resources);
   return p?wait:-1;
 }
+int vk_pool_read(uint64_t address,size_t size,void *out) {
+  return pool_read(address,size,out,0);
+}
 int vk_pool_try_read(uint64_t address,size_t size,void *out) {
   vk_mip_clear_buffer_access(address,size);
   if(!V.cmd||!size||!out) return -1;
@@ -1981,6 +1989,9 @@ int vk_pool_try_read(uint64_t address,size_t size,void *out) {
   return !p?-1:known?1:0;
 }
 int vk_cover_read(uint64_t address,size_t size,void *out) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active && vk_texture_shared_linear_conflict(address,size))return 0;
+#endif
   int reference=atomic_load(&cover_wait_reference);
   if(reference<0) {
     const char *v=getenv("DM_VULKAN_COVER_WAIT_REFERENCE");
@@ -1992,7 +2003,9 @@ int vk_cover_read(uint64_t address,size_t size,void *out) {
   // Never introduce a new demand submission after the caller borrowed state.
   if(V.options.pool_defer_publication &&
       (vk_pool_pending_writes(address,size) || vk_pool_cpu_unknown(address,size)))return 0;
-  if(reference) return vk_pool_read(address,size,out)>=0;
+  // The wait reference remains an optional proof. Recheck after the ordinary
+  // mip-clear drain as well, which can publish another physical image writer.
+  if(reference) return pool_read(address,size,out,1)>=0;
   int result=vk_pool_try_read(address,size,out);
   if(!result) atomic_fetch_add(&sync_proof_pending,1);
   return result==1;
