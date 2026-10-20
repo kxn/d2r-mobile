@@ -64,7 +64,7 @@ add_executable(native_pace_test "${GFX}/vulkan/tests/pace.c" "${GFX}/vulkan/nvn_
 target_link_libraries(native_pace_test PRIVATE m)
 target_link_options(native_pace_test PRIVATE -Wl,-z,max-page-size=16384)
 include("${GFX}/vulkan/builtins.cmake")
-set(VK_SOURCES "${GFX}/vulkan/nvn_vk_freeze.c" "${GFX}/vulkan/nvn_vk_bright.c" "${GFX}/vulkan/nvn_vk_ghost.c" "${GFX}/vulkan/nvn_vk_capture.c" "${GFX}/vulkan/nvn_vk_window.c" "${GFX}/vulkan/nvn_vk_draw.c" "${GFX}/vulkan/nvn_vk_state.c" "${GFX}/vulkan/nvn_vk_shader.c" "${GFX}/vulkan/nvn_vk_counter.c" "${GFX}/vulkan/nvn_vk.c" "${GFX}/vulkan/nvn_vk_format.c" "${GFX}/vulkan/nvn_vk_replay.c" "${GFX}/vulkan/nvn_vk_texture.c" "${GFX}/nvn/nvn_platform.c" "${GFX}/nvn/nvn_tex.c" "${GFX}/tex/nvn_deswizzle.c" "${GFX}/tex/nvn_bcdec.c")
+set(VK_SOURCES "${GFX}/vulkan/nvn_vk_freeze.c" "${GFX}/vulkan/nvn_vk_bright.c" "${GFX}/vulkan/nvn_vk_ghost.c" "${GFX}/vulkan/nvn_vk_capture.c" "${GFX}/vulkan/nvn_vk_window.c" "${GFX}/vulkan/nvn_vk_draw.c" "${GFX}/vulkan/nvn_vk_state.c" "${GFX}/vulkan/nvn_vk_shader.c" "${GFX}/vulkan/nvn_vk_counter.c" "${GFX}/vulkan/nvn_vk_query.c" "${GFX}/vulkan/nvn_vk.c" "${GFX}/vulkan/nvn_vk_format.c" "${GFX}/vulkan/nvn_vk_replay.c" "${GFX}/vulkan/nvn_vk_texture.c" "${GFX}/nvn/nvn_platform.c" "${GFX}/nvn/nvn_tex.c" "${GFX}/tex/nvn_deswizzle.c" "${GFX}/tex/nvn_bcdec.c")
 get_target_property(NATIVE_SOURCES dmhost_native SOURCES)
 list(PREPEND VK_SOURCES "${GFX}/vulkan/nvn_vk_pace.c")
 list(PREPEND VK_SOURCES "${GFX}/vulkan/nvn_vk_memory.cpp" "${GFX}/tex/nvn_astc_metadata.cpp")
