@@ -266,7 +266,8 @@ static descriptor_history_entry *descriptor_shader_hint_find(vk_shader *s,VkDesc
   if(hint->shader!=s || hint->layout!=layout)return NULL;
   descriptor_history_entry *entry=binding_state->descriptor_history[hint->history_slot];
   if(!entry || entry->epoch!=binding_state->descriptor_history_epoch ||
-      entry->shader!=s || entry->layout!=layout || memcmp(entry->values,values,bytes))return NULL;
+      entry->shader!=s || entry->layout!=layout ||
+      bytes>(size_t)entry->capacity*sizeof *values || memcmp(entry->values,values,bytes))return NULL;
   return entry;
 }
 static void descriptor_shader_hint_remember(vk_shader *s,VkDescriptorSetLayout layout,
@@ -879,6 +880,9 @@ unsigned vk_test_descriptor_shader_hint_edges(void) {
   unsigned checks=0;
 #define HINT_CHECK(x) do{if(!(x))die("Descriptor hint edge failed line %d",__LINE__);checks++;}while(0)
   HINT_CHECK(descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value)==entry);
+  entry->capacity=0;HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value));entry->capacity=1;
+  descriptor_value longer[2]={value,value};
+  HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,longer,sizeof longer));
   HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&changed,sizeof changed));
   HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],(VkDescriptorSetLayout)(uintptr_t)32,&value,sizeof value));
   entry->epoch=6;HINT_CHECK(!descriptor_shader_hint_find(&shaders[0],layout,&value,sizeof value));entry->epoch=7;
