@@ -185,6 +185,67 @@ static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
 }
 #include "native_vulkan_astc_copy.inc"
 #include "native_vulkan_image_observe.inc"
+extern int vk_test_texture_retired_frontier(uint64_t,uint64_t,uint64_t *);
+static void shared_image_retired_alias_test(NVNmemoryPool *pool,uint8_t *data) {
+  CHECK(V.timeline_semaphore && V.features.textureCompressionBC);
+  const size_t offset=1572864;
+  uint32_t before=vk_texture_count();NVNtexture old,fresh;NVNtextureBuilder b;
+  CALL(nvnTextureBuilderSetDefaults,&b);CALL(nvnTextureBuilderSetDevice,&b,&device);
+  CALL(nvnTextureBuilderSetTarget,&b,NVN_TEXTURE_TARGET_2D);
+  CALL(nvnTextureBuilderSetWidth,&b,16);CALL(nvnTextureBuilderSetHeight,&b,16);
+  CALL(nvnTextureBuilderSetFormat,&b,NVN_FORMAT_RGBA16F);
+  NVNpackagedTextureLayout packaged={{0}};CALL(nvnTextureBuilderSetPackagedTextureLayout,&b,&packaged);
+  CALL(nvnTextureBuilderSetStorage,&b,pool,offset);CHECK(CALL(nvnTextureInitialize,&old,&b));
+  mtl_sub_begin();p_set_rt target={.n=1,.color={(const tex_t *)&old}};
+  p_clear_color clear={.index=0,.mask=15,.rgba={0,1,0,1}};vk_target_clear_color(&target,NULL,&clear);
+  VkSemaphoreTypeCreateInfoKHR type={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR,.semaphoreType=VK_SEMAPHORE_TYPE_TIMELINE_KHR};
+  VkSemaphoreCreateInfo create={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,.pNext=&type};VkSemaphore gate;
+  VK_CHECK(vkCreateSemaphore(V.device,&create,NULL,&gate));uint64_t one=1;
+  VkTimelineSemaphoreSubmitInfoKHR timeline={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,.waitSemaphoreValueCount=1,.pWaitSemaphoreValues=&one};
+  VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  VkSubmitInfo blocker={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.pNext=&timeline,.waitSemaphoreCount=1,.pWaitSemaphores=&gate,.pWaitDstStageMask=&stage};
+  pthread_mutex_lock(&V.queue_mu);VK_CHECK(vkQueueSubmit(V.queue,1,&blocker,VK_NULL_HANDLE));pthread_mutex_unlock(&V.queue_mu);
+  uint64_t use=vk_internal_commit();uint64_t serial=((const tex_t *)&old)->serial;
+  CALL(nvnTextureFinalize,&old);
+  CHECK(vk_texture_shared_linear_conflict((uintptr_t)data+offset,4096));
+  CHECK(vk_completed_serial()<use);vk_texture_end_submit();
+  CHECK(vk_texture_shared_linear_conflict((uintptr_t)data+offset,4096)); // GPU incomplete
+  VkSemaphoreSignalInfoKHR signal={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO_KHR,.semaphore=gate,.value=1};
+  VK_CHECK(V.signal_timeline(V.device,&signal));vk_internal_wait(use);
+  uint64_t original,withheld;CHECK(vk_test_texture_retired_frontier(serial,UINT64_MAX,&original));
+  vk_texture_end_submit();CHECK(vk_texture_shared_linear_conflict((uintptr_t)data+offset,4096)); // untranslated frontier withheld
+  CHECK(vk_test_texture_retired_frontier(serial,original,&withheld));CHECK(withheld==UINT64_MAX);
+  CHECK(mtl_last_fence()>=original && mtl_last_fence()-original<8);
+  vk_texture_end_submit();CHECK(!vk_texture_shared_linear_conflict((uintptr_t)data+offset,4096));
+  CHECK(vk_texture_count()==before+1); // physical cache/snapshot grace unchanged
+  vkDestroySemaphore(V.device,gate,NULL);
+  CALL(nvnTextureBuilderSetLevels,&b,3);CALL(nvnTextureBuilderSetFormat,&b,NVN_FORMAT_RGBA_DXT5_SRGB);
+  CHECK(CALL(nvnTextureInitialize,&fresh,&b));const tex_t *t=(const tex_t *)&fresh;
+  CHECK(t->mem==data+offset && t->L.size<4096);
+  dm_guest_write_prepare(t->mem,t->L.size);memset(t->mem,0,t->L.size);
+  uint8_t expected[3][256];
+  for(unsigned level=0;level<3;level++) {
+    unsigned w=16u>>level,pitch=((w+3)/4)*16,rows=(w+3)/4;
+    for(unsigned k=0;k<pitch*rows;k++)expected[level][k]=(uint8_t)(0x31+level*17+k);
+    CHECK(!nvn_swizzle(&t->d,level,0,expected[level],pitch,t->mem));
+  }
+  mtl_sub_begin();VkImageLayout layout;VkImage image=vk_texture_present_source(t,&layout);
+  vk_buffer *readback[3];
+  for(unsigned level=0;level<3;level++) {
+    unsigned w=16u>>level,n=((w+3)/4)*((w+3)/4)*16;
+    readback[level]=vk_temp_buffer(n);
+    VkBufferImageCopy c={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,level,0,1},.imageExtent={w,w,1}};
+    vkCmdCopyImageToBuffer(V.cmd,image,layout,readback[level]->handle,1,&c);vk_buffer_transfer_written();
+  }
+  vk_internal_wait(vk_internal_commit());
+  for(unsigned level=0;level<3;level++) {
+    unsigned w=16u>>level,n=((w+3)/4)*((w+3)/4)*16;
+    for(unsigned k=0;k<n;k++)CHECK(readback[level]->map[k]==expected[level][k]);
+  }
+  CHECK(!vk_texture_shared_linear_conflict((uintptr_t)t->mem,t->L.size));
+  CALL(nvnTextureFinalize,&fresh);
+  printf("{\"test_details\":\"shared-retired-image-address-reuse\",\"GPU_incomplete_keeps_alias\":true,\"withheld_translation_frontier_keeps_alias\":true,\"grace_retains_physical_image\":true,\"HDR_to_BC3_same_address_3mip_bytes\":true}\n");
+}
 static void shared_image_dirty_test(void) {
   CHECK(vk_pool_shared_mode());
   size_t allocation=(4u<<20)+65536;
@@ -202,6 +263,7 @@ static void shared_image_dirty_test(void) {
   CALL(nvnMemoryPoolBuilderSetStorage,&b,data,2u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&b));CHECK(!nvn_dirty_tracked(data,2u<<20));
+  if(getenv("DM_SHARED_IMAGE_RETIRED_ALIAS_TEST"))shared_image_retired_alias_test(&pool,data);
   if(getenv("DM_SHARED_IMAGE_COPY_TEST"))shared_image_copy_test(&pool,data);
   NVNtexture textures[2];NVNtextureBuilder tb;
   for(unsigned n=0;n<2;n++) {

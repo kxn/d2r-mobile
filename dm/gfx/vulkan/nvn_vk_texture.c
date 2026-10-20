@@ -2202,6 +2202,18 @@ unsigned vk_texture_trim_idle(void) {
   return removed;
 }
 #ifdef DM_VULKAN_TEST_EMBED
+// Owned metadata boundary fixture only. This never runs in the game or changes
+// a real queue's frontiers; it temporarily withholds a retired entry's logical
+// admission, then restores the original watermark before actual reuse.
+int vk_test_texture_retired_frontier(uint64_t serial,uint64_t next,uint64_t *previous) {
+  int found=0;pthread_mutex_lock(&V.resources);
+  for(retired_image *r=retired_images;r;r=r->next)if(r->serial==serial) {
+    *previous=r->at;r->at=next;found=1;break;
+  }
+  pthread_mutex_unlock(&V.resources);return found;
+}
+#endif
+#ifdef DM_VULKAN_TEST_EMBED
 int vk_test_texture_rebuildable(uint64_t serial) {
   for(image *i=images;i;i=i->next)if(i->tex.serial==serial)return i->cpu_rebuildable;
   return -1;
