@@ -28,7 +28,7 @@ if args.shared_import_windows and not args.shared_pools:
 if args.shared_window_app_fixture:
     if subprocess.check_output(['git','-C',str(ROOT),'status','--porcelain','--untracked-files=no'],text=True):
         parser.error('Freeze tracked source before canonical owned app build')
-OUT = ROOT / '.local/build/android-apk' 
+OUT = ROOT / '.local/build/android-apk'
 SDK = ROOT / '.local/android-sdk'
 BUILD = SDK / 'build-tools/36.0.0'
 JAR = SDK / 'platforms/android-36/android.jar'
