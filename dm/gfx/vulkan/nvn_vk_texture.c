@@ -1513,6 +1513,31 @@ static uint32_t full_zero_copy(image *s,VkImageSubresourceRange sr,image *d,
       p->dr.height==(int)mip(d->extent.height,dr.baseMipLevel)?
       zero_mip_mask(dr.baseMipLevel,1):0;
 }
+// Failure-only metadata: original NVN request and actual physical image must
+// remain distinguishable when diagnosing unsupported copies. Never reads guest
+// bytes, changes authority, queries another resource or executes a callback.
+static void __attribute__((cold,noinline)) texture_copy_unavailable_context(
+    const char *role,const tex_t *t,const image *i,const view_t *v,int has_view,
+    const NVNcopyRegion *region,const VkImageSubresourceRange *resolved) {
+  view_t absent={0};if(!has_view)v=&absent; // ignored payload may be uninitialized
+  LOG("[T2T unavailable] role=%s logical serial=%llu target=%d format=%#x flags=%#x samples=%d shape=%u,%u,%u levels=%u stride=%u pkg_block_h=%d source=%p pool=%p offset=%lld size=%llu layer_size=%llu layers=%u align=%u bpb=%u tile=%u,%u has_layout=%u layout8=%02x%02x%02x%02x%02x%02x%02x%02x",
+      role,(unsigned long long)t->serial,t->d.target,t->d.format,t->d.flags,t->d.samples,
+      t->d.width,t->d.height,t->d.depth,t->d.levels,t->d.stride,t->d.pkg_block_h,
+      t->mem,(void *)t->pool,(long long)t->off,(unsigned long long)t->L.size,
+      (unsigned long long)t->L.layer_size,t->L.layers,t->L.align,t->L.bpb,t->L.tileH,t->L.tileD,
+      t->has_layout,t->layout[0],t->layout[1],t->layout[2],t->layout[3],t->layout[4],t->layout[5],t->layout[6],t->layout[7]);
+  LOG("[T2T unavailable] role=%s physical serial=%llu handle=%#llx format=%u decoded=%d initialized=%d cpu_rebuildable=%d external_access=%d type=%u samples=%u flags=%#x usage=%#x shape=%u,%u,%u levels=%u layers=%u aspect=%#x layout=%u last_use=%llu stamp=%llu",
+      role,(unsigned long long)i->tex.serial,(unsigned long long)(uintptr_t)i->handle,
+      i->format,i->decoded,i->initialized,i->cpu_rebuildable,i->external_access,
+      i->description.imageType,i->description.samples,i->description.flags,i->description.usage,
+      i->extent.width,i->extent.height,i->extent.depth,i->levels,i->layers,i->aspect,i->layout,
+      (unsigned long long)i->last_use,(unsigned long long)i->stamp);
+  LOG("[T2T unavailable] role=%s region_xyz=%d,%d,%d region_extent=%d,%d,%d has_view=%d set_levels=%u base_level=%d nlevels=%d set_layers=%u min_layer=%d nlayers=%d set_format=%u format=%#x set_target=%u target=%d resolved_aspect=%#x resolved_level=%u resolved_levels=%u resolved_layer=%u resolved_layers=%u",
+      role,region->xoffset,region->yoffset,region->zoffset,region->width,region->height,region->depth,
+      has_view,v->set_levels,v->base_level,v->nlevels,v->set_layers,v->min_layer,v->nlayers,
+      v->set_format,v->format,v->set_target,v->target,resolved->aspectMask,resolved->baseMipLevel,
+      resolved->levelCount,resolved->baseArrayLayer,resolved->layerCount);
+}
 void vk_texture_copy_t2t(const p_copy_t2t *p) {
   vk_texture_cpu_preflight(p->src);vk_texture_cpu_preflight(p->dst);
   vk_mip_clear_drain();
@@ -1555,9 +1580,14 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
     if (!(source.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
         !(dest.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) ||
         (filter && !(source.optimalTilingFeatures & filter)) ||
-        s->aspect != VK_IMAGE_ASPECT_COLOR_BIT)
+        s->aspect != VK_IMAGE_ASPECT_COLOR_BIT) {
+      LOG("[T2T unavailable] copy_flags=%#x source_features=%#x destination_features=%#x required_filter=%#x",
+          p->flags,source.optimalTilingFeatures,dest.optimalTilingFeatures,filter);
+      texture_copy_unavailable_context("src",p->src,s,&p->sv,p->has_sv,&p->sr,&sr);
+      texture_copy_unavailable_context("dst",p->dst,d,&p->dv,p->has_dv,&p->dr,&dr);
       die("Vulkan format conversion unavailable: %u -> %u flags=%#x", s->format,
           d->format, p->flags);
+    }
     VkImageBlit b = {
         .srcSubresource = {s->aspect, sr.baseMipLevel, sr.baseArrayLayer, 1},
         .dstSubresource = {d->aspect, dr.baseMipLevel, dr.baseArrayLayer, 1},
