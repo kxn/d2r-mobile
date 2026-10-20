@@ -821,7 +821,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     if(operation_mode_fixed || vk_loader_is_initialized())die("Native resource oracle requires a cold process");
     operation_mode_fixed=1;pthread_mutex_unlock(&operation_mode_mutex);
     if(!shared_guest_heap_startup)die("Native resource oracle requires explicit fixed shared mode");
-    if(setenv("DM_VULKAN_SHARED_POOLS","1",1) || setenv("PANVK_DM_HOST_IMPORT","true",1) ||
+    if(setenv("DM_VULKAN_SHARED_POOLS","1",1) || setenv("TU_DM_HOST_IMPORT","true",1) ||
        setenv("DM_NATIVE_RESOURCE_NVN_FIXTURE",native_resource_fixture_directory,1))die("Native resource oracle cold setup");
     native_resource_environment();
   }

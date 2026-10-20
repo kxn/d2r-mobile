@@ -146,6 +146,7 @@ opus_provenance={'upstream':json.loads(opus_upstream.read_text()),
                  'cmake_rules_sha256':sha(ROOT/'dm/third_party/opus_fixed.cmake'),
                  'generated_config_sha256':sha(opus_config)}
 manifest={'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhost_android.so'),
+          'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),
           'tlsdesc':args.tlsdesc,'host_opt_level':args.opt_level,'contains_game_binary':False,
           'official_renderdoc_api':args.renderdoc_api,
           'fixed_shared_pools_compiled':args.shared_pools,

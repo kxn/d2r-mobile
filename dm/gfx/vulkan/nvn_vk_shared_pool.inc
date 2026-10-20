@@ -82,6 +82,20 @@ int vk_pool_shared_mode(void) {mtl_init();return shared_active;}
 int vk_pool_shared_active(void) {return shared_active;}
 // Frozen cold decision only: scope registration alone is not commit admission.
 int vk_pool_shared_gpu_gate_mode(void) {return shared_active && shared_gpu_gate_phase;}
+// The capability probe models the fixed shared heap's mmap-backed pages, not
+// allocator storage (Android malloc pointers may be tagged and kernel useraddr
+// import is not obliged to accept that allocator address representation).
+// This owns only a small fresh mapping; guest mappings are never replaced.
+static uint8_t *shared_probe_mapping(uint64_t alignment,uint64_t bytes) {
+  uint64_t reserve=bytes+alignment;
+  void *raw=mmap(NULL,reserve,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+  if(raw==MAP_FAILED)return NULL;
+  uintptr_t begin=(uintptr_t)raw,aligned=(begin+alignment-1)&~(alignment-1);
+  uint64_t prefix=aligned-begin,suffix=reserve-prefix-bytes;
+  if(prefix && munmap(raw,prefix))die("Shared probe prefix unmap failed");
+  if(suffix && munmap((void *)(aligned+bytes),suffix))die("Shared probe suffix unmap failed");
+  return (uint8_t *)aligned;
+}
 static void shared_device_probe(void) {
   if(!shared_requested)return;
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
@@ -98,9 +112,11 @@ static void shared_device_probe(void) {
   // Actual bytes both ways before any NVN Pool exists. This validates only
   // the small allocation/type/API path, not all future addresses or residency.
   size_t bytes=shared_alignment*2;uint8_t *memory=NULL;
-  if(posix_memalign((void **)&memory,shared_alignment,bytes))return;
+  memory=shared_probe_mapping(shared_alignment,bytes);
+  if(!memory)return;
+  LOG("[shared pool] startup probe mapping=mmap-shared pointer=%p bytes=%zu",(void *)memory,bytes);
   memset(memory,0x31,bytes);vk_buffer b={0};VkResult status=shared_buffer_create(memory,bytes,&b);
-  if(status!=VK_SUCCESS) {vk_buffer_destroy(&b);free(memory);LOG("[shared pool] startup legacy: probe import=%d",status);return;}
+  if(status!=VK_SUCCESS) {vk_buffer_destroy(&b);if(munmap(memory,bytes))die("Shared probe unmap failed");LOG("[shared pool] startup legacy: probe import=%d",status);return;}
   VkCommandPool pool_handle;VkCommandBuffer cmd;VkFence fence;
   VkCommandPoolCreateInfo pc={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.queueFamilyIndex=V.queue_family};
   VK_CHECK(vkCreateCommandPool(V.device,&pc,NULL,&pool_handle));
@@ -131,7 +147,7 @@ static void shared_device_probe(void) {
   shared_gpu_gate_force=getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE")!=NULL;
   if(shared_gpu_gate_force)needs_gate=1; // admission only, not NC Vk cache calls
 #endif
-  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);free(memory);
+  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);if(munmap(memory,bytes))die("Shared probe unmap failed");
   if(valid && needs_gate) {
     uint64_t atom=V.props.limits.nonCoherentAtomSize,page=(uint64_t)getpagesize();
     if(!atom || (atom&(atom-1)) || !page || (page&(page-1)) || atom>page) {

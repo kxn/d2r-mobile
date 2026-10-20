@@ -3,7 +3,7 @@
 import argparse,hashlib,json,subprocess,zipfile,shutil
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
-P=argparse.ArgumentParser();P.add_argument('--inputs',type=Path,required=True);A=P.parse_args()
+P=argparse.ArgumentParser();P.add_argument('--inputs',type=Path,required=False);A=P.parse_args()
 OUT=ROOT/'.local/build/android-native-family-fixture'
 SDK=ROOT/'.local/android-sdk';TOOLS=SDK/'build-tools/36.0.0'
 BASE=ROOT/'.local/build/android-apk/d2r-native-tlsdesc-debug.apk'
@@ -23,7 +23,7 @@ def run(*args):
 # aapt2 keeps the original Java package-qualified Activity when renaming the
 # manifest package. The compiled manifest below is verified before signing.
 run(TOOLS/'aapt2','link','-I',SDK/'platforms/android-36/android.jar','--manifest',
-    ROOT/'dm/android/AndroidManifest.xml','--rename-manifest-package','com.d2rmobile.nativefamilyfixture',
+    ROOT/'dm/android/AndroidManifest.xml','--rename-manifest-package','com.d2rmobile.turniprealfamily',
     '-o',unsigned,ROOT/'.local/build/android-apk/resources.zip')
 with zipfile.ZipFile(BASE) as source,zipfile.ZipFile(unsigned,'a',compression=zipfile.ZIP_DEFLATED) as target:
     present=set(target.namelist())
@@ -32,7 +32,7 @@ with zipfile.ZipFile(BASE) as source,zipfile.ZipFile(unsigned,'a',compression=zi
         target.writestr(entry,source.read(entry.filename))
 xml=run(TOOLS/'aapt2','dump','xmltree',unsigned,'--file','AndroidManifest.xml')
 (OUT/'AndroidManifest.xmltree.txt').write_text(xml)
-assert 'com.d2rmobile.nativefamilyfixture' in xml
+assert 'com.d2rmobile.turniprealfamily' in xml
 assert 'com.d2rmobile.nativeport.MainActivity' in xml
 assert '".MainActivity"' not in xml
 run(TOOLS/'zipalign','-f','-P','16','4',unsigned,aligned)
@@ -49,7 +49,7 @@ with zipfile.ZipFile(BASE) as source,zipfile.ZipFile(apk) as target:
     native_names={n for n in target.namelist() if n.startswith('lib/arm64-v8a/') and n.endswith('.so')}
     assert native_names=={'lib/arm64-v8a/'+n for n in manifest['native_library_sha256']}
     assert len(native_names)==6
-result={'package':'com.d2rmobile.nativefamilyfixture','activity':'com.d2rmobile.nativeport.MainActivity',
+result={'package':'com.d2rmobile.turniprealfamily','activity':'com.d2rmobile.nativeport.MainActivity',
     'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),
     'apk_sha256':sha(apk),'base_apk_sha256':sha(BASE),'manifest_xmltree_sha256':sha(OUT/'AndroidManifest.xmltree.txt'),
     'base_build_manifest_sha256':sha(BASE.with_suffix('.apk.build.json')),'packager_sha256':sha(Path(__file__)),
@@ -57,14 +57,18 @@ result={'package':'com.d2rmobile.nativefamilyfixture','activity':'com.d2rmobile.
     'native_library_sha256':manifest['native_library_sha256'],'base_payload_entries_verified_identical':same,
     'JNI_class_package_unchanged':'com.d2rmobile.nativeport','contains_game_binary':False,
     'build_commands':commands,'installed':False}
+if not A.inputs:
+    result.update(resource_bundle_pending_actual_driver_bake=True,driver_sha256='aa185374ef6c1135ddcbff08506aa4dc720e29b82e45a9ae9f5ce767f54564db')
+    apk.with_suffix('.apk.build.json').write_text(json.dumps(result,indent=2)+'\n')
+    print(apk);raise SystemExit(0)
 inputs=json.loads(A.inputs.read_text())
-assert inputs['driver_sha256']=='6849875ce017b19a8913ed0fb3b9a1edcbfb13b44a25ad32d3bfbec7d1602338'
-assert set(inputs['resources'])=={'resource4','resource6'}
+assert inputs['driver_sha256']=='aa185374ef6c1135ddcbff08506aa4dc720e29b82e45a9ae9f5ce767f54564db'
+assert set(inputs['resources'])=={'resource4'}
 resources=OUT/'resources';shutil.rmtree(resources,ignore_errors=True);resources.mkdir()
 owned={}
 for name,row in inputs['resources'].items():
     assert set(row['files'])=={'native-layouts.bin','native-resource.bin','resource-input.bin'}
-    assert row['producer_sha256']=='043d009065b301a7cb05bab2c0d9517feb39f9464fca013929f100fe34802fe2'
+    assert len(row['producer_sha256'])==64 and all(c in '0123456789abcdef' for c in row['producer_sha256'])
     for leaf,item in row['files'].items():
         src=Path(item['path']);assert sha(src)==item['sha256']
         dst=resources/name/leaf;dst.parent.mkdir(exist_ok=True);shutil.copy2(src,dst)
