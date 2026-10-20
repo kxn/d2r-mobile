@@ -1572,6 +1572,23 @@ Buffer backing 比上一轮 563MiB 少 16MiB，但 live image 数也由 1,290
 heapprofd 调参；后续仅尝试官方 bionic malloc_debug 的独立诊断包装，
 其分配跟踪和展开成本不作为优化前后 PSS/FPS 对照。
 
+官方 malloc_debug 的第一次实际冷启动也未得到有效归因：独立诊断 APK
+只增加包内 env wrapper，六个库、DEX、manifest、资源及原 NSO 不变。
+普通 UID 进程实际确认 enabled 和 SIG47 handler，但未达到 HUD，也未
+发送导出信号。日志有 142 次 `UNKNOWN POINTER (free)`，普通 pthread
+和游戏线程退出栈均出现。官方源码及本机系统库反汇编表明，这类验证
+失败会跳过真实释放，诊断本身可能增加内存滞留。因此不把这个工具失败
+写成游戏 TLS 错误，也不用不完整跟踪推算 malloc 增量。
+
+原失败报告保留。控制器已请求原 HOME/onPause，因菜单阶段没有新的
+OBS_TICK 而保守拒绝停止；随后独立核对同 PID/UID、Activity STOPPED、
+原暂停的正面图形清空记录，以及 exact bc ELF 的保存分支：谓词为真
+必在图形挂起前向同一无缓冲日志打印保存结果。结合完整菜单/无玩家
+历史，本次支持原暂停谓词为假，未伪造 save2 或为存档重启。受控停止
+后复用原 rollback 的完整 CAS 检查，原包、六个目录与 PSO 已恢复。
+后续仅考察现成默认 backtrace 算法，避免 full unwinder 的内部线程
+缓存路径；需重新验证覆盖，不能视为工具问题已解决。
+
 完整 MineGraph PanVK 加静态 unsupported HAL 后，原 BC 资源也实际触发
 GPU timeout；因此它尚不能作为 Mali 的可用驱动。已通过现有 Mesa
 pandecode 保存本次任务的完整 CS，Mali 已恢复系统驱动、原资源及 PSO
