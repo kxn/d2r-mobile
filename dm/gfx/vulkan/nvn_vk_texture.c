@@ -932,6 +932,17 @@ static void texture_dirty_mode_begin(void) {
 static __attribute__((noinline)) void image_upload_contents(image *i) {
   const tex_t *t=&i->tex;
 #ifdef DM_VULKAN_SHARED_POOLS
+  if(vk_pool_shared_active() && vk_texture_shared_linear_conflict((uintptr_t)t->mem,t->L.size)) {
+    image *owner=NULL;
+    for(image *a=shared_gpu_aliases;a;a=a->shared_alias_next)
+      if(a->initialized && a->tex.mem && a->tex.L.size &&
+          (uintptr_t)t->mem<(uintptr_t)a->tex.mem+a->tex.L.size &&
+          (uintptr_t)t->mem+t->L.size>(uintptr_t)a->tex.mem) {owner=a;break;}
+    die("Shared CPU image upload aliases GPU-owned optimal source: canonical retile required target_serial=%llu target_format=%#x source=%p bytes=%llu owner_serial=%llu owner_format=%#x owner_source=%p owner_bytes=%llu",
+        (unsigned long long)t->serial,t->d.format,(void *)t->mem,(unsigned long long)t->L.size,
+        (unsigned long long)(owner?owner->tex.serial:0),owner?owner->tex.d.format:0,
+        owner?(void *)owner->tex.mem:NULL,(unsigned long long)(owner?owner->tex.L.size:0));
+  }
   if(vk_pool_shared_mode() && !i->shared_dirty_scope) {
     if(!shared_image_backing((uintptr_t)t->mem,t->L.size))die("Shared image provenance changed");
     i->shared_dirty_scope=nvn_dirty_scope_acquire(t->mem,t->L.size);
