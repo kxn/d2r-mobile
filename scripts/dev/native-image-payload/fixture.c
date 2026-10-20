@@ -1,4 +1,5 @@
-// Standard API only: no vendor swizzle, game modules, sampling or timing tools.
+// Owned API fixture; optional explicit PanVK native producer contract.
+// No vendor swizzle implementation, game modules or profiling/timing tools.
 #include "mbedtls/sha256.h"
 #include "native_sample_spv.h"
 #include "volk.h"
@@ -38,6 +39,16 @@ static VkPipelineLayout pipeline_layout;
 static VkDescriptorSetLayout descriptor_layout;
 static VkDebugUtilsMessengerEXT messenger;
 static int bc, astc;
+static int native_mode;
+static PFN_vkGetInstanceProcAddr fixture_get_proc;
+static int fixture_validation = -1;
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+static VkPhysicalDeviceDriverProperties native_driver;
+static VkPhysicalDeviceExternalMemoryHostPropertiesEXT native_host;
+static const VkExternalMemoryImageCreateInfo native_external = {
+    .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+    .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+#endif
 static const VkImageUsageFlags usage =
     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
 static VKAPI_ATTR VkBool32 VKAPI_CALL
@@ -72,7 +83,10 @@ static int has_extension(VkExtensionProperties *p, uint32_t n,
   return 0;
 }
 static int init(void) {
-  VK(volkInitialize());
+  if (fixture_get_proc)
+    volkInitializeCustom(fixture_get_proc);
+  else
+    VK(volkInitialize());
   VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
                            .pApplicationName = "owned-native-image-payload",
                            .apiVersion = VK_API_VERSION_1_1};
@@ -95,7 +109,8 @@ static int init(void) {
   validation.pNext = &debug_info;
   VkInstanceCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                              .pApplicationInfo = &app};
-  if (!getenv("DM_NATIVE_NO_VALIDATION")) {
+  if (fixture_validation >= 0 ? fixture_validation
+                              : !getenv("DM_NATIVE_NO_VALIDATION")) {
     ci.pNext = &validation;
     ci.enabledLayerCount = 1;
     ci.ppEnabledLayerNames = layers;
@@ -123,8 +138,16 @@ static int init(void) {
                                           available));
   const char *wanted[] = {VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,
                           VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
-                          VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME};
-  for (unsigned n = 0; n < 3; n++)
+                          VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+                          ,
+                          VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME,
+                          VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
+                          VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME
+#endif
+  };
+  unsigned wanted_count = native_mode ? 6 : 3;
+  for (unsigned n = 0; n < wanted_count; n++)
     if (!has_extension(available, ext_count, wanted[n])) {
       printf("{\"result\":\"unsupported\",\"reason\":\"%s\"}\n", wanted[n]);
       free(available);
@@ -144,6 +167,17 @@ static int init(void) {
   astc = features.features.textureCompressionASTC_LDR;
   ids = (VkPhysicalDeviceIDProperties){
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+  if (native_mode) {
+    native_host = (VkPhysicalDeviceExternalMemoryHostPropertiesEXT){
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+    native_driver = (VkPhysicalDeviceDriverProperties){
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
+        .pNext = &native_host};
+    ids.pNext = &native_driver;
+  }
+#endif
   host = (VkPhysicalDeviceHostImageCopyPropertiesEXT){
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_PROPERTIES_EXT,
       .pNext = &ids};
@@ -151,6 +185,13 @@ static int init(void) {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &host};
   vkGetPhysicalDeviceProperties2(physical, &p);
   properties = p.properties;
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+  if (native_mode && native_driver.driverID != VK_DRIVER_ID_MESA_PANVK) {
+    puts("{\"result\":\"unsupported\",\"reason\":\"DM native image producer v1 "
+         "requires exact PanVK driver contract\"}");
+    return 0;
+  }
+#endif
   CHECK(host.copySrcLayoutCount <= 64 && host.copyDstLayoutCount <= 64);
   VkImageLayout src[64], dst[64];
   host.pCopySrcLayouts = src;
@@ -188,7 +229,7 @@ static int init(void) {
                            .pNext = &feature,
                            .queueCreateInfoCount = 1,
                            .pQueueCreateInfos = &qc,
-                           .enabledExtensionCount = 3,
+                           .enabledExtensionCount = wanted_count,
                            .ppEnabledExtensionNames = wanted,
                            .pEnabledFeatures = &enabled};
   VK(vkCreateDevice(physical, &dc, NULL, &device));
@@ -212,6 +253,9 @@ typedef struct {
 } image;
 static VkImageCreateInfo recipe(VkFormat format) {
   return (VkImageCreateInfo){.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+                             .pNext = native_mode ? &native_external : NULL,
+#endif
                              .imageType = VK_IMAGE_TYPE_2D,
                              .format = format,
                              .extent = {13, 9, 1},
@@ -225,7 +269,9 @@ static VkImageCreateInfo recipe(VkFormat format) {
 static int supported(VkFormat format) {
   if ((format == VK_FORMAT_BC3_UNORM_BLOCK && !bc) ||
       ((format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK ||
-        format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK) &&
+        format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
+        format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK ||
+        format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK) &&
        !astc))
     return 0;
   VkFormatProperties3 p3 = {.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};
@@ -243,15 +289,41 @@ static int supported(VkFormat format) {
       .type = VK_IMAGE_TYPE_2D,
       .tiling = VK_IMAGE_TILING_OPTIMAL,
       .usage = usage};
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+  VkPhysicalDeviceExternalImageFormatInfo external = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+      .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+  VkExternalImageFormatProperties external_properties = {
+      .sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
+  if (native_mode)
+    i.pNext = &external;
+#endif
   VkHostImageCopyDevicePerformanceQueryEXT performance = {
       .sType = VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT};
   VkImageFormatProperties2 out = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
       .pNext = &performance};
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+  if (native_mode)
+    performance.pNext = &external_properties;
+#endif
   VkResult result =
       vkGetPhysicalDeviceImageFormatProperties2(physical, &i, &out);
   if (result != VK_SUCCESS)
     return 0;
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+  if (native_mode) {
+    VkExternalMemoryProperties *e =
+        &external_properties.externalMemoryProperties;
+    CHECK(e->externalMemoryFeatures ==
+          VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT);
+    CHECK(e->compatibleHandleTypes ==
+          VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT);
+    CHECK(!e->exportFromImportedHandleTypes &&
+          out.imageFormatProperties.maxArrayLayers == 1 &&
+          out.imageFormatProperties.maxMipLevels >= LEVELS);
+  }
+#endif
   printf("{\"format\":%u,\"host_transfer\":true,\"optimal_device_access\":%s,"
          "\"identical_memory_layout\":%s}\n",
          format, performance.optimalDeviceAccess ? "true" : "false",
@@ -285,6 +357,7 @@ static void transition(image *i, VkImageLayout old, VkImageLayout next) {
       .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, LEVELS, 0, LAYERS}};
   VK(vkTransitionImageLayoutEXT(device, 1, &t));
 }
+static unsigned pattern_version;
 static void expected(VkFormat format, uint32_t level, uint32_t layer,
                      uint32_t x, uint32_t y, uint8_t rgba[4]) {
   if (format == VK_FORMAT_R8G8B8A8_UNORM) {
@@ -294,8 +367,11 @@ static void expected(VkFormat format, uint32_t level, uint32_t layer,
     rgba[3] = 255;
     return;
   }
-  uint32_t block = format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ? 6 : 4,
-           n = (x / block + y / block + layer + level) % 3;
+  uint32_t block = (format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
+                    format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
+                       ? 6
+                       : 4,
+           n = (x / block + y / block + layer + level + pattern_version) % 3;
   rgba[0] = n == 0 ? 255 : 0;
   rgba[1] = n == 1 ? 255 : 0;
   rgba[2] = n == 2 ? 255 : 0;
@@ -304,7 +380,10 @@ static void expected(VkFormat format, uint32_t level, uint32_t layer,
 static uint8_t *linear_source(VkFormat format, uint32_t level, uint32_t layer,
                               size_t *size) {
   uint32_t w = mip(13, level), h = mip(9, level),
-           block = format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ? 6 : 4;
+           block = (format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
+                    format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
+                       ? 6
+                       : 4;
   if (format == VK_FORMAT_R8G8B8A8_UNORM) {
     *size = w * h * 4;
     uint8_t *out = malloc(*size);
@@ -761,11 +840,23 @@ static void restore(const char *directory, VkFormat format) {
          "\"restore_declared_opaque_region_bytes\":%llu,\"checks\":%u}\n",
          format, LEVELS, LAYERS, (unsigned long long)restored_bytes, checks);
 }
-int main(int argc, char **argv) {
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+#include "native_import.inc"
+#endif
+static int fixture_main(int argc, char **argv) {
   uint16_t endian = 1;
   CHECK(*(uint8_t *)&endian == 1);
   CHECK(argc == 3 &&
-        (!strcmp(argv[1], "--bake") || !strcmp(argv[1], "--restore")));
+        (!strcmp(argv[1], "--bake") || !strcmp(argv[1], "--restore")
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+         || !strcmp(argv[1], "--native-bake") ||
+         !strcmp(argv[1], "--native-import")
+#endif
+             ));
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+  native_mode =
+      !strcmp(argv[1], "--native-bake") || !strcmp(argv[1], "--native-import");
+#endif
   if (!init()) {
     if (messenger)
       vkDestroyDebugUtilsMessengerEXT(instance, messenger, NULL);
@@ -773,22 +864,44 @@ int main(int argc, char **argv) {
       vkDestroyInstance(instance, NULL);
     return 77;
   }
-  const VkFormat formats[] = {
-      VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_BC3_UNORM_BLOCK,
-      VK_FORMAT_ASTC_4x4_UNORM_BLOCK, VK_FORMAT_ASTC_6x6_UNORM_BLOCK};
+  const VkFormat formats[] = {VK_FORMAT_R8G8B8A8_UNORM,
+                              VK_FORMAT_BC3_UNORM_BLOCK,
+                              VK_FORMAT_ASTC_4x4_UNORM_BLOCK,
+                              VK_FORMAT_ASTC_6x6_UNORM_BLOCK
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+                              ,
+                              VK_FORMAT_ASTC_4x4_SRGB_BLOCK,
+                              VK_FORMAT_ASTC_6x6_SRGB_BLOCK
+#endif
+  };
   unsigned used = 0;
   for (unsigned n = 0; n < sizeof formats / sizeof *formats; n++) {
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+    if (native_mode && formats[n] != VK_FORMAT_ASTC_4x4_UNORM_BLOCK &&
+        formats[n] != VK_FORMAT_ASTC_6x6_UNORM_BLOCK &&
+        formats[n] != VK_FORMAT_ASTC_4x4_SRGB_BLOCK &&
+        formats[n] != VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
+      continue;
+#endif
     if (!supported(formats[n])) {
       printf("{\"format\":%u,\"result\":\"unsupported_format\"}\n", formats[n]);
       continue;
     }
-    if (!strcmp(argv[1], "--bake"))
+#ifdef DM_NATIVE_IMPORTED_IMAGE
+    if (native_mode) {
+      if (!strcmp(argv[1], "--native-bake"))
+        native_bake(argv[2], formats[n]);
+      else
+        native_import(argv[2], formats[n]);
+    } else
+#endif
+        if (!strcmp(argv[1], "--bake"))
       bake(argv[2], formats[n]);
     else
       restore(argv[2], formats[n]);
     used++;
   }
-  CHECK(used && !errors);
+  CHECK((used || native_mode) && !errors);
   VK(vkDeviceWaitIdle(device));
   if (pipeline)
     vkDestroyPipeline(device, pipeline, NULL);
@@ -804,7 +917,22 @@ int main(int argc, char **argv) {
   CHECK(!errors);
   printf(
       "{\"test\":\"native-host-image-payload\",\"mode\":\"%s\",\"formats\":%u,"
-      "\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",
-      argv[1], used, checks);
-  return 0;
+      "\"checks\":%u,\"result\":\"%s\",\"game_modules_executed\":false}\n",
+      argv[1], used, checks, used ? "passed" : "unsupported");
+  return used ? 0 : 77;
 }
+
+#ifndef DM_NATIVE_IMAGE_EMBED
+int main(int argc, char **argv) { return fixture_main(argc, argv); }
+#else
+int dm_native_image_fixture_run(const char *mode, const char *directory,
+                                PFN_vkGetInstanceProcAddr proc,
+                                int validation) {
+  // One call per cold owned-fixture process. Never share with a running game.
+  fixture_get_proc = proc;
+  fixture_validation = !!validation;
+  char *argv[] = {"owned-native-image-fixture", (char *)mode,
+                  (char *)directory};
+  return fixture_main(3, argv);
+}
+#endif

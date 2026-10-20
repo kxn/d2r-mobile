@@ -1,0 +1,232 @@
+diff --git a/src/panfrost/vulkan/panvk_device_memory.c b/src/panfrost/vulkan/panvk_device_memory.c
+--- a/src/panfrost/vulkan/panvk_device_memory.c
++++ b/src/panfrost/vulkan/panvk_device_memory.c
+@@ -114,7 +114,8 @@
+           (pAllocateInfo->allocationSize & (alignment - 1)) ||
+           pAllocateInfo->allocationSize > UINTPTR_MAX - (uintptr_t)host_info->pHostPointer ||
+           can_be_exported || (other_fd && other_fd->handleType) ||
+-          (dedicated && dedicated->image != VK_NULL_HANDLE) ||
++          (dedicated && (dedicated->image != VK_NULL_HANDLE ||
++                         dedicated->buffer != VK_NULL_HANDLE)) ||
+           (flags && (flags->flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT)))
+          return panvk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+    }
+diff --git a/src/panfrost/vulkan/panvk_physical_device.c b/src/panfrost/vulkan/panvk_physical_device.c
+--- a/src/panfrost/vulkan/panvk_physical_device.c
++++ b/src/panfrost/vulkan/panvk_physical_device.c
+@@ -28,6 +28,7 @@
+ #include "util/os_time.h"
+ #include "util/u_atomic.h"
+ #include "git_sha1.h"
++#include "panvk_dm_native_image.h"
+ 
+ #include "vk_android.h"
+ #include "vk_device.h"
+@@ -506,6 +507,7 @@
+ }
+ 
+ DEBUG_GET_ONCE_BOOL_OPTION(panvk_dm_host_import, "PANVK_DM_HOST_IMPORT", false)
++DEBUG_GET_ONCE_BOOL_OPTION(panvk_dm_native_image_import, "PANVK_DM_NATIVE_IMAGE_IMPORT", false)
+ 
+ static VkResult
+ get_device_heaps(struct panvk_physical_device *device,
+@@ -617,6 +619,8 @@
+          }
+       }
+    }
++   device->dm_native_image_import = device->host_import_type_bits &&
++      debug_get_option_panvk_dm_native_image_import();
+    if (device->kbase_node_path[0] && debug_get_option_panvk_dm_host_import())
+       mesa_logi("panvk: experimental host import type bits=0x%x, selected coherency=%u",
+                 device->host_import_type_bits,
+@@ -2578,6 +2582,19 @@
+    VkExternalMemoryHandleTypeFlagBits handleType,
+    VkExternalMemoryProperties *external_properties)
+ {
++   if (handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT) {
++      if (!panvk_dm_native_image_recipe(
++             physical_device->dm_native_image_import, pImageFormatInfo->type,
++             pImageFormatInfo->format, pImageFormatInfo->tiling,
++             pImageFormatInfo->usage, pImageFormatInfo->flags))
++         return panvk_error(physical_device, VK_ERROR_FORMAT_NOT_SUPPORTED);
++      *external_properties = (VkExternalMemoryProperties) {
++         .externalMemoryFeatures = VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT,
++         .compatibleHandleTypes = handleType,
++      };
++      return VK_SUCCESS;
++   }
++
+    const VkExternalMemoryHandleTypeFlags supported_handle_types =
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+@@ -2753,8 +2770,11 @@
+       if (result != VK_SUCCESS)
+          goto fail;
+ 
+-      /* pan_image_layout_init requirements for explicit layout */
+-      base_props->imageFormatProperties.maxMipLevels = 1;
++      /* Host pointers use the driver's exact implicit native mip layout,
++       * not an explicit dma-buf row pitch. Only the latter needs one mip. */
++      if (external_info->handleType !=
++          VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT)
++         base_props->imageFormatProperties.maxMipLevels = 1;
+       base_props->imageFormatProperties.maxArrayLayers = 1;
+       base_props->imageFormatProperties.sampleCounts = 1;
+    }
+diff --git a/src/panfrost/vulkan/panvk_physical_device.h b/src/panfrost/vulkan/panvk_physical_device.h
+--- a/src/panfrost/vulkan/panvk_physical_device.h
++++ b/src/panfrost/vulkan/panvk_physical_device.h
+@@ -56,6 +56,7 @@
+    char kbase_node_path[32];
+    uint32_t host_import_type_bits;
+    uint64_t host_import_alignment;
++   bool dm_native_image_import;
+ 
+    struct {
+       const struct pan_blendable_format *blendable;
+diff --git a/src/panfrost/vulkan/panvk_image.c b/src/panfrost/vulkan/panvk_image.c
+--- a/src/panfrost/vulkan/panvk_image.c
++++ b/src/panfrost/vulkan/panvk_image.c
+@@ -18,6 +18,7 @@
+ #include "panvk_android.h"
+ #include "panvk_device.h"
+ #include "panvk_device_memory.h"
++#include "panvk_dm_native_image.h"
+ #include "panvk_entrypoints.h"
+ #include "panvk_image.h"
+ #include "panvk_instance.h"
+@@ -898,6 +899,44 @@
+    struct panvk_physical_device *phys_dev =
+       to_panvk_physical_device(dev->vk.physical);
+    VkResult result;
++   const VkExternalMemoryImageCreateInfo *host_external =
++      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
++   if (host_external &&
++       (host_external->handleTypes &
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT)) {
++      if (!dev->vk.enabled_extensions.EXT_external_memory_host ||
++          !panvk_dm_native_image_create(phys_dev->dm_native_image_import,
++                                         pCreateInfo))
++         return panvk_error(device, VK_ERROR_FORMAT_NOT_SUPPORTED);
++      VkPhysicalDeviceExternalImageFormatInfo external = {
++         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
++         .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
++      };
++      VkPhysicalDeviceImageFormatInfo2 query = {
++         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
++         .pNext = &external,
++         .format = pCreateInfo->format,
++         .type = pCreateInfo->imageType,
++         .tiling = pCreateInfo->tiling,
++         .usage = pCreateInfo->usage,
++         .flags = pCreateInfo->flags,
++      };
++      VkImageFormatProperties2 queried = {
++         .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
++      };
++      result = panvk_GetPhysicalDeviceImageFormatProperties2(
++         panvk_physical_device_to_handle(phys_dev), &query, &queried);
++      if (result != VK_SUCCESS)
++         return result;
++      const VkImageFormatProperties *limits = &queried.imageFormatProperties;
++      if (pCreateInfo->extent.width > limits->maxExtent.width ||
++          pCreateInfo->extent.height > limits->maxExtent.height ||
++          pCreateInfo->extent.depth > limits->maxExtent.depth ||
++          pCreateInfo->mipLevels > limits->maxMipLevels ||
++          pCreateInfo->arrayLayers > limits->maxArrayLayers ||
++          !(limits->sampleCounts & pCreateInfo->samples))
++         return panvk_error(device, VK_ERROR_FORMAT_NOT_SUPPORTED);
++   }
+ 
+    if (panvk_android_is_gralloc_image(pCreateInfo)) {
+       return panvk_android_create_gralloc_image(device, pCreateInfo, pAllocator,
+@@ -1212,7 +1251,10 @@
+          : size_non_sparse;
+ 
+    pMemoryRequirements->memoryRequirements.memoryTypeBits =
+-      BITFIELD_MASK(phys_dev->memory.type_count);
++      image->vk.external_handle_types ==
++         VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT
++         ? phys_dev->host_import_type_bits
++         : BITFIELD_MASK(phys_dev->memory.type_count);
+    pMemoryRequirements->memoryRequirements.alignment = alignment;
+    pMemoryRequirements->memoryRequirements.size = size;
+ 
+@@ -1541,6 +1583,24 @@
+    }
+ 
+    assert(mem);
++   if (mem->vk.host_ptr) {
++      struct panvk_physical_device *physical =
++         to_panvk_physical_device(dev->vk.physical);
++      const uint64_t size = panvk_image_get_total_size(image);
++      if (image->vk.external_handle_types !=
++             VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++          !panvk_dm_native_image_recipe(
++             physical->dm_native_image_import, image->vk.image_type,
++             image->vk.format, image->vk.tiling, image->vk.usage,
++             image->vk.create_flags) ||
++          image->vk.array_layers != 1 || image->vk.extent.depth != 1 ||
++          image->vk.samples != VK_SAMPLE_COUNT_1_BIT ||
++          !(physical->host_import_type_bits &
++            BITFIELD_BIT(mem->vk.memory_type_index)) ||
++          (offset & 4095) || offset > mem->vk.size ||
++          size > mem->vk.size - offset)
++         return panvk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   }
+    if (is_disjoint(image)) {
+       const VkBindImagePlaneMemoryInfo *plane_info =
+          vk_find_struct_const(bind_info->pNext, BIND_IMAGE_PLANE_MEMORY_INFO);
+diff --git a/src/panfrost/vulkan/panvk_dm_native_image.h b/src/panfrost/vulkan/panvk_dm_native_image.h
+new file mode 100644
+--- /dev/null
++++ b/src/panfrost/vulkan/panvk_dm_native_image.h
+@@ -0,0 +1,48 @@
++/* SPDX-License-Identifier: MIT
++ * DM native image producer v1: opt-in platform contract, not a portable
++ * interpretation of optimal-tiling VkSubresourceLayout fields.
++ */
++#ifndef PANVK_DM_NATIVE_IMAGE_H
++#define PANVK_DM_NATIVE_IMAGE_H
++
++#include "vk_util.h"
++
++static inline bool
++panvk_dm_native_image_recipe(bool enabled, VkImageType type, VkFormat format,
++                             VkImageTiling tiling, VkImageUsageFlags usage,
++                             VkImageCreateFlags flags)
++{
++   return enabled && type == VK_IMAGE_TYPE_2D &&
++          (format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK ||
++           format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK ||
++           format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
++           format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK) &&
++          tiling == VK_IMAGE_TILING_OPTIMAL && flags == 0 &&
++          usage == (VK_IMAGE_USAGE_SAMPLED_BIT |
++                    VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT);
++}
++
++static inline bool
++panvk_dm_native_image_create(bool enabled, const VkImageCreateInfo *info)
++{
++   if (!panvk_dm_native_image_recipe(enabled, info->imageType, info->format,
++                                      info->tiling, info->usage, info->flags) ||
++       info->arrayLayers != 1 || info->extent.depth != 1 ||
++       !info->extent.width || !info->extent.height || !info->mipLevels ||
++       info->samples != VK_SAMPLE_COUNT_1_BIT ||
++       info->initialLayout != VK_IMAGE_LAYOUT_UNDEFINED)
++      return false;
++   unsigned host_structs = 0;
++   vk_foreach_struct_const(sType, ext, info->pNext) {
++      if (sType != VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO)
++         continue;
++      const VkExternalMemoryImageCreateInfo *external = (const void *)ext;
++      if (external->handleTypes !=
++          VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT)
++         return false;
++      host_structs++;
++   }
++   return host_structs == 1;
++}
++
++#endif

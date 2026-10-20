@@ -129,3 +129,19 @@ Primary references:
 - [Host image copy API](https://docs.vulkan.org/spec/latest/chapters/copies.html)
 - [Khronos preswizzled data / layout UUID explanation](https://www.khronos.org/blog/copying-images-on-the-host-in-vulkan)
 - [Host image properties](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceHostImageCopyPropertiesEXT.html)
+
+## Separate direct-import experiment
+
+`DM_BUILD_NATIVE_IMPORTED_IMAGE=ON` adds the explicit PanVK-native producer
+contract modes `--native-bake` and `--native-import`. They are outside this
+portable host-copy experiment and accept only their opt-in PanVK driver. See
+[the driver contract](../experimental-panvk-native-image/README.md) for external
+ownership, full image offsets, noncoherent Flush, lifetime and remaining game
+resource requirements. Neither this option nor the driver option is on by
+default. LVP returning unsupported is not a hardware acceptance.
+
+`DM_BUILD_NATIVE_IMAGE_EMBEDDED=ON` also builds a cold-app fixture object with
+`dm_native_image_fixture_run`. A dedicated fresh process must pass the existing
+provider's `vkGetInstanceProcAddr`; it must report whether validation is available
+and must not initialize alongside a running game Vulkan context. Each mode is a
+separate cold process, preserving files only within the owned fixture directory.
