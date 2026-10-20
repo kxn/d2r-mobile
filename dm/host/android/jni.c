@@ -589,7 +589,10 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   pthread_mutex_unlock(&operation_mode_mutex);
   if(setenv("DM_GUEST_HEAP_SHARED",shared_guest_heap_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SHARED_POOLS",shared_guest_heap_startup?"1":"0",1) ||
-      (shared_guest_heap_startup && setenv("PANVK_DM_HOST_IMPORT","true",1)))
+      setenv("PANVK_DM_HOST_IMPORT",shared_guest_heap_startup?"true":"false",1) ||
+      // The app-local Turnip driver consumes its opt-in during physical-device
+      // creation, before the startup byte probe freezes the heap backing.
+      setenv("TU_DM_HOST_IMPORT",shared_guest_heap_startup?"true":"false",1))
     die("Android shared guest heap cold request environment");
   // Freeze the optional module/descriptor policy before any game or Vulkan
   // worker exists. The backend samples this environment only once; Activity
