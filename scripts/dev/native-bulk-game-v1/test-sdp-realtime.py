@@ -87,6 +87,18 @@ class SDP(unittest.TestCase):
   exec(code,{'tool':tool,'p':p,'d':state,'own':'123','out':Path('/tmp'),'pinned':lambda x:Path('/original-helper'),'save':save})
   self.assertFalse(state['gpu_validity']);self.assertFalse(state['official_gpu_complete']);self.assertTrue(p['_official_gpu_disabled']);self.assertIn('missing actual GPU counter',state['official_gpu_error']);tool.close.assert_called_once();save.assert_called_once()
   self.assertIn("        require(pid() == own, 'PID changed before residency snapshot')",text[end:]);self.assertIn("(out / 'official-dumpsys-meminfo.txt').write_text",text[end:])
+ def test_unpaused_unclosed_tool_skips_CPU_but_not_memory(self):
+  import textwrap
+  text=(D/'run-game.py').read_text();start=text.index("        if p.get('performance_tools'):",text.index('        m.original_route('));end=text.index("        if p.get('performance_tools') and not p.get('_official_gpu_unclosed'):",start)
+  for errors in ([],['still live unknown collector']):
+   with self.subTest(errors=errors):
+    tool=Mock();tool.paused.side_effect=RuntimeError('not paused');tool.close.return_value=errors
+    p={'performance_tools':{},'official_gpu_tools':{'helper':{'path':'/same-helper'}},'official_gpu_config':{}}
+    p['performance_tools']={'present':True};d={};save=Mock()
+    exec(textwrap.dedent(text[start:end]),{'p':p,'d':d,'module':lambda *a:tool,'save':save})
+    self.assertEqual(p['_official_gpu_unclosed'],bool(errors));self.assertFalse(d['gpu_validity'])
+    if errors:self.assertFalse(d['cpu_validity']);self.assertFalse(d['official_performance_complete'])
+    self.assertIn("(out / 'official-dumpsys-meminfo.txt').write_text",text[end:])
  def test_unknown_metric_units_refused(self):
   with tempfile.TemporaryDirectory()as d:
    p=Path(d)/'x';database(p)

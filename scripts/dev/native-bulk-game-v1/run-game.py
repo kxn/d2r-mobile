@@ -341,7 +341,14 @@ def phase_game(dev, out, phase, p, token):
                     d['official_gpu_error'] = 'before CPU: ' + repr(e)
                     p['_official_gpu_disabled'] = True
                     d['official_gpu_early_cleanup_errors'] = tool.close(p['official_gpu_config'])
+                    p['_official_gpu_unclosed'] = bool(d['official_gpu_early_cleanup_errors'])
                 save()
+            if p.get('_official_gpu_unclosed'):
+                d['cpu_validity'] = False
+                d['official_performance_complete'] = False
+                d['official_performance_skipped'] = 'SDP neither confirmed paused nor confirmed closed; preserve CPU applicability gap'
+                save()
+        if p.get('performance_tools') and not p.get('_official_gpu_unclosed'):
             require(pid() == own, 'PID changed before independent performance windows')
             performance_out = out / 'official-performance'
             performance_out.mkdir()
@@ -355,6 +362,7 @@ def phase_game(dev, out, phase, p, token):
             require(tools_result.get('complete') is True, 'official performance windows incomplete')
             require(pid() == own, 'PID changed during independent performance windows')
             d['official_performance_complete'] = True
+            d['cpu_validity'] = True
             d['performance_stable_target60_PSO_variants_all_windows'] = tools_result[
                 'stable_target60_PSO_variants_all_windows']
             save()
@@ -379,6 +387,7 @@ def phase_game(dev, out, phase, p, token):
                 d['official_gpu_error'] = repr(e)
                 p['_official_gpu_disabled'] = True
                 d['official_gpu_early_cleanup_errors'] = tool.close(p['official_gpu_config'])
+                p['_official_gpu_unclosed'] = bool(d['official_gpu_early_cleanup_errors'])
             save()
         if p.get('counter_snapshot'):
             require(pid() == own, 'PID changed before once-only counter snapshot')

@@ -166,3 +166,9 @@ so no optional LLDB step blocks memory acceptance. No old failed result changes.
 The paired diagnostic launch uses `--external-profile`: performance hints and
 present worker are reference/inactive. Its observed approximately30FPS is not
 the ordinary default game's limit or evidence of a change in normal throughput.
+
+If an SDK pause check fails and exact cleanup cannot confirm closure, that and
+subsequent phases explicitly skip CPU windows (`cpu_validity: false`) while
+keeping functional/memory/save2 restoration. Confirmed paused or confirmed
+closed tools preserve original CPU collection. No contaminated CPU success is
+reported; unknown/replacement collectors remain untouched.
