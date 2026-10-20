@@ -506,6 +506,11 @@ static uint64_t command_reset_test_blocked;
 static unsigned command_reset_test_pressure_waiters,command_reset_test_finish_waiters;
 #endif
 static _Atomic unsigned in_flight;
+#ifdef DM_VULKAN_SHARED_POOLS
+// Presence only: exact range decisions still use immutable pending snapshots.
+// Publish at enqueue and retain through all CPU effects and pending removal.
+static _Atomic unsigned pending_cpu_effect_submissions;
+#endif
 static _Atomic int submission_barrier_requested = -1;
 static _Atomic int submission_barrier_active = -1;
 int vk_submission_barrier_mode(void) { return atomic_load(&submission_barrier_active); }
@@ -1210,6 +1215,13 @@ static void *completion_thread(void *unused) {
     }
     vk_profile_end(VK_TIME_EFFECTS, started);
     pending = s->next;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(s->resources->cpu_effect_write_count) {
+      if(!atomic_load_explicit(&pending_cpu_effect_submissions,memory_order_relaxed))
+        die("Pending CPU effect presence underflow");
+      atomic_fetch_sub_explicit(&pending_cpu_effect_submissions,1,memory_order_release);
+    }
+#endif
     atomic_fetch_sub(&in_flight, 1);
     if (!pending)
       pending_tail = &pending;
@@ -3493,7 +3505,7 @@ int vk_pool_texture_cpu_effect_pending(uint64_t address,uint64_t bytes) {
   uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
   for(vk_effect *e=V.effects;e;e=e->next)
     if(e->dst && range_overlap(first,length,(uintptr_t)e->dst,e->size))return 1;
-  if(!atomic_load(&in_flight))return 0;
+  if(!atomic_load_explicit(&pending_cpu_effect_submissions,memory_order_acquire))return 0;
   int found=0;pthread_mutex_lock(&completion_mu);
   for(submission *s=pending;s && !found;s=s->next)
     for(size_t k=0;k<s->resources->cpu_effect_write_count;k++) {
@@ -4217,6 +4229,13 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   r->pending_read_size=0;
   *pending_tail = s;
   pending_tail = &s->next;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(r->cpu_effect_write_count) {
+    if(atomic_load_explicit(&pending_cpu_effect_submissions,memory_order_relaxed)==~0u)
+      die("Pending CPU effect presence overflow");
+    atomic_fetch_add_explicit(&pending_cpu_effect_submissions,1,memory_order_release);
+  }
+#endif
   atomic_fetch_add(&in_flight, 1);
   pthread_cond_broadcast(&completion_cv);
   pthread_mutex_unlock(&completion_mu);

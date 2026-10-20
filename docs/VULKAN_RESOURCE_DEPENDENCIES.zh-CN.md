@@ -1812,3 +1812,5 @@ Resident 后继的反向别名条件：原生 `VkImage` 写入后，已存在的
 B2T 本来就必须结束 render pass；现在先结束已有 pass、完成窗口 admission 及可能的 deferred replay，再做最终 CPU preflight，之后才借用 retile Buffer 和物理图像。CPU 观察不能依赖一次发生于 pass replay 之前的旧证明。原缺失 preflight、非法 alias、脏页及数据依赖 guard 均保留。
 
 回归在原 shared-image fixture 中加入实际录制和在途 completion CPU 写入；旧 dad2c3d preflight 不能先发布写入，负例在 `*(uint32_t *)data == 7` 失败；修正后通过，原 retile same-recording 不提交断言仍通过。LVP 是软件功能验证，不能替代真实游戏的重测，亦不证明真实游戏此次崩溃只有一个触发源。
+
+后继 CPU effect presence 门：仅在已提交且带真实 CPU effect 的 submission enqueue 时增加原子计数，在全部 CPU effects 完成并从 pending 摘链时减少，二者仍在原 completion mutex 内，含溢出/下溢检查。纹理 preflight 先检查 owner 的 recording effect，再 acquire 读取该计数；零时无需争抢 completion mutex，非零保留原精确页范围扫描。共享 GPU canonical publication 不计入该提示；它不是字节范围缓存，也不提前宣布 CPU 写入完成。

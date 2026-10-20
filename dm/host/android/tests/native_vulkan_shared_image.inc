@@ -389,6 +389,7 @@ static void shared_image_dirty_test(void) {
     CHECK(*(uint32_t *)data==7);
     if(!submitted)CHECK(vk_recording_serial()!=before);
     vk_internal_wait(vk_internal_commit());
+    CHECK(!vk_pool_texture_cpu_effect_pending((uintptr_t)data,4096));
     dirty_range_fill(data,4096,green);
     shared_image_pixels(&textures[0],green);shared_image_pixels(&textures[1],green);
   }
@@ -399,6 +400,7 @@ static void shared_image_dirty_test(void) {
   vkCmdFillBuffer(V.cmd,buffer->handle,offset,4096,0xffff0000u);
   vk_buffer_transfer_written_range((uintptr_t)data,4096);
   vk_buffer_writeback_stage((uintptr_t)data,4096,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  CHECK(!vk_pool_texture_cpu_effect_pending((uintptr_t)data,4096)); // GPU publication is not a CPU callback
   vk_texture_cpu_preflight((const tex_t *)&textures[0]); // original ordered CPU observation commits/waits
   vk_internal_wait(vk_internal_commit());
   shared_image_pixels(&textures[0],blue);shared_image_pixels(&textures[1],blue);
