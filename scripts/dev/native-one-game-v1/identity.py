@@ -20,6 +20,17 @@ def verify(table_path,composition,raw,native):
  # three UUIDs, producer, pack and recipe/table digest validation succeeded.
  events=raw.get('events',[]);assert not raw.get('errors'),'LLDB read errors';binds=[e for e in events if e['kind']=='bind_entry'];uses=[e for e in events if e['kind']=='use_validated'];assert len(binds)==1
  bind=binds[0];transfers=[e for e in uses if e['arguments']['stages']&0x1000];fragments=[e for e in uses if e['arguments']['stages']&0x80];assert len(transfers)==1 and len(fragments)==1,'both actual TRANSFER and FRAGMENT native-use records required'
+ assert transfers[0]['arguments']['token']==fragments[0]['arguments']['token'],'TRANSFER/FRAGMENT allocation token mismatch'
+ views={'texture_view_binding_impl','vk_texture_view_binding','vk_texture_view_binding_quad'}
+ assert any(row.get('function')in views and row.get('native_entry')for row in fragments[0].get('caller_images',[])),'FRAGMENT stage without actual texture-view binding caller'
+ sampled=[]
+ for row in fragments[0].get('shader_binding_callers',[]):
+  shader=row.get('shader',{});binding=row.get('binding',{});key=row.get('key',{})
+  if shader.get('stage',{}).get('unsigned')==1 and binding.get('kind',{}).get('unsigned')in(3,6)and key.get('hex'):
+   try:valid_key=len(bytes.fromhex(key['hex']))==17
+   except ValueError:valid_key=False
+   if valid_key:sampled.append(row)
+ assert sampled,'FRAGMENT native resource lacks actual sampled FS shader/binding context'
  value=lambda x:x['unsigned'];address=bind['arguments']['address'];assert bind['arguments']['bytes']==size and value(bind['requirements']['size'])==size and value(bind['requirements']['alignment'])==align and address%align==0,'actual Builder/storage alignment'
  typed=transfers[0].get('typed_B2T',{});actual=typed.get('actual_copy',{});parameters=typed.get('parameters',{});assert not typed.get('error') and actual and parameters,'typed actual B2T view/level/ROI required'
  number=lambda values,key:values[key]['unsigned']
@@ -41,4 +52,4 @@ def verify(table_path,composition,raw,native):
    assert row['NVN_packaged_layout_bytes']['hex']=='444d4e0201000000'and{k:v['hex']for k,v in row['recipe_bytes'].items()}==expected,'captured actual recipe/identity mismatch'
   assert matched,'no actual image/recipe on use stack'
  assert len(serials)==len(pointers)==len(pids)==1,'transfer/fragment serial or PID mismatch'
- return {'identity_proven':True,'source':'authenticated table + validator-success stderr LOG + official LLDB raw actual recipe; no stdout JSON expectation','PID':next(iter(pids)),'serial':next(iter(serials)),'entry':1,'bytes':size,'alignment':align,'UUID_and_payload_input_hashes':expected,'driver_sha256':composition['driver_sha256'],'transfer_and_fragment_proven':True,'caller_frames':frames,'actual_B2T':{'mip':mip,'layer':layer,'layers':layers,'offset':offsets,'extent':extents},'boundary':'one material actual transfer and fragment resource use; not FPS, DRAM, broad visual parity or full texture adoption'}
+ return {'identity_proven':True,'source':'authenticated table + validator-success stderr LOG + official LLDB raw actual recipe; no stdout JSON expectation','PID':next(iter(pids)),'serial':next(iter(serials)),'entry':1,'bytes':size,'alignment':align,'UUID_and_payload_input_hashes':expected,'driver_sha256':composition['driver_sha256'],'transfer_and_fragment_proven':True,'caller_frames':frames,'actual_FS_sampled_binding_callers':len(sampled),'actual_B2T':{'mip':mip,'layer':layer,'layers':layers,'offset':offsets,'extent':extents},'boundary':'one material actual transfer and fragment resource use; not FPS, DRAM, broad visual parity or full texture adoption'}

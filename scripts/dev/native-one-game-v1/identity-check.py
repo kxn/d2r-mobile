@@ -14,6 +14,8 @@ no('real-v2-transfer-only-is-insufficient-for-v3',lambda:m.verify(table,meta,raw
 # A synthetic copied frame with FS stage is only a host validator positive control.
 positive=copy.deepcopy(raw);fs=copy.deepcopy(raw['events'][1]);fs['arguments']['stages']=0x80;positive['events'].append(fs)
 scalar=lambda n:{'unsigned':n}
+positive['events'][2]['caller_images'][0]['function']='texture_view_binding_impl'
+positive['events'][2]['shader_binding_callers']=[{'function':'shader_bindings_selected_impl','shader':{'stage':scalar(1)},'binding':{'kind':scalar(3)},'key':{'hex':'30'*16+'00'}}]
 positive['events'][1]['typed_B2T']={'parameters':{'src':scalar(1),'tex':scalar(2),'has_view':scalar(1)},'actual_copy':{**{k:scalar(v)for k,v in [('imageSubresource.mipLevel',0),('imageSubresource.baseArrayLayer',0),('imageSubresource.layerCount',1),('imageOffset.x',0),('imageOffset.y',0),('imageOffset.z',0),('imageExtent.width',256),('imageExtent.height',256),('imageExtent.depth',1)]}}}
 p=m.verify(table,meta,positive,native);yes('synthetic-transfer-plus-FS-selector-positive',p['identity_proven']and p['transfer_and_fragment_proven'])
 yes('stdout-JSON-absence-does-not-weaken-validation','"native_resource_identity":true'not in native)
@@ -26,6 +28,9 @@ wrong=copy.deepcopy(positive);wrong['events'][2]['caller_images'][0]['image']['t
 wrong=copy.deepcopy(positive);wrong['events'][1]['typed_B2T']['actual_copy']['imageSubresource.mipLevel']['unsigned']=9;no('B2T-mip-outside-recipe-rejected',lambda:m.verify(table,meta,wrong,native))
 wrong=copy.deepcopy(positive);wrong['events'][1]['typed_B2T']['actual_copy']['imageExtent.width']['unsigned']=257;no('B2T-ROI-outside-mip-rejected',lambda:m.verify(table,meta,wrong,native))
 wrong=copy.deepcopy(positive);del wrong['events'][1]['typed_B2T'];no('missing-B2T-view-ROI-rejected',lambda:m.verify(table,meta,wrong,native))
+wrong=copy.deepcopy(positive);wrong['events'][2]['arguments']['token']+=1;no('TRANSFER-FS-token-mismatch-rejected',lambda:m.verify(table,meta,wrong,native))
+wrong=copy.deepcopy(positive);wrong['events'][2]['caller_images'][0]['function']='native_image_record';no('FS-stage-without-texture-view-binding-rejected',lambda:m.verify(table,meta,wrong,native))
+wrong=copy.deepcopy(positive);wrong['events'][2]['shader_binding_callers']=[];no('FS-stage-without-actual-shader-binding-rejected',lambda:m.verify(table,meta,wrong,native))
 wrong=copy.deepcopy(positive);wrong['events'][2]['PID']+=1;no('FS-PID-mismatch-rejected',lambda:m.verify(table,meta,wrong,native))
 wrong=copy.deepcopy(positive);wrong['events'][0]['requirements']['alignment']['unsigned']*=2;no('Builder-alignment-mismatch-rejected',lambda:m.verify(table,meta,wrong,native))
 wrong=copy.deepcopy(positive);wrong['events'][2]['allocation']['storage.memory']['unsigned']=0;no('missing-actual-VkDeviceMemory-rejected',lambda:m.verify(table,meta,wrong,native))
