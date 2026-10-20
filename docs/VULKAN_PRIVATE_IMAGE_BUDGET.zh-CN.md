@@ -5,7 +5,7 @@ Android 官方 `ComponentCallbacks2` 文档说明：从 API 34 起不再通知
 暂停时的清理仍保留，但不能作为前台冷图像缓存的唯一回收触发。
 来源：https://developer.android.com/reference/android/content/ComponentCallbacks2
 
-本候选基于 `80a71bc`，不改游戏资源、内存池内容或 NVN 指令语义。
+本候选是 `ed2c139` 的 guest-only 后继，不改游戏资源、内存池内容或 NVN 指令语义。
 `vk_memory_allocation_bytes()` 读取现有 VMA AllocationInfo.size，记录每个
 独立私有 VkImage 的真实分配范围，不把 native 导入或同页别名计成第二份内存。
 物理 promotion 的旧、新分配同时计入总量，旧分配直到原 completion 回调才扣除。
@@ -19,6 +19,11 @@ Android 官方 `ComponentCallbacks2` 文档说明：从 API 34 起不再通知
   审核的候选值，不是已验收的默认参数，也不是进程或总 GPU 内存的硬上限。
 - `released_allocation_bytes`：预算策略累计交还 VMA 的 allocation 字节数；不是
   硬件 DRAM 流量，也不是当前 RSS 降幅。VMA 可能暂留一个空 block。
+
+只有 HLE `x_submit()` 在翻译任何命令之前调用 `mtl_sub_guest_begin()`；该入口在
+Vulkan 执行预算维护后进入原 begin，在 Metal 只转发原 begin。内部 stream flush、
+CPU preflight、present 等继续使用原 `mtl_sub_begin()`，不维护缓存。这样不必推断
+内部重开时的调用栈是否还借用某个 image 指针，也将维护频次限制到原 guest 提交。
 
 普通游戏提交开始前，在没有 command buffer、recording resources、binding scope
 时，仅在可重建缓存超预算的情况下检查候选。每次最多检查 32 项、释放 4 张；
@@ -39,6 +44,8 @@ Android 官方 `ComponentCallbacks2` 文档说明：从 API 34 起不再通知
 
 验证复用原 image-pressure-trim GPU 用例：真实多 mip/array 上传与逐像素重建、
 GPU clear/copy 内容保护、裸句柄保护、40 张冷图像的每轮额度及游标进展、真实
-timeline 阻塞下的 in-flight 保护、最终物理分配计账归零。另复用 shared-retirement
+timeline 阻塞下的 in-flight 保护、最终物理分配计账归零；新增真实超预算且冷却足够
+时内部 begin 不淘汰、guest begin 才有界淘汰的对照，恢复旧 ed 内部维护位置应被
+同一用例拒绝。另复用 shared-retirement
 和 native-resident oracle 检查共享导入、GPU 别名依赖及旧物理副本生命周期。
 这些 host/Lavapipe 结果不代替 Android 原游戏、6GB 设备或功耗验收。

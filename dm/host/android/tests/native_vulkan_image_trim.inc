@@ -88,9 +88,14 @@ static void image_pressure_trim_test(void) {
   if(getenv("DM_IMAGE_CACHE_BUDGET_FIXTURE")) {
     uint64_t before,after;
     vk_test_texture_budget(0,&before);CHECK(before>0);
+    // Internal reopen is deliberately inert even though the real GPU is done,
+    // the cache is over budget and the CPU-backed texture is old enough.
+    mtl_sub_begin();CHECK(vk_texture_count()==count);
+    vk_texture_budget_maintain();CHECK(vk_texture_count()==count);
+    vk_internal_wait(vk_internal_commit());
     // The actual next foreground guest-submit boundary runs maintenance;
     // no Android trim callback, synthetic GPU clock or finish is used there.
-    mtl_sub_begin();CHECK(vk_texture_count()==count-1);
+    mtl_sub_guest_begin();CHECK(vk_texture_count()==count-1);
     vk_texture_budget_maintain();CHECK(vk_texture_count()==count-1);
     vk_internal_wait(vk_internal_commit());
     vk_test_texture_budget(0,&after);CHECK(after<before);
@@ -130,10 +135,12 @@ static void image_pressure_trim_test(void) {
     }
     for(unsigned n=0;n<257;n++){mtl_sub_begin();vk_internal_wait(vk_internal_commit());}
     uint32_t before=vk_texture_count();vk_test_texture_budget(0,&ignored);
-    mtl_sub_begin();CHECK(vk_texture_count()==before-4);
+    mtl_sub_begin();CHECK(vk_texture_count()==before);
+    vk_internal_wait(vk_internal_commit());
+    mtl_sub_guest_begin();CHECK(vk_texture_count()==before-4);
     vk_texture_budget_maintain();CHECK(vk_texture_count()==before-4); // borrowed recording
     vk_internal_wait(vk_internal_commit());
-    for(unsigned n=0;n<16;n++){mtl_sub_begin();vk_internal_wait(vk_internal_commit());}
+    for(unsigned n=0;n<16;n++){mtl_sub_guest_begin();vk_internal_wait(vk_internal_commit());}
     for(unsigned n=0;n<40;n++)CHECK(vk_test_texture_rebuildable(((const tex_t *)&cold[n])->serial)==-1);
     // Logical registration survives eviction and reconstructs the same mip
     // content; GPU-authored siblings are still their clear/copy results.

@@ -3895,7 +3895,8 @@ static void begin_submission(int pool_migration) {
   // Preserve pending buffer/vertex visibility across command-buffer boundaries.
   if(r->submission_barrier_reference) vk_barrier();
 }
-void mtl_sub_begin(void) {
+void mtl_sub_begin(void) { begin_submission(0); }
+void mtl_sub_guest_begin(void) {
   mtl_init();
   vk_texture_budget_maintain();
   begin_submission(0);

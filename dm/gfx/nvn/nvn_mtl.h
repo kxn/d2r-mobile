@@ -35,6 +35,8 @@ void mtl_res_snapshot(mtl_res_count *out);
 // 一次提交：begin → 若干操作 → commit（返回本次提交完成时的栅栏值）
 // One submit: begin -> several operations -> commit (returns the fence value at which this submit completes)
 void mtl_sub_begin(void);
+// Original guest submission boundary; internal chunk reopen uses sub_begin.
+void mtl_sub_guest_begin(void);
 void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t n);               // GPU 时序上的缓冲拷贝 | Buffer copy in GPU ordering
 void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v);   // 完成后写事件值（0 写 / 1 加） | Write the event value after completion (0 write / 1 add)
 void mtl_sub_counter(uint64_t addr, uint32_t type);                       // 完成后写计数器记录 | Write the counter record after completion
