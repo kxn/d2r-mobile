@@ -23,12 +23,18 @@ static unsigned checks, errors;
     }                                                                          \
   } while (0)
 #define VK(c) CHECK((c) == VK_SUCCESS)
-#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+#ifdef DM_NATIVE_MATRIX_WIDTH
+enum { FIXTURE_WIDTH=DM_NATIVE_MATRIX_WIDTH, FIXTURE_HEIGHT=DM_NATIVE_MATRIX_HEIGHT };
+#elif defined(DM_NATIVE_TURNIP_HOST_ASTC)
 enum { FIXTURE_WIDTH=8, FIXTURE_HEIGHT=8 };
 #else
 enum { FIXTURE_WIDTH=13, FIXTURE_HEIGHT=9 };
 #endif
-enum { LEVELS = 4, LAYERS = 1, REGIONS = LEVELS * LAYERS, MAX_FILE = 16 << 20 };
+#ifndef DM_NATIVE_MATRIX_LEVELS
+#define DM_NATIVE_MATRIX_LEVELS 4
+#endif
+enum { LEVELS = DM_NATIVE_MATRIX_LEVELS, LAYERS = 1, REGIONS = LEVELS * LAYERS, MAX_FILE = 16 << 20 };
+_Static_assert(LEVELS >= 1 && LEVELS <= 9, "bounded owned shape levels");
 static VkInstance instance;
 static VkPhysicalDevice physical;
 static VkDevice device;
@@ -217,6 +223,11 @@ static int init(void) {
   printf("\",\"driver_UUID\":\"");for(unsigned n=0;n<16;n++)printf("%02x",ids.driverUUID[n]);
   printf("\"}\n");
   }
+#endif
+#ifdef DM_NATIVE_LINEAR_MATRIX
+  static const uint8_t expected_layout[16]={0xab,0x91,0xc5,0x40,0x84,0x74,0x48,0x36,0x0a,0x44,0x49,0x6b,0x50,0x04,0x51,0x59};
+  CHECK(properties.vendorID==0x5143 && properties.deviceType!=VK_PHYSICAL_DEVICE_TYPE_CPU && astc);
+  CHECK(!memcmp(host.optimalTilingLayoutUUID,expected_layout,16));
 #endif
   CHECK(host.copySrcLayoutCount <= 64 && host.copyDstLayoutCount <= 64);
   VkImageLayout src[64], dst[64];
@@ -651,7 +662,8 @@ static void pipeline_create(void) {
   VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cp, NULL, &pipeline));
   vkDestroyShaderModule(device, shader, NULL);
 }
-static void sample_all(image *i, VkFormat format) {
+static void sample_from_base(image *i, VkFormat format, uint32_t base) {
+  CHECK(base < LEVELS);
   pipeline_create();
   VkImageView view;
   VkSampler sampler;
@@ -663,7 +675,7 @@ static void sample_all(image *i, VkFormat format) {
       .image = i->image,
       .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
       .format = format,
-      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, LEVELS, 0, LAYERS}};
+      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, base, LEVELS-base, 0, LAYERS}};
   VK(vkCreateImageView(device, &vi, NULL, &view));
   VkSamplerCreateInfo si = {
       .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -673,7 +685,7 @@ static void sample_all(image *i, VkFormat format) {
       .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
       .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
       .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .maxLod = LEVELS - 1};
+      .maxLod = LEVELS - base - 1};
   VK(vkCreateSampler(device, &si, NULL, &sampler));
   VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                            .size = FIXTURE_WIDTH * FIXTURE_HEIGHT * 4,
@@ -739,7 +751,7 @@ static void sample_all(image *i, VkFormat format) {
                                .memory = output_memory,
                                .size = VK_WHOLE_SIZE};
   for (uint32_t layer = 0; layer < LAYERS; layer++)
-    for (uint32_t level = 0; level < LEVELS; level++) {
+    for (uint32_t level = base; level < LEVELS; level++) {
       memset(mapped, 0xcc, bi.size);
       if (!coherent)
         VK(vkFlushMappedMemoryRanges(device, 1, &whole));
@@ -756,7 +768,7 @@ static void sample_all(image *i, VkFormat format) {
       vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
       vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
                               pipeline_layout, 0, 1, &set, 0, NULL);
-      uint32_t push[] = {mip(FIXTURE_WIDTH, level), mip(FIXTURE_HEIGHT, level), layer, level};
+      uint32_t push[] = {mip(FIXTURE_WIDTH, level), mip(FIXTURE_HEIGHT, level), layer, level-base};
       vkCmdPushConstants(command, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
                          0, sizeof push, push);
       vkCmdDispatch(command, (push[0] + 7) / 8, (push[1] + 7) / 8, 1);
@@ -793,6 +805,13 @@ static void sample_all(image *i, VkFormat format) {
   vkFreeMemory(device, output_memory, NULL);
   vkDestroySampler(device, sampler, NULL);
   vkDestroyImageView(device, view, NULL);
+}
+static void sample_all(image *i, VkFormat format) {
+  // Base0 retains the original every-pixel/unused-output guard oracle. Each
+  // later view repeats those exact loops at rebased LODs; no pixel is sampled
+  // only on the CPU and no mip/baseMip success is inferred from query values.
+  for(uint32_t base=0;base<LEVELS;base++)sample_from_base(i,format,base);
+  printf("{\"native_all_base_mips_sampled\":true,\"format\":%u,\"width\":%u,\"height\":%u,\"levels\":%u,\"base_views\":%u,\"allpixel_assertions_retained\":true}\n",format,FIXTURE_WIDTH,FIXTURE_HEIGHT,LEVELS,LEVELS);
 }
 static void restore(const char *directory, VkFormat format) {
   char path[4096];
@@ -879,6 +898,7 @@ static int fixture_main(int argc, char **argv) {
 #ifdef DM_NATIVE_IMPORTED_IMAGE
          || !strcmp(argv[1], "--native-bake") ||
          !strcmp(argv[1], "--native-import") ||
+         !strcmp(argv[1], "--native-linear-matrix") ||
          !strcmp(argv[1], "--resource-bake") ||
          !strcmp(argv[1], "--resource-bake-batch") ||
          !strcmp(argv[1], "--verify-resource-batch") ||
@@ -888,6 +908,7 @@ static int fixture_main(int argc, char **argv) {
 #ifdef DM_NATIVE_IMPORTED_IMAGE
   native_mode = !strcmp(argv[1], "--native-bake") ||
                 !strcmp(argv[1], "--native-import") ||
+                !strcmp(argv[1], "--native-linear-matrix") ||
                 !strcmp(argv[1], "--resource-bake") ||
                 !strcmp(argv[1], "--resource-bake-batch");
   if (!strcmp(argv[1], "--verify-resource-batch")) {
@@ -946,7 +967,9 @@ static int fixture_main(int argc, char **argv) {
       }
 #ifdef DM_NATIVE_IMPORTED_IMAGE
       if (native_mode) {
-        if (!strcmp(argv[1], "--native-bake"))
+        if (!strcmp(argv[1], "--native-linear-matrix")) {
+          native_bake(argv[2],formats[n]);native_import(argv[2],formats[n]);
+        } else if (!strcmp(argv[1], "--native-bake"))
           native_bake(argv[2], formats[n]);
         else
           native_import(argv[2], formats[n]);
@@ -982,7 +1005,10 @@ static int fixture_main(int argc, char **argv) {
 #ifndef DM_NATIVE_IMAGE_EMBED
 int main(int argc, char **argv) { return fixture_main(argc, argv); }
 #else
-int dm_native_image_fixture_run(const char *mode, const char *directory,
+#ifndef DM_NATIVE_FIXTURE_ENTRY
+#define DM_NATIVE_FIXTURE_ENTRY dm_native_image_fixture_run
+#endif
+int DM_NATIVE_FIXTURE_ENTRY(const char *mode, const char *directory,
                                 PFN_vkGetInstanceProcAddr proc,
                                 int validation) {
   // One call per cold owned-fixture process. Never share with a running game.

@@ -134,6 +134,15 @@ static void native_bake(const char *directory, VkFormat format) {
           .regionCount = 1,
           .pRegions = &copy};
       VK(vkCopyMemoryToImageEXT(device, &info));
+#ifdef DM_NATIVE_LINEAR_MATRIX
+      uint8_t *plain=malloc(bytes);CHECK(plain);
+      VkImageToMemoryCopyEXT plain_region={.sType=VK_STRUCTURE_TYPE_IMAGE_TO_MEMORY_COPY_EXT,
+        .pHostPointer=plain,.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,level,0,1},
+        .imageExtent={mip(FIXTURE_WIDTH,level),mip(FIXTURE_HEIGHT,level),1}};
+      VkCopyImageToMemoryInfoEXT plain_copy={.sType=VK_STRUCTURE_TYPE_COPY_IMAGE_TO_MEMORY_INFO_EXT,
+        .srcImage=i.image,.srcImageLayout=VK_IMAGE_LAYOUT_GENERAL,.regionCount=1,.pRegions=&plain_region};
+      VK(vkCopyImageToMemoryEXT(device,&plain_copy));CHECK(!memcmp(plain,linear,bytes));free(plain);
+#endif
       free(linear);
       VkImageToMemoryCopyEXT back = {
           .sType = VK_STRUCTURE_TYPE_IMAGE_TO_MEMORY_COPY_EXT,
@@ -150,6 +159,9 @@ static void native_bake(const char *directory, VkFormat format) {
       VK(vkCopyImageToMemoryEXT(device, &exported));
       opaque_bytes += slice.size;
     }
+#ifdef DM_NATIVE_LINEAR_MATRIX
+    printf("{\"native_plain_hostcopy_roundtrip\":true,\"format\":%u,\"pattern\":%u,\"levels\":%u,\"every_mip_compressed_blocks_exact\":true}\n",format,version,LEVELS);
+#endif
     native_sha(output + h.data_offset, h.image_size, h.payload_sha256);
     memcpy(output, &h, sizeof h);
     file_digest(output, h.common.file_bytes,
@@ -316,19 +328,31 @@ static void native_metadata_negatives(const native_file *file,
   file_digest(bad, file->bytes, h->common.digest);
   CHECK(!native_validate(bad, file->bytes, format, 0));
   memcpy(bad, file->data, file->bytes);
+#ifdef DM_NATIVE_LINEAR_MATRIX
+  static const uint8_t old_AA[16]={0x45,0x29,0xbb,0xb8,0x70,0xcd,0xbd,0xd0,0x2d,0xb2,0x14,0x74,0x2b,0x3e,0x41,0x70};
+  memcpy(h->common.layout_uuid,old_AA,16);file_digest(bad,file->bytes,h->common.digest);
+  CHECK(!native_validate(bad,file->bytes,format,0));
+  memcpy(bad,file->data,file->bytes);
+#endif
   h->common.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
   file_digest(bad, file->bytes, h->common.digest);
   CHECK(!native_validate(bad, file->bytes, format, 0));
   memcpy(bad, file->data, file->bytes);
-  h->slices[1].offset = h->image_size;
-  h->common.parts[1].offset = h->image_size;
+  h->slices[LEVELS-1].offset = h->image_size;
+  h->common.parts[LEVELS-1].offset = h->image_size;
   file_digest(bad, file->bytes, h->common.digest);
   CHECK(!native_validate(bad, file->bytes, format, 0));
   memcpy(bad, file->data, file->bytes);
   bad[h->data_offset] ^= 1;
   CHECK(!native_validate(bad, file->bytes, format, 0));
   free(bad);
+#ifdef DM_NATIVE_LINEAR_MATRIX
+  printf("{\"native_old_AA_opaque_identity_refused\":true,\"format\":%u,\"production_table_rejection_proven\":false}\n",format);
+#endif
 }
+#ifdef DM_NATIVE_LINEAR_MATRIX
+#include "native_linear_roundtrip.inc"
+#endif
 static void native_import(const char *directory, VkFormat format) {
   native_query_negatives(format);
   native_file file = native_open(directory, format, 0);
@@ -415,7 +439,13 @@ static void native_import(const char *directory, VkFormat format) {
         VK(vkFlushMappedMemoryRanges(device, 1, &flush));
       native_ownership(&i, 1);
       pattern_version = version;
+      // Prove imported host-produced bytes BEFORE any GPU upload can repair
+      // them. Then independently verify B2T/T2B and sample all views again.
       sample_all(&i, format);
+#ifdef DM_NATIVE_LINEAR_MATRIX
+      native_linear_transfer_roundtrip(&i,format);
+      sample_all(&i,format);
+#endif
       native_ownership(&i, 0);
       uint8_t digest[32];
       native_sha(pool_memory + offset, h.image_size, digest);
