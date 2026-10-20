@@ -165,7 +165,9 @@ static int native_resource_gpu_test(const char *directory) {
     vk_test_texture_native_binding(serial,&original,&original_offset);
     vk_pool_span_info before,after;
     unsigned image_only_begin=checks;
-    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_UNBACKED);
+    extern int vk_test_pool_has_buffer_intersection(uint64_t,uint64_t);
+    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_CROSSING &&
+      vk_test_pool_has_buffer_intersection((uintptr_t)storage+native_offset,payload_size)==0);
     CHECK(!vk_pool_shared_materialized((uintptr_t)storage+native_offset,payload_size));
     // CPU production is legal only after the original synchronous GPU uses.
     // Same-value prepare/publication still exercises the real invalidation
@@ -175,7 +177,8 @@ static int native_resource_gpu_test(const char *directory) {
     memcpy(storage+native_offset,payload,payload_size);
     CALL(nvnMemoryPoolFlushMappedRange,&pool,native_offset,payload_size);
     nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
-    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_UNBACKED);
+    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_CROSSING &&
+      vk_test_pool_has_buffer_intersection((uintptr_t)storage+native_offset,payload_size)==0);
     // First actual VkBuffer consumer: reuse the original GPU copy helper,
     // rather than using an address-only lookup as a proxy for consumption.
     uint8_t *opaque_read=malloc(payload_size);CHECK(opaque_read);

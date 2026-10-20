@@ -65,6 +65,15 @@ static void native_lane_gpu_test(void) {
   CALL(nvnMemoryPoolBuilderSetStorage,&pb,bytes,4u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&pb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&memory,&pb));
+  extern int vk_test_pool_has_buffer_intersection(uint64_t,uint64_t);
+  // Real unrelated Buffer producer in the SAME Pool: a hole elsewhere must
+  // now report CROSSING, not the public API's whole-Pool UNBACKED status.
+  mtl_sub_begin();vk_pool_requirement unrelated={(uintptr_t)bytes+(3u<<20),16,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0};
+  int unrelated_operation=vk_pool_operation_begin_ranges(&unrelated,1);
+  pool_window_fill(bytes+(3u<<20),16,0x5a5a5a5a);
+  vk_buffer_writeback_stage(unrelated.address,unrelated.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_pool_operation_end(unrelated_operation);vk_internal_wait(vk_internal_commit());
+  CHECK(vk_test_pool_has_buffer_intersection(unrelated.address,unrelated.size)==1);
   VkPhysicalDeviceExternalImageFormatInfo external_query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
     .handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
   VkPhysicalDeviceImageFormatInfo2 format={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,.pNext=&external_query,
@@ -91,7 +100,7 @@ static void native_lane_gpu_test(void) {
   vk_test_native_allocation_stats(&initial_count,&initial_bytes);
   mtl_sub_begin();vk_pool_requirement requirement={address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,VK_POOL_REQUIRE_NATIVE_IMAGE};
   int operation=vk_pool_operation_begin_ranges(&requirement,1);
-  vk_pool_span_info absent;CHECK(vk_pool_span_query(address,needs.size,&absent)==VK_POOL_SPAN_UNBACKED);
+  vk_pool_span_info absent;CHECK(vk_pool_span_query(address,needs.size,&absent)==VK_POOL_SPAN_CROSSING && vk_test_pool_has_buffer_intersection(address,needs.size)==0);
   CHECK(!vk_pool_shared_materialized(address,needs.size));
   extern void vk_test_native_allocation_fail(int);
   extern void *vk_test_native_image_try_bind(uint64_t,uint64_t,VkImage,const VkMemoryRequirements *,VkDeviceMemory *,VkResult *);
@@ -128,7 +137,7 @@ static void native_lane_gpu_test(void) {
     vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,0,NULL,1,&release);
   }
   vk_pool_operation_end(operation);vk_internal_wait(vk_internal_commit());
-  CHECK(vk_pool_span_query(address,needs.size,&absent)==VK_POOL_SPAN_UNBACKED);
+  CHECK(vk_pool_span_query(address,needs.size,&absent)==VK_POOL_SPAN_CROSSING && vk_test_pool_has_buffer_intersection(address,needs.size)==0);
   CHECK(!vk_pool_shared_materialized(address,needs.size));
   extern int vk_test_native_import_coverage(uint64_t,uint64_t);
   CHECK(vk_test_native_import_coverage(address,needs.size));
@@ -161,7 +170,8 @@ static void native_lane_gpu_test(void) {
     uint8_t both[8192];native_lane_readback publication={both,pixels->map,sizeof both};
     vk_completion_write(native_lane_readback_done,&publication,both,sizeof both);
     vk_pool_operation_end(operation);vk_internal_wait(vk_internal_commit());
-    CHECK(vk_pool_span_query(address,second_address+needs.size-address,&absent)==VK_POOL_SPAN_UNBACKED);
+    CHECK(vk_pool_span_query(address,second_address+needs.size-address,&absent)==VK_POOL_SPAN_CROSSING &&
+      vk_test_pool_has_buffer_intersection(address,second_address+needs.size-address)==0);
     for(unsigned n=0;n<sizeof both;n+=4)CHECK(both[n]==(n<4096?255:0) && both[n+1]==(n<4096?0:255) && !both[n+2] && both[n+3]==255);
     CALL(nvnMemoryPoolInvalidateMappedRange,&memory,address-(uintptr_t)bytes,second_address+needs.size-address);
     CALL(nvnMemoryPoolFlushMappedRange,&memory,address-(uintptr_t)bytes,second_address+needs.size-address);
@@ -184,6 +194,11 @@ static void native_lane_gpu_test(void) {
     {saved_address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0}};
   operation=vk_pool_operation_begin_ranges(copy_ranges,3);
   CHECK(vk_pool_shared_materialized(address,needs.size));
+  // A broader partial Buffer overlap is also CROSSING and !materialized.
+  // The new exact intersection predicate must REJECT it as image-only.
+  CHECK(vk_pool_span_query(address,65537,&absent)==VK_POOL_SPAN_CROSSING);
+  CHECK(!vk_pool_shared_materialized(address,65537));
+  CHECK(vk_test_pool_has_buffer_intersection(address,65537)==1);
   CHECK(vk_pool_address_stage(address,needs.size,&raw,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));source=raw;
   CHECK(vk_pool_address_stage(saved_address,needs.size,&saved_raw,&saved_offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
   VkBufferCopy keep={.srcOffset=offset,.dstOffset=saved_offset,.size=needs.size};
