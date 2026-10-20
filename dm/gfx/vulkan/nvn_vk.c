@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <stdatomic.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #if defined(__aarch64__)
 #include <arm_neon.h>
 #endif

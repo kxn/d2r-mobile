@@ -2,6 +2,7 @@
 // mirror demotion or legacy content proof is used by a shared Pool.
 static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer *fresh) {
   uint64_t address=(uintptr_t)host_pointer;
+  const char *stage="external-buffer-properties";
   VkExternalMemoryBufferCreateInfo external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
     .handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
   VkBufferCreateInfo create={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.pNext=&external,.size=bytes,
@@ -13,7 +14,7 @@ static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer
   VkExternalMemoryFeatureFlags external_features=props.externalMemoryProperties.externalMemoryFeatures;
   VkResult result=(external_features&VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) &&
     !(external_features&VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT)?VK_SUCCESS:VK_ERROR_INVALID_EXTERNAL_HANDLE;
-  if(result==VK_SUCCESS)result=vkCreateBuffer(V.device,&create,NULL,&fresh->handle);
+  if(result==VK_SUCCESS){stage="create-buffer";result=vkCreateBuffer(V.device,&create,NULL,&fresh->handle);}
   if(result==VK_SUCCESS) {
     VkMemoryDedicatedRequirements dedicated={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
     VkMemoryRequirements2 requirements={.sType=VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,.pNext=&dedicated};
@@ -21,9 +22,10 @@ static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer
     vkGetBufferMemoryRequirements2(V.device,&buffer_info,&requirements);
     VkMemoryRequirements needs=requirements.memoryRequirements;
     VkBool32 effective_requires=dedicated.requiresDedicatedAllocation;
+    stage="buffer-memory-requirements";
     if(effective_requires)result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
     VkMemoryHostPointerPropertiesEXT host={.sType=VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
-    if(result==VK_SUCCESS)result=vkGetMemoryHostPointerPropertiesEXT(V.device,VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,host_pointer,&host);
+    if(result==VK_SUCCESS){stage="host-pointer-properties";result=vkGetMemoryHostPointerPropertiesEXT(V.device,VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,host_pointer,&host);}
     uint32_t type=UINT32_MAX;uint64_t atom=V.props.limits.nonCoherentAtomSize;
     for(unsigned pass=0;result==VK_SUCCESS && pass<2 && type==UINT32_MAX;pass++)
       for(uint32_t k=0;k<V.mem.memoryTypeCount;k++) {
@@ -33,23 +35,24 @@ static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer
             ((flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || (pass && atom && !(atom&(atom-1)) &&
               !(address%atom) && !(bytes%atom)))) {type=k;break;}
       }
-    if(result==VK_SUCCESS && (type==UINT32_MAX || needs.size>bytes))result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    if(result==VK_SUCCESS){stage="memory-type-and-size";if(type==UINT32_MAX || needs.size>bytes)result=VK_ERROR_INVALID_EXTERNAL_HANDLE;}
     if(result==VK_SUCCESS) {
       VkImportMemoryHostPointerInfoEXT import={.sType=VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
         .handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,.pHostPointer=host_pointer};
       VkMemoryAllocateInfo allocation={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.pNext=&import,
         .allocationSize=bytes,.memoryTypeIndex=type};
-      result=vkAllocateMemory(V.device,&allocation,NULL,&fresh->memory);
+      stage="allocate-import";result=vkAllocateMemory(V.device,&allocation,NULL,&fresh->memory);
       if(result==VK_SUCCESS)fresh->shared_import=1;
-      if(result==VK_SUCCESS)result=vkBindBufferMemory(V.device,fresh->handle,fresh->memory,0);
+      if(result==VK_SUCCESS){stage="bind-buffer";result=vkBindBufferMemory(V.device,fresh->handle,fresh->memory,0);}
       if(result==VK_SUCCESS) {
-        void *mapped=NULL;result=vkMapMemory(V.device,fresh->memory,0,bytes,0,&mapped);
+        stage="map-import";void *mapped=NULL;result=vkMapMemory(V.device,fresh->memory,0,bytes,0,&mapped);
         if(result==VK_SUCCESS){fresh->shared_import=1;if(!mapped)result=VK_ERROR_MEMORY_MAP_FAILED;}
       }
       fresh->properties=V.mem.memoryTypes[type].propertyFlags;
     }
   }
   if(result==VK_SUCCESS) {fresh->size=bytes;fresh->map=host_pointer;}
+  if(result!=VK_SUCCESS)LOG("[shared pool] import failed stage=%s bytes=%llu pointer=%p pointer_high_byte=%u result=%d",stage,(unsigned long long)bytes,host_pointer,(unsigned)(address>>56),result);
   return result;
 }
 
@@ -85,6 +88,20 @@ int vk_pool_shared_materialized(uint64_t address,uint64_t bytes) {
   int ready=p && p->shared && !p->shared_closing && p->backings;
   pthread_mutex_unlock(&V.resources);return ready;
 }
+// The capability probe models the fixed shared heap's mmap-backed pages, not
+// allocator storage (Android malloc pointers may be tagged and kernel useraddr
+// import is not obliged to accept that allocator address representation).
+// This owns only a small fresh mapping; guest mappings are never replaced.
+static uint8_t *shared_probe_mapping(uint64_t alignment,uint64_t bytes) {
+  uint64_t reserve=bytes+alignment;
+  void *raw=mmap(NULL,reserve,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+  if(raw==MAP_FAILED)return NULL;
+  uintptr_t begin=(uintptr_t)raw,aligned=(begin+alignment-1)&~(alignment-1);
+  uint64_t prefix=aligned-begin,suffix=reserve-prefix-bytes;
+  if(prefix && munmap(raw,prefix))die("Shared probe prefix unmap failed");
+  if(suffix && munmap((void *)(aligned+bytes),suffix))die("Shared probe suffix unmap failed");
+  return (uint8_t *)aligned;
+}
 static void shared_device_probe(void) {
   if(!shared_requested)return;
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
@@ -101,9 +118,11 @@ static void shared_device_probe(void) {
   // Actual bytes both ways before any NVN Pool exists. This validates only
   // the small allocation/type/API path, not all future addresses or residency.
   size_t bytes=shared_alignment*2;uint8_t *memory=NULL;
-  if(posix_memalign((void **)&memory,shared_alignment,bytes))return;
+  memory=shared_probe_mapping(shared_alignment,bytes);
+  if(!memory)return;
+  LOG("[shared pool] startup probe mapping=mmap-shared pointer=%p bytes=%zu",(void *)memory,bytes);
   memset(memory,0x31,bytes);vk_buffer b={0};VkResult status=shared_buffer_create(memory,bytes,&b);
-  if(status!=VK_SUCCESS) {vk_buffer_destroy(&b);free(memory);LOG("[shared pool] startup legacy: probe import=%d",status);return;}
+  if(status!=VK_SUCCESS) {vk_buffer_destroy(&b);if(munmap(memory,bytes))die("Shared probe unmap failed");LOG("[shared pool] startup legacy: probe import=%d",status);return;}
   VkCommandPool pool_handle;VkCommandBuffer cmd;VkFence fence;
   VkCommandPoolCreateInfo pc={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.queueFamilyIndex=V.queue_family};
   VK_CHECK(vkCreateCommandPool(V.device,&pc,NULL,&pool_handle));
@@ -134,7 +153,7 @@ static void shared_device_probe(void) {
   shared_gpu_gate_force=getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE")!=NULL;
   if(shared_gpu_gate_force)needs_gate=1; // admission only, not NC Vk cache calls
 #endif
-  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);free(memory);
+  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);if(munmap(memory,bytes))die("Shared probe unmap failed");
   if(valid && needs_gate) {
     uint64_t atom=V.props.limits.nonCoherentAtomSize,page=(uint64_t)getpagesize();
     if(!atom || (atom&(atom-1)) || !page || (page&(page-1)) || atom>page) {
