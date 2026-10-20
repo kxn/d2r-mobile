@@ -661,12 +661,51 @@ recipe 为 4096B、2816B；总图像分配仍为 90,112B、45,056B。实际排�
 可复现 controller 在 `codex/native-image-resource-copy-app-v1` 的 `36c0896`。
 真正的游戏 NVN 资源表、缩略 mip 和流式更新集成尚未验收。
 
+### CSF 超时：完整队列输出与证据边界
+
+已有 Mesa 故障解码器的累计 ring 游标错误已在 `e8fc0ae` 修复；
+`8a73429` 只补充故障后对三条已知根命令流的有界解码，不改变 GPU 指令、
+正常提交、缓存操作或等待策略。原游戏 `277f74f` 真机复测得到约 20.5MB
+现成解码输出，VT、片元、计算三条根流均在内，原解码器 SIGSEGV 未再出现。
+游戏自身的 CSF progress timeout 仍然存在，尚未到 HUD。这是工具修复通过，
+不是游戏故障修复或性能提升。
+
+本次 job4351 的快照中，VT 已完成，片元与计算进入 CALL 但未观察到返回。
+两个独立审查对齐了 119 段时钟推进和 5,961 个跨队列等待；按源码定义的
+共同基准、寄存器保存及有限 GPU 工作条件，依赖图没有缺失的信号生产者，
+也没有固有循环。这排除了该条件下的静态计数依赖环，不能证明实际硬件
+寄存器相同，不能定位当前阻塞 PC，也不能排除 shader、scoreboard、堆或
+内存数据阻止命令完成。静态指令数量不是执行次数、耗时或带宽。
+
+下一证据缺口是已有内核／厂商工具提供的指令指针、等待对象和值、scoreboard
+或 blocked reason。普通 shell 的 dmesg 已被拒绝，预期 debugfs 节点未暴露；
+不能把应用映射的 user-IO 页面当成内核 CSF 寄存器区猜偏移读取。没有这些
+现场证据前，不根据“片元和计算都没返回”删除同步或改某个 shader。
+
+实际记录为本机 `panvk-csf-tool-8a73429-actual-v5-root-review.json`、
+`shared-compute-csf-v5-agent-v1/report.json` 及
+`shared-format-277f74f-driver-diag-v5-fragment-independent-agent.json`。
+本轮原 c8 APK、模块、资源和驱动已恢复，四项 Mesa 属性恢复原值，游戏已停止。
+
 ### 共享 Pool 的快照与非一致性写入保护
 
 共享分支不分配整个 Pool 的 `shadow`，也不通过内容扫描决定 Buffer 上传。
 保留的是访问范围、版本、Fence 和有限 image-scope 页的保护信息，并非整份
 数据快照。真正需要保留历史值的异步命令输入另算；NVN 排布与私有 VkImage
 之间的转换存储也不能冒称已经消除。原生图像直接绑定是后一项的独立工作。
+
+对生产 `c8e7a25`、共享 `277f74f` 和原生图像 `fbd09b2` 的分配与使用点复核：
+生产路径仍有延迟分配的 Pool CPU shadow 和独立 Vulkan Buffer 存储；共享
+路径在分配 shadow 前返回，直接导入原 guest 存储，known-copy/B2B 的 CPU
+内容快照也已关闭。因此，完整共享不要求再留一份全尺寸比较快照。
+版本、页状态、访问范围和 Fence 是元数据，不保存第二份内容。
+
+普通 Tegra 纹理仍同时保留原始排布和真正参与采样的 optimal 图像，短期
+转换 staging 也仍被使用；不能把它们按“没用的跟踪快照”删除。匹配原生
+资源的 full 图像已直接绑定原 Pool 内存，跳过第二份图像存储和初始上传，
+缩略图及未覆盖资源仍走原路径。这里只确认源码分配行为与有限真机功能，
+不把 VkMemory 声明容量、calloc 虚拟容量或离线资源总量当作实际 PSS 节省。
+本机源码审计为 `shared-mode-content-copies-source-audit-agent.json`。
 
 写前保护核心 `b1ea0ef` 与应用包装组合为 `14dae0e`。Mali 普通 UID 两次
 独立冷进程验证均通过：实际 `0xb` 非一致性 HOST_CACHED、atom64 下，GPU
