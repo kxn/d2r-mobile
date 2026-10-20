@@ -339,6 +339,13 @@ static int image_sampled_array_layout(const image *i) {
   return !!(i->physical_traits&IMAGE_LAYOUT_SAMPLED_ARRAY);
 }
 static int image_safe_layouts(const image *i) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  // Authenticated native payloads are produced and handed off in GENERAL.
+  // Keep their sampled/transfer descriptors in that layout between FOREIGN
+  // acquire/release. Access dependencies and ownership handoffs still run;
+  // ordinary private images retain the original optimal-layout policy.
+  if(i->native_entry)return 0;
+#endif
   return !layout_reference &&
       ((i->physical_traits&IMAGE_LAYOUT_COLOR) ||
        (!sampled_array_layout_reference && (i->physical_traits&IMAGE_LAYOUT_SAMPLED_ARRAY)) ||
@@ -2813,6 +2820,12 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   }
   VkImageLayout binding_layout=image_use_range_normalized(i,access_range,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       image_shader_stages(stage));
+#if defined(DM_VULKAN_TEST_EMBED) && defined(DM_VULKAN_NATIVE_RESOURCES)
+  // The actual ASTC family fixture uses this real descriptor on the GPU,
+  // including after CPU publication, transfer writers and chunk handoffs.
+  if(i->native_entry && binding_layout!=VK_IMAGE_LAYOUT_GENERAL)
+    die("Native image sampled descriptor must retain GENERAL");
+#endif
   if(layout) *layout=binding_layout;
   image_request_add_normalized(i,access_range,image_shader_stages(stage),
       VK_ACCESS_SHADER_READ_BIT|(storage?VK_ACCESS_SHADER_WRITE_BIT:0));
