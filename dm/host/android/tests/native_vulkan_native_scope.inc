@@ -155,7 +155,12 @@ static void native_acquire_scope_gpu_test(void) {
       CHECK(vk_render_active());
       if(order>=3) {
         CHECK(vk_test_native_writer_stages(address,needs.size)&producer_stage);
-        CHECK(vk_pool_native_acquire_independent(address,needs.size)==(producer!=2));
+        // A native-only B2T writer has no canonical VkBuffer identity in
+        // window mode. Its conservative negative acquire proof is correct;
+        // residency must retain the real dependency without requiring a
+        // redundant first-use optimization to become newly admissible.
+        CHECK(vk_pool_native_acquire_independent(address,needs.size)==
+          (producer!=2 && !(window_fixture && !producer)));
       }
     }
     if(order==1) {
