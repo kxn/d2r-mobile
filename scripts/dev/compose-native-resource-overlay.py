@@ -55,6 +55,7 @@ def compose(a):
     require(hashes.file(texture) == entry['texture_sha256'] and
             hashes.file(cache) == record['complete_cache_merge']['output_sha256'], 'native outputs changed')
     require(hashes.file(a.baseline_cache) == record['complete_cache_merge']['input_sha256'], 'wrong baseline cache')
+    require(hashes.file(a.baseline_texture) == entry['source_texture_sha256'], 'wrong original full4 texture')
     before, after = json.loads(a.baseline_cache.read_text()), json.loads(cache.read_text())
     require(len(before) == len(after) == 31072, 'full descriptor cache required')
     changed = []
@@ -89,7 +90,8 @@ def compose(a):
         key, encoded, decoded = original[name]
         require(casc.data_filename(key[9], key[10]) == manifest['name'] and
                 int.from_bytes(key[11:], 'big') + encoded <= manifest['size'], 'baseline key outside archive8')
-        row = list(source_manifest[name]);row[2:8] = [str(key[9]), str(key[10]), '', str(decoded), key.hex(), str(encoded)]
+        reference = a.baseline_texture if name == logical else a.baseline_cache
+        row = list(source_manifest[name]);row[2:8] = [str(key[9]), str(key[10]), hashlib.md5(reference.read_bytes()).hexdigest(), str(decoded), key.hex(), str(encoded)]
         require(comp.byte_sha(touch_layout._read_entry(str(baseline), row)) == expected,
                 'baseline CASC content differs from declared native source: ' + name)
     for name in (comp.PACK9, comp.ROOT10):
@@ -121,7 +123,7 @@ def compose(a):
     require(set(replaced) == set(updates) and len(replaced) == len(updates), 'virtual manifest lookup mismatch')
     (source / 'data/build_manifest.psv').write_text('\n'.join(rows) + '\n')
     for name, (key, encoded, decoded) in updates.items():
-        row = list(source_manifest[name]);row[2:8] = [str(key[9]), str(key[10]), '', str(decoded), key.hex(), str(encoded)]
+        row = list(source_manifest[name]);row[2:8] = [str(key[9]), str(key[10]), hashlib.md5(declared[name].read_bytes()).hexdigest(), str(decoded), key.hex(), str(encoded)]
         require(comp.byte_sha(touch_layout._read_entry(str(source), row)) == hashes.file(declared[name]),
                 'native archive content roundtrip failed: ' + name)
     require(casc.available_location(source / 'data') == (0, 10), 'unexpected root TVFS archive')
@@ -139,7 +141,7 @@ def compose(a):
     shutil.copy2(table, out / 'native-layouts.bin')
     sources = [Path(__file__), Path(comp.__file__), Path(casc.__file__), Path(touch_layout.__file__),
                pack / 'native-pack.json', pack / 'replacements.tsv', table, texture, cache,
-               a.baseline_cache, a.baseline_index, a.baseline_pack_manifest, a.baseline_overlay_record,
+               a.baseline_cache, a.baseline_texture, a.baseline_index, a.baseline_pack_manifest, a.baseline_overlay_record,
                a.runtime_acceptance, raw / 'data/.build.config', raw / 'data/build_manifest.psv']
     result = {'complete': True, 'not_deployed': True, 'source_revision': revision, 'source_clean': True,
               'CASC_workers': 2, 'commands': commands, 'selected': [logical], 'native_family_count': 1,
@@ -169,7 +171,7 @@ def compose(a):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for name in ('raw', 'native-pack', 'out', 'baseline-cache', 'baseline-index',
+    for name in ('raw', 'native-pack', 'out', 'baseline-cache', 'baseline-texture', 'baseline-index',
                  'baseline-pack-manifest', 'baseline-overlay', 'baseline-overlay-record', 'runtime-acceptance'):
         p.add_argument('--' + name, type=Path, required=True)
     compose(p.parse_args())
