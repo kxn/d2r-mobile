@@ -10,8 +10,7 @@ static uint32_t clock_multiplier;
 static int32_t clock_shift;
 static const char *clock_reason="not-probed";
 
-enum query_clock_status {QUERY_CLOCK_OK,QUERY_CLOCK_INVALID_BITS,QUERY_CLOCK_INVALID_PERIOD,
-  QUERY_CLOCK_INTERMEDIATE_OVERFLOW,QUERY_CLOCK_OUTPUT_DOMAIN_OVERFLOW};
+enum query_clock_status {QUERY_CLOCK_OK,QUERY_CLOCK_INVALID_BITS,QUERY_CLOCK_INVALID_PERIOD};
 static enum query_clock_status query_clock_parameters(float period,uint32_t bits,uint32_t *multiplier,int32_t *shift) {
   uint32_t value;memcpy(&value,&period,sizeof value);
   uint32_t exponent=(value>>23)&255u,mantissa=value&0x7fffffu;
@@ -20,16 +19,10 @@ static enum query_clock_status query_clock_parameters(float period,uint32_t bits
   if(exponent)mantissa|=0x800000u;
   int32_t power=exponent?(int32_t)exponent-150:-149;
   uint32_t factor=mantissa*12u;
-  uint64_t maximum=bits==64?UINT64_MAX:((UINT64_C(1)<<bits)-1);
-  __uint128_t product=(__uint128_t)maximum*factor;
-  if(power>=0) {
-    if(power>=128 || product>(~(__uint128_t)0>>power))return QUERY_CLOCK_INTERMEDIATE_OVERFLOW;
-    if((product<<power)>=((__uint128_t)1<<64)*625u)return QUERY_CLOCK_OUTPUT_DOMAIN_OVERFLOW;
-  } else {
-    product/=625u;
-    if(-power>=128)product=0;else product>>=-power;
-    if(product>UINT64_MAX)return QUERY_CLOCK_OUTPUT_DOMAIN_OVERFLOW;
-  }
+  // Every positive finite binary32 period has a bounded shift [-149,104].
+  // The GPU's 96-bit product/long division retains all input bits and handles
+  // a quotient wider than64 explicitly, matching Android compiler-rt's
+  // __fixunstfdi saturation rather than silently discarding high bits.
   *multiplier=factor;*shift=power;return QUERY_CLOCK_OK;
 }
 int vk_query_clock_parameters(float period,uint32_t bits,uint32_t *multiplier,int32_t *shift) {
@@ -40,12 +33,12 @@ int vk_query_native_supported(void) {
     clock_ready=1;float period=V.props.limits.timestampPeriod;uint32_t period_bits;
     memcpy(&period_bits,&period,sizeof period_bits);
     enum query_clock_status status=query_clock_parameters(period,V.timestamp_bits,&clock_multiplier,&clock_shift);
-    static const char *const reasons[]={"supported","invalid-valid-bits","invalid-period",
-      "intermediate-domain-overflow","scaled-valid-input-domain-exceeds-u64"};
+    static const char *const reasons[]={"supported","invalid-valid-bits","invalid-period"};
     clock_supported=status==QUERY_CLOCK_OK;clock_reason=reasons[status];
     // Cold metadata of the selected physical device/queue, not timing or a
-    // replacement query result. Keep the admission decision unchanged.
-    LOG("[native query] timestampPeriod_ns=%.9g period_float_bits=0x%08x timestampValidBits=%u timestampComputeAndGraphics=%u admission=%s",
+    // replacement query result. Only malformed input formats are rejected;
+    // output overflow has the explicit Android-compatible shader policy.
+    LOG("[native query] timestampPeriod_ns=%.9g period_float_bits=0x%08x timestampValidBits=%u timestampComputeAndGraphics=%u admission=%s overflow=android-u64-saturate",
         (double)period,period_bits,V.timestamp_bits,V.props.limits.timestampComputeAndGraphics,reasons[status]);
   }
   return clock_supported;

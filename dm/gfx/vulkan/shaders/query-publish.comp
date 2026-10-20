@@ -27,19 +27,21 @@ uvec2 scaled_ticks(uvec2 raw) {
     // Divide the 96-bit product (possibly shifted left) by625. Negative
     // binary shifts are applied to the quotient, preserving exact floor.
     int positive=max(p.binary_shift,0),negative=max(-p.binary_shift,0);
-    uint remainder=0u;uvec2 result=uvec2(0u);
+    uint remainder=0u;uvec2 result=uvec2(0u);bool overflow=false;
     for(int bit=95+positive;bit>=0;--bit) {
         int source_bit=bit-positive;uint digit=0u;
         if(source_bit>=0)digit=(product[source_bit/32]>>uint(source_bit%32))&1u;
         remainder=(remainder<<1)|digit;
         bool one=remainder>=625u;if(one)remainder-=625u;
         int target_bit=bit-negative;
-        // Startup CPU capability bounds prove every valid device timestamp
-        // fits64bits; this branch is not a saturation or fake-query path.
+        // Positive quotient bits above the original uint64 ABI are never
+        // dropped. Android's actual legacy __fixunstfdi returns UINT64_MAX
+        // on this overflow, so explicitly reproduce that defined policy.
+        if(one && target_bit>=64)overflow=true;
         if(one && target_bit>=0 && target_bit<64)
             result[target_bit/32]|=1u<<uint(target_bit%32);
     }
-    return result;
+    return overflow?uvec2(0xffffffffu):result;
 }
 void main() {
     uvec2 ticks=scaled_ticks(uvec2(input_words[0],input_words[1]));
