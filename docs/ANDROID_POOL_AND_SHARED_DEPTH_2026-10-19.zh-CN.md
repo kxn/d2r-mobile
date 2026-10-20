@@ -936,3 +936,26 @@ GPU 最终 optimal 存储布局仍须与可移植上传布局区分；可移植�
 回归在明确启用 VVL+sync 后通过。原失败、成功日志和冻结报告均保留，新纠错
 记录为 `readback-host-sync-validation-erratum-agent-v1.json`。此纠错不撤销已执行
 的 Mali 非一致性 GPU 字节验收，也不能将宿主同步验证称作 Android 同步层验收。
+
+## 原 PanVK fork 的非共享真实游戏对照
+
+纯上游 Mesa `5a07217f` 不含此手机所需的 vendor kbase 后端，不能称作可用的
+零修改 Android 基线。可对照的是原 `zenithblue-oss/panvk-kbase-android`
+`5b87b74d` 及其原有 179 项补丁，未加入本项目的 host-import 或诊断修改。
+独立重新构建与最初原 fork 的 `c5ecf526…` 驱动逐字节相同。
+
+在同一 `36a9781` APK／原始模块上，关闭 shared guest heap、legacy ASTC copy
+及 decode8，使用原 BC 资源和原触控 UI。离线核实 31,093 个纹理及描述缓存的
+CFT 条目与原 RomFS 相同，避免此前 ASTC→BC 格式检查提前阻断。普通 UID
+真实进程确认加载 driverID20 的原 PanVK、private-anonymous guest heap。
+
+该次运行越过主菜单，打开选角期间仍出现 `Vulkan GPU fence wait: -4`
+及 SIGABRT，未达到营地 HUD。证明此次 GPU 失效不需要新增共享导入；不能
+据此证明与共享版同根因，也不能排除 Vulkan 后端的错误用法。当前 direct ICD
+入口绕过 Android loader，既有 validation 开关主动拒绝该组合，尚无官方
+校验层证明此次调用有效，下一步需先接通现成工具入口。
+
+进程已自行退出，未为存档重新启动；原 35 项文件、完整旧驱动及缓存目录恢复
+核验通过，临时资源清理完成。本机记录 `panvk-original-fork-ui-game-v4/result.json`。
+此前 v3 在启动前遇到缓存文件清单过长导致 ADB `error: closed`，未运行游戏，
+失败记录保留；v4 仅将哈希请求分批，并非另一项驱动改动。本次不提供性能结论。
