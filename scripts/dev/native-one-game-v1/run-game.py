@@ -7,6 +7,7 @@ import argparse,hashlib,importlib.util,json,re,shlex,subprocess,sys,tarfile,uuid
 R=Path('/home/dl/d2r-mobile');HERE=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('native_one_transaction',HERE/'transaction.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 sha=m.sha;read=m.read;require=m.require;PKG=m.PKG
+spec=importlib.util.spec_from_file_location('native_one_installer',HERE/'installer.py');installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
 COMMIT='bb4ac548cbb3858ed6cee01d3319b26e50088f5e'
 READY=R/'.local/logs/native-image-window-lane-bb4ac54-canonical-source-ready-agent.json';READY_SHA='277ba1d3c22df08d8d92bfda70675b95c0cccde0a2af73b7ac6f7f2abc1aac5a'
 RAW=R/'.local/logs/native-image-window-bb4ac54-raw-nso-root-ready.json';RAW_SHA='f830e6e33e80dc91c04825a1c97d1524563ede7128d288392624fae37ecdf5d7'
@@ -35,7 +36,7 @@ def proof():
   for n,h in ready['canonical_native_library_sha256'].items():require(hashlib.sha256(z.read('lib/arm64-v8a/'+n)).hexdigest()==h,'sixlib mismatch '+n)
  oldmods={Path(n).name:{'sha256':h}for n,h in base['inventories']['files/runtime/modules'].items()if not n.endswith('/.d2r-deploy-managed')}
  old={'apk':m.APK,'elf':m.ELF,'chain':m.CHAIN,'module_artifacts':oldmods};new={'apk':NEWAPK,'elf':NEWELF,'chain':m.CHAIN,'module_artifacts':{n:{'sha256':h}for n,h in files.items()}}
- dep=[Path(__file__),HERE/'transaction.py',m.COMMON,m.SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py',SOURCE_TOOLS/'run-game.py',SOURCE_TOOLS/'reused-transaction.py',NATIVE/'composition.json',TABLE]
+ dep=[Path(__file__),HERE/'transaction.py',HERE/'installer.py',m.COMMON,m.SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py',SOURCE_TOOLS/'run-game.py',SOURCE_TOOLS/'reused-transaction.py',NATIVE/'composition.json',TABLE]
  return {'old':old,'new':new,'raw':raw,'baseline':base,'overlay':delta,'table':composition,'inputs':{**{str(p):h for p,h in pins.items()},**{str(p):sha(p)for p in dep}}}
 def fixture_gate(path,digest):
  require(path is not None and digest=='755c634376a6bdebde5168bbf0b7cc3e1694c8398bd2f8940a7a51790f8dd9ca','--execute needs exact root-pinned actual AA combined fixture acceptance')
@@ -52,9 +53,7 @@ def debugger_gate(path,digest):
  run=Path(j['run_debugger']);require(run.name=='run-debugger.py'and any(x['path']==str(run)for x in files),'helper entry not frozen')
  return run,server,{str(path):digest,**{x['path']:x['sha256']for x in files},server['path']:server['sha256']}
 def install(dev,apk,expected,out):
- dev.stopped()
- with out.open('w')as f:subprocess.run(dev.command+['install','-r','-d','--no-incremental',str(apk)],stdout=f,stderr=subprocess.STDOUT,check=True,timeout=100)
- loc=dev.adb('shell','pm','path',PKG).removeprefix('package:');require(dev.adb('shell','sha256sum',loc).split()[0]==expected,'installed APK digest mismatch')
+ installer.install(dev,apk,expected,out,require,PKG)
 def current_owned(label,inv,d,p):
  if inv is None or inv.get(m.OWNER)!=d['owner_sha256']:return False
  if label=='driver':return inv.get('libvulkan_freedreno.so')==m.SO and all(n in(m.OWNER,'libvulkan_freedreno.so')or n.startswith(('shader-cache/','mesa_shader_cache/','.cache/'))for n in inv)
@@ -113,6 +112,7 @@ def main():
  except BaseException as e:d['error']=repr(e);write()
  finally:
   try:
+   require(not installer.UNRESOLVED,'owned install result unresolved: preserve backups and journal; do not restore or send another install')
    dev.stopped();require(dev.app('cat',m.LOCK+'/owner')==token,'lock owner changed')
    if created:
     for label,target in reversed(DIRS):
