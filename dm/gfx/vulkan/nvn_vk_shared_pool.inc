@@ -80,6 +80,8 @@ int vk_pool_shared_mode(void) {mtl_init();return shared_active;}
 // Recording-owner read of the immutable result, after device initialization.
 // Unlike the startup query this never initializes Vulkan or reads environment.
 int vk_pool_shared_active(void) {return shared_active;}
+// Frozen cold decision only: scope registration alone is not commit admission.
+int vk_pool_shared_gpu_gate_mode(void) {return shared_active && shared_gpu_gate_phase;}
 static void shared_device_probe(void) {
   if(!shared_requested)return;
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
