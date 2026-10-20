@@ -22,7 +22,7 @@ def state(tick,pso=10,variant=20):
   'time_ns':tick*1000000,'tick':tick,'frame_pacing':{'target_fps':60}}
 
 class RealReadiness(unittest.TestCase):
- def exercise(self,records,expect_count,passes):
+ def exercise(self,records,expect_count,passes,window=16777216):
   records=list(map(copy.deepcopy,records));state_reads=[];commands=[]
   with tempfile.TemporaryDirectory(prefix='native-bulk-readiness-offline-',dir=R/'.local/logs') as name:
    out=Path(name)
@@ -38,7 +38,7 @@ class RealReadiness(unittest.TestCase):
     if parts[2:4]==['sh','-c'] and 'task/*' in parts[4]:raise ReachedTools('real readiness passed; stop before official tool windows')
     raise AssertionError('Unexpected fake-device command: '+repr(command))
    def forbidden(*args,**kwargs):raise AssertionError('No process/device may run in offline readiness test')
-   argv=[str(HELPER),SERIAL,PID,'1',str(out),'16777216','1']
+   argv=[str(HELPER),SERIAL,PID,'1',str(out),str(window),'1']
    with patch.object(sys,'argv',argv),patch('subprocess.check_output',side_effect=check_output),patch('subprocess.run',side_effect=forbidden),patch('subprocess.Popen',side_effect=forbidden),patch('time.sleep',return_value=None):
     if passes:
      with self.assertRaises(ReachedTools):runpy.run_path(str(HELPER),run_name='__main__')
@@ -56,6 +56,11 @@ class RealReadiness(unittest.TestCase):
  def test_four_fresh_stable_ticks_pass_actual_loop(self):
   result=self.exercise([state(n)for n in range(1,6)],4,True)
   self.assertEqual([v['time_ns']for v in result['pre_record_cache_states']],[1000000,2000000,3000000,4000000])
+ def test_one_MiB_actual_helper_requires_matching_window(self):
+  records=[state(n)for n in range(1,6)]
+  for row in records:row['pool_windows']['window_bytes']=1048576
+  result=self.exercise(records,4,True,window=1048576)
+  self.assertEqual(result['window_bytes'],1048576)
  def test_PSO_and_variant_changes_each_reset_actual_loop(self):
   for pso,variant in [(11,20),(10,21)]:
    with self.subTest(pso=pso,variant=variant):

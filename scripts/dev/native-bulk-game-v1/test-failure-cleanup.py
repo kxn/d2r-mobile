@@ -87,7 +87,8 @@ class LifecycleFailureTests(unittest.TestCase):
                  patch.object(t.m, 'screenshot_pull_remove',
                               side_effect=RuntimeError('injected retry failure')):
                 with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
-                    config = {'serial': '10CG570J59001U1'}
+                    config = {'serial': '10CG570J59001U1',
+                              'pool_window_bytes': 16777216}
                     if counter_failure:
                         config['counter_snapshot'] = {
                             'helper_path': 'counter-helper.py',

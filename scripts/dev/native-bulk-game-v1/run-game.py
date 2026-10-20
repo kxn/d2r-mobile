@@ -50,6 +50,10 @@ def proof(path, digest):
     require(sha(path) == digest, 'input manifest changed')
     p = read(path)
     require(p['schema'] == 1 and p['serial'] == '10CG570J59001U1', 'Q735 scope')
+    p['pool_window_bytes'] = p.get('pool_window_bytes', 16777216)
+    require(type(p['pool_window_bytes']) is int and
+            p['pool_window_bytes'] in (1048576, 16777216),
+            'reviewed finite shared-window size required')
     baseline = read(pinned(p['baseline']))
     require(baseline['game_PID_absent'] is True, 'baseline must be stopped')
     ready = read(pinned(p['canonical']))
@@ -186,7 +190,7 @@ def phase_game(dev, out, phase, p, token):
                '--no-astc-decode-unorm8', '--no-defer-pool-publication', '--scale-3d', '.60',
                '--fixed-3d', '--pool-copy-accounting', '--game-res', '2750x1260',
                '--timeout', '90', '--report', str(out / 'launch.json'),
-               '--pool-window-bytes', '16777216', '--expect-shared-import-windows']
+               '--pool-window-bytes', str(p['pool_window_bytes']), '--expect-shared-import-windows']
     if phase['kind'] == 'native':
         command += ['--native-resource-table', '/data/user/0/' + PKG + '/' + DIRS[-1][1] + '/native-layouts.bin',
                     '--native-resource-pack-sha256', phase['pack_sha'],
@@ -245,7 +249,7 @@ def phase_game(dev, out, phase, p, token):
             performance_out = out / 'official-performance'
             performance_out.mkdir()
             command = [sys.executable, p['performance_tools']['cpu_helper']['path'],
-                       p['serial'], own, '1', str(performance_out), '16777216', '1']
+                       p['serial'], own, '1', str(performance_out), str(p['pool_window_bytes']), '1']
             d['performance_command'] = command
             save()
             with (performance_out / 'console.txt').open('w') as log:
@@ -290,7 +294,7 @@ def phase_game(dev, out, phase, p, token):
         require(current['valid'] and current['world_input_ready'], 'original world not input-ready')
         require(current['scale_3d'] == .60 and current['game_output'] == current['surface_output']
                 == {'width': 2750, 'height': 1260}, 'fixed resolution mismatch')
-        require(current['pool_windows']['window_bytes'] == 16777216
+        require(current['pool_windows']['window_bytes'] == p['pool_window_bytes']
                 and current['guest_heap']['shared'] is True, 'actual shared-window mismatch')
         native = dev.app('cat', 'files/runtime/native.log')
         (out / 'native.log').write_text(native)
@@ -361,7 +365,8 @@ def main():
     plan = {'offline': True, 'controller_sources': p['controller_sources'],
             'inputs_sha256': args.inputs_sha256, 'runtime': p['runtime_commit'],
             'phases': ['standard-ASTC4', 'native-ASTC4'], 'scale_3d': .60,
-            'output': '2750x1260', 'profiling': False, 'recursive_RomFS_copy': False,
+            'output': '2750x1260', 'pool_window_bytes': p['pool_window_bytes'],
+            'profiling': False, 'recursive_RomFS_copy': False,
             'scope': 'Functional and system residency only, not sustained thermal/FPS proof'}
     if p.get('performance_tools'):
         plan['profiling'] = True

@@ -8,7 +8,7 @@ class Performance(unittest.TestCase):
  def test_hook_precedes_LLDB_and_uses_original_route_only(self):
   s=(D/'run-game.py').read_text();a=s.index("        m.original_route(");b=s.index("        if p.get('performance_tools'):",a);c=s.index("        if p.get('counter_snapshot'):",a)
   self.assertLess(a,b);self.assertLess(b,c)
-  self.assertIn("'16777216', '1'",s[b:c]);self.assertIn("'stable_target60_PSO_variants_all_windows'",s[b:c])
+  self.assertIn("str(p['pool_window_bytes']), '1'",s[b:c]);self.assertIn("'stable_target60_PSO_variants_all_windows'",s[b:c])
  def test_existing_official_commands_and_scope(self):
   s=(D/'capture-official-cpu.py').read_text()
   for text in ["'/system/bin/simpleperf'","'--duration','8'","'-f','99'","'dwarf,16384'","'--per-thread'","'--frame-timeline'","'--clean-atrace-print'","v['scale_3d']==.60"]:

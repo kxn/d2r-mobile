@@ -79,3 +79,13 @@ incomplete sidecar; the parent still attempts original owned-game save2/stop and
 succeeded. Preserve original capture logs/UUID/path, no automatic retry, and let
 the device owner establish stopped tool/session state before another transaction.
 This is a documented pre-existing tool boundary, not a new cleanup implementation.
+# Finite import window comparison
+
+The input may select `pool_window_bytes` as 1048576 or 16777216 (default).
+Launch, official-tool endpoint checks and the offline plan use the same value.
+This only selects the existing runtime option; it does not change the runtime,
+resource recipes or NSO rewriting. Smaller imports can avoid pinning unrelated
+pages but may increase driver objects, unions and descriptor changes. Compare
+actual Buffer backing, original-game CPU and memory; do not infer resident RAM
+or FPS savings from the chosen window size alone.
+
