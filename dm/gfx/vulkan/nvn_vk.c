@@ -3133,11 +3133,32 @@ uint64_t vk_test_shared_dependency_observed(void) {
   pthread_mutex_unlock(&shared_dependency_test_mu);return v;
 }
 #endif
+#ifdef DM_VULKAN_TEST_EMBED
+static void (*shared_host_snapshot_test)(int,int,VkMemoryPropertyFlags);
+void vk_test_shared_host_snapshot(void (*snapshot)(int,int,VkMemoryPropertyFlags)) {
+  shared_host_snapshot_test=snapshot;
+}
+#endif
 // Host cache maintenance / CPU effects need a CPU phase between overlapping
 // GPU users. Preserve asynchronous submission for nonoverlapping ranges.
-// Call only on the translation owner, outside resource and queue locks.
+// Caller retains p. CPU observation begin may be non-owner and never waits a
+// GPU; owner callers may wait. All enter outside resource and queue locks.
 static uint64_t shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int protect_host_page,int wait) {
-  int cache=p->backings && !(p->shared_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  // A retained identity does not freeze backing metadata: the owner may
+  // publish a first/disjoint head span concurrently with a CPU observation.
+  // Snapshot the pair under its publication lock; release before completion
+  // scanning or any GPU/CPU-effect wait (no resources -> completion lock edge).
+  pthread_mutex_lock(&V.resources);
+  int backed=p->backings!=NULL;
+  VkMemoryPropertyFlags properties=p->shared_properties;
+#ifdef DM_VULKAN_TEST_EMBED
+  if(shared_host_snapshot_test)shared_host_snapshot_test(0,backed,properties);
+#endif
+  pthread_mutex_unlock(&V.resources);
+#ifdef DM_VULKAN_TEST_EMBED
+  if(shared_host_snapshot_test)shared_host_snapshot_test(1,backed,properties);
+#endif
+  int cache=backed && !(properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 #ifdef DM_VULKAN_TEST_EMBED
   if(shared_dependency_test_force_cache)cache=1; // tests admission only, not NC Vk cache calls
 #endif

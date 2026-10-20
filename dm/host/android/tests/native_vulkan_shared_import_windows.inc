@@ -31,6 +31,87 @@ static void shared_window_copy_read(uint8_t *address,unsigned size,uint8_t *out)
   int operation=vk_pool_operation_begin_ranges(&need,1);
   pool_window_read(address,size,out);vk_pool_operation_end(operation);
 }
+// Exact metadata publication overlap, not a scheduler/timing measurement.
+// Hook pauses a REAL observer_begin at its snapshot while resources is held;
+// owner proves exclusion with trylock, then appends while that begin/token live.
+extern void vk_test_shared_host_snapshot(void (*)(int,int,VkMemoryPropertyFlags));
+static pthread_mutex_t shared_append_mu=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t shared_append_cv=PTHREAD_COND_INITIALIZER;
+static int shared_append_snapshot,shared_append_continue,shared_append_ready,shared_append_release;
+static int shared_append_backed;
+static VkMemoryPropertyFlags shared_append_properties;
+static uint8_t *shared_append_source;
+static void shared_append_snapshot_hook(int phase,int backed,VkMemoryPropertyFlags properties) {
+  pthread_mutex_lock(&shared_append_mu);
+  shared_append_backed=backed;shared_append_properties=properties;shared_append_snapshot=phase+1;
+  pthread_cond_broadcast(&shared_append_cv);
+  while(shared_append_continue<phase+1)pthread_cond_wait(&shared_append_cv,&shared_append_mu);
+  pthread_mutex_unlock(&shared_append_mu);
+}
+static void *shared_append_observer(void *unused) {
+  (void)unused;vk_shared_cpu_observation token;
+  // Main owns the fixture's plain checks counter; worker success is published
+  // under shared_append_mu rather than racing CHECK's counter increment.
+  if(!vk_pool_shared_cpu_observe_begin((uintptr_t)shared_append_source,4096,&token))
+    die("Shared append observer begin unexpectedly rejected");
+  pthread_mutex_lock(&shared_append_mu);shared_append_ready=1;pthread_cond_broadcast(&shared_append_cv);
+  while(!shared_append_release)pthread_cond_wait(&shared_append_cv,&shared_append_mu);
+  pthread_mutex_unlock(&shared_append_mu);vk_pool_shared_cpu_observe_end(&token);return NULL;
+}
+static void shared_window_append_observer_test(uint8_t *data) {
+  enum {W=65536};NVNmemoryPoolBuilder mb;NVNmemoryPool owner;
+  CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,4u<<20);
+  CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&owner,&mb));
+  shared_append_source=data+W;nvn_dirty_scope *scope=nvn_dirty_scope_acquire(shared_append_source,4096);CHECK(scope);
+  vk_pool_span_info old_head,current;
+  for(unsigned phase=0;phase<2;phase++) {
+    CHECK(vk_pool_shared_cpu_observe_prepare((uintptr_t)shared_append_source,4096));
+    pthread_mutex_lock(&shared_append_mu);
+    shared_append_snapshot=shared_append_continue=shared_append_ready=shared_append_release=0;
+    pthread_mutex_unlock(&shared_append_mu);
+    vk_test_shared_host_snapshot(shared_append_snapshot_hook);
+    pthread_t observer;CHECK(!pthread_create(&observer,NULL,shared_append_observer,NULL));
+    pthread_mutex_lock(&shared_append_mu);
+    while(!shared_append_snapshot)pthread_cond_wait(&shared_append_cv,&shared_append_mu);
+    CHECK(shared_append_backed==(phase!=0));
+    if(!phase)CHECK(!shared_append_properties);
+    else CHECK(shared_append_properties&VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    // The snapshot must actually own the SAME lock used by first/head publish.
+    CHECK(pthread_mutex_trylock(&V.resources)==EBUSY);
+    shared_append_continue=1;pthread_cond_broadcast(&shared_append_cv);
+    while(shared_append_snapshot<2)pthread_cond_wait(&shared_append_cv,&shared_append_mu);
+    // Real begin is still active, now outside resources: publish can proceed.
+    CHECK(!pthread_mutex_trylock(&V.resources));pthread_mutex_unlock(&V.resources);
+    pthread_mutex_unlock(&shared_append_mu);
+    vk_pool_requirement need={(uintptr_t)data+(phase?W:4*W)+128,64,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+    vk_pool_reserve_result result;CHECK(vk_pool_reserve_ranges(&need,1,W,&result)==VK_POOL_RESERVE_OK);
+    CHECK(result.added_spans==1 && result.added_buffer_bytes==W);
+    pthread_mutex_lock(&shared_append_mu);
+    CHECK(!shared_append_ready); // publication overlapped this actual begin
+    shared_append_continue=2;pthread_cond_broadcast(&shared_append_cv);
+    while(!shared_append_ready)pthread_cond_wait(&shared_append_cv,&shared_append_mu);
+    pthread_mutex_unlock(&shared_append_mu);
+    CHECK(vk_pool_span_query(need.address,64,&current)==VK_POOL_SPAN_SINGLE);
+    if(!phase)old_head=current;
+    else {
+      CHECK(current.logical_begin==W);
+      CHECK(vk_pool_span_query((uintptr_t)data+4*W+128,64,&current)==VK_POOL_SPAN_SINGLE);
+      CHECK(current.handle==old_head.handle && current.backing_generation==old_head.backing_generation);
+    }
+    // Scope/token remains live through a real GPU read of the appended span.
+    // Hook is one-shot for this observer; subsequent owner host phases pass.
+    vk_test_shared_host_snapshot(NULL);
+    uint8_t read[64];mtl_sub_begin();shared_window_copy_read((uint8_t *)(uintptr_t)need.address,64,read);
+    vk_internal_wait(vk_internal_commit());for(unsigned k=0;k<64;k++)CHECK(read[k]==0x39);
+    pthread_mutex_lock(&shared_append_mu);shared_append_release=1;pthread_cond_broadcast(&shared_append_cv);
+    pthread_mutex_unlock(&shared_append_mu);CHECK(!pthread_join(observer,NULL));
+  }
+  nvn_dirty_scope_release(scope);CALL(nvnMemoryPoolFinalize,&owner);
+  CHECK(!vk_validation_error_count());
+  printf("{\"test_details\":\"shared-observer-first-and-head-append\",\"real_begin_token\":true,\"snapshot_resource_lock_exclusion\":true,\"actual_GPU_bytes\":true}\n");
+}
 static VkBufferView shared_window_old_view;
 static VkBuffer shared_window_old_buffer;
 static int shared_window_view_destroyed,shared_window_buffer_destroyed;
@@ -81,6 +162,7 @@ static void shared_import_windows_test(void) {
   CHECK(vk_pool_shared_active() && V.options.pool_window_bytes==W);
   CHECK(getenv("DM_SHARED_GUEST_HEAP_FIXTURE"));
   uint8_t *data=bytes;memset(data,0x39,size);
+  shared_window_append_observer_test(data);
   NVNmemoryPoolBuilder mb;NVNmemoryPool owner;
   CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,size);
