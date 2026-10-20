@@ -22,7 +22,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native int nativeSharedImageTests(String directory, int mode);
     private static boolean sharedImageFixtureStarted;
     private boolean sharedImageFixture;
-    private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly);
+    private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
     private static native void nativeThermalLimit(int limit);
@@ -261,7 +261,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (getIntent().getBooleanExtra("run_vulkan_tests", false)) {
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),
-                    getIntent().getBooleanExtra("memory_test", false)), "native-vulkan-test").start();
+                    getIntent().getBooleanExtra("memory_test", false),
+                    getIntent().getBooleanExtra("vulkan_test_validation", true)), "native-vulkan-test").start();
         }
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);

@@ -765,7 +765,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
 
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
-    jboolean acquire_scope, jboolean memory_only) {
+    jboolean acquire_scope, jboolean memory_only, jboolean validation_enabled) {
   (void)klass;
   if(setenv("DM_VULKAN_ASTC_DECODE_UNORM8",astc_decode_startup?"1":"0",1) ||
       (astc_decode_fixture?setenv("DM_ASTC_DECODE_FIXTURE","1",1):unsetenv("DM_ASTC_DECODE_FIXTURE")))
@@ -787,21 +787,21 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   snprintf(file, sizeof file, "%s/vulkan-fixture", path);
   setenv("DM_VULKAN_SHADERS", file, 1);
   setenv("DM_CAPTURE_TEST_DIR", path, 1);
-  setenv("DM_VULKAN_VALIDATE", "1", 1);
-  setenv("DM_VULKAN_SYNC_VALIDATE", "1", 1);
+  if(validation_enabled) {
+    if(setenv("DM_VULKAN_VALIDATE","1",1) || setenv("DM_VULKAN_SYNC_VALIDATE","1",1))die("Vulkan fixture validation environment");
+  } else if(unsetenv("DM_VULKAN_VALIDATE") || unsetenv("DM_VULKAN_SYNC_VALIDATE"))die("Vulkan fixture validation environment");
   snprintf(file, sizeof file, "%s/vulkan-test.log", path);
-  if (!freopen(file, "w", stderr))
-    _exit(90);
-  if (!freopen(file, "a", stdout))
-    _exit(91);
-  // 两个 FILE 各有偏移；禁用缓存，防 stderr 尾部刷新覆盖 stdout 的 JSON 结果。
-  // The FILE objects have separate offsets. Disable buffering so a final
-  // stderr flush cannot overwrite stdout's appended JSON result.
-  setvbuf(stderr, NULL, _IONBF, 0);
-  setvbuf(stdout, NULL, _IONBF, 0);
+  int output_error=dm_fixture_output_open(file);if(output_error)_exit(output_error);
+  printf("{\"native_vulkan_app_configuration\":true,\"uid\":%u,\"pid\":%u,"
+         "\"validation_layer\":\"%s\",\"synchronization_validation\":\"%s\","
+         "\"legacy_ASTC_requested\":%s,\"game_modules_executed\":false}\n",
+         (unsigned)getuid(),(unsigned)getpid(),validation_enabled?"requested":"disabled_explicitly",
+         validation_enabled?"requested":"disabled_explicitly",legacy_astc_fixture?"true":"false");
   (*env)->ReleaseStringUTFChars(env, directory, path);
   int dm_vulkan_test_main(void);
-  dm_vulkan_test_main();
+  int result=dm_vulkan_test_main();
+  printf("{\"native_vulkan_app_terminal\":true,\"uid\":%u,\"pid\":%u,\"rc\":%d}\n",
+         (unsigned)getuid(),(unsigned)getpid(),result);
 }
 
 // Separate owned test selector; never freezes game startup policy or touches

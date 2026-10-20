@@ -28,6 +28,7 @@ present_modes.add_argument('--shader-present',dest='shader_present',action='stor
 present_modes.add_argument('--reference-present',dest='shader_present',action='store_false',help='use the original Vulkan blit presentation')
 parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
+parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
 parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk'],help='cold explicit system/Adreno-tools/PanVK direct ICD; requires separately verified private driver')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
@@ -120,6 +121,8 @@ if args.custom_vulkan_driver and args.vulkan_provider not in (None,'adreno'):
     parser.error('--custom-vulkan-driver conflicts with --vulkan-provider other than adreno')
 if args.vulkan_provider=='panvk' and args.validate:
     parser.error('PanVK direct ICD does not compose loader validation')
+if args.attach and args.legacy_astc_copy is not None:
+    parser.error('--legacy-astc-copy/--no-legacy-astc-copy are startup-only and cannot be used with --attach')
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.pool_window_bytes is not None:
@@ -203,6 +206,8 @@ if not args.attach:
               '--ez', 'validate', str(args.validate).lower()]
     if args.operation_mode is not None:
         launch += ['--es', 'operation_mode', args.operation_mode]
+    if args.legacy_astc_copy is not None:
+        launch += ['--ez','legacy_astc_copy',str(args.legacy_astc_copy).lower()]
     if args.shared_guest_heap is not None:
         launch += ['--ez','shared_guest_heap',str(args.shared_guest_heap).lower()]
     if args.vulkan_provider is not None:
@@ -376,6 +381,7 @@ while time.monotonic() < deadline:
                                                              False if 'color attachment usage: actual attachment only' in log else None),
                               'eager_pool_mirrors_reference':state.get('pool_mirrors',{}).get('reference'),
                               'requested_shared_guest_heap':args.shared_guest_heap,
+                              'requested_legacy_astc_copy':args.legacy_astc_copy,
                               'actual_guest_heap':state.get('guest_heap'),
                               'requested_vulkan_provider':args.vulkan_provider or ('adreno' if args.custom_vulkan_driver else 'system'),
                               'actual_vulkan_provider':('panvk' if '[vulkan loader] provider=panvk direct ICD=' in log else 'adreno' if '[vulkan loader] custom=' in log else 'system' if '[vulkan loader] system' in log else 'unknown'),
