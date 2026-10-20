@@ -9,9 +9,9 @@ R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
-READY=R/'.local/logs/panvk-minegraph-703db0e-full-driver-source-ready-agent.json'
-READY_SHA='defcf3634fe46c0733ab40319251082d0a8eca5b28eb4120b70aca5c0921e1d2'
-DRIVER_SHA='6acfacb8ffe69081f84ee95a8964144760a394d9ebd694f0c082e65677d643c9'
+READY=R/'.local/logs/panvk-minegraph-703db0e-static-hardware-v2-source-ready-agent.json'
+READY_SHA='edcbcc0f465f712c889e51daf64b767b6b136699a47f5c464d78e048d62b9930'
+DRIVER_SHA='df9ba8326b353812bbe36b3306f9ce6c833764c2538e85cacf91a12ccd9566a9'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
 LOCK='files/runtime/.astc6-full-controller-lock'
@@ -44,6 +44,7 @@ def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':
 def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
  require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
+ require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build'],'not the static unsupported-HAL platform candidate')
  for key in ['source_identity','build_only_adaptation','generated_version','host_codegen','ELF','driver']:
   r=d[key];require(sha(r['path'])==r['sha256'],'driver provenance changed: '+key)
  require(d['driver']['sha256']==DRIVER_SHA and set(d['ICD_exports_verified'])=={'HMI','vk_icdGetInstanceProcAddr','vk_icdGetPhysicalDeviceProcAddr','vk_icdNegotiateLoaderICDInterfaceVersion'},'wrong ICD')

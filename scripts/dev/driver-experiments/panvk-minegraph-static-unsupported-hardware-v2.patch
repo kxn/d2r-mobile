@@ -1,0 +1,31 @@
+diff --git a/src/android_stub/meson.build b/src/android_stub/meson.build
+index 73d5f04..b4b0708 100644
+--- a/src/android_stub/meson.build
++++ b/src/android_stub/meson.build
+@@ -1,6 +1,6 @@
+ if with_android_stub
+   stub_libs = []
+-  lib_names = ['log', 'nativewindow', 'sync', 'hardware']
++  lib_names = ['log', 'nativewindow', 'sync']
+ 
+   if with_libbacktrace
+     lib_names += ['backtrace']
+@@ -15,7 +15,17 @@ if with_android_stub
+     )
+   endforeach
+ 
++  # App namespaces cannot resolve private libhardware.so. Legacy HAL probes
++  # explicitly return unsupported (-ENOENT/NULL); the existing gralloc code
++  # retains its RGB/AHardwareBuffer fallback. Never ship a pretend HAL library.
++  hardware_unsupported = static_library(
++    'hardware_unsupported',
++    files('hardware_stub.cpp'),
++    include_directories : inc_include,
++    install : false,
++  )
++
+   dep_android = declare_dependency(
+-    link_with : stub_libs,
++    link_with : stub_libs + [hardware_unsupported],
+   )
+ endif
