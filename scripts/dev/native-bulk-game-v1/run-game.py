@@ -327,6 +327,15 @@ def phase_game(dev, out, phase, p, token):
                 # below. Preserve its path/hash for explicit later cleanup.
                 d.setdefault('screenshot_collection_errors', []).append(repr(e))
                 save()
+        if p.get('malloc_debug') and own and pid()==own:
+            try:
+                d['official_malloc_debug_final_health']=malloc.log_health(dev,out/'official-malloc-debug-final-health-logcat.txt',own)
+                if d['official_malloc_debug_final_health']['UNKNOWN_POINTER_events'] or d['official_malloc_debug_final_health']['option_or_disabled_errors']:
+                    d.setdefault('malloc_debug',{'errors':[]})['accepted']=False
+                    d['malloc_debug']['stage']='official-allocator-error-invalid-complete-attribution'
+                save()
+            except Exception as error:
+                d.setdefault('collection_errors',[]).append('official-malloc-debug-final-health:'+repr(error));d.setdefault('malloc_debug',{'errors':[]})['accepted']=False;save()
         try:
             now = pid()
             if now:
@@ -340,7 +349,7 @@ def phase_game(dev, out, phase, p, token):
                 if p.get('malloc_debug') and not d.get('launch_HUD_verified'):
                     uid=dev.app('id','-u')
                     require(uid.isdecimal() and 10000<=int(uid)<200000,'ordinary cold cleanup UID required')
-                    fresh=malloc.pause_failed_cold_start(dev,out,own,int(uid),lambda value:(d.update(cold_start_cleanup=value),save()))
+                    fresh=malloc.pause_failed_cold_start(dev,out,own,int(uid),lambda value:(d.update(cold_start_cleanup=value),save()),p['malloc_debug'])
                     require(fresh.get('accepted') and pid()==own,'cold lifecycle state not proven')
                     d['never_world_no_save_required']=fresh.get('never_world_confirmed',False)
                 else:
@@ -361,7 +370,16 @@ def phase_game(dev, out, phase, p, token):
         finally:
             if capture and not capture.state['cleanup_confirmed']:
                 capture.finish(own)  # Late receipt cleanup after independently stopping the game.
-            if p.get('malloc_debug') and d.get('malloc_debug',{}).get('dump_complete') and (d.get('fresh_save_then_stopped') or d.get('already_exited_no_save_restart')):
+            if p.get('malloc_debug') and own and not pid():
+                try:
+                    health=malloc.log_health(dev,out/'official-malloc-debug-after-stop-health-logcat.txt',own)
+                    d['official_malloc_debug_after_stop_health']=health
+                    if health['UNKNOWN_POINTER_events'] or health['option_or_disabled_errors']:
+                        d.setdefault('malloc_debug',{'errors':[]})['accepted']=False
+                        d['malloc_debug']['stage']='official-allocator-error-invalid-complete-attribution'
+                except Exception as error:
+                    d.setdefault('collection_errors',[]).append('official-malloc-debug-after-stop-health:'+repr(error));d.setdefault('malloc_debug',{'errors':[]})['accepted']=False
+            if p.get('malloc_debug') and d.get('malloc_debug',{}).get('accepted') and d.get('malloc_debug',{}).get('dump_complete') and (d.get('fresh_save_then_stopped') or d.get('already_exited_no_save_restart')):
                 d['malloc_debug']['shim_process_exited']=True
                 malloc.analyze_after_game_stop(out/'official-malloc-debug',p['malloc_debug'],d['malloc_debug'],lambda value:(d.update(malloc_debug=value),save()))
             save()

@@ -1,83 +1,78 @@
-# Official malloc_debug single-control diagnostic
+# Official default-backtrace control diagnostic
 
-This is an intrusive allocation-attribution diagnostic, not a performance or
-resident-memory comparison. It does not change runtime, driver, game modules,
-resource bytes, or allocation code. It does not use a custom malloc hook or
-sampler. No device is accessed by packaging or by the controller's default plan.
-
-`build-android-malloc-debug-apk.py --malloc-debug-wrap` reads a pinned canonical
-APK. Only `lib/arm64-v8a/wrap.sh` is added; every original ZIP payload entry,
-including six native libraries, DEX, manifest and assets, remains byte-identical.
-The existing signer is retained and zipalign/apksigner verify the new archive.
-Without `--build`, packaging is a plan. The diagnostic record points to the
-original canonical build, not a new runtime build. It is explicitly opt-in.
-The wrapper exports only the official package-scoped setting:
+This source-only successor follows the actual full-unwinder diagnostic failure.
+That run activated the official library but never reached HUD and logged 142
+UNKNOWN POINTER frees; it is invalid for allocation attribution. The original
+report, source/ELF audit and root recovery remain unchanged. This next attempt
+only removes `backtrace_full` from the package's official environment:
 
 ```
-LIBC_DEBUG_MALLOC_OPTIONS="backtrace=16 backtrace_full verbose backtrace_dump_prefix=/data/user/0/com.d2rmobile.nativeport/files/runtime/temp/malloc-debug-control"
+LIBC_DEBUG_MALLOC_OPTIONS="backtrace=16 verbose backtrace_dump_prefix=/data/user/0/com.d2rmobile.nativeport/files/runtime/temp/malloc-debug-control"
 ```
 
-There is no LD_PRELOAD or system property. Android's wrap mechanism activates
-its own libc_malloc_debug in a debuggable APK. Whether the device accepts the
-options and its full unwinder can cross guest-stack gateways is an actual-run
-question. An installed public library alone does not prove activation.
+AOSP PointerData::AddBacktrace selects backtrace_get/_Unwind_Backtrace without
+BACKTRACE_FULL; the full branch alone calls AndroidLocalUnwinder/Unwind, whose
+MemoryThreadCache allocates pthread-key caches inside ScopedDisableDebugCalls.
+The default branch avoids this identified internal-cache path. This source
+fact does not prove the vendor binary will avoid every allocator error or that
+all guest stacks can unwind. Host/NVN/driver allocation stacks may be sufficient
+without managed Java frames. No official library, runtime TLS or allocator is
+modified; the actual default path still needs one controlled validation.
 
-Use a standard original-game control phase with a diagnostic canonical record
-and a `malloc_debug` input containing pinned packaging, runtime_symbols and
-driver_symbols, plus mode `control-only`. The native phase is never run by this
-first diagnostic. No concurrent LLDB/counter or heapprofd is permitted. Existing
-28-module raw-NSO rules, driver identity, resources, baseline, PSO backup and
-original transaction restore checks remain in force.
+Packaging is opt-in (`--malloc-debug-wrap`, `--build`), defaulting to a plan.
+Only lib/arm64-v8a/wrap.sh is added to the canonical bcbd751 APK. All six native
+libraries, manifest, DEX and assets remain byte-identical; original raw NSO and
+resource/driver inputs retain their existing hashes. zipalign and the existing
+signer verify the new archive. There is no LD_PRELOAD or global property.
+The diagnostic canonical record references the original runtime build.
 
-There is one cold launch: the original launcher has a 90-second bound and its
-parent observation has a 120-second bound, with no retry. After the original
-HUD/route the tool verifies the first PID, ordinary UID, TracerPid=0, exact
-startup environment and private driver SHA. It additionally requires the loaded
-official library, caught signal 47 and the official successful signal-handler
-registration message for that PID. A missing capability is a tool limitation;
-no signal is sent to a process without the verified registration. A preexisting
-dump is rejected. Signal 47 is requested once; completion has a 25-second bound
-and requires the official END marker. There is no expression/allocator function
-call. The real official dump is exported with matching device/host SHA. On
-failure, any safely owned partial output is retained as explicitly untrusted.
+The original single control transaction is reused, including standard6217
+resources, AA185, original HUD/walk route, original save2 and APK/private-data/
+PSO restoration. No native phase, concurrent LLDB or heapprofd is permitted.
+The input must pin the earlier full-unwinder negative audit and the independent
+exact bc lifecycle source/ELF proof. Existing launcher90s/parent120s bounds and
+one game launch remain; an intrusive cold-start timeout is not a proven
+production runtime failure and must not cause parameter scanning/restarts.
 
-Tool failure does not replace the independent original-game lifecycle: with the
-same first PID, no tracer and fresh original save commits=2, the game is stopped
-and checked absent. An unknown/replacement PID is never saved or stopped. The
-existing APK/private-directory/PSO rollback then runs. The official viewer is
-run on the host only after the owned game has stopped; a viewer failure remains
-a distinct tool failure with the raw evidence preserved. No profiler daemon is
-started. One diagnostic may substantially slow cold launch or exceed its bound;
-this is not a runtime correctness or FPS result and must not cause repeated
-starts with parameter scanning.
+One SIG47 dump is requested only after original PID/UID/TracerPid, exact env,
+loaded library, private driver SHA, caught handler and official enabled plus
+handler-registration receipts agree. Unknown/bad-value/disabled options and
+UNKNOWN POINTER errors reject coverage before signaling. The official complete
+dump has a 25s bound, immutable export SHA and exact official header/parser
+counts/totals. Unknown/short/no-host-driver allocation bytes are always retained.
+The owned PID's official allocator log is checked again after dump, during
+finally and after game stop; errors cannot be overwritten by later viewer
+success. Missing final health evidence also fails acceptance. Partial output
+and actual tool failure remain distinct from runtime correctness evidence.
 
-The pinned AOSP native_heapdump_viewer is retained byte-for-byte with provenance.
-Its four-line compatibility patch adds Python3 subprocess text mode at two
-calls and permits zero-frame records at two parser conditions. Without these,
-the original script throws a bytes/string error during actual symbolization
-and silently drops allocations with no stack. Its parser, address mapper,
-symbolizer and allocation tree are reused; no new heap capture or parser is
-implemented. Use GNU objdump/addr2line (pinned in the plan): the official script
-requires GNU's File-off column and addr2line's `-j`; LLVM versions do not have
-the same interface. An offline known-function fixture checks actual ELF
-symbolization and retains the original-script failure.
+Cold-menu cleanup uses the exact independently reviewed bc target, not empty
+OBS_TICK output. The loaded /data/app ELF must hash-match that proof; same
+PID/ordinary UID/no tracer remain mandatory. The same Activity is foregrounded,
+HOME requests original onPause, and its own Activity record must reach STOPPED.
+A real new asked=1/commits=2 still proves a saved world. Otherwise menu cleanup
+requires new focus3 followed by positive GPU-quiescence output, one same-PID
+native-start history, exclusively MainMenuLinks/area0/no-player render reports,
+and no HUD or background-save branch anywhere. In this exact source/ELF,
+dm_ingame_now is diag.c dm_hud_get().valid and a true predicate unconditionally
+prints the save result to _IONBF stderr before graphics suspend. This whole
+positive lifecycle chain proves no save was required according to the original
+pause predicate. A surface-only quiescence line or absent log by itself does
+not suffice. Other ELF, missing evidence, world/previous-save history or
+replacement PID stays paused/unaccepted and blocks dependent restore.
 
-Acceptance requires a complete official v1.2 dump, exact header totals/record
-counts, original backtrace size, mappings and nonzero host/driver frame coverage.
-Zero-frame, one-frame, fewer-than-four-frame and no-host/driver bytes remain
-reported explicitly. These are weighted live requested allocation bytes;
-short/unknown stacks cannot be assigned to Buffer windows or silently excluded.
-They are not resident RAM, allocator metadata, mmap totals or GPU physical
-memory. Viewer success does not claim every stack is resolved. Process-wide
-backtrace_full tracks every malloc/free and can impose large CPU and metadata
-costs, hence its PSS/FPS must not be compared with the earlier unprofiled pair.
-There is no official per-thread/module capture filter for this mode.
+Official native_heapdump_viewer is reused after the owned game is stopped. Its
+preserved upstream plus four-line compatibility patch only retain zero-frame
+records and support Python3 subprocess text mode. GNU objdump/addr2line match
+its required File-off/-j interfaces; a real canonical ELF fixture validates
+symbolization. Its parser, mapping and allocation tree are not reimplemented.
+Viewer failure preserves raw evidence and is a tool failure.
 
-The lighter official API35 `log_allocator_stats_on_signal` invokes allocator
-`mallopt(M_LOG_STATS,0)` at the next allocation after signal49. It can inspect
-allocator totals/size classes without recording every stack, but does not
-attribute retained bytes to call sites and cannot answer the current driver vs
-runtime allocation question. It is not enabled by this tool. `am dumpheap -n`
-needs pre-enabled malloc tracking; debuggerd captures current stacks, and
-libmemunreachable covers leaks rather than all retained allocations. The two
-failed heapprofd traces stay invalid and are not reused as full attribution.
+All reported sizes are live requested allocations, not RSS/allocator metadata/
+GPU physical bytes. Even default backtrace imposes substantial CPU/metadata
+costs; profiled PSS/FPS cannot be presented as optimization gains. Header totals
+alone never prove full allocation coverage. Unknown, one-frame, short and
+no-host/driver bytes are explicit; successful tool operation does not mean all
+call sites are resolved. API35 log_allocator_stats_on_signal is lighter but
+only gives allocator totals/size classes, not retained call-site attribution;
+it is not enabled here. No custom malloc hook, sampler or target function call
+is introduced. Source-only preparation performs no device access.

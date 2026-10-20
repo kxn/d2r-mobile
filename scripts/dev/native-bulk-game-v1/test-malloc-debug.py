@@ -48,7 +48,7 @@ class MallocToolTests(unittest.TestCase):
             def adb(self,*args):
                 if args==('shell','pidof '+t.PKG+' || true'):
                     return '54321' if failure=='replacement' else '12345'
-                return '' if failure=='receipt' else "malloc debug enabled\nRun: 'kill -47 12345' to dump the backtrace."+("\nunknown option backtrace_full" if failure=='unknownoption' else "")
+                return '' if failure=='receipt' else "malloc debug enabled\nRun: 'kill -47 12345' to dump the backtrace."+("\nunknown option backtrace_full" if failure=='unknownoption' else "")+("\n+++ ALLOCATION 0x123 UNKNOWN POINTER (free)" if failure=='unknownfree' or (failure=='unknownlate' and self.signalled) else "")
             def app(self,*args):
                 if args==('cat','/proc/12345/status'):
                     return 'Uid:\t'+('\t'.join(['10312' if failure=='uid' else '10311']*4))+'\nTracerPid:\t'+('7' if failure=='tracer' else '0')+'\nSigCgt:\t'+('0' if failure=='handler' else format(1<<46,'x'))+'\n'
@@ -73,23 +73,28 @@ class MallocToolTests(unittest.TestCase):
         self.assertEqual(result['coverage']['empty_stack_bytes'],200)
 
     def test_missing_shim_handler_receipt_environment_or_owner_never_signalled(self):
-        for failure in ['shim','handler','receipt','environment','uid','tracer','replacement','preexisting','unknownoption']:
+        for failure in ['shim','handler','receipt','environment','uid','tracer','replacement','preexisting','unknownoption','unknownfree']:
             with self.subTest(failure=failure):
                 result,sent=self.collect_case(failure)
                 self.assertFalse(sent);self.assertFalse(result['accepted']);self.assertTrue(result['errors'])
+
+    def test_late_unknown_pointer_invalidates_already_exported_dump(self):
+        result,sent=self.collect_case('unknownlate')
+        self.assertTrue(sent);self.assertFalse(result['accepted']);self.assertIn('dump_sha256',result)
 
     def test_timeout_no_repeat_signal_and_untrusted_evidence(self):
         result,sent=self.collect_case('deadline')
         self.assertTrue(sent);self.assertFalse(result['accepted'])
         self.assertIn('incomplete_dump_sha256',result)
 
-    def exercise_phase(self,valid=True,replacement=False,tracer=False,viewer_error=False):
+    def exercise_phase(self,valid=True,replacement=False,tracer=False,viewer_error=False,unknown=False,unknown_after_stop=False):
         events=[]
         class Dev:
             pid='';stopped=False
             def adb(self,*args):
                 if args==('shell','pidof '+t.PKG+' || true'):return self.pid
                 if args==('shell','am','force-stop',t.PKG):self.pid='';self.stopped=True;events.append('stop');return ''
+                if args[:2]==('shell','logcat') and (unknown or (unknown_after_stop and not self.pid)):return 'UNKNOWN POINTER (free)'
                 return ''
             def app(self,*args):
                 if args==('id','-u'):return '10311'
@@ -126,16 +131,18 @@ class MallocToolTests(unittest.TestCase):
             self.assertNotIn('save2',events);self.assertNotIn('stop',events);self.assertNotIn('viewer',events)
         else:
             self.assertLess(events.index('dump'),events.index('save2'));self.assertLess(events.index('save2'),events.index('stop'))
-            if valid:self.assertLess(events.index('stop'),events.index('viewer'))
+            if valid and not (unknown or unknown_after_stop):self.assertLess(events.index('stop'),events.index('viewer'))
             else:self.assertNotIn('viewer',events)
             self.assertTrue(report['fresh_save_then_stopped'])
-            self.assertEqual(report['malloc_debug']['accepted'],valid and not viewer_error)
+            self.assertEqual(report['malloc_debug']['accepted'],valid and not viewer_error and not (unknown or unknown_after_stop))
 
     def test_healthy_dump_analyzed_after_owned_game_save_and_stop(self):self.exercise_phase()
     def test_invalid_tool_does_not_bypass_owned_game_save_stop(self):self.exercise_phase(valid=False)
     def test_replacement_game_never_saved_stopped_or_analyzed(self):self.exercise_phase(replacement=True)
     def test_active_tracer_prevents_lifecycle_actions(self):self.exercise_phase(tracer=True)
     def test_official_viewer_failure_keeps_cleanup_and_distinct_failure(self):self.exercise_phase(viewer_error=True)
+    def test_late_unknown_pointer_cannot_be_overridden_by_viewer(self):self.exercise_phase(unknown=True)
+    def test_unknown_pointer_during_save_stop_cannot_be_overridden_by_viewer(self):self.exercise_phase(unknown_after_stop=True)
 
 class FailedLaunchLifecycleTests(unittest.TestCase):
     def exercise(self,proven):
@@ -154,7 +161,7 @@ class FailedLaunchLifecycleTests(unittest.TestCase):
             returncode=1
             def __init__(self,*args,**kwargs):pass
             def poll(self):return 1
-        def pause(dev,out,pid,uid,journal):
+        def pause(dev,out,pid,uid,journal,cfg):
             events.append('pause')
             if not proven:raise RuntimeError('unknown world remains paused')
             result={'accepted':True,'never_world_confirmed':True,'no_save_required':True};journal(result);return result
@@ -174,7 +181,7 @@ class ColdCleanupTests(unittest.TestCase):
     def run_case(self,kind):
         events=[]
         class Dev:
-            paused=False;observed=0
+            paused=False
             def adb(self,*args):
                 if args==('shell','pidof '+t.PKG+' || true'):return '54321' if kind=='replacement' and self.paused else '12345'
                 if args==('shell','input','keyevent','HOME'):self.paused=True;events.append('HOME');return ''
@@ -185,28 +192,39 @@ class ColdCleanupTests(unittest.TestCase):
                 raise AssertionError(args)
             def app(self,*args):
                 if args==('cat','/proc/12345/status'):return 'Uid:\t10311\t10311\t10311\t10311\nTracerPid:\t0\n'
+                if args==('cat','/proc/12345/maps'):return '0000-1000 r-xp 0000 00:00 1 /data/app/owned/lib/arm64/libdmhost_android.so'
+                if args[0]=='sha256sum':return ('e' if kind=='foreignELF' else 'd')*64+' file'
                 if args==('cat','files/runtime/native.log'):
-                    return 'Android native start pid=12345\n'+('Android background save asked=1 commits=2 froze=1\n' if kind=='savedworld' and self.paused else '')
-                if args==('cat','files/runtime/game-state.jsonl'):
-                    self.observed+=1
-                    return json.dumps({'time_ns':1 if kind=='stale' else self.observed,'valid':kind in ('worldunknown','savedworld')})+'\n'
+                    base='Android native start pid=12345\n[dm] [长帧] 面板 MainMenuLinks，区域 0（未读到玩家）\n'
+                    if kind in ('worldunknown','savedworld'):base+='PanelManager OpenPanel HUDPanel\n'
+                    if kind=='previoussave':base+='Android background save asked=1 commits=2\n'
+                    if self.paused:
+                        if kind!='nofocus':base+='oe 焦点状态 → 3\n'
+                        if kind=='savedworld':base+='Android background save asked=1 commits=2 froze=1\n'
+                        if kind!='noquiescence':base+='[nvn] 图形挂起：在途 GPU 工作已清空\n'
+                    return base
                 raise AssertionError(args)
-        with tempfile.TemporaryDirectory()as directory,patch.object(h.time,'monotonic',side_effect=[0,6,20,40]),patch.object(h.time,'sleep'):
+        cfg={'lifecycle_proof_checked':kind!='noproof','runtime_symbols':{'sha256':'d'*64}}
+        with tempfile.TemporaryDirectory()as directory,patch.object(h.time,'monotonic',side_effect=[0,20,40]),patch.object(h.time,'sleep'):
             dev=Dev();journal=[]
-            if kind in ('wrongactivity','worldunknown','stale','replacement'):
-                with self.assertRaises(RuntimeError):h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append)
-                self.assertIn('HOME',events)
+            if kind not in ('menu','savedworld'):
+                with self.assertRaises(RuntimeError):h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append,cfg)
+                self.assertEqual('HOME'in events,kind not in ('noproof','foreignELF'))
             else:
-                result=h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append)
+                result=h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append,cfg)
                 self.assertTrue(result['accepted'])
                 self.assertEqual(result.get('never_world_confirmed',False),kind=='menu')
                 self.assertEqual(result.get('save_commits'),2 if kind=='savedworld' else None)
         return events
-    def test_fresh_original_false_world_and_STOPPED_no_fake_save(self):self.run_case('menu')
+    def test_exact_target_positive_pause_menu_no_fake_save(self):self.run_case('menu')
     def test_real_world_requires_original_fresh_save2(self):self.run_case('savedworld')
     def test_world_without_save_is_paused_not_accepted(self):self.run_case('worldunknown')
-    def test_stale_state_cannot_prove_no_world(self):self.run_case('stale')
+    def test_no_reviewed_proof_never_assumes_contract(self):self.run_case('noproof')
+    def test_foreign_loaded_ELF_never_assumes_contract(self):self.run_case('foreignELF')
     def test_other_activity_STOPPED_is_not_our_pause(self):self.run_case('wrongactivity')
     def test_replacement_after_HOME_never_accepted(self):self.run_case('replacement')
+    def test_no_new_quiescence_never_assumes_completion(self):self.run_case('noquiescence')
+    def test_no_new_focus_does_not_use_surface_only_suspend(self):self.run_case('nofocus')
+    def test_previous_world_save_history_blocks_menu_assumption(self):self.run_case('previoussave')
 
 if __name__=='__main__':unittest.main()

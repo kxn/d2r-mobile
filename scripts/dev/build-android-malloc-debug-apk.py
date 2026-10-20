@@ -8,7 +8,7 @@ PKG='com.d2rmobile.nativeport'
 PREFIX='/data/user/0/'+PKG+'/files/runtime/temp/malloc-debug-control'
 WRAP=('#!/system/bin/sh\n'
       '# Official libc malloc_debug diagnostic; original TLSdesc native libraries unchanged.\n'
-      'export LIBC_DEBUG_MALLOC_OPTIONS="backtrace=16 backtrace_full verbose backtrace_dump_prefix='+PREFIX+'"\n'
+      'export LIBC_DEBUG_MALLOC_OPTIONS="backtrace=16 verbose backtrace_dump_prefix='+PREFIX+'"\n'
       'exec "$@"\n').encode()
 SO={'libdmhost_android.so','libadrenotools.so','libfile_redirect_hook.so','libgsl_alloc_hook.so','libhook_impl.so','libmain_hook.so'}
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -39,7 +39,7 @@ def build(args):
     plan={'diagnostic_only':True,'base_canonical':{'path':str(args.canonical.resolve()),'sha256':sha(args.canonical)},
           'base_APK':{'path':str(base),'sha256':sha(base)},'runtime_commit':base_ready['commit'],
           'six_SO':libs,'only_added_payload':'lib/arm64-v8a/wrap.sh','wrap_sha256':hashlib.sha256(WRAP).hexdigest(),
-          'malloc_options':'backtrace=16 backtrace_full verbose backtrace_dump_prefix='+PREFIX,
+          'malloc_options':'backtrace=16 verbose backtrace_dump_prefix='+PREFIX,
           'dump_prefix':PREFIX,'output':str(args.output.resolve()),'canonical_build_record_base':base_ready.get('canonical_build_manifest'),
           'source':{'path':str(Path(__file__).resolve()),'sha256':sha(__file__)},'no_Cmake_or_runtime_rebuild':True}
     if not args.build:return plan
