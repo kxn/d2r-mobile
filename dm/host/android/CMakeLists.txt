@@ -234,3 +234,9 @@ if(DM_VULKAN_SHARED_POOLS)
     target_compile_definitions(${shared_target} PRIVATE DM_VULKAN_SHARED_POOLS=1)
   endforeach()
 endif()
+
+# Explicit test-only JNI; the production APK default never enables this entry.
+option(DM_ANDROID_PANVK_BC3_FIXTURE "Build isolated original NVN BC3 capture subset entry" OFF)
+if(DM_ANDROID_PANVK_BC3_FIXTURE)
+  target_sources(dmhost_android PRIVATE tests/panvk_bc3_fixture_jni.c)
+endif()

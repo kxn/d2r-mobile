@@ -13,6 +13,7 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
+parser.add_argument('--panvk-bc3-fixture',action='store_true',help='compile isolated test-only BC3 JNI; does not package or execute game data')
 parser.add_argument('--shared-pools',action='store_true',help='compile default-OFF fixed shared Pool/early guest heap experiment')
 parser.add_argument('--native-jobs',type=int,choices=range(1,65),default=4,help='parallel native build jobs (default4)')
 parser.add_argument('--tlsdesc', action='store_true', help='Native dynamic TLS, without wrap.sh; requires elfdesc game rewrites')
@@ -36,6 +37,7 @@ def run(*args):
     subprocess.run([str(arg) for arg in args], check=True)
 
 run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-native',
+    '-DDM_ANDROID_PANVK_BC3_FIXTURE=' + ('ON' if args.panvk_bc3_fixture else 'OFF'),
     '-DDM_ANDROID_TLS_DESC=' + ('ON' if args.tlsdesc else 'OFF'),
     '-DDM_VULKAN_SHARED_POOLS=' + ('ON' if args.shared_pools else 'OFF'),
     '-DDM_ANDROID_RENDERDOC_API=' + ('ON' if args.renderdoc_api else 'OFF'),
@@ -145,6 +147,7 @@ manifest={'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhos
           'tlsdesc':args.tlsdesc,'host_opt_level':args.opt_level,'contains_game_binary':False,
           'official_renderdoc_api':args.renderdoc_api,
           'fixed_shared_pools_compiled':args.shared_pools,
+          'panvk_bc3_fixture_compiled':args.panvk_bc3_fixture,
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,
