@@ -3484,6 +3484,24 @@ int vk_pool_legacy_cpu_observe_pending(uint64_t address,uint64_t bytes) {
   // original writeback/CPU-effect destinations can change this CPU source.
   return recording_cpu_write(first,length) || pending_cpu_write(first,length);
 }
+// CPU callbacks have no dirty publication until they run. Shared canonical
+// GPU publications already carry their dirty generation (and a clean image
+// may acknowledge its own retile), so do not turn those into needless waits.
+int vk_pool_texture_cpu_effect_pending(uint64_t address,uint64_t bytes) {
+  if(!shared_active)return vk_pool_legacy_cpu_observe_pending(address,bytes);
+  if(!bytes)return 0;
+  uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
+  for(vk_effect *e=V.effects;e;e=e->next)
+    if(e->dst && range_overlap(first,length,(uintptr_t)e->dst,e->size))return 1;
+  if(!atomic_load(&in_flight))return 0;
+  int found=0;pthread_mutex_lock(&completion_mu);
+  for(submission *s=pending;s && !found;s=s->next)
+    for(size_t k=0;k<s->resources->cpu_effect_write_count;k++) {
+      const cpu_write_range *e=&s->resources->cpu_writes[k];
+      if(range_overlap(first,length,e->address,e->size)){found=1;break;}
+    }
+  pthread_mutex_unlock(&completion_mu);return found;
+}
 int vk_pool_cpu_observe_prepare(uint64_t address,uint64_t bytes) {
   if(shared_active)return vk_pool_shared_cpu_observe_prepare(address,bytes);
   if(!legacy_astc_copy_enabled || !bytes || !nvn_dirty_tracked((void *)(uintptr_t)address,bytes))return 0;

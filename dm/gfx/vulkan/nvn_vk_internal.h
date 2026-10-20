@@ -405,6 +405,7 @@ void vk_legacy_astc_copy_startup(int enabled);
 int vk_pool_legacy_encoding_guard_add(uint64_t address,uint64_t bytes);
 int vk_pool_cpu_observe_mode(void);
 int vk_pool_legacy_cpu_observe_pending(uint64_t address,uint64_t bytes);
+int vk_pool_texture_cpu_effect_pending(uint64_t address,uint64_t bytes);
 int vk_pool_cpu_observe_prepare(uint64_t address,uint64_t bytes);
 int vk_pool_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_cpu_observation *token);
 void vk_pool_cpu_observe_end(vk_shared_cpu_observation *token);

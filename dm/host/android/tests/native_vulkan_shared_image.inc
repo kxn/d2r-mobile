@@ -364,6 +364,34 @@ static void shared_image_dirty_test(void) {
   mtl_pkg_stats(&u2,&r2);CHECK(u2==uploads && r2==reuploads); // no everydraw reupload
   dirty_range_fill(data,4096,green); // real original dirty fault
   shared_image_pixels(&textures[0],green);shared_image_pixels(&textures[1],green);
+  // A real completion callback can target a currently clean packaged source
+  // without changing its dirty generation until completion. Both recording
+  // and in-flight callbacks must be visible before the conversion decision.
+  for(unsigned submitted=0;submitted<2;submitted++) {
+    mtl_sub_begin();uint64_t before=vk_recording_serial();
+    if(submitted) {
+      review_effect_entered=review_effect_release=0;
+      vk_completion(review_effect_gate,NULL);
+    }
+    vk_completion_write(review_generic_cpu_write,data,data,sizeof(uint32_t));
+    CHECK(vk_pool_texture_cpu_effect_pending((uintptr_t)data,4096));
+    if(submitted) {
+      // The real writer stays behind the gate until its immutable pending
+      // range snapshot has been checked while the image remains clean.
+      vk_internal_commit();
+      pthread_mutex_lock(&review_effect_mu);
+      while(!review_effect_entered)pthread_cond_wait(&review_effect_cv,&review_effect_mu);
+      CHECK(vk_pool_texture_cpu_effect_pending((uintptr_t)data,4096));
+      review_effect_release=1;pthread_cond_broadcast(&review_effect_cv);
+      pthread_mutex_unlock(&review_effect_mu);mtl_sub_begin();
+    }
+    vk_texture_cpu_preflight((const tex_t *)&textures[0]);
+    CHECK(*(uint32_t *)data==7);
+    if(!submitted)CHECK(vk_recording_serial()!=before);
+    vk_internal_wait(vk_internal_commit());
+    dirty_range_fill(data,4096,green);
+    shared_image_pixels(&textures[0],green);shared_image_pixels(&textures[1],green);
+  }
   // Known GPU writes to packaged bytes change CPU-visible source only through
   // original WB completion, and invalidate both converted images' dirty proof.
   mtl_sub_begin();vk_buffer *buffer;uint64_t offset;

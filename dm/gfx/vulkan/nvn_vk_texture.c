@@ -892,7 +892,7 @@ void vk_texture_cpu_preflight(const tex_t *t) {
     }
     // A queued CPU effect has no dirty generation until completion. Publish
     // it even for an initialized/clean image, before any image/view borrows.
-    if((read || vk_pool_legacy_cpu_observe_pending((uintptr_t)t->mem,t->L.size)) && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
+    if((read || vk_pool_texture_cpu_effect_pending((uintptr_t)t->mem,t->L.size)) && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
       die("Shared packaged image source outside live shared Pool");
   }
 #endif
@@ -1618,11 +1618,14 @@ static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int
   return vk_pool_operation_begin(copy_pool_collect,&plan);
 }
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
-  vk_texture_cpu_preflight(p->tex);
+  // Copy needs an ended pass anyway. End/replay it before the final CPU
+  // visibility proof, while no physical image or retile buffer is borrowed.
+  vk_mip_clear_drain();vk_render_end();
+  int operation=copy_pool_operation(p,row,img,0);
+  // Admission may migrate storage and replay a deferred render pass.
+  vk_render_end();vk_texture_cpu_preflight(p->tex);
   if(V.options.pool_defer_publication && p->tex && p->tex->d.format>=0x41 && p->tex->d.format<=0x50)
     vk_pool_cpu_prepare(p->src,copy_pool_footprint(p,row,img));
-  int operation=copy_pool_operation(p,row,img,0);
-  vk_mip_clear_drain();
 #ifdef DM_VULKAN_SHARED_POOLS
   shared_copy_backing canonical=image_retile_prepare(p->tex);
 #endif

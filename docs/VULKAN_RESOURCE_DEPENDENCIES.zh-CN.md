@@ -1804,3 +1804,11 @@ recording/command-pool 保留内存可能受益，但实际 CPU/PSS/吞吐均待
 隔离 host fault build 可通过 `DM_VULKAN_TEST_POSTRECORD_NATIVE_ALIAS` 恢复旧的 post-record 排序（仅 TEST_EMBED）。真实“GPU 绿 -> 同 recording 未知 compute 恢复红 -> FS”在 LVP 上正负版本均得到正确像素；这明确表示软件 GPU 没有检出故障，不能把其通过当有效的硬件排序负控。AA185 严格 ASTC oracle 和真实游戏验收完成前继续作为待验候选。
 
 Resident 后继的反向别名条件：原生 `VkImage` 写入后，已存在的同地址 Pool `VkBuffer` 只能借助全局内存依赖建立可见性，不能因为 producer 记录了 Pool backing 就当成实际 Buffer 写入。命名 Buffer barrier 的范围与可见性发布均覆盖整个 backing，因此只要该 backing 的任意区间与存活 native import 相交，就通过现有 native AVL 查询拒绝命名快路，回到原全局依赖；不是逐图像扫描。TRANSFER 消费原本已有全局 WAR/WAW，不另加重复屏障。新增同一 recording 的 B2T Image 写入→compute Buffer 完整 opaque payload 读回检查，消费者前没有中间 fence。先前 b351b1b、6fb5add、2767c8a 均为 HOLD，不可部署。
+
+### clean packaged image 的真实 CPU effect 与 B2T 顺序
+
+`vk_texture_cpu_preflight()` 原先对已初始化且 dirty proof 为 clean 的图像，仅询问 legacy pending helper。该 helper 在 shared 模式直接返回零，因而漏掉尚未实际写入 CPU 页的 query/通用 completion callback。现在使用真实 effect 的 recording 列表和既有 immutable `cpu_effect_write_count` 前缀判断；只有与源页相交的真实 CPU callback 才进入原有 prepare/commit/wait，不把已由 own-stamp 确认的 canonical GPU retile publication 当作新的 CPU callback。clean GPU→GPU 链继续保留原 submission。
+
+B2T 本来就必须结束 render pass；现在先结束已有 pass、完成窗口 admission 及可能的 deferred replay，再做最终 CPU preflight，之后才借用 retile Buffer 和物理图像。CPU 观察不能依赖一次发生于 pass replay 之前的旧证明。原缺失 preflight、非法 alias、脏页及数据依赖 guard 均保留。
+
+回归在原 shared-image fixture 中加入实际录制和在途 completion CPU 写入；旧 dad2c3d preflight 不能先发布写入，负例在 `*(uint32_t *)data == 7` 失败；修正后通过，原 retile same-recording 不提交断言仍通过。LVP 是软件功能验证，不能替代真实游戏的重测，亦不证明真实游戏此次崩溃只有一个触发源。
