@@ -13,6 +13,7 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
+parser.add_argument('--native-resources',action='store_true',help='compile default-OFF host-native texture protocol; requires shared pools')
 parser.add_argument('--shared-pools',action='store_true',help='compile default-OFF fixed shared Pool/early guest heap experiment')
 parser.add_argument('--shared-import-windows',action='store_true',help='compile experimental shared range imports; requires --shared-pools and cold nonzero pool window bytes')
 parser.add_argument('--native-jobs',type=int,choices=range(1,65),default=4,help='parallel native build jobs (default4)')
@@ -22,6 +23,8 @@ parser.add_argument('--renderdoc-api', action='store_true', help='optional offic
 args = parser.parse_args()
 if args.shared_import_windows and not args.shared_pools:
     parser.error("--shared-import-windows requires --shared-pools")
+if args.native_resources and not args.shared_pools:
+    parser.error('--native-resources requires --shared-pools')
 OUT = ROOT / '.local/build/android-apk'
 SDK = ROOT / '.local/android-sdk'
 BUILD = SDK / 'build-tools/36.0.0'
@@ -42,6 +45,7 @@ run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-
     '-DDM_ANDROID_TLS_DESC=' + ('ON' if args.tlsdesc else 'OFF'),
     '-DDM_VULKAN_SHARED_IMPORT_WINDOWS=' + ('ON' if args.shared_import_windows else 'OFF'),
     '-DDM_VULKAN_SHARED_POOLS=' + ('ON' if args.shared_pools else 'OFF'),
+    '-DDM_VULKAN_NATIVE_RESOURCES=' + ('ON' if args.native_resources else 'OFF'),
     '-DDM_ANDROID_RENDERDOC_API=' + ('ON' if args.renderdoc_api else 'OFF'),
     '-DDM_RENDERDOC_INCLUDE_DIR=' + str(ROOT/'.local/tools/Arm_Performance_Studio_2026.5/renderdoc_for_arm_gpus/include'),
     '-DDM_ANDROID_RUNTIME_OPT_LEVEL=' + args.opt_level)
@@ -150,6 +154,7 @@ manifest={'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhos
           'official_renderdoc_api':args.renderdoc_api,
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
+          'native_resources_compiled':args.native_resources,
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,

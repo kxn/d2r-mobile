@@ -5,6 +5,32 @@
 #include <limits.h>
 #include <sys/stat.h>
 #include <errno.h>
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+#include "mbedtls/sha256.h"
+#include <fcntl.h>
+#include <unistd.h>
+static uint8_t native_driver_digest[32];
+static int native_driver_digest_valid;
+static void native_driver_hash(const char *path) {
+  int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);struct stat before,after;
+  if(fd<0 || fstat(fd,&before))die("Native resource driver ELF open");
+  mbedtls_sha256_context hash;mbedtls_sha256_init(&hash);mbedtls_sha256_starts(&hash,0);
+  uint8_t data[16384];
+  for(;;) {ssize_t n=read(fd,data,sizeof data);if(n<0 && errno==EINTR)continue;
+    if(n<0)die("Native resource driver ELF read");if(!n)break;mbedtls_sha256_update(&hash,data,(size_t)n);}
+  if(fstat(fd,&after) || before.st_size!=after.st_size || before.st_mtime!=after.st_mtime || close(fd))
+    die("Native resource driver ELF changed");
+  mbedtls_sha256_finish(&hash,native_driver_digest);mbedtls_sha256_free(&hash);native_driver_digest_valid=1;
+}
+#endif
+int vk_loader_native_driver_digest(uint8_t out[32]) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(native_driver_digest_valid && out) {memcpy(out,native_driver_digest,32);return 1;}
+#else
+  (void)out;
+#endif
+  return 0;
+}
 #ifdef __ANDROID__
 #include "../../third_party/libadrenotools/include/adrenotools/driver.h"
 #endif
@@ -42,6 +68,7 @@ void vk_loader_set_driver(const char *name,const char *directory,const char *hoo
   // Driver selection is startup-only; onNewIntent never changes it.
   pthread_mutex_unlock(&loader_mutex);
 }
+// Existing cold-state accessor also used by the frozen ordinary-UID fixtures.
 int vk_loader_is_initialized(void) {
   pthread_mutex_lock(&loader_mutex);int active=initialized;
   pthread_mutex_unlock(&loader_mutex);return active;
@@ -102,6 +129,9 @@ void vk_loader_initialize(void) {
          !get_proc(VK_NULL_HANDLE,"vkEnumerateInstanceExtensionProperties"))
         die("Vulkan PanVK global dispatch incomplete");
       volkInitializeCustom(get_proc);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      if(getenv("DM_VULKAN_NATIVE_RESOURCE_TABLE"))native_driver_hash(library);
+#endif
       LOG("[vulkan loader] provider=panvk direct ICD=%s (dispatch only; GPU not validated)",library);
     } else {
       if(!hook_directory[0]) directory_copy(hook_directory,getenv("DM_VULKAN_DRIVER_HOOKS"));

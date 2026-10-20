@@ -40,7 +40,14 @@ void crash_thread_init(void) {
 #include "pixel_local_loader.inc"
 #include "quad_transfer_contract.inc"
 #include "quad_readonly_contract.inc"
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+#include "native_layout.inc"
+#endif
 int main(void) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  const char *table=getenv("DM_NATIVE_LAYOUT_METADATA_FIXTURE");
+  if(table)return native_layout_test(table);
+#endif
   if(getenv("DM_QUAD_READONLY_CONTRACT_FIXTURE"))return quad_readonly_contract_test();
   if(getenv("DM_QUAD_TRANSFER_CONTRACT_FIXTURE"))return quad_transfer_contract_test();
   if(getenv("DM_PIXEL_LOCAL_LOADER_FIXTURE")) {crash_thread_init();mtl_init();return pixel_local_loader_test();}

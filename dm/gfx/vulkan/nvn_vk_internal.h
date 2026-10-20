@@ -29,6 +29,7 @@ typedef struct vk_buffer {
   int readback;
 #ifdef DM_VULKAN_SHARED_POOLS
   int shared_import;
+  uint32_t shared_memory_type;
 #endif
 } vk_buffer;
 typedef struct vk_effect {
@@ -428,4 +429,12 @@ void vk_texture_shared_source_written(uint64_t address,uint64_t bytes);
 void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes);
 int vk_texture_shared_linear_conflict(uint64_t address,uint64_t bytes);
 void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes);
+#endif
+
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+void *vk_pool_native_image_bind(uint64_t,uint64_t,VkImage,const VkMemoryRequirements *,VkDeviceMemory *);
+void vk_pool_native_image_use(void *,uint64_t,uint64_t,VkPipelineStageFlags);
+void vk_pool_native_image_release(void *);
+int vk_pool_native_image_write_ready(void *);
+void vk_native_images_release(void);
 #endif

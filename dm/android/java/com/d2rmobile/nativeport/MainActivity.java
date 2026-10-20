@@ -46,6 +46,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativeSharedGuestHeap(boolean enabled);
     private static native void nativeLegacyAstcCopy(boolean enabled, boolean fixture);
+    private static native void nativeNativeResources(String table, String packSha256, String producerSha256);
     private static native void nativePoolDeferPublication(boolean enabled);
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
@@ -183,6 +184,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeLegacyAstcCopy(getIntent().getBooleanExtra("legacy_astc_copy", false),
                     getIntent().getBooleanExtra("run_vulkan_tests", false) &&
                     getIntent().getBooleanExtra("legacy_astc_copy_test", false));
+            nativeNativeResources(getIntent().getStringExtra("native_resource_table"),
+                    getIntent().getStringExtra("native_resource_pack_sha256"),
+                    getIntent().getStringExtra("native_resource_producer_sha256"));
             // Source-proved subpasses fall back when recipes, resources or
             // dependencies do not qualify. Shared-depth remains opt-in.
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", true));
@@ -362,6 +366,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("legacy_astc_copy") || intent.hasExtra("legacy_astc_copy_test")) {
             android.util.Log.w("D2RASTC", "legacy_astc_copy is startup-only; cold restart required");
             intent.removeExtra("legacy_astc_copy");intent.removeExtra("legacy_astc_copy_test");
+        }
+        for (String key : new String[]{"native_resource_table", "native_resource_pack_sha256", "native_resource_producer_sha256"}) {
+            if (intent.hasExtra(key)) {
+                android.util.Log.w("D2RNativeResources", "native resources require a cold restart");
+                intent.removeExtra(key);
+            }
         }
         if (intent.hasExtra("shared_guest_heap")) {
             android.util.Log.w("D2RPool", "shared_guest_heap is startup-only; cold restart required");

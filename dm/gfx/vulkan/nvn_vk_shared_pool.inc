@@ -54,6 +54,7 @@ static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer
         if(result==VK_SUCCESS){fresh->shared_import=1;if(!mapped)result=VK_ERROR_MEMORY_MAP_FAILED;}
       }
       fresh->properties=V.mem.memoryTypes[type].propertyFlags;
+      fresh->shared_memory_type=type;
     }
   }
   if(result==VK_SUCCESS) {fresh->size=bytes;fresh->map=host_pointer;}
@@ -335,3 +336,45 @@ int vk_pool_shared_image_source(uint64_t address,uint64_t bytes,int prepare) {
 }
 
 #include "nvn_vk_shared_union.inc"
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+// A persistent image reference plus original per-submission GPU-access refs.
+// Pool Finalize finishes submissions and destroys images before waiting refs.
+void *vk_pool_native_image_bind(uint64_t address,uint64_t bytes,VkImage image,
+                               const VkMemoryRequirements *needs,VkDeviceMemory *memory) {
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || !p->shared || p->shared_closing || !needs || needs->size!=bytes)
+    die("Native image requires a live whole shared Pool");
+  shared_pool_materialize(p);
+  uint64_t offset=address-(uintptr_t)p->guest;
+  if(!needs->alignment || offset%needs->alignment ||
+     !(needs->memoryTypeBits&(1u<<p->whole.buffer.shared_memory_type)))
+    die("Native image shared allocation type/alignment mismatch");
+  VK_CHECK(vkBindImageMemory(V.device,image,p->whole.buffer.memory,offset));
+  *memory=p->whole.buffer.memory;atomic_fetch_add(&p->native_image_references,1);
+  pthread_mutex_unlock(&V.resources);return p;
+}
+void vk_pool_native_image_use(void *token,uint64_t address,uint64_t bytes,VkPipelineStageFlags stages) {
+  pthread_mutex_lock(&V.resources);pool *p=token;
+  if(p!=pool_find(address,bytes) || !p->shared || p->shared_closing)
+    die("Native image retained Pool lifetime mismatch");
+  record_pool_use(p,address-(uintptr_t)p->guest,bytes,stages,1);
+  pthread_mutex_unlock(&V.resources);
+}
+// The independent prewrite-gate change supplies this startup-frozen query.
+// A scope alone does NOT prove the command commit/completion gate is wired.
+// Old cores can still sample native images; NC writers fail closed there.
+extern int vk_pool_shared_gpu_gate_mode(void) __attribute__((weak));
+int vk_pool_native_image_write_ready(void *token) {
+  pool *p=token;
+  if(!p || !p->shared || !p->backings || p->shared_closing)return 0;
+  return (p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ||
+    (vk_pool_shared_gpu_gate_mode && vk_pool_shared_gpu_gate_mode());
+}
+void vk_pool_native_image_release(void *token) {
+  // Destroy is called both with resources held and from completion callbacks.
+  // Finalize finishes callbacks and closes every image before freeing Pool.
+  pool *p=token;
+  if(!p || !atomic_fetch_sub(&p->native_image_references,1))
+    die("Native image Pool reference underflow");
+}
+#endif
