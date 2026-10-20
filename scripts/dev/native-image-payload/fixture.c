@@ -55,7 +55,11 @@ static const VkExternalMemoryImageCreateInfo native_external = {
     .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
 #endif
 static const VkImageUsageFlags usage =
-    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT
+#ifdef DM_NATIVE_TURNIP_HOST_ASTC
+    | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+#endif
+    ;
 static VKAPI_ATTR VkBool32 VKAPI_CALL
 debug(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
       VkDebugUtilsMessageTypeFlagsEXT type,
