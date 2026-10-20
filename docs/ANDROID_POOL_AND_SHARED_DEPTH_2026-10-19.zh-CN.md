@@ -1131,3 +1131,42 @@ cube 六层、源位值保留、GPU 改写刷新和原生 D16；默认回归通�
 后续先解读既有 Mesa 命令流转储。故障报告的 last job 不是挂起程序计数器，
 应追踪实际 extract 到 insert 的待执行区间及 CALL 链；不能据此直接修改
 提交同步，或把没有 VUID 当作 GPU 编译及驱动完全正确的证明。
+
+## Turnip：同包共享对照及实际 CPU 大热点
+
+同一 `2f0d37d` APK／驱动／资源的开关对照已完成。官方 8 秒 stat 中，NvN
+task-clock 为 6302→6219ms，用户态 cycles 为 8.412→8.905G，内核态为
+1.666→0.363G，上下文切换为 6255→310。关闭共享的窗口有 PSO／Uniform
+变体编译变化，开启窗口稳定；不能将这些数值合成净 FPS 或单位帧收益。
+同包 meminfo 端点 TOTAL PSS 为 2,356,125→2,701,559KiB。镜像消失与总内存
+降低是不同结论，整池导入的驻留成本仍需处理。
+
+随后只对开启共享、PSO／变体稳定的真实游戏做官方 Simpleperf 99Hz、约
+8 秒用户态 DWARF 采样，使用精确 BuildID 符号化。NvN 共 577 个样本，其中
+248 个、约 42.98% 位于线性 Buffer／图像别名保护。实际链为
+`pool_address → shader_bindings_selected_impl → vk_draw_record`。LLVM 反汇编
+确认其遍历 `shared_gpu_aliases`，逐节点读取 initialized，并重复查询固定
+共享模式；这是地址重叠查找，不是纹理内容哈希或逐字节比较。
+
+本窗口脏页／CPU 观察命名函数约 1.04%，图像转换／上传约 0.35%，只描述
+稳定营地采样，不能外推首次加载／新场景，也不含内核态。这修正了“镜像
+计数零就代表纹理跟踪已消失”的错误推论。池计数没有覆盖全部纹理处理。
+
+下一候选为确定性的平衡区间索引，保留真实地址重叠、写入、退役和原错误
+保护，减少每次 Buffer 访问的全链遍历。此时尚未实现／验收，不报告涨帧。
+同一代码也适用于 Mali 共享模式；当前 Mali 生产包共享与旧 ASTC 复制实验
+均关闭，普通 Buffer 访问不进入此扫描，不能将该 43% 归因于当前 Mali。
+证据：`turnip-shared-2f0-on-cpu99-official-analysis-v1/final-hotspots-agent-v1.json`。
+
+## Turnip：直接共享纹理的独立 App 检查已通过
+
+`aa185374` 实验驱动已在普通 App UID 上通过 ASTC4／6、UNORM／sRGB 四种
+格式、四级 mip 的导入及 GPU 采样检查。bake 的 280 项仅检查原 host-image
+copy 排布和文件合同；后续 import 的 202016 项包括实际 GPU 采样、元数据
+和哨兵检查，不是片元数量或性能数据。实际驱动 maps／完整 SHA 和三项 UUID
+均核实；原游戏始终未启动、未修改，独立包已卸载。
+
+这尚未把游戏的大部分材质转换为直接共享纹理，也没有功耗或内存收益证据。
+下一步复用原资源加工及 NVN family 检查，先闭合一张真实火盆材质，不能将
+PanVK 的 opaque payload／offsets 用到 Turnip。证据：
+`turnip-host-image-app-v2-q-actual-evidence.json`。
