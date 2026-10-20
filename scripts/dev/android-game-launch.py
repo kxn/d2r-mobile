@@ -421,10 +421,22 @@ while time.monotonic() < deadline:
             if 'PanelManager OpenPanel CharacterSelectPanel' in log:
                 selection_seen = selection_seen or time.monotonic()
             if selection_seen and time.monotonic() - selection_seen >= 3:
-                png = adb('exec-out', 'screencap', '-p', binary=True)
-                if png[:8] != b'\x89PNG\r\n\x1a\n':
-                    raise SystemExit('invalid Android screenshot dimensions')
-                width, height = struct.unpack('>II', png[16:24])
+                # The current PID's actual Vulkan Surface and Android display
+                # size can prove fullscreen dimensions without blocking on the
+                # system screenshot service. Keep the old screenshot fallback
+                # for letterboxed/unknown surfaces; never guess tap coordinates.
+                surfaces = re.findall(r'\[vulkan\] Android Surface (\d+)x(\d+) images=', log)
+                display = re.findall(r'(?:Physical|Override) size: (\d+)x(\d+)',
+                                     adb('shell', 'wm', 'size')) if surfaces else []
+                if (surfaces and display and int(surfaces[-1][0]) > int(surfaces[-1][1]) and
+                        sorted(map(int, surfaces[-1])) == sorted(map(int, display[-1]))):
+                    width, height = map(int, surfaces[-1])
+                    print(f'pid={pid}: fullscreen dimensions verified from Surface/display', flush=True)
+                else:
+                    png = adb('exec-out', 'screencap', '-p', binary=True)
+                    if png[:8] != b'\x89PNG\r\n\x1a\n':
+                        raise SystemExit('invalid Android screenshot dimensions')
+                    width, height = struct.unpack('>II', png[16:24])
                 if width <= height:
                     raise SystemExit('game Surface is not landscape')
                 adb('shell', 'input', 'tap', str(round(width / 2)), str(round(height * .9)))
