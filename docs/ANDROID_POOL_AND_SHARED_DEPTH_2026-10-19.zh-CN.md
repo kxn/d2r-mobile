@@ -540,3 +540,40 @@ descriptor retarget 和随后 CPU 编辑；完整 async/sync 分别 22,031,792/2
 
 冻结源码、指令与测试：本机 `.local/logs/pool-binding-mask-v1-source-ready.json`；
 独立源码审查：`.local/logs/pool-binding-mask-v1-root-review.json`。
+
+## 2026-10-20：共享堆整游戏首次验证
+
+以下是独立实验分支 `codex/shared-guest-game-combined-v2` 的结果，实验源码
+`03cbdba5be720393efa6648bb8f4a7b9f5feed70` 尚未合入生产默认路径。
+983 项 APK 构建输入、6 个原生库已逐项校验。游戏模块仍由原始 NSO 经统一
+入口生成并验证，使用 `elfdesc-gate`、`touch-run-v4`、private gates 和 x18
+group size 3；没有叠改已加工的二进制。
+
+此前普通应用 UID 下，Mali-G710 MC10 的有限 4MiB 全 Pool 导入用例通过：
+Buffer 659 项、Event 117 项、Query 7827 项。实际内存属性为 `0xb`，即
+HOST_CACHED、非 HOST_COHERENT；用例执行了 Flush/Invalidate。这些是功能
+字节验证，不是游戏、整 Pool 内存开销或散热验收。直接 PanVK ICD 的这些
+Android 测试没有加载 VVL，不能写成真机验证层无错误。
+
+真实游戏 PID 32621 冷启动使用固定驱动 `bdd9df32…`，日志确认
+`actual_shared=1`；实际 timestampPeriod 为约 76.92308ns、valid bits 为 64，
+原模块开始原生执行，但在主菜单约第 60 帧触发：
+
+```
+Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not implemented
+```
+
+因此共享 Buffer/堆已实际启用，但整游戏共享路径没有通过。现有错误只证明
+图像 CPU 源的 dirty proof 失败，不能认定图像字节确实被 CPU 改过。源码有
+一条需修正的路径：首次 GPU 完整清屏可跳过 CPU 上传，图像已 initialized，
+但尚无 CPU 源 dirty scope/stamp；后续采样会将 untracked 保守判为 dirty。
+同页邻居写也可能导致页级误报。不能简单删除拒绝条件，或把 baseline 字节
+相等当作 GPU-owned 区域没有 CPU 后写的证明；CPU 写回与旧值相同的字节，
+仍可能是在覆盖 GPU 新值。任意 partial CPU 编辑与 optimal/linear 别名的
+发布规则仍未完成，不宣称已经消除了所有回写或等待。
+
+失败证据位于本机 `.local/logs/shared-game-03cbdba-mali-v1/`。进程已自行
+退出，没有为存档重新启动；已回读校验恢复 c8 APK、原有私有驱动和全部
+28 项模块，并确认游戏停止。原 full ASTC4 资源与存档未参与部署。没有取得
+本次共享游戏的稳定 PSS、FPS 或温度对照，不能据此宣称内存、帧率或散热
+改善。下一步先修正图像源追踪生命周期，再验证真实游戏；生产仍保留原路径。
