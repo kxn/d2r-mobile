@@ -40,9 +40,9 @@ class FS:
    p=a[1];assert p in self.dirs and not any(q.startswith(p+'/')for q in self.files)and not any(q.startswith(p+'/')for q in self.dirs);self.dirs.remove(p);return ''
   raise AssertionError('unhandled primitive: '+str(a))
 with tempfile.TemporaryDirectory()as tmp:
- for presence in itertools.product([False,True],repeat=3):
+ for presence in itertools.product([False,True],repeat=len(m.DIRS)):
   fs=FS();token='a'*32;ownerhash=hashlib.sha256((token+'\n').encode()).hexdigest();stage='files/runtime/.minegraph-game-'+token
-  d={'stage':stage,'token':token,'owner_sha256':ownerhash,'transfer_pushed':False}
+  d={'stage':stage,'token':token,'owner_sha256':ownerhash,'transfer_pushed':False,'candidate_overlay':m.read(m.RESOURCE_READY)['deploy_files']}
   for i,(label,target)in enumerate(m.DIRS.items()):
    if presence[i]:fs.put(target+'/Diablo II/Original cache '+label+'.bin','c'*64)
   original_files=copy.deepcopy(fs.files);original_roots={label:m.inventory(fs,target)for label,target in m.DIRS.items()}
@@ -50,6 +50,8 @@ with tempfile.TemporaryDirectory()as tmp:
   for label,target in m.DIRS.items():
    d['old_'+label]=original_roots[label];incoming=stage+'/incoming/'+label;fs.put(incoming+'/'+m.OWNER,ownerhash,token)
    if label=='driver':fs.put(incoming+'/libvulkan_panfrost.so',m.DRIVER_SHA)
+   if label=='overlay':
+    for n,h in d['candidate_overlay'].items():fs.put(incoming+'/'+n,h)
    if d['old_'+label]is not None:m.rename_dir(fs,target,stage+'/backup/'+label,d['old_'+label])
    m.rename_dir(fs,incoming,target,m.inventory(fs,incoming))
   fs.put(m.DIRS['driver']+'/shader-cache/Mesa Cache/compiled shader.bin','d'*64)
@@ -59,4 +61,4 @@ with tempfile.TemporaryDirectory()as tmp:
   assert d['original_directories_restored']and d['owned_staging_and_transfer_cleaned']
   assert fs.files==original_files and all(m.inventory(fs,target)==original_roots[label]for label,target in m.DIRS.items())
   assert stage not in fs.dirs and m.LOCK not in fs.dirs
-print(json.dumps({'passed':True,'cases':8,'real_functions':['inventory','rename_dir','restore','clean'],'path_shape':'Diablo II/GameLogs/D2261020.txt; old/new nested cache with spaces','backup_publish_restore_cleanup':True,'device_access':False}))
+print(json.dumps({'passed':True,'cases':16,'real_functions':['inventory','rename_dir','restore','clean'],'path_shape':'Diablo II/GameLogs/D2261020.txt; old/new nested cache with spaces','backup_publish_restore_cleanup':True,'device_access':False}))

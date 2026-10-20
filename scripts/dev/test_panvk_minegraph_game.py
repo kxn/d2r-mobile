@@ -2,6 +2,7 @@
 import importlib.util,itertools,tempfile,json,copy
 from pathlib import Path
 p=Path(__file__).with_name('run-panvk-minegraph-game.py');s=importlib.util.spec_from_file_location('candidate',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+CANDIDATE=m.read(m.RESOURCE_READY)['deploy_files']
 class Dev:
  def stopped(self):pass
 class FilenameDev:
@@ -40,13 +41,14 @@ for bad in ['digest','duplicate']:
  else:raise AssertionError('malformed SHA inventory accepted: '+bad)
 n=0
 with tempfile.TemporaryDirectory()as tmp:
- for presence in itertools.product([False,True],repeat=3):
-  for published in range(4):
-   d={'stage':'files/runtime/.minegraph-game-'+'a'*32,'token':'a'*32,'owner_sha256':'b'*64};v={};labels=list(m.DIRS)
+ for presence in itertools.product([False,True],repeat=len(m.DIRS)):
+  for published in range(len(m.DIRS)+1):
+   d={'stage':'files/runtime/.minegraph-game-'+'a'*32,'token':'a'*32,'owner_sha256':'b'*64,'candidate_overlay':CANDIDATE};v={};labels=list(m.DIRS)
    for i,label in enumerate(labels):
     old={'original-'+label:'c'*64}if presence[i]else None;d['old_'+label]=old
     new={m.OWNER:d['owner_sha256']}
     if label=='driver':new['libvulkan_panfrost.so']=m.DRIVER_SHA
+    if label=='overlay':new.update(CANDIDATE)
     if i<published:
      if old is not None:v[d['stage']+'/backup/'+label]=old
      v[m.DIRS[label]]=new
@@ -60,12 +62,13 @@ with tempfile.TemporaryDirectory()as tmp:
    assert d['original_directories_restored']and all(inv(None,target)==d['old_'+label]for label,target in m.DIRS.items())
    # Repeating recovery after interrupted caller bookkeeping is safe.
    m.restore(Dev(),Path(tmp)/'result.json',d);n+=1
- d={'stage':'files/runtime/.minegraph-game-'+'a'*32,'owner_sha256':'b'*64,**{'old_'+k:{'original':'c'*64}for k in m.DIRS}}
+ d={'stage':'files/runtime/.minegraph-game-'+'a'*32,'owner_sha256':'b'*64,'candidate_overlay':CANDIDATE,**{'old_'+k:{'original':'c'*64}for k in m.DIRS}}
  for tamper in ['backup','owner','driver']:
   v={}
   for label,target in m.DIRS.items():
    v[d['stage']+'/backup/'+label]=d['old_'+label];v[target]={m.OWNER:'b'*64}
    if label=='driver':v[target]['libvulkan_panfrost.so']=m.DRIVER_SHA
+   if label=='overlay':v[target].update(CANDIDATE)
   if tamper=='backup':v[d['stage']+'/backup/cache']={'changed':'d'*64}
   if tamper=='owner':v['cache'][m.OWNER]='d'*64
   if tamper=='driver':v[m.DIRS['driver']]['libvulkan_panfrost.so']='d'*64
@@ -79,4 +82,4 @@ with tempfile.TemporaryDirectory()as tmp:
  except RuntimeError:pass
  else:raise AssertionError('corrupt driver receipt accepted')
  m.READY_SHA=good;n+=1
-print(json.dumps({'passed':True,'restore_and_idempotence_cases':32,'tamper_rejections':3,'driver_receipt_negative_control':True,'cases':n+4,'actual_inventory_regression_cases':3,'actual_inventory_and_CAS_roundtrip':True,'actual_filename_inventory_regression':True,'malformed_digest_and_duplicate_rejected':True,'device_access':False}))
+print(json.dumps({'passed':True,'restore_and_idempotence_cases':80,'tamper_rejections':3,'driver_receipt_negative_control':True,'cases':n+4,'actual_inventory_regression_cases':3,'actual_inventory_and_CAS_roundtrip':True,'actual_filename_inventory_regression':True,'malformed_digest_and_duplicate_rejected':True,'device_access':False}))

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""One reversible driver-only original022 real-game start. Offline by default.
+"""One reversible original-BC original022 driver compatibility start. Offline by default.
 Uses existing directory CAS, ordinary first-PID ownership and original save2 helper.
-No APK/module/resource changes, old capture, custom measurement or GPU-import mode.
+Original BC/current-identical upstream UI overlay only; no APK/module changes, old capture, measurement or GPU-import.
 """
 from pathlib import Path
-import argparse,hashlib,importlib.util,json,re,shlex,signal,subprocess,sys,time,uuid,zipfile
+import argparse,hashlib,importlib.util,json,re,shlex,signal,subprocess,sys,time,uuid,zipfile,tarfile
 R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
@@ -15,7 +15,9 @@ DRIVER_SHA='df9ba8326b353812bbe36b3306f9ce6c833764c2538e85cacf91a12ccd9566a9'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
 LOCK='files/runtime/.astc6-full-controller-lock'
-CHAIN='cbd8d2da0b0f';OWNER='.minegraph-game-owner';DIRS={'driver':'files/runtime/vulkan-panfrost','temp':'files/runtime/temp','cache':'cache'}
+CHAIN='cbd8d2da0b0f';OWNER='.minegraph-game-owner';DIRS={'driver':'files/runtime/vulkan-panfrost','temp':'files/runtime/temp','cache':'cache','overlay':'files/runtime/romfs_overlay'}
+RESOURCE_READY=R/'.local/build/panvk-minegraph-original-bc-control-v5/composition.json'
+RESOURCE_SHA='41ce2605b2150669081aa1978094d1296168d4c95c88c2bb0b21c7e6ff970e13'
 LAYER_KEYS=['enable_gpu_debug_layers','gpu_debug_app','gpu_debug_layers','gpu_debug_layers_gles','gpu_debug_layer_app']
 # Same existing inventory/CAS checks; preserve real Diablo II paths containing spaces.
 def inventory(dev,path):
@@ -60,6 +62,18 @@ def proof():
  with zipfile.ZipFile(ap) as z:require(hashlib.sha256(z.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()==ELF,'canonical ELF changed')
  return d,p
 
+def resource_proof():
+ require(sha(RESOURCE_READY)==RESOURCE_SHA,'BC resource composition changed');c=read(RESOURCE_READY)
+ require(c['complete'] and not c['deploy_allowed'] and not c['game_acceptance'],'not offline BC validation composition')
+ require(c['proofs']['original_texture_and_cache_CFT_entries_identical']==31093 and c['proofs']['other_including_all_UI_CFT_entries_current_full4_identical']==102107 and c['proofs']['ctrl_touch_and_strings_current_Mali_identical'],'BC/UI proof incomplete')
+ require(set(c['deploy_files'])=={'ctrl_touch','touch_strings.tsv','data/.build.config','data/00-00000007.data'},'not exact four BC overlay files')
+ for row in [c['old_resource_proof'],c['preparer'],c['original_manifest'],*c['source_configs'],*c['source_tools'],c['transfer_archive']]:require(sha(row['path'])==row['sha256'],'BC provenance changed: '+row['path'])
+ old.common.check_map(Path(c['deploy_overlay']),c['deploy_files'],old.common.Hashes(),exact=True)
+ with tarfile.open(c['transfer_archive']['path'],'r')as archive:
+  members=archive.getmembers();require(len(members)==4 and {m.name for m in members}==set(c['deploy_files']),'BC tar member set changed')
+  for member in members:require(member.isfile() and not Path(member.name).is_absolute() and '..'not in Path(member.name).parts and hashlib.sha256(archive.extractfile(member).read()).hexdigest()==c['deploy_files'][member.name],'unsafe/corrupt BC tar member')
+ return c
+
 def command(serial,out):
  return [sys.executable,str(SOURCE/'scripts/dev/android-game-launch.py'),'--serial',serial,'--vulkan-provider','panvk','--no-shared-guest-heap','--no-legacy-astc-copy','--external-profile','--fixed-3d','--scale-3d','0.6','--game-res','2772x1240','--timeout','75','--report',str(out/'launch.json')]
 
@@ -73,6 +87,9 @@ def baseline(dev,expected):
  return {'APK':APK,'ELF':ELF,'files35':got,'shader_chain':CHAIN,'shaders':inventory(dev,'files/runtime/shaders')}
 def owned(values,d,label,partial=False):
  require(isinstance(values,dict)and values.get(OWNER)==d['owner_sha256'],'candidate ownership absent: '+label)
+ if label=='overlay':
+  expected={**d['candidate_overlay'],OWNER:d['owner_sha256']}
+  require(all(expected.get(k)==h for k,h in values.items()) if partial else values==expected,'candidate BC overlay changed')
  if label=='driver':require((values.get('libvulkan_panfrost.so')in(None,DRIVER_SHA) if partial else values.get('libvulkan_panfrost.so')==DRIVER_SHA) and all(k in (OWNER,'libvulkan_panfrost.so')or k.startswith('shader-cache/')for k in values),'candidate driver differs')
  return True
 
@@ -170,14 +187,16 @@ def clean(dev,path,d):
  if d.get('transfer_pushed'):
   require(dev.adb('shell','sha256sum',d['transfer']).split()[0]==DRIVER_SHA,'transfer changed');dev.adb('shell','rm',d['transfer'])
  require(dev.app('cat',LOCK+'/owner')==d['token'],'controller lock owner changed');dev.app('rm',LOCK+'/owner');dev.app('rmdir',LOCK)
+ if d.get('resource_transfer_pushed'):
+  require(dev.adb('shell','sha256sum',d['resource_transfer']).split()[0]==d['resource_transfer_sha256'],'BC resource transfer changed');dev.adb('shell','rm',d['resource_transfer'])
  d['owned_staging_and_transfer_cleaned']=True;journal(path,d)
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof()
- plan={'scope':'ONE original022/fullASTC4 driver-only real-game startup; fresh allocation with full703db driver; no oldcapture/APK/module/resource mutation or FPS claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
+ plan={'scope':'ONE original022 original-BC/current-identical-upstreamUI real-game compatibility baseline; new driver requirements; no oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
- d={**plan,'token':token,'stage':stage,'transfer':transfer,'owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
+ d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
  def interrupt(sig,frame):raise RuntimeError('interrupted; owned save/stop+restore only')
  for sig in(signal.SIGINT,signal.SIGTERM):signal.signal(sig,interrupt)
  try:
@@ -189,6 +208,8 @@ def main():
    pth=stage+'/incoming/'+label;dev.app('mkdir',pth);dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',pth+'/'+OWNER,token)
   dev.adb('push',driver['driver']['path'],transfer);d['transfer_pushed']=True;journal(path,d);require(dev.adb('shell','sha256sum',transfer).split()[0]==DRIVER_SHA,'pushed driver corrupt')
   dev.app('cp',transfer,stage+'/incoming/driver/libvulkan_panfrost.so')
+  dev.adb('push',resources['transfer_archive']['path'],d['resource_transfer']);d['resource_transfer_pushed']=True;journal(path,d);require(dev.adb('shell','sha256sum',d['resource_transfer']).split()[0]==d['resource_transfer_sha256'],'BC tar transfer corrupt')
+  dev.app('tar','xf',d['resource_transfer'],'-C',stage+'/incoming/overlay');owned(inventory(dev,stage+'/incoming/overlay'),d,'overlay')
   for label,target in DIRS.items():
    d['intent']='backup-'+label;journal(path,d)
    if d['old_'+label]is not None:rename_dir(dev,target,stage+'/backup/'+label,d['old_'+label])
