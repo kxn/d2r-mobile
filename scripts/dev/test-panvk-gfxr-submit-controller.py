@@ -23,12 +23,13 @@ class Fake:
  def app(self,*a):
   if a[0]=='find':return m.DRIVER_DIR+'/shader-cache/panvk-submit-'+('a'*32)+'_queue_submits_150_through_174.gfxr'
   if a[0]=='cat':return self.maps
+  if a[0]=='sh':return str(getattr(self,'trace_size',1024))
   raise AssertionError(a)
 def check(v):
  global checks
  assert v;checks+=1
 with tempfile.TemporaryDirectory()as n:
- p=Path(n)/'journal.json';d={'token':'a'*32};dev=Fake();m.capture_settings(dev,p,d);check(d['capture_settings_applied']);check(dev.props['debug.gfxrecon.capture_queue_submits']=='' and dev.props['debug.gfxrecon.capture_trigger_boundary']=='');check(len(dev.props['debug.gfxrecon.capture_file'].encode())<92);m.restore_capture_settings(dev,p,d);check(d['capture_settings_restored']);check(not dev.settings and all(v==''for v in dev.props.values()))
+ p=Path(n)/'journal.json';d={'token':'a'*32};dev=Fake();m.capture_settings(dev,p,d);check(d['capture_settings_applied']);check(dev.props['debug.gfxrecon.capture_queue_submits']=='' and dev.props['debug.gfxrecon.capture_trigger_boundary']=='' and dev.props['debug.gfxrecon.capture_android_trigger']=='');check(len(dev.props['debug.gfxrecon.capture_file'].encode())<92);m.restore_capture_settings(dev,p,d);check(d['capture_settings_restored']);check(not dev.settings and all(v==''for v in dev.props.values()))
  dev=Fake(True);d={'token':'a'*32}
  try:m.capture_settings(dev,p,d)
  except RuntimeError:pass
@@ -46,7 +47,12 @@ with tempfile.TemporaryDirectory()as n:
  try:m.collect_trace_stopped(dev,p,d,Path(n))
  except RuntimeError as e:check('not actually selected'in str(e))
  else:raise AssertionError('nonplain capture accepted')
- dev=Fake();dev.maps='libVkLayer_gfxreconstruct.so libVkLayer_khronos_validation.so libvulkan_panfrost.so';d={};m.capture_stack(dev,p,d,Path(n),'123');check(d['capture_stack_mapped'])
+ dev=Fake();dev.maps='libVkLayer_gfxreconstruct.so libVkLayer_khronos_validation.so libvulkan_panfrost.so';d={'trace_stem':'g'};m.capture_stack(dev,p,d,Path(n),'123');check(d['capture_stack_mapped'] and d['initial_capture_bytes']==1024)
+ dev.trace_size=0
+ try:m.capture_stack(dev,p,{'trace_stem':'g'},Path(n),'123')
+ except RuntimeError as e:check('startupcapture absent'in str(e))
+ else:raise AssertionError('mappedlayerwithouttrace accepted')
+ dev.trace_size=1024
  dev.maps='libVkLayer_khronos_validation.so libvulkan_panfrost.so'
  try:m.capture_stack(dev,p,{},Path(n),'123')
  except RuntimeError:checks+=1
