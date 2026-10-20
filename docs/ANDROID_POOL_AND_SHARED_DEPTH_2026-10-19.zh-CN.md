@@ -610,3 +610,21 @@ UNDEFINED 转换保留旧字节。Android 直接 ICD 仍明确未启用 VVL。
 独立应用、临时文件与进程已清理。这证明的是有限图像直接导入机制；尚未
 实现游戏 packaged 8B layout、StorageSize、完整/缩略 mip 表及流式发布协议，
 没有游戏 PSS、带宽、FPS 或散热收益结论。
+
+后续 `86381c7` 资源工具与独立应用 `3324edf` 已使用真实游戏
+`firepit_a_ALB`（256×256、九级 mip）执行普通 UID 真机对照。原始资源经
+现有工具生成 ASTC4、ASTC6 两种输入，分别烘焙原生排布、在另一个冷进程
+导入。每种输入均另外通过标准 `vkCmdCopyBufferToImage` 建立 GPU 参考，
+全部九级 mip 的 87,381 个采样 texel 与各自参考相同；这不是 ASTC4 与
+ASTC6 有损编码之间的画质比较。消费端仍没有第二份导入图像存储。
+
+实际原生图像存储需求为 ASTC4 90,112B、ASTC6 45,056B；对应 NVN 排布
+资源为 89,600B、64,000B。这些是单资源排布大小，不是进程 PSS、实际
+DRAM 流量或整游戏节省量。该驱动目前只接纳 SAMPLED|HOST_TRANSFER；
+真实游戏已经使用纹理到纹理复制，因此 TRANSFER_SRC 用途与流式写入
+发布合同也必须补齐，不能将当前有限采样验收写成游戏直接导入完成。
+
+验收记录为本机 `native-image-resource-app-3324edf-mali-v1-root-review.json`。
+游戏 APK、模块、资源、shader chain 与原私有驱动均保持不变；独立应用
+已经卸载，测试进程与临时文件已清理。下一步是在默认关闭的独立路径中
+接入通用 NVN 元数据与资源工具链，再验证真实游戏内存和持续游玩散热。
