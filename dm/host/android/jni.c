@@ -133,20 +133,27 @@ extern void vk_descriptor_reuse_reference(int reference);
 extern void vk_descriptor_history_reference(int reference);
 extern void vk_window_mailbox_present(int enabled);
 extern void vk_descriptor_template_reference(int reference);
-extern void vk_loader_set_driver(const char *directory,const char *hooks);
+extern void vk_loader_set_driver(const char *provider,const char *directory,const char *hooks);
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeVulkanDriver(
-    JNIEnv *env,jclass klass,jstring directory,jstring hooks) {
+    JNIEnv *env,jclass klass,jstring provider,jstring directory,jstring hooks) {
   (void)klass;
+  const char *kind=provider?(*env)->GetStringUTFChars(env,provider,NULL):NULL;
+  if(provider && !kind) return;
   const char *driver=directory?(*env)->GetStringUTFChars(env,directory,NULL):NULL;
-  if(directory && !driver) return;
+  if(directory && !driver) {
+    if(kind) (*env)->ReleaseStringUTFChars(env,provider,kind);
+    return;
+  }
   const char *libraries=hooks?(*env)->GetStringUTFChars(env,hooks,NULL):NULL;
   if(hooks && !libraries) {
     if(driver) (*env)->ReleaseStringUTFChars(env,directory,driver);
+    if(kind) (*env)->ReleaseStringUTFChars(env,provider,kind);
     return;
   }
-  vk_loader_set_driver(driver,libraries);
+  vk_loader_set_driver(kind,driver,libraries);
   if(libraries) (*env)->ReleaseStringUTFChars(env,hooks,libraries);
   if(driver) (*env)->ReleaseStringUTFChars(env,directory,driver);
+  if(kind) (*env)->ReleaseStringUTFChars(env,provider,kind);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTextureDirtyReference(
     JNIEnv *env,jclass klass,jboolean reference) {

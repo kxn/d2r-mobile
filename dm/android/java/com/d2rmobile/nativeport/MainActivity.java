@@ -72,7 +72,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeMailboxPresent(boolean enabled);
     private static native void nativePresentWorkerReference(boolean reference, boolean sharedQueue);
     private static native void nativeBloomQuarterEnabled(boolean enabled);
-    private static native void nativeVulkanDriver(String directory, String hooks);
+    private static native void nativeVulkanDriver(String provider, String directory, String hooks);
     private static native void nativeStreamSubmitReference(boolean reference);
     private static native void nativeStoreDescriptorReference(boolean reference);
     private static native void nativeCoverWaitReference(boolean reference);
@@ -209,9 +209,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeUniformSpecializationEnabled(getIntent().getBooleanExtra("uniform_specialization", true));
         nativeUniformPredicateEnabled(getIntent().getBooleanExtra("uniform_predicate", false));
         nativeDeferredMipClearsEnabled(getIntent().getBooleanExtra("deferred_mip_clears", false));
-        nativeVulkanDriver(getIntent().getBooleanExtra("custom_vulkan_driver", false) ?
-                new File(getFilesDir(), "runtime/vulkan-driver").getAbsolutePath() : null,
-                getApplicationInfo().nativeLibraryDir);
+        if (!hostStarted) {
+            String provider = getIntent().getStringExtra("vulkan_provider");
+            if (provider == null) provider = getIntent().getBooleanExtra("custom_vulkan_driver", false) ? "adreno" : "system";
+            if (!"system".equals(provider) && !"adreno".equals(provider) && !"panvk".equals(provider))
+                throw new IllegalArgumentException("vulkan_provider must be system, adreno or panvk");
+            if ("panvk".equals(provider) && getIntent().getBooleanExtra("validate", false))
+                throw new IllegalArgumentException("PanVK direct ICD does not compose loader validation");
+            nativeVulkanDriver(provider, "system".equals(provider) ? null :
+                    new File(root, "panvk".equals(provider) ? "vulkan-panfrost" : "vulkan-driver").getAbsolutePath(),
+                    getApplicationInfo().nativeLibraryDir);
+        }
         nativeStreamSubmitReference(getIntent().getBooleanExtra("stream_submit_reference", false));
         nativeStoreDescriptorReference(getIntent().getBooleanExtra("store_descriptor_reference", false));
         nativeCoverWaitReference(getIntent().getBooleanExtra("cover_wait_reference", false));
