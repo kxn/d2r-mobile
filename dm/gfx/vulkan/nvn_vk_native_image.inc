@@ -1,4 +1,96 @@
 static image *native_acquired_images;
+// Actual physical ownership, not a contents cache. Only the translation owner
+// creates/removes entries; image retirement already excludes completion users.
+// Page envelopes include cache/mprotect neighbours of the native bytes.
+typedef struct {uintptr_t first,end,prefix_end;image *owner;} native_address_range;
+static native_address_range *native_ranges;
+static size_t native_range_count,native_range_capacity;
+static void native_range_prefix(size_t first) {
+  uintptr_t previous=first?native_ranges[first-1].prefix_end:0;
+  for(size_t n=first;n<native_range_count;n++) {
+    previous=previous>native_ranges[n].end?previous:native_ranges[n].end;
+    native_ranges[n].prefix_end=previous;
+  }
+}
+static void native_range_add(image *i) {
+  uintptr_t page=(uintptr_t)getpagesize(),a=(uintptr_t)i->tex.mem;
+  if(!page || (page&(page-1)) || i->tex.L.size>UINTPTR_MAX-a || a+i->tex.L.size>UINTPTR_MAX-(page-1))
+    die("Native image physical page bounds");
+  native_address_range range={a&~(page-1),(a+i->tex.L.size+page-1)&~(page-1),0,i};
+  if(native_range_count==native_range_capacity) {
+    size_t capacity=native_range_capacity?native_range_capacity*2:16;
+    if(capacity<native_range_capacity || capacity>SIZE_MAX/sizeof *native_ranges)die("Native range index size");
+    void *memory=realloc(native_ranges,capacity*sizeof *native_ranges);if(!memory)die("Native range index allocation");
+    native_ranges=memory;native_range_capacity=capacity;
+  }
+  size_t lo=0,hi=native_range_count;
+  while(lo<hi) {size_t mid=lo+(hi-lo)/2;if(native_ranges[mid].first<=range.first)lo=mid+1;else hi=mid;}
+  memmove(native_ranges+lo+1,native_ranges+lo,(native_range_count-lo)*sizeof *native_ranges);
+  native_ranges[lo]=range;native_range_count++;native_range_prefix(lo);
+}
+static void native_range_remove(image *i) {
+  size_t n=0;while(n<native_range_count && native_ranges[n].owner!=i)n++;
+  if(n==native_range_count)die("Native range physical retirement mismatch");
+  memmove(native_ranges+n,native_ranges+n+1,(native_range_count-n-1)*sizeof *native_ranges);
+  native_range_count--;native_range_prefix(n);
+  if(!native_range_count) {free(native_ranges);native_ranges=NULL;native_range_capacity=0;}
+}
+static void native_image_write_scope(image *i,unsigned n) {
+  if(!vk_pool_native_image_write_ready(i->native_pool))
+    die("Native image NC writer requires the shared prewrite commit gate");
+  if(!i->native_write_scopes[n]) {
+    const nvn_native_mip *m=&i->native_entry->recipe.mips[n];
+    i->native_write_scopes[n]=nvn_dirty_scope_acquire(i->tex.mem+m->offset,m->size);
+    if(!i->native_write_scopes[n])die("Native image writer scope admission failed");
+  }
+}
+static size_t native_range_first(uintptr_t address) {
+  size_t lo=0,hi=native_range_count;
+  while(lo<hi) {size_t mid=lo+(hi-lo)/2;if(native_ranges[mid].prefix_end<=address)lo=mid+1;else hi=mid;}
+  return lo;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+unsigned vk_test_native_address_index(void) {
+  if(native_range_count)die("Native index owned test requires empty registry");
+  size_t page=(size_t)getpagesize();uint8_t *mapping=mmap(NULL,8*page,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+  if(mapping==MAP_FAILED)die("Native index owned mapping");
+  image owners[4]={0};const unsigned starts[]={0,2,0,6},sizes[]={1,2,5,1};
+  for(unsigned n=0;n<4;n++) {owners[n].tex.mem=mapping+starts[n]*page;owners[n].tex.L.size=sizes[n]*page;native_range_add(&owners[n]);}
+  unsigned checks=0;
+  // Fixed semantic endpoints: the long enclosing interval must survive a
+  // short same-base entry and a disjoint middle interval's prefix max.
+  const unsigned pages[]={0,1,2,3,4,5,6,7},masks[]={5,4,6,6,4,0,8,0};
+  for(unsigned q=0;q<8;q++) {uintptr_t a=(uintptr_t)mapping+pages[q]*page;unsigned mask=0;
+    for(size_t n=native_range_first(a);n<native_range_count && native_ranges[n].first<a+1;n++)
+      if(native_ranges[n].end>a)mask|=1u<<(unsigned)(native_ranges[n].owner-owners);
+    if(mask!=masks[q])die("Native physical index endpoint mismatch");checks++;
+  }
+  native_range_remove(&owners[2]);native_range_remove(&owners[0]);native_range_remove(&owners[3]);native_range_remove(&owners[1]);
+  if(native_range_count || native_ranges || native_range_capacity)die("Native physical index final retirement");checks++;
+  native_range_add(&owners[1]);native_range_remove(&owners[1]);checks++;
+  if(munmap(mapping,8*page))die("Native physical index own unmap");
+  return checks;
+}
+#endif
+static void native_image_linear_written(uint64_t address,uint64_t bytes) {
+  if(!native_range_count || !bytes || bytes>UINTPTR_MAX-address)return;
+  uintptr_t end=address+bytes,page=(uintptr_t)getpagesize();
+  for(size_t n=native_range_first(address);n<native_range_count && native_ranges[n].first<end;n++) {
+    native_address_range *r=&native_ranges[n];if(r->end<=address)continue;
+    image *i=r->owner;
+    for(unsigned level=0;level<i->levels;level++) {
+      const nvn_native_mip *m=&i->native_entry->recipe.mips[level];
+      uintptr_t a=(uintptr_t)i->tex.mem+m->offset,b=(a+m->size+page-1)&~(page-1);a&=~(page-1);
+      if(a<end && b>address)native_image_write_scope(i,level);
+    }
+  }
+}
+static void native_image_alias_read(image *i,VkPipelineStageFlags stages) {
+  uint64_t previous=(stages&~i->native_alias_visible_stages)?0:i->native_alias_generation;
+  uint64_t now=vk_buffer_native_image_read((uintptr_t)i->tex.mem,i->tex.L.size,stages,previous);
+  if(now!=i->native_alias_generation)i->native_alias_visible_stages=0;
+  i->native_alias_generation=now;i->native_alias_visible_stages|=stages;
+}
 // The table is a layout/provenance declaration, never read-only authority.
 // Imported images have no vk_memory allocation: their original shared Pool
 // owns storage, existing submission refs retain uses, and Pool close destroys
@@ -26,6 +118,7 @@ static void native_image_use(image *i) {
     // proofs even when the CPU wrote identical bytes. The acquire orders it.
     memset(i->access,0,(size_t)i->levels*3*sizeof *i->access);i->access_generation++;
     for(unsigned n=0;n<i->levels;n++)image_cell(i,0,n,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
+    i->native_alias_generation=0;i->native_alias_visible_stages=0;
     i->native_acquired=1;i->native_next=native_acquired_images;native_acquired_images=i;
   }
 
@@ -74,7 +167,7 @@ static void native_image_create(image *i,const nvn_native_entry *entry) {
   i->native_entry=entry;i->initialized=1;i->physical_traits=image_physical_traits(i);
   i->access=calloc((size_t)i->levels*3,sizeof *i->access);
   if(!i->access)die("Native image access allocation");
-  i->access_generation++;native_image_use(i);
+  i->access_generation++;native_range_add(i);native_image_use(i);
 }
 void vk_native_images_release(void) {
   // Called at the original end of every command chunk, after render/query
@@ -95,6 +188,7 @@ void vk_native_images_release(void) {
 
 static void native_image_record(image *i,VkImageSubresourceRange range,VkPipelineStageFlags stages,VkAccessFlags access) {
   native_image_use(i);
+  if(!stages || !access)return; // metadata-only normalization is not a GPU access
   if(i->native_use_serial!=vk_recording_serial()) {
     i->native_use_serial=vk_recording_serial();i->native_recorded_stages=0;
   }
@@ -106,10 +200,9 @@ static void native_image_record(image *i,VkImageSubresourceRange range,VkPipelin
   const nvn_native_mip *last=&recipe->mips[range.baseMipLevel+range.levelCount-1];
   uint64_t address=(uintptr_t)i->tex.mem+first->offset;
   uint64_t bytes=last->offset+last->size-first->offset;
-  if(access&(VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT)) {
-    vk_buffer_use use={address,bytes,!!image_writes(access)};
-    vk_transfer_buffer_dependencies(&use,1);
-  } else vk_buffer_shader_read(address,bytes,stages);
+  if(image_writes(access)) {
+    vk_buffer_use use={address,bytes,1};vk_transfer_buffer_dependencies(&use,1);
+  } else native_image_alias_read(i,stages);
   if(stages&~i->native_recorded_stages) {
     vk_pool_native_image_use(i->native_pool,(uintptr_t)i->tex.mem,i->tex.L.size,stages);
     i->native_recorded_stages|=stages;
@@ -127,12 +220,7 @@ static void native_image_record(image *i,VkImageSubresourceRange range,VkPipelin
       // only a mip that is actually written, never every sampled-only asset.
       // The independent NC commit gate protects these pages through fence +
       // Invalidate. A missing gate is a hard experimental capability failure.
-      if(!vk_pool_native_image_write_ready(i->native_pool))
-        die("Native image NC writer requires the shared prewrite commit gate");
-      if(!i->native_write_scopes[n]) {
-        i->native_write_scopes[n]=nvn_dirty_scope_acquire((void *)(uintptr_t)address,m->size);
-        if(!i->native_write_scopes[n])die("Native image writer scope admission failed");
-      }
+      native_image_write_scope(i,n);
       vk_buffer_transfer_written_range(address,m->size);
       vk_buffer_writeback_stage(address,m->size,stages);
     }

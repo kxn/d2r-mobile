@@ -8,6 +8,8 @@ static void native_table_rehash(nvn_native_table *table) {
   mbedtls_sha256((const void *)table,table->file_bytes,table->digest,0);
 }
 static int native_layout_test(const char *path) {
+  extern unsigned vk_test_native_address_index(void);
+  NATIVE_CHECK(vk_test_native_address_index()==10);
   FILE *file=fopen(path,"rb");NATIVE_CHECK(file!=NULL);
   NATIVE_CHECK(!fseek(file,0,SEEK_END));long count=ftell(file);NATIVE_CHECK(count>0);
   NATIVE_CHECK(!fseek(file,0,SEEK_SET));nvn_native_table *table=malloc((size_t)count);
