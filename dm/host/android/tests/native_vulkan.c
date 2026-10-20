@@ -483,6 +483,7 @@ static void bright_test(NVNtexturePool *pool) {
 #include "native_vulkan_pixel_local.inc"
 #include "native_vulkan_ds_plane_store.inc"
 #include "native_vulkan_astc_decode.inc"
+#include "native_vulkan_event.inc"
 #ifdef DM_VULKAN_SHARED_POOLS
 extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
 extern void vk_test_shared_close_arm(void),vk_test_shared_close_wait(void);
@@ -563,6 +564,12 @@ static void review_fill_shared(uint32_t *destination,uint32_t value) {
   vk_buffer_transfer_written_range((uintptr_t)destination,4);
   vk_buffer_writeback_stage((uintptr_t)destination,4,VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
+static void review_generic_cpu_write(void *destination) {
+  // Keep the range-ownership oracle a real completion CPU writer after NVN
+  // events become GPU-native. Query/other CPU callbacks still need this guard.
+  dm_guest_write_prepare(destination,sizeof(uint32_t));
+  __atomic_store_n((uint32_t *)destination,7,__ATOMIC_RELEASE);
+}
 static void fixed_shared_dependency_test(void) {
   const char *mode=getenv("DM_FIXED_SHARED_DEPENDENCY_TEST");
   int separate=!strcmp(mode,"disjoint"),cache=!strcmp(mode,"cache-phase");
@@ -571,11 +578,12 @@ static void fixed_shared_dependency_test(void) {
   uint32_t *a=(void *)(bytes+(3u<<20)),*b=separate?(void *)(bytes+(3u<<20)+4096):cache?a+1:a;
   *a=0;*b=0;mtl_sub_begin();
   if(!strcmp(mode,"same-recording")) {
-    mtl_sub_event(a,0,7);review_fill_shared(a,9);vk_internal_commit();
+    vk_completion_write(review_generic_cpu_write,a,a,sizeof *a);review_fill_shared(a,9);vk_internal_commit();
     die("Unsupported same-recording CPUeffect/shared GPU combination accepted");
   }
   if(cache || gpu_only)review_fill_shared(a,7);
-  vk_completion(review_effect_gate,NULL);if(!cache && !gpu_only)mtl_sub_event(a,0,7);
+  vk_completion(review_effect_gate,NULL);
+  if(!cache && !gpu_only)vk_completion_write(review_generic_cpu_write,a,a,sizeof *a);
   uint64_t first=vk_internal_commit();
   pthread_mutex_lock(&review_effect_mu);
   while(!review_effect_entered)pthread_cond_wait(&review_effect_cv,&review_effect_mu);
@@ -723,6 +731,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+  if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {
     CHECK(vk_pool_shared_mode());
