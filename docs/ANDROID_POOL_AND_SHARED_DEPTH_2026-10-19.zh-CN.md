@@ -1867,3 +1867,31 @@ GUI、Xvfb 和游戏均已退出，无须重跑有效的游戏／采集阶段。
 官方分析：`.local/logs/native-resident-f830-6f8188e-sdp-game-pair-v3-analysis/official-resident-vs-transient-comparison-agent-v2.json`。
 后续为同候选持续游玩、公开 API 热状态与内存增长验证；短窗口仍不能证明
 长时间散热达标，也未完成真实 6GB 或 Mali 共享原生纹理游戏验收。
+
+### 30 分钟营地负载与统一 CPU 版本短验证（2026-10-21）
+
+6f8188e / f830 / 6,217 项 native ASTC4 在同一原游戏进程中完成 30 分钟
+营地负载，原触控 B→C 往返共 588 段均到达；没有崩溃或热暂停。0、10、20、
+30 分钟四个独立官方 Perfetto 窗口约为 30.60、30.49、21.55、33.11 FPS。
+各窗口采集时松开摇杆，不能写成连续跑动的平均帧率。电池 Overlay 为
+29.2、31.6、33.0、33.0°C，公开热状态均为 0；不排除厂商限功耗策略。
+20 分钟降速后恢复，伴随最强 CPU 核上的翻译线程占比变化；最后窗口绘制
+工作量也减少，不能单独归因于调度或散热。尚不证明持续稳定 30 FPS。
+
+PSS 端点为 1,981,267 / 2,039,914 / 2,051,780 / 2,056,219 KiB，最后
+十分钟增加约 4.34MiB。Pool backing 保持 361,758,720B。首次增长包含
+Dalvik、EGL、Gfx 和 Native Heap 等类别，不将总增量称为 native 泄漏。
+原生命周期双存档、停机、原包与六目录恢复通过，工具已退出。
+证据：`.local/logs/native-sustained-play-Q735-v2-root-actual-review.json` 和
+`.local/logs/native-sustained-play-Q735-v2-analysis/30min-official-functional-summary-agent.json`。
+
+26b0764 将已验证的共享原生资源路径、区间别名负查询缓存，与主线的页位图
+连续区间枚举合并，保留真实 CPU effect 预检和 GPU 依赖。相同 .60 固定比例、
+2750×1260、1MiB 窗口的真实原游戏完成三段行走、官方 Simpleperf/Perfetto
+采集和双存档，退出及原环境恢复通过。截图人物、几何和 HUD 均存在；已有
+地面彩色散点仍在。缓存/variant 稳定门未通过，因此此次只验收功能及采集，
+不作合并后的净涨帧或散热结论。该合并已进入主线，默认开关不变。
+根验收：`.local/logs/native-candidate-short-26b-Q735-v1-root-actual-review.json`。
+
+上述均为高通固定 .60 营地测试，不能替代 iOS 对齐默认 .75 动态比例、
+野外战斗、Mali 或实际 6GB 设备的持续游玩验收。
