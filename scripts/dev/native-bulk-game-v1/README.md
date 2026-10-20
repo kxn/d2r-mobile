@@ -60,3 +60,22 @@ own surface events; stat and sampledCPU are independent windows.
 
 Preparation/plan is offline. Root reviews one exact pair before any execution;
 original firstPID/save2/6dir CASrestore/settings/toolcleanup remain unchanged.
+
+### Readiness fix successor
+
+The first c5d51c8 plan was not executed: its readiness journal list was missing
+from initialization. The successor only initializes `pre_record_cache_states`.
+`test-readiness-fake-device.py` executes the actual helper via runpy with all
+real subprocess launches denied: fresh4ticks, PSO/variant reset,30unstable reads,
+repeatedtick rejection and repeatedthenfresh pass. Successful tests stop at the
+thread-list command before any sampling; they are not fake performance results.
+
+Existing scheduler failure boundary is unchanged: its configured Perfetto session
+is duration-bounded8s, but `capture-android-scheduler.py` has no outer finally for
+remote trace cleanup. An unsuccessful perfetto command/pull/postcondition can
+leave its unique `/data/misc/perfetto-traces/d2r-scheduler-*.pftrace` file and an
+incomplete sidecar; the parent still attempts original owned-game save2/stop and
+6dir restore. Do not claim scheduler cleanup complete merely because game restore
+succeeded. Preserve original capture logs/UUID/path, no automatic retry, and let
+the device owner establish stopped tool/session state before another transaction.
+This is a documented pre-existing tool boundary, not a new cleanup implementation.
