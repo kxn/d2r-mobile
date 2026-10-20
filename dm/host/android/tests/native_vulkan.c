@@ -2306,6 +2306,11 @@ int dm_vulkan_test_main(void) {
   CALL(nvnCommandBufferFinalize, &cmd);
   CALL(nvnQueueFinalize, &queue);
   CALL(nvnMemoryPoolFinalize, &memory);
+#ifdef DM_VULKAN_SHARED_POOLS
+  // Real SVC heap (including requested legacy/private mode) owns its initial
+  // process-lifetime AS; it is not the ordinary posix_memalign allocation.
+  if(!getenv("DM_SHARED_GUEST_HEAP_FIXTURE"))
+#endif
   free(bytes);
   CHECK(vk_validation_error_count() == 0);
   if (getenv("DM_VULKAN_EXTERNAL_PROFILE")) {
