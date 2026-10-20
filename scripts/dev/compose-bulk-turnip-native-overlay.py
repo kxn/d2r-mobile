@@ -17,6 +17,8 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import native_linear_acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'dm/tools'), str(ROOT / 'dm/ios/tools')]
@@ -122,6 +124,8 @@ def authenticate_table(table, record, details=None):
 def receipt_gate(path, expected, hashes):
     require(hashes.file(path) == expected, 'root functional receipt changed')
     r = json.loads(path.read_text())
+    if r.get('status') == 'ROOT_REVIEWED_F830_ACTUAL_ORIGINAL_NVN_PASS_AND_OLD_AA_TABLE_REFUSAL':
+        return native_linear_acceptance.acceptance(path, expected, hashes)
     require(r['status'] == 'REAL_GAME_ONE_NATIVE_TEXTURE_FUNCTIONAL_ACCEPTED_NOT_BULK' and
             r['bulk_assets_accepted'] is False and r['production_promotion'] is False and
             r['actual_fragment_read']['recorded_draw_before_capture'] is True and
@@ -324,7 +328,7 @@ def compose(a):
     driver_manifest = json.loads(a.driver_manifest.read_text())
     require(h.file(a.driver_manifest) == record['driver_build_record_sha256'], 'driver manifest differs')
     driver = h.record(driver_manifest['driver'])
-    require(h.file(driver) == record['driver_binary_sha256'] == acceptance['driver_sha256'], 'driver differs from real-game functional driver')
+    require(h.file(driver) == record['driver_binary_sha256'] == acceptance['driver_sha256'], 'driver differs from authenticated functional provider')
     require(record['producer_source_sha256'] == a.producer_source_sha256, 'native producer differs from explicit new source pin')
     uuid = acceptance['identity']['actual_recipe_UUID_payload_input_equal_table']
     require(record['identity'] == ''.join(uuid[k] for k in ['layout_uuid', 'device_uuid', 'driver_uuid']), 'actual driver three UUIDs differ')
@@ -441,7 +445,7 @@ def compose(a):
         'selected_logicals_sha256': digest(canonical(names)),
         'one_material_functional_receipt_sha256': a.acceptance_sha256,
         'producer_identity_lineage': {'legacy_one_material_producer': acceptance['identity']['producer_sha256'],
-            'legacy_receipt_scope': 'driver/three UUIDs/protocol and one shape only; not new producer game acceptance',
+            'legacy_receipt_scope': acceptance.get('acceptance_scope', 'driver/three UUIDs/protocol and one shape only; not new producer game acceptance'),
             'current_producer': a.producer_source_sha256,
             'current_source_ready_sha256': a.producer_source_ready_sha256,
             'actual_batch_receipts_sha256': a.actual_batch_receipts_sha256,

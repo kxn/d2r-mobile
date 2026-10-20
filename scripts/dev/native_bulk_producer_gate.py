@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import zipfile
+import native_linear_acceptance
 
 
 def require(value, message):
@@ -21,7 +22,7 @@ def source_ready_gate(path, expected_sha, expected_producer, legacy_receipt, has
     require(ready['producer_source_sha256'] == expected_producer and ready['tracked_clean'] is True,
             'new producer source identity differs')
     canonical = ready['canonical']
-    require(canonical['source_clean'] is True and canonical['driver_sha256'] == legacy_receipt['driver_sha256'] and
+    require(canonical['source_clean'] is True and native_linear_acceptance.historical_producer_driver(ready, legacy_receipt, hashes) and
             canonical['native_protocols_unchanged'] == ['DMRSRC1', 'DMNRES1', 'DMNTBL2'],
             'new producer changed driver/protocol contract')
     for item in ready['source_files']:

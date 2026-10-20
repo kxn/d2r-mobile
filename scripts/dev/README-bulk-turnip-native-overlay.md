@@ -156,3 +156,16 @@ bakes and retains its already frozen source/manifest and exact selected set.
 
 Run `test_native_bulk_producer_gate.py` for owned receipt negative controls.
 These synthetic schema tests do not substitute for actual ordinary-UID batches.
+
+The f830 successor separates unchanged compiled 8064 producer provenance
+(canonical AA driver record is retained) from the actual current f830 controller
+and loaded provider. `compose-native-linear-bulk.py` defaults to a source-only
+plan. `--compose` requires the complete, clean single 49-batch/6217-entry final
+transaction, actual per-entry metadata/wire/payload hashes, and root-reviewed
+original NVN plus fractional-filter fixtures. It calls the unchanged strict
+family packer with this batch's actual 8064 query, then this CASC composer.
+The current source-ready adapter is a new report; historical AA reports/APKs
+are not edited. Original BC/unselected CFTs and upstream UI remain unchanged.
+Matched control is the same 6217 ordinary NVN ASTC4 source set. New composition
+remains game_acceptance=false/deploy_allowed=false until separate real-game
+validation, regardless of fixture or all-batch hostcopy success. No device access.
