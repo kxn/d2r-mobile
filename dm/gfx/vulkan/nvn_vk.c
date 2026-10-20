@@ -329,6 +329,9 @@ typedef struct submit_resources {
   unsigned cached_gpu_access_count;
   cpu_write_range *cpu_writes;
   size_t cpu_write_count;
+#ifdef DM_VULKAN_SHARED_POOLS
+  size_t cpu_effect_write_count; // excludes GPU-written shared publication ranges
+#endif
   uint64_t queue_serial,readback_bytes;
   VkCommandBuffer uploads;
   queued_pool_upload *pool_uploads;
@@ -667,6 +670,11 @@ static int recording_cpu_write(uint64_t address, uint64_t size) {
     for (writeback_range *r = w->ranges; r; r = r->next)
       if (range_overlap(address, size, (uintptr_t)w->owner->guest + r->offset,
                          r->end - r->offset)) return 1;
+#ifdef DM_VULKAN_SHARED_POOLS
+  for(pool_writeback *w=recording_resources->shared_publishes;w;w=w->next)
+    for(writeback_range *r=w->ranges;r;r=r->next)
+      if(range_overlap(address,size,(uintptr_t)w->owner->guest+r->offset,r->end-r->offset))return 1;
+#endif
   for (vk_effect *e = V.effects; e; e = e->next)
     if (e->dst && range_overlap(address, size, (uintptr_t)e->dst, e->size)) return 1;
   return 0;
@@ -2889,10 +2897,72 @@ static void sync_used_changed_pages(const void *memory,size_t length,void *conte
     offset+=size;length-=size;
   }
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+#ifdef DM_VULKAN_TEST_EMBED
+static pthread_mutex_t shared_dependency_test_mu=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t shared_dependency_test_cv=PTHREAD_COND_INITIALIZER;
+static int shared_dependency_test_armed,shared_dependency_test_force_cache;
+static uint64_t shared_dependency_test_observed;
+void vk_test_shared_dependency_arm(int force_cache) {
+  pthread_mutex_lock(&shared_dependency_test_mu);
+  shared_dependency_test_armed=1;shared_dependency_test_observed=0;
+  shared_dependency_test_force_cache=force_cache;
+  pthread_mutex_unlock(&shared_dependency_test_mu);
+}
+uint64_t vk_test_shared_dependency_observed(void) {
+  pthread_mutex_lock(&shared_dependency_test_mu);
+  while(!shared_dependency_test_observed)
+    pthread_cond_wait(&shared_dependency_test_cv,&shared_dependency_test_mu);
+  uint64_t v=shared_dependency_test_observed;
+  pthread_mutex_unlock(&shared_dependency_test_mu);return v;
+}
+#endif
+// Host cache maintenance / CPU effects need a CPU phase between overlapping
+// GPU users. Preserve asynchronous submission for nonoverlapping ranges.
+// Call only on the translation owner, outside resource and queue locks.
+static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes) {
+  int cache=!(p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+#ifdef DM_VULKAN_TEST_EMBED
+  if(shared_dependency_test_force_cache)cache=1; // tests admission only, not NC Vk cache calls
+#endif
+  uint64_t lo=offset,hi=offset+bytes;
+  if(cache) {
+    uint64_t atom=V.props.limits.nonCoherentAtomSize;
+    if(!atom || (atom&(atom-1)) || hi>UINT64_MAX-(atom-1))die("Shared host phase atom");
+    lo&=~(atom-1);hi=(hi+atom-1)&~(atom-1);
+    if(hi>p->size)die("Shared host phase exceeds allocation");
+  }
+  uint64_t serial=0,base=(uintptr_t)p->guest;
+  pthread_mutex_lock(&completion_mu);
+  for(submission *s=pending;s;s=s->next) {
+    int conflict=0;
+    // Stable snapshots remain valid until pending removal, after callbacks.
+    for(size_t k=0;k<s->resources->cpu_effect_write_count;k++) {
+      const cpu_write_range *e=&s->resources->cpu_writes[k];
+      if(range_overlap(base+lo,hi-lo,e->address,e->size)){conflict=1;break;}
+    }
+    if(cache && !conflict)for(pool_gpu_access *u=s->resources->gpu_accesses;u;u=u->next)
+      if(u->owner==p && bitmap_overlaps(u->pages,lo,hi-lo)){conflict=1;break;}
+    if(conflict)serial=s->queue_serial;
+  }
+  pthread_mutex_unlock(&completion_mu);
+  if(serial) {
+#ifdef DM_VULKAN_TEST_EMBED
+    pthread_mutex_lock(&shared_dependency_test_mu);
+    if(shared_dependency_test_armed) {shared_dependency_test_armed=0;shared_dependency_test_observed=serial;
+      pthread_cond_broadcast(&shared_dependency_test_cv);}
+    pthread_mutex_unlock(&shared_dependency_test_mu);
+#endif
+    vk_internal_wait(serial); // true GPU + CPU effects, not a full-queue drain
+  }
+}
+#endif
 static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(p->shared) {uint64_t off=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
-    if(limit>p->size)limit=p->size;shared_cache(&p->whole.buffer,off,limit-off,0);return;}
+    if(limit>p->size)limit=p->size;
+    shared_access_host_phase(p,off,limit-off);
+    shared_cache(&p->whole.buffer,off,limit-off,0);return;}
 #endif
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
   if(limit>p->size) limit=p->size;
@@ -3397,6 +3467,7 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   for (vk_effect *e = s->effects; e; e = e->next)
     if (e->dst && e->size) r->cpu_write_count++;
 #ifdef DM_VULKAN_SHARED_POOLS
+  r->cpu_effect_write_count=r->cpu_write_count;
   for(pool_writeback *w=r->shared_publishes;w;w=w->next)
     for(writeback_range *range=w->ranges;range;range=range->next)r->cpu_write_count++;
 #endif
@@ -3413,6 +3484,19 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
         r->cpu_writes[i++]=(cpu_write_range){(uintptr_t)w->owner->guest+range->offset,range->end-range->offset};
 #endif
   }
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active)for(size_t k=0;k<r->cpu_effect_write_count;k++) {
+    const cpu_write_range *e=&r->cpu_writes[k];
+    for(pool_gpu_access *u=r->gpu_accesses;u;u=u->next) {
+      pool *p=u->owner;if(!p->shared)continue;
+      uint64_t base=(uintptr_t)p->guest,lo=e->address>base?e->address:base;
+      uint64_t hi=e->size<=UINT64_MAX-e->address?e->address+e->size:UINT64_MAX;
+      if(hi>base+p->size)hi=base+p->size;
+      if(lo<hi && bitmap_overlaps(u->pages,lo-base,hi-lo))
+        die("Fixed shared CPU effect overlaps same-recording GPU page; GPU-ordered effect not implemented");
+    }
+  }
+#endif
   VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
                      .waitSemaphoreCount = wait != VK_NULL_HANDLE,
                      .pWaitSemaphores = wait ? &wait : NULL,
