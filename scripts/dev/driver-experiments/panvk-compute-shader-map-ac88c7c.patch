@@ -1,0 +1,78 @@
+diff --git a/src/panfrost/vulkan/panvk_instance.c b/src/panfrost/vulkan/panvk_instance.c
+index 73688dc..ca438b2 100644
+--- a/src/panfrost/vulkan/panvk_instance.c
++++ b/src/panfrost/vulkan/panvk_instance.c
+@@ -42,6 +42,7 @@ static const struct debug_control panvk_debug_options[] = {
+    {"nir", PANVK_DEBUG_NIR},
+    {"trace", PANVK_DEBUG_TRACE},
+    {"trace_failure_only", PANVK_DEBUG_TRACE_FAILURE_ONLY},
++   {"shader_map", PANVK_DEBUG_SHADER_MAP},
+    {"sync", PANVK_DEBUG_SYNC},
+    {"noafbc", PANVK_DEBUG_NO_AFBC},
+    {"linear", PANVK_DEBUG_LINEAR},
+diff --git a/src/panfrost/vulkan/panvk_instance.h b/src/panfrost/vulkan/panvk_instance.h
+index 63589bf..473ede7 100644
+--- a/src/panfrost/vulkan/panvk_instance.h
++++ b/src/panfrost/vulkan/panvk_instance.h
+@@ -40,6 +40,7 @@ enum panvk_debug_flags {
+    PANVK_DEBUG_NO_BC_ZEROINIT = 1 << 22,
+    PANVK_DEBUG_BC_TRACE = 1 << 23,
+    PANVK_DEBUG_TRACE_FAILURE_ONLY = 1 << 24,
++   PANVK_DEBUG_SHADER_MAP = 1 << 25,
+ };
+ 
+ extern uint64_t panvk_debug;
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index a5d287d..312e9d7 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1217,6 +1217,30 @@ panvk_lower_gs_nir_io(nir_shader *nir)
+       NIR_PASS(_, nir, nir_io_add_intrinsic_xfb_info);
+ }
+ 
++/* Optional pipeline identity metadata. Never a per-dispatch capture or timer.
++ * Cached binaries still get an upload identity, without inventing a NIR name. */
++static void
++panvk_debug_compute_shader_map(const struct panvk_shader_variant *shader,
++                                const char *phase, const char *nir_name,
++                                uint64_t spd)
++{
++   if (!PANVK_DEBUG(SHADER_MAP) ||
++       shader->info.stage != MESA_SHADER_COMPUTE ||
++       !shader->bin_ptr || !shader->bin_size)
++      return;
++
++   blake3_hash hash;
++   char hex[BLAKE3_HEX_LEN];
++   _mesa_blake3_compute(shader->bin_ptr, shader->bin_size, hash);
++   _mesa_blake3_format(hex, hash);
++   mesa_logi("compute_shader_map: phase=%s binary_blake3=%s bytes=%u "
++              "local=%ux%ux%u spd=0x%llx nir_name=%.160s",
++              phase, hex, shader->bin_size,
++              shader->cs.local_size.x, shader->cs.local_size.y,
++              shader->cs.local_size.z, (unsigned long long)spd,
++              nir_name ? nir_name : "<unknown/cache-or-upload>");
++}
++
+ static VkResult
+ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
+                   VkShaderCreateFlagsEXT shader_flags,
+@@ -1369,6 +1393,7 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
+       break;
+    }
+ 
++   panvk_debug_compute_shader_map(shader, "compile", nir->info.name, 0);
+    return VK_SUCCESS;
+ }
+ 
+@@ -1537,6 +1562,10 @@ panvk_shader_upload(struct panvk_device *dev,
+    }
+ #endif
+ 
++#if PAN_ARCH >= 9
++   panvk_debug_compute_shader_map(shader, "upload", NULL,
++                                  panvk_priv_mem_dev_addr(shader->spd));
++#endif
+    return VK_SUCCESS;
+ }
+ 

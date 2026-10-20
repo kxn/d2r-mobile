@@ -9,9 +9,9 @@ R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
-READY=R/'.local/logs/panvk-failed-trace-debug-token-v1-source-ready-agent.json'
-READY_SHA='78dfe83e095292150ee398d39d606001bdfa714b2be3c76344ff18a2a899d00c'
-DRIVER_SHA='133bfcaf739b2af3806f0b6d6452e0f426ac8b82d7c336d1902816cfdec63071'
+READY=R/'.local/logs/panvk-compute-shader-map-v1-source-ready-agent.json'
+READY_SHA='c918c3cfdd02b2796013330d77dbeccb072a781121f88cbf26da5db6635592c5'
+DRIVER_SHA='4e7b29e71cb4b205b55929f58c88e3d6521b19c02e0c0a2372b0672d5648a9e0'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
 LOCK='files/runtime/.astc6-full-controller-lock'
@@ -20,7 +20,7 @@ RESOURCE_READY=R/'.local/build/panvk-minegraph-original-bc-control-v5/compositio
 RESOURCE_SHA='41ce2605b2150669081aa1978094d1296168d4c95c88c2bb0b21c7e6ff970e13'
 DUMP_DIR='files/runtime/temp/pandecode'
 DUMP_PREFIX='/data/data/'+PKG+'/files/runtime/temp/pandecode/cs'
-PROPERTIES={'debug.mesa.panvk.debug':'startup,trace,kbase_diag,trace_failure_only','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
+PROPERTIES={'debug.mesa.panvk.debug':'startup,trace,kbase_diag,trace_failure_only,shader_map','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
 DUMP_SOFT_LIMIT=256*1024*1024
 LAYER_KEYS=['enable_gpu_debug_layers','gpu_debug_app','gpu_debug_layers','gpu_debug_layers_gles','gpu_debug_layer_app']
 # Same existing inventory/CAS checks; preserve real Diablo II paths containing spaces.
@@ -50,11 +50,11 @@ def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':
 def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
  require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
- require(d['diagnostic_only'] and d['only_delta_from_parent_c465_source']==['src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c','src/panfrost/vulkan/panvk_instance.c','src/panfrost/vulkan/panvk_instance.h'],'not exact bounded TRACE configuration successor')
+ require(d['diagnostic_only'] and d['only_delta_from_parent_d149_source']==['src/panfrost/vulkan/panvk_instance.c','src/panfrost/vulkan/panvk_instance.h','src/panfrost/vulkan/panvk_vX_shader.c'],'not exact compute shader identity metadata successor')
  require('libhardware.so'not in d['needed'],'not static HAL platform candidate')
- require(d['local_source_revision']=='d14928d7b949fef17e4f46c25daeda50d4c0625d','wrong frozen source')
- require(d['parent_ready']['sha256']=='b918ae25d6bbb88ff04de82b046bcea26b6ec8be1a7dc2d7f5cda000f774e68c','wrong reviewed bounded tracer parent')
- for row in [d['parent_ready'],d['source_protocol_proof'],*d['debug_token_guard_evidence'],*d['host_parser_guard_evidence'],*d['token_build_evidence']]:require(sha(row['path'])==row['sha256'],'TRACE provenance changed: '+row['path'])
+ require(d['local_source_revision']=='ac88c7ccbe9d31d46483ed8ddd3a7d9df54c1f73','wrong frozen source')
+ require(d['parent_ready']['sha256']=='78dfe83e095292150ee398d39d606001bdfa714b2be3c76344ff18a2a899d00c','wrong reviewed bounded tracer parent')
+ for row in [d['parent_ready'],d['source_protocol_proof'],*d['debug_token_guard_evidence'],*d['host_parser_guard_evidence'],*d['token_build_evidence'],*d['shader_map_guard_evidence'],*d['shader_map_build_evidence'],*d['shader_map_host_libraries']]:require(sha(row['path'])==row['sha256'],'TRACE provenance changed: '+row['path'])
  for key in ['source_identity','build_only_adaptation','generated_version','host_codegen','ELF','driver']:
   r=d[key];require(sha(r['path'])==r['sha256'],'driver provenance changed: '+key)
  require(d['driver']['sha256']==DRIVER_SHA and set(d['ICD_exports_verified'])=={'HMI','vk_icdGetInstanceProcAddr','vk_icdGetPhysicalDeviceProcAddr','vk_icdNegotiateLoaderICDInterfaceVersion'},'wrong ICD')
@@ -158,7 +158,7 @@ def native_log_text(dev,*args):
 
 def failure_only_banner(native):
  matches=re.findall(r'^\[MESA-PANVK\] panvk_debug: ([^\n]+)$',native,re.M)
- return bool(matches) and all(set(v.split('|'))=={'startup','trace','kbase_diag','trace_failure_only'}for v in matches)
+ return bool(matches) and all(set(v.split('|'))=={'startup','trace','kbase_diag','trace_failure_only','shader_map'}for v in matches)
 
 def activity_stopped(activities,pid):
  # Exact target record only; whitespace never consumes the next line/block.
@@ -185,7 +185,8 @@ def launch_once(dev,path,d,out):
   now=current()
   if now:
    try:old.claim_pid(d,now,own)
-   except RuntimeError:ambiguous=True;raise
+   except RuntimeError:
+    ambiguous=True;d['ownership_failed_raw_pidof']=now;d['ownership_failed_first_PID']=own;journal(path,d);raise
    if own is None:
     own=now;d['first_PID']=int(own);uid=dev.app('id','-u');status=dev.app('cat','/proc/'+own+'/status');(out/'first-status.txt').write_text(status)
     u=re.search(r'^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',status,re.M)
@@ -248,6 +249,7 @@ def launch_once(dev,path,d,out):
   if d.get('native_failure_seen')or ambiguous:
    deadline=time.monotonic()+30
    while now and time.monotonic()<deadline:time.sleep(.3);now=current()
+  d['raw_pidof_after_bounded_exit_wait']=now;journal(path,d)
   if now:
    require(not ambiguous and own and now==own,'unowned/replacement PID: preserve transaction')
    cmd=[sys.executable,str(R/'scripts/dev/android-game-background-save.py'),'--serial',d['serial'],'--report',str(out/'fresh-save.json')]
@@ -310,7 +312,7 @@ def clean(dev,path,d):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE bounded existing PanVK TRACE_FAILURE_ONLY+kbase_diag diagnostic original022 originalBC; no DUMP, no resources decode, incomplete conservative earlier prefix only; NOT live PC/GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'ONE bounded existing PanVK TRACE_FAILURE_ONLY+kbase_diag+compute shader_map diagnostic original022 originalBC; no DUMP, no resources decode, incomplete conservative earlier prefix only; NOT live PC/GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
