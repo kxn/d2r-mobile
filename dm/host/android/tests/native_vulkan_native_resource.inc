@@ -57,7 +57,13 @@ static void nr_tail_compare(NVNtexture *tail,unsigned first,NVNtexture *native,N
     nr_draw(native,level,output,expected);nr_draw(tail,level-first,output,actual);CHECK(!memcmp(actual,expected,sizeof actual));
   }
 }
+#ifdef DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE
+#include "native_vulkan_native_previous_astc.inc"
+#include "native_vulkan_native_resident_astc.inc"
+#endif
 static int native_resource_gpu_test(const char *directory) {
+  unsigned resident_added=0;
+  int resident_test=getenv("DM_NATIVE_RESIDENT_OWNER_ASTC_FIXTURE")!=NULL;
   enum {pool_bytes=4<<20,native_offset=(1<<20)+8192,reference_offset=2<<20,
     linear_offset=3<<20,vertex_offset=(3<<20)+(256<<10),output_offset=(3<<20)+(320<<10),
     alias_offset=(3<<20)+(384<<10)};
@@ -105,7 +111,8 @@ static int native_resource_gpu_test(const char *directory) {
   memcpy(storage+linear_offset,linear,linear_size);
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);
   CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);CALL(nvnMemoryPoolBuilderSetStorage,&mb,storage,pool_bytes);
-  CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CALL(nvnMemoryPoolBuilderSetFlags,&mb,(resident_test?NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED:
+    NVN_MEMORY_POOL_FLAGS_CPU_CACHED)|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));
   NVNtexture native,reference,output;
   for(unsigned n=0;n<3;n++) {
@@ -161,7 +168,32 @@ static int native_resource_gpu_test(const char *directory) {
     uint64_t serial=((const tex_t *)&native)->serial;
     vk_test_texture_native_binding(serial,&original,&original_offset);
     vk_pool_span_info before,after;
+    unsigned image_only_begin=checks;
+    extern int vk_test_pool_has_buffer_intersection(uint64_t,uint64_t);
+    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_CROSSING &&
+      vk_test_pool_has_buffer_intersection((uintptr_t)storage+native_offset,payload_size)==0);
+    CHECK(!vk_pool_shared_materialized((uintptr_t)storage+native_offset,payload_size));
+    // CPU production is legal only after the original synchronous GPU uses.
+    // Same-value prepare/publication still exercises the real invalidation
+    // and actual native VkMemory cache path with no ordinary Buffer coverage.
+    CALL(nvnMemoryPoolInvalidateMappedRange,&pool,native_offset,payload_size);
+    dm_guest_write_prepare(storage+native_offset,payload_size);
+    memcpy(storage+native_offset,payload,payload_size);
+    CALL(nvnMemoryPoolFlushMappedRange,&pool,native_offset,payload_size);
+    nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
+    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_CROSSING &&
+      vk_test_pool_has_buffer_intersection((uintptr_t)storage+native_offset,payload_size)==0);
+    // First actual VkBuffer consumer: reuse the original GPU copy helper,
+    // rather than using an address-only lookup as a proxy for consumption.
+    uint8_t *opaque_read=malloc(payload_size);CHECK(opaque_read);
+    mtl_sub_begin();vk_pool_requirement buffer_read={(uintptr_t)storage+native_offset,payload_size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+    int first_buffer=vk_pool_operation_begin_ranges(&buffer_read,1);
+    pool_window_read(storage+native_offset,payload_size,opaque_read);
+    vk_pool_operation_end(first_buffer);vk_internal_wait(vk_internal_commit());
+    CHECK(!memcmp(opaque_read,payload,payload_size));free(opaque_read);
     CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_SINGLE);
+    CHECK(vk_pool_shared_materialized((uintptr_t)storage+native_offset,payload_size));
+    printf("{\"test\":\"native-image-only-original-NVN\",\"result\":\"passed\",\"checks_added\":%u,\"actual_ASTC_GPU\":true,\"mips\":9,\"sample_and_ReadTexels_without_Buffer\":true,\"CPU_same_value_without_Buffer\":true,\"late_real_Buffer_copy_payload_exact\":true,\"late_materialized_only\":true}\n",checks-image_only_begin);
     for(unsigned pass=0;pass<2;pass++) {
       mtl_sub_begin();vk_pool_requirement cross={(uintptr_t)storage+native_offset-(pass?98304:32768),
         payload_size+(pass?196608:65536),0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
@@ -257,12 +289,20 @@ static int native_resource_gpu_test(const char *directory) {
   CALL(nvnCommandBufferCopyBufferToTexture,&cmd,(uintptr_t)storage+linear_offset+top->offset,&reference,&thumbnail,&thumbnail_region,0);
   CALL(nvnCommandBufferCopyTextureToTexture,&cmd,&reference,&thumbnail,&thumbnail_region,&native,&thumbnail,&thumbnail_region,0);
   submit(end());nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
+  if(resident_test)resident_added=nr_resident_astc(&native,&reference,&output,&pool,storage,input,linear,
+    native_offset,payload_size,linear_offset,alias_offset,&S);
   // Read original canonical native bytes through a linear NVN alias.
   CALL(nvnCommandBufferBeginRecording,&cmd);CALL(nvnCommandBufferCopyBufferToBuffer,&cmd,
     (uintptr_t)storage+native_offset,(uintptr_t)storage+alias_offset,4096,0);submit(end());
   CHECK(!memcmp(storage+alias_offset,storage+native_offset,4096));
   CHECK(!memcmp(storage+native_offset-64,(uint8_t[64]){[0 ... 63]=0xa5},64));
   CHECK(!memcmp(storage+native_offset+payload_size,(uint8_t[64]){[0 ... 63]=0xa5},64));
+#ifdef DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE
+  if(getenv("DM_NATIVE_PREVIOUS_WRITER_ASTC_FIXTURE")) {
+    nr_previous_writer_astc(&native,&reference,&output,&pool,storage,input,linear,native_offset,
+      payload_size,linear_offset,vertex_offset,alias_offset,&S);
+  }
+#endif
   uint64_t native_import_count,native_import_bytes,native_metadata_bytes;
   vk_native_allocation_stats(&native_import_count,&native_import_bytes,&native_metadata_bytes);
   CHECK(native_import_count==1 && native_import_bytes>=payload_size && native_import_bytes<=payload_size+65536);
@@ -278,7 +318,7 @@ static int native_resource_gpu_test(const char *directory) {
     (unsigned long long)native_import_count,(unsigned long long)native_import_bytes,(unsigned long long)native_metadata_bytes,window_fixture?"true":"false");
   free(payload);free(linear);CHECK(vk_validation_error_count()==0);
   printf("{\"test\":\"native-resource-original-NVN\",\"checks\":%u,\"format\":%u,\"mips\":%u,\"family_version\":%u,\"tail_levels\":%u,\"memory_flags\":%u,\"atom\":%llu,\"native_offset\":%u,\"pool_bytes\":%u,\"no_pool_shadow\":true,\"full_all_mips\":true,\"tail_packaged_and_B2T\":%s,\"shared_gpu_gate\":%s,\"default_enabled\":false,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
-    checks,entry.recipe.format,entry.recipe.levels,header.version,has_tail?entry.recipe.levels-family.thumbnail_mip:0,
+    checks-resident_added,entry.recipe.format,entry.recipe.levels,header.version,has_tail?entry.recipe.levels-family.thumbnail_mip:0,
     properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,native_offset,pool_bytes,
     has_tail?"true":"false",vk_pool_shared_gpu_gate_mode()?"true":"false");return 0;
 }
