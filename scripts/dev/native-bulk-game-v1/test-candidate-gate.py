@@ -24,10 +24,10 @@ def pinned(row):
 
 class Gate(unittest.TestCase):
  def config(self):
-  p=read(R/'.local/build/native-candidate-short-80a-v1/inputs-DRAFT.json')
+  p=read(R/'.local/build/native-candidate-short-ed-v1/inputs-DRAFT.json')
   p['phases'][1]['composition_data']=read(pinned(p['phases'][1]['composition']))
   return p
- def test_actual_reviewed80a_26b_and6f_refs_are_accepted(self):
+ def test_actual_reviewed_ed_80a_and6f_refs_are_accepted(self):
   g.validate(self.config(),pinned,read,require)
  def test_wrong_runtime_provider_window_or_selection_rejected(self):
   for key,value in [('runtime_commit',g.BASE),('driver',{'sha256':'0'*64}),('pool_window_bytes',16777216)]:
@@ -73,7 +73,7 @@ class Gate(unittest.TestCase):
    with self.subTest(key=key):
     with self.assertRaises(RuntimeError):g.validate(p,pinned,altered,require)
  def test_actual_predecessor_phase_must_be_complete(self):
-  p=self.config();actual=R/'.local/logs/native-candidate-short-26b-Q735-v1/result.json'
+  p=self.config();actual=R/'.local/logs/native-candidate-short-80a-Q735-v1/result.json'
   for key,value in [('original_route_completed',2),('fresh_save_then_stopped',False),('official_performance_complete',False),('game_modules_executed',False)]:
    def altered(path):
     data=read(path)
@@ -91,8 +91,8 @@ class Gate(unittest.TestCase):
    with self.subTest(key=key):
     with self.assertRaises(RuntimeError):g.validate(p,pinned,altered,require)
  def test_qualified_predecessor_does_not_fake_stable_performance(self):
-  p=self.config();q=R/'.local/logs/native-candidate-short-26b-Q735-v1/result.json'
-  self.assertFalse(read(q)['phases'][0]['performance_stable_target60_PSO_variants_all_windows'])
+  p=self.config();q=R/'.local/logs/native-candidate-short-80a-Q735-v1/result.json'
+  self.assertTrue(read(q)['phases'][0]['performance_stable_target60_PSO_variants_all_windows'])
   g.validate(p,pinned,read,require)
 
 if __name__=='__main__':unittest.main(verbosity=2)

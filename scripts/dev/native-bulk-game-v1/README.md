@@ -275,3 +275,13 @@ not a matched performance/thermal baseline. Original shared window1MiB,
 f830,6217,.60,2750×1260 and6dir CAS restore are unchanged. DRAFT false and
 no device operation during preparation; root publishes a separate ROOT input.
 This does not enable ADPF, SDP, LLDB or any additional timing/sampling path.
+
+
+### ed2c139 私有图像预算候选短验证
+
+本工具后继只将严格 candidate gate 更新为已核的 ed2c139 canonical/raw、实际80a
+短验证和已有6f真 paired 证据。仍只执行 native 一阶段、原三点路线和现成官方
+CPU工具，保持原 six-dir CAS、fresh save2/停止/原包恢复，不加LLDB/SDP或测量器。
+现成 game-state 的 private_image_cache 字段及官方 meminfo 用于区分私有总分配、
+CPU可重建子集及真正预算释放；累计 allocation 释放不等于同量PSS减少。512MiB
+仍是待实际工作集审查的参数，不先认定默认最优、6GB可玩或有净涨帧。
