@@ -760,7 +760,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeNativeIm
   const char *path=(*env)->GetStringUTFChars(env,directory,NULL);
   const char *kind=(*env)->GetStringUTFChars(env,mode,NULL);
   if(!path || !kind) die("Native image fixture strings unavailable");
-  if(strcmp(kind,"--resource-bake"))
+  if(strcmp(kind,"--resource-bake") && strcmp(kind,"--resource-bake-batch"))
     die("Native image fixture mode invalid");
   char output[4096];
   if(snprintf(output,sizeof output,"%s/native-image-test.log",path)>=(int)sizeof output)

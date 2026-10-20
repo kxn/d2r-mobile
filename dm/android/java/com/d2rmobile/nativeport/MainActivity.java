@@ -242,7 +242,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     getIntent().getBooleanExtra("vulkan_test_validation", true))
                 throw new IllegalArgumentException("Native image requires exclusive cold Turnip test, explicit validation=false and run_game=false");
             String imageMode = getIntent().getStringExtra("native_image_mode");
-            if (!"--resource-bake".equals(imageMode))
+            if (!"--resource-bake".equals(imageMode) && !"--resource-bake-batch".equals(imageMode))
                 throw new IllegalArgumentException("Unknown native image fixture mode");
             new Thread(() -> nativeNativeImageTest(root.getAbsolutePath(), imageMode, false),
                     "owned-native-image").start();

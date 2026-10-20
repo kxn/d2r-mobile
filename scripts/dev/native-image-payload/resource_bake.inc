@@ -183,9 +183,18 @@ static void resource_native_header(dm_resource_native *o,
         slices[n].array_pitch, slices[n].depth_pitch};
   }
 }
-static void resource_bake(const char *directory) {
+static dm_resource_native resource_bake(const char *directory,
+                                         const uint8_t *expected_input,
+                                         const uint8_t *expected_declaration) {
   resource_input r = resource_open(directory);
   const dm_resource_input *h = r.header;
+  if (expected_input) {
+    uint8_t actual[32];
+    native_sha(r.data, r.bytes, actual);
+    CHECK(!memcmp(actual, expected_input, 32));
+    CHECK(expected_declaration &&
+          !memcmp(h->declaration_sha256, expected_declaration, 32));
+  }
   VkPhysicalDeviceExternalImageFormatInfo external = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
       .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
@@ -385,4 +394,5 @@ static void resource_bake(const char *directory) {
   free(payload);
   destroy_image(&i);
   resource_close(&r);
+  return wire;
 }

@@ -869,6 +869,7 @@ static void restore(const char *directory, VkFormat format) {
 #ifdef DM_NATIVE_IMPORTED_IMAGE
 #include "native_import.inc"
 #include "resource_bake.inc"
+#include "resource_batch.inc"
 #endif
 static int fixture_main(int argc, char **argv) {
   uint16_t endian = 1;
@@ -879,13 +880,22 @@ static int fixture_main(int argc, char **argv) {
          || !strcmp(argv[1], "--native-bake") ||
          !strcmp(argv[1], "--native-import") ||
          !strcmp(argv[1], "--resource-bake") ||
+         !strcmp(argv[1], "--resource-bake-batch") ||
+         !strcmp(argv[1], "--verify-resource-batch") ||
          !strcmp(argv[1], "--verify-resource-input")
 #endif
              ));
 #ifdef DM_NATIVE_IMPORTED_IMAGE
   native_mode = !strcmp(argv[1], "--native-bake") ||
                 !strcmp(argv[1], "--native-import") ||
-                !strcmp(argv[1], "--resource-bake");
+                !strcmp(argv[1], "--resource-bake") ||
+                !strcmp(argv[1], "--resource-bake-batch");
+  if (!strcmp(argv[1], "--verify-resource-batch")) {
+    resource_batch(argv[2], 0);
+    printf("{\"test\":\"native-resource-batch-input\",\"result\":\"passed\","
+           "\"checks\":%u,\"GPU_executed\":false}\n", checks);
+    return 0;
+  }
   if (!strcmp(argv[1], "--verify-resource-input")) {
     resource_input r = resource_open(argv[2]);
     resource_close(&r);
@@ -914,8 +924,10 @@ static int fixture_main(int argc, char **argv) {
   };
   unsigned used = 0;
 #ifdef DM_NATIVE_IMPORTED_IMAGE
-  if (!strcmp(argv[1], "--resource-bake")) {
-    resource_bake(argv[2]);
+  if (!strcmp(argv[1], "--resource-bake-batch")) {
+    used = resource_batch(argv[2], 1);
+  } else if (!strcmp(argv[1], "--resource-bake")) {
+    resource_bake(argv[2], NULL, NULL);
     used = 1;
   } else
 #endif
