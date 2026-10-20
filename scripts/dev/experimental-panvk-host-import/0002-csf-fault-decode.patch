@@ -1,0 +1,180 @@
+--- a/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/csf/panvk_vX_gpu_queue.c
+@@ -53,6 +53,8 @@
+  * retain a snapshot of those seqnos and only wait when the application asks
+  * for completion; ordinary queue submission remains asynchronous.
+  */
++
++#include "panvk_kbase_diag_ring.h"
+ 
+ #define KBASE_RINGBUF_SIZE     (64 * 1024)
+ /* Worst-case size of one ring entry, in bytes. Diagnostic breadcrumbs add a
+@@ -108,6 +110,33 @@
+    }
+ 
+    return threshold;
++}
++
++/* The firmware cursors are monotonic; pandecode needs bounded physical
++ * ranges. Split only the diagnostic view at wrap, never the actual ring. */
++static void
++kbase_decode_ring_range(struct panvk_gpu_queue *queue,
++                         struct panvk_subqueue *subq,
++                         uint64_t begin, uint64_t end)
++{
++   struct panvk_device *dev = to_panvk_device(queue->vk.base.device);
++   struct panvk_physical_device *phys_dev =
++      to_panvk_physical_device(dev->vk.physical);
++   struct panvk_kbase_diag_segment segments[2];
++   unsigned count = panvk_kbase_diag_ring_segments(
++      subq->kbase.ringbuf_dev, KBASE_RINGBUF_SIZE, begin, end, segments);
++   if (!count) {
++      mesa_loge("kbase: skipping invalid diagnostic ring range %" PRIu64
++                "..%" PRIu64, begin, end);
++      return;
++   }
++   for (unsigned i = 0; i < count; i++) {
++      mesa_logi("kbase: diagnostic CS segment %u/%u gpu_va 0x%" PRIx64
++                " size %u (cursors %" PRIu64 "..%" PRIu64 ")",
++                i + 1, count, segments[i].address, segments[i].size, begin, end);
++      pandecode_cs_binary(dev->debug.decode_ctx, segments[i].address,
++                           segments[i].size, phys_dev->kmod.dev->props.gpu_id);
++   }
+ }
+ 
+ static VkResult
+@@ -942,15 +971,17 @@
+             //    subq->kbase.ringbuf_cpu + offset, padded_size, stream_addr);
+             mesa_logi("kbase: csf timeout on subqueue %d @ job %lu / %lu: insert %lu (gpu_va: %lx), extract %lu (gpu_va: %lx)"
+                ", last_job_offset %u (gpu_va: %lx), last_last_job_offset %u (gpu_va: %lx)",
+-               subqueue, cell->seqno, target_seqno, insert, subq->kbase.ringbuf_dev + insert,
+-               extract, subq->kbase.ringbuf_dev + extract,
++               subqueue, cell->seqno, target_seqno, insert, subq->kbase.ringbuf_dev + insert % KBASE_RINGBUF_SIZE,
++               extract, subq->kbase.ringbuf_dev + extract % KBASE_RINGBUF_SIZE,
+                last_job_offset, subq->kbase.ringbuf_dev + last_job_offset,
+                last_last_job_offset, subq->kbase.ringbuf_dev + last_last_job_offset);
+-            struct panvk_physical_device *phys_dev = to_panvk_physical_device(dev->vk.physical);
+-            pandecode_cs_binary(dev->debug.decode_ctx,
+-                                 subq->kbase.ringbuf_dev + last_last_job_offset,
+-                                 insert - last_last_job_offset,
+-                                 phys_dev->kmod.dev->props.gpu_id);
++            uint64_t begin;
++            if (panvk_kbase_diag_tail_begin(insert, last_last_job_offset,
++                                             KBASE_RINGBUF_SIZE, &begin))
++               kbase_decode_ring_range(queue, subq, begin, insert);
++            else
++               mesa_loge("kbase: skipping invalid diagnostic last-job offset %u",
++                         last_last_job_offset);
+          }
+ 
+          return vk_queue_set_lost(&queue->vk,
+@@ -983,15 +1014,11 @@
+             //    subq->kbase.ringbuf_cpu + offset, padded_size, stream_addr);
+             mesa_logi("kbase: csf error/potential timeout (error=%d) on subqueue %d @ job %lu / %lu: insert %lu (gpu_va: %lx), extract %lu (gpu_va: %lx)"
+                ", last_job_offset %u (gpu_va: %lx), last_last_job_offset %u (gpu_va: %lx)",
+-               error_type, subqueue, cell->seqno, target_seqno, insert, subq->kbase.ringbuf_dev + insert,
+-               extract, subq->kbase.ringbuf_dev + extract,
++               error_type, subqueue, cell->seqno, target_seqno, insert, subq->kbase.ringbuf_dev + insert % KBASE_RINGBUF_SIZE,
++               extract, subq->kbase.ringbuf_dev + extract % KBASE_RINGBUF_SIZE,
+                last_job_offset, subq->kbase.ringbuf_dev + last_job_offset,
+                last_last_job_offset, subq->kbase.ringbuf_dev + last_last_job_offset);
+-            struct panvk_physical_device *phys_dev = to_panvk_physical_device(dev->vk.physical);
+-            pandecode_cs_binary(dev->debug.decode_ctx,
+-                                 subq->kbase.ringbuf_dev + extract,
+-                                 insert - extract,
+-                                 phys_dev->kmod.dev->props.gpu_id);
++            kbase_decode_ring_range(queue, subq, extract, insert);
+          }
+          prev_error_type = error_type;
+       }
+--- a/src/panfrost/genxml/decode_csf.c
++++ b/src/panfrost/genxml/decode_csf.c
+@@ -2399,6 +2399,19 @@
+       return cfg;
+    }
+ 
++   /* Diagnostic input may reference an unavailable or truncated mapping.
++    * Do not let the assert-only generic fetch dereference NULL in release
++    * builds, hiding the original GPU failure behind a decoder crash. */
++   const struct pandecode_mapped_memory *mem =
++      pandecode_find_mapped_gpu_mem_containing(ctx, bin);
++   if (!bin_size || (bin & 7) || (bin_size & 7) || !mem || !mem->addr ||
++       bin < mem->gpu_va || bin - mem->gpu_va > mem->length ||
++       bin_size > mem->length - (bin - mem->gpu_va)) {
++      pandecode_log(ctx, "// Cannot decode CS range 0x%" PRIx64
++                    "/%u: unavailable, unaligned or out-of-bounds mapping\n",
++                    bin, bin_size);
++      return NULL;
++   }
+    uint64_t *instrs = pandecode_fetch_gpu_mem(ctx, bin, bin_size);
+ 
+    cfg = rzalloc(symbols, struct cs_code_cfg);
+@@ -2593,7 +2606,8 @@
+    struct hash_table_u64 *symbols = _mesa_hash_table_u64_create(NULL);
+    struct cs_code_cfg *main_cfg = get_cs_cfg(ctx, symbols, bin, bin_size);
+ 
+-   print_cs_binary(ctx, bin, main_cfg, "main_cs");
++   if (main_cfg)
++      print_cs_binary(ctx, bin, main_cfg, "main_cs");
+    hash_table_u64_foreach(symbols, he)
+    {
+       struct cs_code_cfg *other_cfg = he.data;
+@@ -2606,6 +2620,7 @@
+    ralloc_free(symbols);
+ 
+    pandecode_map_read_write(ctx);
++   fflush(ctx->dump_stream);
+ }
+ 
+ void
+--- /dev/null
++++ b/src/panfrost/vulkan/csf/panvk_kbase_diag_ring.h
+@@ -0,0 +1,48 @@
++/* Diagnostic-only CS ring geometry. No queue/submission state is modified. */
++#ifndef PANVK_KBASE_DIAG_RING_H
++#define PANVK_KBASE_DIAG_RING_H
++#include <stdbool.h>
++#include <stdint.h>
++
++struct panvk_kbase_diag_segment {
++   uint64_t address;
++   uint32_t size;
++};
++
++static inline unsigned
++panvk_kbase_diag_ring_segments(uint64_t ring, uint32_t ring_size,
++                               uint64_t begin, uint64_t end,
++                               struct panvk_kbase_diag_segment out[2])
++{
++   if (!ring_size || (ring_size & (ring_size - 1)) ||
++       (ring_size & 7) || (ring & 7) || (begin & 7) || (end & 7) ||
++       ring > UINT64_MAX - ring_size || end < begin ||
++       end - begin > ring_size || end == begin)
++      return 0;
++
++   uint32_t offset = begin % ring_size;
++   uint32_t size = end - begin;
++   uint32_t first = size < ring_size - offset ? size : ring_size - offset;
++   out[0] = (struct panvk_kbase_diag_segment){ring + offset, first};
++   if (first == size)
++      return 1;
++   out[1] = (struct panvk_kbase_diag_segment){ring, size - first};
++   return 2;
++}
++
++/* A saved physical job offset names the last occurrence before insert. */
++static inline bool
++panvk_kbase_diag_tail_begin(uint64_t insert, uint32_t offset,
++                            uint32_t ring_size, uint64_t *begin)
++{
++   if (!ring_size || (ring_size & (ring_size - 1)) || offset >= ring_size)
++      return false;
++   uint32_t end_offset = insert % ring_size;
++   uint32_t size = end_offset >= offset ? end_offset - offset
++                                        : ring_size - offset + end_offset;
++   if (!size || size > insert)
++      return false;
++   *begin = insert - size;
++   return true;
++}
++#endif
