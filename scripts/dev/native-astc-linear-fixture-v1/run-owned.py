@@ -4,6 +4,7 @@ import argparse,hashlib,json,os,re,shlex,signal,subprocess,time,uuid,zipfile,tar
 from pathlib import Path
 from types import SimpleNamespace
 import owned_installer
+import readonly_inventory
 HOST=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeastclinearfixture';GAME='com.d2rmobile.nativeport'
 DRIVER='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce';LAYOUT='ab91c540847448360a44496b50045159';SHAPES=[[1,1,1],[5,7,3],[63,65,7],[64,64,7],[95,97,7],[128,128,8],[128,256,9],[256,256,9]];FORMATS={157,158,165,166}
 def require(c,m):
@@ -81,13 +82,18 @@ def exact_fixture():
  require(path.startswith('/')and '\n'not in path,'fixture APK location');require(ad('shell','sha256sum',path).split()[0]==sha(apk),'unclaimed fixture APK');return True
 def snapshot():
  require(not process(GAME),'original game running: preserve it');path=ad('shell','pm','path',GAME).removeprefix('package:');require(path.startswith('/')and '\n'not in path,'original APK location');require(ad('shell','sha256sum',path).split()[0]==baseline['APK_sha256'],'original APK drift');got={}
+ # Reuse the source-closed existing inventory with bounded file batches.
+ # Preserve every actual transport argv/output before its parser can reject it.
+ phase='before'if original_before is None else'after'
+ logpath=a.output/('inventory-'+phase+'.jsonl')
+ def app(*args):
+  command=readonly_inventory.app_command(GAME,args);raw=ad(*command)
+  with logpath.open('a')as report:report.write(json.dumps({'args':list(args),'ADB_service_argv':command,'stdout':raw},ensure_ascii=False)+'\n')
+  return raw
+ dev=SimpleNamespace(app=app)
  for folder,items in inventories.items():
-  if items is None:require(ad('shell','run-as',GAME,'test','!','-e',folder)=='','absent baseline path');continue
-  code='if test -d "$1"; then find "$1" -type f -exec sha256sum {} \\;; else exit 3; fi'
-  raw=ad('exec-out','run-as',GAME,'sh','-c',shlex.quote(code),'sh',shlex.quote(folder))
-  local={}
-  for line in raw.splitlines():
-   h,name=line.split(None,1);require(re.fullmatch('[0-9a-f]{64}',h),'inventory digest');local[name]=h
+  relative=readonly_inventory.inventory(dev,folder)
+  local=None if relative is None else{folder+'/'+name:h for name,h in relative.items()}
   require(local==items,'original inventory drift:'+folder);got[folder]=local
  require(ad('exec-out','run-as',GAME,'cat','files/runtime/shaders/.chain')==baseline['chain'],'original shader chain drift');return {'APK':baseline['APK_sha256'],'inventories':got,'chain':baseline['chain'],'PID_absent':True}
 def stopped():require(not process(GAME)and not process(PKG),'installer process precondition')

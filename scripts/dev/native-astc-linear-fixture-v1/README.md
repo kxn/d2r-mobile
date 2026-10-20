@@ -118,3 +118,24 @@ positive proof remains pending until actual new resource bake and table exist.
 The source-ready JSON provides concrete host paths/command arrays. Commands that
 consume an actual earlier result stay pending until that real record exists;
 they cannot be made ready by manufacturing an acceptance JSON.
+
+## Tools-only inventory successor
+
+The initial matrix controller failed before installation or launch. Its `exec-out`
+caller pre-quoted the `sh -c` body, while ADB already quotes each argument after
+the command name. The body therefore became a quoted command name. There was
+only one actual backslash in the `find -exec` delimiter; the earlier double-slash
+hypothesis was disproved by character inspection and local execution.
+
+The successor reuses the exact accepted directory inventory function: kind and
+symlink checks, `find` file list and batches of at most128 `sha256sum` paths. The
+transport sends one complete `shlex.join` command string to `exec-out`, with no
+additional arguments to quote twice. Every command/raw result is journaled before
+parsing. All original hashes and absence/empty distinctions remain exact.
+
+A host guard runs these actual complete command strings through `sh -c` and a
+minimal `run-as` exec stub against261 files, including `Diablo II`, spaces, an
+apostrophe and literal `$()`; it checks three hash batches, absent/empty/file and
+symlink cases, corruption refusal, reproduces the old double-quoting failure and
+proves that the original find body succeeds without pre-quoting. This is host
+transport evidence, not an Android result. APK/C/Java/SPIR-V/driver are unchanged.
