@@ -6,11 +6,11 @@ import hashlib,json,re,shlex,subprocess,time,uuid,xml.etree.ElementTree as ET
 UNRESOLVED=False
 
 def actions(xml):
- """Read only exact owned D2R ASTC Linear GPU Fixture installer UI; return at most one fresh action."""
+ """Read only exact owned D2R ASTC Filter GPU Fixture installer UI; return at most one fresh action."""
  try:tree=ET.fromstring(xml)
  except ET.ParseError:return []
  nodes=list(tree.iter('node'));pkg='com.android.packageinstaller'
- if not any(n.get('package')==pkg and n.get('text')=='D2R ASTC Linear GPU Fixture'for n in nodes):return []
+ if not any(n.get('package')==pkg and n.get('text')=='D2R ASTC Filter GPU Fixture'for n in nodes):return []
  def enabled(n):return n.get('enabled','true')=='true'
  acks=[n for n in nodes if n.get('package')==pkg and n.get('resource-id')==pkg+':id/deleted_file_state_cb'and n.get('text')=='已了解应用的风险检测结果'and enabled(n)]
  parents=[n for n in nodes if n.get('package')==pkg and n.get('resource-id')=='android:id/button1'and enabled(n)and(n.get('text')in('Install','安装','继续安装')or any(c.get('resource-id')==pkg+':id/vbutton_title'and c.get('text')=='继续安装'for c in n.iter('node')))]

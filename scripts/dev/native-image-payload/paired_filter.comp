@@ -1,0 +1,20 @@
+#version 450
+// Minimal dual-source extension of sample.comp. Both images use the same
+// sampler, UV and fractional LOD. No CPU decoder or filter reference.
+layout(local_size_x=8,local_size_y=8) in;
+layout(set=0,binding=0) uniform sampler2DArray native_image;
+layout(set=0,binding=1) uniform sampler2DArray private_image;
+layout(set=0,binding=2,std430) writeonly buffer Output { uint words[]; };
+layout(push_constant) uniform Parameters { uint width,height; float level,phase; } p;
+void main() {
+  uvec2 at=gl_GlobalInvocationID.xy;
+  if(at.x>=p.width || at.y>=p.height) return;
+  // Include fractional texel positions, edges and coordinates beyond the edge
+  // to exercise the identical CLAMP_TO_EDGE sampler on both image layouts.
+  vec2 uv=(vec2(at)-vec2(p.phase))/vec2(p.width-2,p.height-2);
+  uvec4 a=floatBitsToUint(textureLod(native_image,vec3(uv,0),p.level));
+  uvec4 b=floatBitsToUint(textureLod(private_image,vec3(uv,0),p.level));
+  uint n=(at.y*p.width+at.x)*9;
+  for(uint c=0;c<4;c++){words[n+c]=a[c];words[n+4+c]=b[c];}
+  words[n+8]=0xf17e0000u+(at.y*p.width+at.x);
+}

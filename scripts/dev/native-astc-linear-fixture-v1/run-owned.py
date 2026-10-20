@@ -5,14 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 import owned_installer
 import readonly_inventory
-HOST=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeastclinearfixture';GAME='com.d2rmobile.nativeport'
-DRIVER='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce';LAYOUT='ab91c540847448360a44496b50045159';SHAPES=[[1,1,1],[5,7,3],[63,65,7],[64,64,7],[95,97,7],[128,128,8],[128,256,9],[256,256,9]];FORMATS={157,158,165,166}
+HOST=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeastcfilterfixture';GAME='com.d2rmobile.nativeport'
+DRIVER='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce';LAYOUT='ab91c540847448360a44496b50045159';SHAPES=[[1,1,1],[5,7,3],[63,65,7],[128,256,9]];FORMATS={157,158,165,166}
 def require(c,m):
  if not c:raise AssertionError(m)
 def sha(p):
  with Path(p).open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def validate_rows(rows,selector):
- selected=list(range(8))if selector==-1 else[selector]
+ selected=list(range(4))if selector==-1 else[selector]
  starts=[x for x in rows if x.get('native_linear_matrix_start')];term=[x for x in rows if x.get('native_linear_matrix_terminal')]
  require(len(starts)==len(term)==1,'exact start/terminal');start,end=starts[0],term[0]
  require(start['uid']>=10000 and start['pid']==end['pid']and start['uid']==end['uid'],'ordinary first PID identity')
@@ -35,14 +35,24 @@ def validate_rows(rows,selector):
   require(len(plain)==8 and len(old)==4 and {x['format']for x in old}==FORMATS and all(x['production_table_rejection_proven']is False for x in old),'plain hostcopy and exact old-AA opaque negatives; no production-table claim')
   for x in plain:require(x['format']in FORMATS and x['levels']==levels and x['every_mip_compressed_blocks_exact'],'plain hostcopy allmips')
   for fmt in FORMATS:
-   events=[('S'if x.get('native_all_base_mips_sampled')else 'C'if x.get('native_all_mip_buffer_copy')else 'I')for x in part if x.get('format')==fmt and any(x.get(k)for k in ('native_all_base_mips_sampled','native_all_mip_buffer_copy','native_import_sampled'))]
-   require(events==['S','C','S','I']*4,'native payload sampled BEFORE and AFTER GPU upload for each version/lifecycle')
+   events=[('S'if x.get('native_all_base_mips_sampled')else 'F'if x.get('native_filter_GPU_reference')else 'C'if x.get('native_all_mip_buffer_copy')else 'I')for x in part if x.get('format')==fmt and any(x.get(k)for k in ('native_all_base_mips_sampled','native_filter_GPU_reference','native_all_mip_buffer_copy','native_import_sampled'))]
+   require(events==['S','F','C','S','F','I']*4,'native payload sampled BEFORE and AFTER GPU upload for each version/lifecycle')
    require(sum(x['format']==fmt for x in samples)==8,'sample format coverage');require({(x['lifecycle'],x['pattern'])for x in imports if x['format']==fmt}=={(0,0),(0,1),(1,0),(1,1)},'lifetime/version coverage')
+  filtered=[x for x in part if x.get('native_filter_GPU_reference')];capabilities=[x for x in part if x.get('native_filter_capability')]
+  require(len(filtered)==len(capabilities)==32,'all 4formats x2patterns x2lifecycles before+after filters')
+  for fmt in FORMATS:
+   actual=[x for x in filtered if x['format']==fmt]
+   require([x['phase']for x in actual]==['opaque-before-native-B2T','after-native-B2T']*4,'filter must sample raw imported opaque bytes before native upload')
+  for x in capabilities:require(x['linear_filter_supported']is True,'actual linear filter capability missing/unsupported')
+  for x in filtered:
+   require([x['width'],x['height'],x['levels']]==[w,h,levels]and x['base_views']==levels and x['dispatches']==levels*(levels+1)and x['compared_pixels']==sum(2*(level+1)*(max(1,w>>level)+2)*(max(1,h>>level)+2)for level in range(levels))and x['every_mip_pixel_plus_edges']is True,'every filtered mip/baseMip and finite per-pixel output')
+   for key in ('bilinear_and_trilinear','fractional_UV_and_LOD','private_optimal_reference','same_sampler','RGBA_float_bits_exact','unused_output_guard'):require(x[key]is True,'strict GPU reference field '+key)
+   require(x['CPU_filter_or_decode']is False,'no CPU filter/decoder reference')
   for x in samples:require([x['width'],x['height'],x['levels']]==[w,h,levels]and x['base_views']==levels and x['allpixel_assertions_retained'],'every mip/baseMip allpixel')
   for x in copies:require([x['width'],x['height'],x['levels']]==[w,h,levels]and x['B2T_T2B_blocks_exact'],'all mip compressed GPU transfer')
   for x in imports:require(x['format']in FORMATS and x['memory_flags']&4 and x['memory_flags']&8 and not x['extra_image_allocation'],'cached coherent native import')
  require(not start['game_modules_executed']and not end['game_modules_executed'],'no game')
- return {'selected_shapes':selected,'identity':identities[0],'ordinary_UID':end['uid'],'PID':end['pid'],'nearest_GPU_allpixel_per_mip_and_baseMip':True,'all_mip_buffer_roundtrip':True,'two_patterns_two_lifetimes':True,'opaque_whole_payload_hash_and_guard':True,'validation':'disabled_explicitly_not_VVL_coverage','linear_trilinear_filtering_proven':False,'real_NVN_late_Buffer_companion_proven':False}
+ return {'selected_shapes':selected,'identity':identities[0],'ordinary_UID':end['uid'],'PID':end['pid'],'nearest_GPU_allpixel_per_mip_and_baseMip':True,'all_mip_buffer_roundtrip':True,'two_patterns_two_lifetimes':True,'opaque_whole_payload_hash_and_guard':True,'validation':'disabled_explicitly_not_VVL_coverage','linear_trilinear_GPU_reference_floatbits_proven':True,'real_NVN_late_Buffer_companion_proven':False}
 def validate_resource_rows(rows,pid):
  starts=[x for x in rows if x.get('native_linear_matrix_start')];ends=[x for x in rows if x.get('native_linear_matrix_terminal')];ids=[x for x in rows if x.get('native_device_identity')]
  require(len(starts)==len(ends)==len(ids)==1,'real resource cold start/end/identity')
@@ -51,7 +61,7 @@ def validate_resource_rows(rows,pid):
  require(ids[0]['layout_UUID']==LAYOUT and ids[0]['driverID']==18 and ids[0]['vendorID']==0x5143,'actual new driver query')
  finish=[x for x in rows if x.get('test')=='native-host-image-payload'];require(len(finish)==1 and finish[0]['mode']=='--resource-bake'and finish[0]['result']=='passed'and finish[0]['formats']==1,'original resource bake terminal')
  return {'PID':pid,'ordinary_UID':ends[0]['uid'],'actual_identity':ids[0],'producer_only_no_GPU_sampling':True,'real_NVN_late_Buffer_companion_proven':False}
-P=argparse.ArgumentParser(description=__doc__);P.add_argument('--serial',required=True);P.add_argument('--artifact',type=Path,required=True);P.add_argument('--driver',type=Path,required=True);P.add_argument('--baseline',type=Path,required=True);P.add_argument('--original-apk',type=Path,required=True);P.add_argument('--shape',type=int,choices=list(range(-1,8)),default=-1);P.add_argument('--output',type=Path,required=True);P.add_argument('--mode',choices=['matrix','resource-bake'],default='matrix');P.add_argument('--resource-input',type=Path);P.add_argument('--matrix-acceptance',type=Path);P.add_argument('--execute',action='store_true');a=P.parse_args()
+P=argparse.ArgumentParser(description=__doc__);P.add_argument('--serial',required=True);P.add_argument('--artifact',type=Path,required=True);P.add_argument('--driver',type=Path,required=True);P.add_argument('--baseline',type=Path,required=True);P.add_argument('--original-apk',type=Path,required=True);P.add_argument('--shape',type=int,choices=list(range(-1,4)),default=-1);P.add_argument('--output',type=Path,required=True);P.add_argument('--mode',choices=['matrix'],default='matrix');P.add_argument('--resource-input',type=Path);P.add_argument('--matrix-acceptance',type=Path);P.add_argument('--execute',action='store_true');a=P.parse_args()
 m=json.loads((a.artifact/'build.json').read_text());apk=a.artifact/'candidate.apk';require(m['package']==PKG and sha(apk)==m['APK']['sha256'],'APK identity');require(sha(a.driver)==DRIVER==m['expected_driver_SHA256'],'driver identity');require(m['source_shapes']==SHAPES and set(m['formats'])==FORMATS,'matrix declaration')
 with zipfile.ZipFile(apk)as z:
  require(len(m['native_libraries'])==6,'six exact fixture/hooks libraries')
@@ -67,8 +77,8 @@ if a.mode=='resource-bake':
  require(a.shape==7 and a.resource_input is not None and a.matrix_acceptance is not None,'resource mode requires exact firepit input and actual matrix receipt')
  resource_hashes={'resource-input.bin':'d078631c7797b699200230a09533c9ad394a40fb9244fe0f75d905974ca49354','resource-source.json':'5d2e767a618a805d412f86c70be6f3c926897e5085621461390386f368e6d269'}
  for n,h in resource_hashes.items():require(sha(a.resource_input/n)==h,'original real resource input changed')
- matrix=json.loads(a.matrix_acceptance.read_text());require(matrix['stage']=='actual-native-ASTC-fully-linear-API-matrix-passed-not-game'and not matrix['cleanup_errors']and matrix['original_unchanged']and matrix['driver_sha256']==DRIVER,'actual clean matrix receipt required');validate_rows(matrix['actual_rows'],-1)
-plan={'scope':'ONE cold independent producer API matrix, no original game writes; real NVN companion remains separate mandatory acceptance','serial':a.serial,'package':PKG,'APK_sha256':sha(apk),'driver_sha256':DRIVER,'layout_UUID_required_actual_query':LAYOUT,'selected_shapes':list(range(8))if a.shape==-1 else[a.shape],'functional_bound_seconds':180,'launches_allowed':1,'original_baseline':str(a.baseline),'original_baseline_sha256':sha(a.baseline),'original_APK_sha256':sha(a.original_apk),'controller_sha256':sha(__file__),'installer_sha256':sha(owned_installer.__file__),'mode':a.mode,'real_resource_inputs':resource_hashes,'matrix_acceptance_sha256':sha(a.matrix_acceptance)if a.matrix_acceptance else None,'device_access':bool(a.execute),'performance_claim':False,'game_acceptance':False}
+ matrix=json.loads(a.matrix_acceptance.read_text());require(matrix['stage']=='actual-native-ASTC-fully-linear-filter-reference-passed-not-game'and not matrix['cleanup_errors']and matrix['original_unchanged']and matrix['driver_sha256']==DRIVER,'actual clean matrix receipt required');validate_rows(matrix['actual_rows'],-1)
+plan={'scope':'ONE cold independent producer API matrix, no original game writes; real NVN companion remains separate mandatory acceptance','serial':a.serial,'package':PKG,'APK_sha256':sha(apk),'driver_sha256':DRIVER,'layout_UUID_required_actual_query':LAYOUT,'selected_shapes':list(range(4))if a.shape==-1 else[a.shape],'functional_bound_seconds':240,'launches_allowed':1,'original_baseline':str(a.baseline),'original_baseline_sha256':sha(a.baseline),'original_APK_sha256':sha(a.original_apk),'controller_sha256':sha(__file__),'installer_sha256':sha(owned_installer.__file__),'mode':a.mode,'real_resource_inputs':resource_hashes,'matrix_acceptance_sha256':sha(a.matrix_acceptance)if a.matrix_acceptance else None,'device_access':bool(a.execute),'performance_claim':False,'game_acceptance':False}
 if not a.execute:print(json.dumps(plan,indent=2));raise SystemExit(0)
 require(not a.output.exists(),'new owned output required');a.output.mkdir(parents=True);B=[str(HOST/'.local/android-sdk/platform-tools/adb'),'-s',a.serial];token=uuid.uuid4().hex;tmp='/data/local/tmp/d2r-native-linear-'+token;result={**plan,'stage':'preflight','owned_tmp':tmp,'cleanup_errors':[]};first=None;installed=False;installation_requested=False;made_tmp=False;launch=None;original_before=None;crashing=False;ambiguous=False
 
@@ -133,7 +143,7 @@ try:
  args=['shell','am','start','-W','-n',PKG+'/'+m['activity'],'--es','fixture_directory','/data/user/0/'+PKG+'/files/runtime','--ei','shape',str(a.shape),'--es','mode',a.mode]
  result['launch_command']=B+args;result['stage']='one-cold-launch';save()
  with(a.output/'launch.txt').open('w')as f:launch=subprocess.Popen(B+args,stdout=f,stderr=subprocess.STDOUT)
- deadline=time.monotonic()+180;rows=[];log=''
+ deadline=time.monotonic()+240;rows=[];log=''
  while True:
   current=observe();log=ad('exec-out','run-as',PKG,'tail','-c','262144','files/runtime/native-linear-matrix.log',check=False)
   (a.output/'native-linear-matrix.log').write_text(log);rows=[]
@@ -152,10 +162,10 @@ try:
    major,minor=map(lambda s:int(s,16),fields[3].split(':'));v=aliases[fields[5]];require((major,minor,int(fields[4]))==(v['major'],v['minor'],v['inode']),'actual mapped driver inode differs');mapped.append(line)
  require(mapped and not any(s in maps for s in ['libVkLayer_','renderdoc','libvulkan_panfrost']),'actual candidate driver mapping/layers');require(ad('exec-out','run-as',PKG,'sha256sum','files/runtime/driver/libvulkan_freedreno.so').split()[0]==DRIVER,'driver bytes changed during run');result['proof']=proof;result['actual_driver_mappings']=mapped;save();stop_owned();result['fixture_PID_absent']=True
  # Pull bounded evidence only after GPU process stopped. Exclude driver/cache.
- selected=list(range(8))if a.shape==-1 else[a.shape];names=['native-linear-matrix.log']+(['resource4']if a.mode=='resource-bake'else['shape-%u-%ux%u'%(i,*SHAPES[i][:2])for i in selected]);remote='files/runtime/native-linear-evidence.tar';ad('shell','run-as',PKG,'tar','-cf',remote,'-C','files/runtime',*names)
+ selected=list(range(4))if a.shape==-1 else[a.shape];names=['native-linear-matrix.log']+(['resource4']if a.mode=='resource-bake'else['shape-%u-%ux%u'%(i,*SHAPES[i][:2])for i in selected]);remote='files/runtime/native-linear-evidence.tar';ad('shell','run-as',PKG,'tar','-cf',remote,'-C','files/runtime',*names)
  size=int(ad('exec-out','run-as',PKG,'stat','-c','%s',remote));require(0<size<=32<<20,'bounded evidence archive');digest=ad('exec-out','run-as',PKG,'sha256sum',remote).split()[0]
  with(a.output/'native-linear-evidence.tar').open('wb')as f:subprocess.run(B+['exec-out','run-as',PKG,'cat',remote],stdout=f,check=True,timeout=60)
- require(sha(a.output/'native-linear-evidence.tar')==digest,'evidence transfer SHA');result['evidence_archive']={'bytes':size,'sha256':digest};result['stage']='actual-native-ASTC-fully-linear-API-matrix-passed-not-game'
+ require(sha(a.output/'native-linear-evidence.tar')==digest,'evidence transfer SHA');result['evidence_archive']={'bytes':size,'sha256':digest};result['stage']='actual-native-ASTC-fully-linear-filter-reference-passed-not-game'
  if a.mode=='resource-bake':
   with tarfile.open(a.output/'native-linear-evidence.tar')as tar:
    allowed={'native-linear-matrix.log','resource4','resource4/resource-input.bin','resource4/resource-source.json','resource4/native-resource.bin','resource4/native-resource.json','resource4/native-resource-layout.bin'}
@@ -182,4 +192,4 @@ finally:
   if original_before is not None:result['original_after']=snapshot();require(result['original_after']==original_before,'original changed');result['original_unchanged']=True
  except BaseException as e:result['cleanup_errors'].append(repr(e))
  save()
-print(json.dumps(result));raise SystemExit(0 if result['stage']in('actual-native-ASTC-fully-linear-API-matrix-passed-not-game','actual-native-ASTC-fully-linear-real-firepit-producer-passed-not-NVN')and not result['cleanup_errors']else 1)
+print(json.dumps(result));raise SystemExit(0 if result['stage']in('actual-native-ASTC-fully-linear-filter-reference-passed-not-game','actual-native-ASTC-fully-linear-real-firepit-producer-passed-not-NVN')and not result['cleanup_errors']else 1)

@@ -813,6 +813,9 @@ static void sample_all(image *i, VkFormat format) {
   for(uint32_t base=0;base<LEVELS;base++)sample_from_base(i,format,base);
   printf("{\"native_all_base_mips_sampled\":true,\"format\":%u,\"width\":%u,\"height\":%u,\"levels\":%u,\"base_views\":%u,\"allpixel_assertions_retained\":true}\n",format,FIXTURE_WIDTH,FIXTURE_HEIGHT,LEVELS,LEVELS);
 }
+#ifdef DM_NATIVE_FILTER_ORACLE
+#include "native_filter_reference.inc"
+#endif
 static void restore(const char *directory, VkFormat format) {
   char path[4096];
   CHECK(snprintf(path, sizeof path, "%s/native-%u.bin", directory, format) <
@@ -989,6 +992,11 @@ static int fixture_main(int argc, char **argv) {
     vkDestroyPipelineLayout(device, pipeline_layout, NULL);
   if (descriptor_layout)
     vkDestroyDescriptorSetLayout(device, descriptor_layout, NULL);
+#ifdef DM_NATIVE_FILTER_ORACLE
+  if(filter_pipeline)vkDestroyPipeline(device,filter_pipeline,NULL);
+  if(filter_layout)vkDestroyPipelineLayout(device,filter_layout,NULL);
+  if(filter_descriptor)vkDestroyDescriptorSetLayout(device,filter_descriptor,NULL);
+#endif
   vkDestroyCommandPool(device, commands, NULL);
   vkDestroyDevice(device, NULL);
   if (messenger)

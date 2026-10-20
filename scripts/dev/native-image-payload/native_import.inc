@@ -442,9 +442,15 @@ static void native_import(const char *directory, VkFormat format) {
       // Prove imported host-produced bytes BEFORE any GPU upload can repair
       // them. Then independently verify B2T/T2B and sample all views again.
       sample_all(&i, format);
+#ifdef DM_NATIVE_FILTER_ORACLE
+      native_filter_reference(&i,format,"opaque-before-native-B2T");
+#endif
 #ifdef DM_NATIVE_LINEAR_MATRIX
       native_linear_transfer_roundtrip(&i,format);
       sample_all(&i,format);
+#ifdef DM_NATIVE_FILTER_ORACLE
+      native_filter_reference(&i,format,"after-native-B2T");
+#endif
 #endif
       native_ownership(&i, 0);
       uint8_t digest[32];
