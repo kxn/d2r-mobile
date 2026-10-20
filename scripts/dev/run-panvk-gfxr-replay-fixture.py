@@ -32,17 +32,28 @@ def ad(*args,check=True,timeout=20):
  if p.returncode and(check or any(s in err.lower()for s in ('device offline','device not found','no devices','connection reset','error: closed'))):raise RuntimeError(repr(args)+': '+err+' '+out)
  return out
 pid=lambda name:ad('shell','pidof',name,check=False)
+def inventory():
+ # Android toybox find -exec '+' can exceed the kernel's argument ceiling for
+ # a large shader cache. Preserve every filename, hash bounded128 batches.
+ names=ad('shell','run-as',original,'find','files/runtime/vulkan-panfrost','files/runtime/shaders','-type','f',timeout=45).splitlines()
+ assert len(names)==len(set(names)) and names
+ assert all(re.fullmatch(r'[A-Za-z0-9_./+-]+',n) and '..'not in Path(n).parts for n in names)
+ got={}
+ for start in range(0,len(names),128):
+  group=names[start:start+128];raw=ad('exec-out','run-as',original,'sha256sum',*group,timeout=45)
+  batch={line.split(None,1)[1]:line.split()[0]for line in raw.splitlines()}
+  assert set(batch)==set(group) and all(re.fullmatch('[a-f0-9]{64}',v)for v in batch.values())
+  got.update(batch)
+ assert len(got)==len(names)
+ return dict(sorted(got.items()))
 def snapshot():
  assert not pid(original),'Production game running: do not alter it'
  path=ad('shell','pm','path',original).removeprefix('package:');assert path.startswith('/')and'\n'not in path
  assert ad('shell','sha256sum',path).split()[0]==promotion['canonical_APK_SHA256']
  raw=ad('exec-out','run-as',original,'sha256sum',*expected);got={line.split(None,1)[1]:line.split()[0]for line in raw.splitlines()};assert got==expected
  chain=ad('exec-out','run-as',original,'cat','files/runtime/shaders/.chain');assert chain=='cbd8d2da0b0f'
- # Existing find/exec bounded argv protocol preserves complete driver/cache
- # and shader inventory without one enormous ADB command or cache deletion.
- raw=ad('shell',"run-as "+original+" find files/runtime/vulkan-panfrost files/runtime/shaders -type f -exec sha256sum '{}' '+'",timeout=45)
- inventory=dict(sorted((line.split(None,1)[1],line.split()[0])for line in raw.splitlines()))
- return {'APK':promotion['canonical_APK_SHA256'],'ELF':promotion['host_ELF_SHA256'],'files35':got,'chain':chain,'driver_shader_inventory':inventory,'PID_absent':True}
+ inv=inventory()
+ return {'APK':promotion['canonical_APK_SHA256'],'ELF':promotion['host_ELF_SHA256'],'files35':got,'chain':chain,'driver_shader_inventory':inv,'PID_absent':True}
 def exact():
  p=ad('shell','pm','path',pkg,check=False).removeprefix('package:')
  if not p:return False
