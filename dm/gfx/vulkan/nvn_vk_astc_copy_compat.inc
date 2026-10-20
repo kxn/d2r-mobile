@@ -222,7 +222,7 @@ static void image_bc_copy_decode(image *d,VkFormat incoming,astc_copy_observatio
     die("Mixed compressed copy changed during physical replacement");
   image_general_transfer(d);vk_transfer_barrier();
   image *old=malloc(sizeof *old);if(!old)die("Mixed compressed copy retirement allocation");
-  *old=*d;old->shared_alias_linked=0;old->shared_alias_next=NULL;
+  *old=*d;image_replacement_detach(d,old);old->shared_alias_linked=0;old->shared_alias_next=NULL;
   old->shared_alias_range=(alias_range_node){0};
   image_recipes_changed();image_binding_replaced(d,old);
   d->views=NULL;d->format=decoded;d->description.format=decoded;d->decoded=1;d->bpp=4;
@@ -230,7 +230,7 @@ static void image_bc_copy_decode(image *d,VkFormat incoming,astc_copy_observatio
   // Keep the same logical owner/alias registry node. The old VkImage/access
   // history and descriptor/framebuffer views retire with the real submission.
   d->bc_copy_decoded=1;d->astc_copy_stamp=o->stamp;
-  d->shared_dirty_scope=o->scope;o->scope=NULL;d->cpu_rebuildable=0;astc_copy_live++;
+  d->shared_dirty_scope=o->scope;o->scope=NULL;image_rebuildable_set(d,0);astc_copy_live++;
   d->checked_dirty_epoch=d->checked_dirty_stamp=0;d->checked_dirty_range=(nvn_dirty_range_proof){0};
   for(unsigned level=0;level<d->levels;level++) {
     VkImageSubresourceLayers sub={d->aspect,level,0,d->layers};
@@ -297,10 +297,10 @@ static void image_astc_copy_propagate(image *s,image *d,const p_copy_t2t *p,astc
     astc_copy_observation_release(o);return;
   }
   image *old=malloc(sizeof *old);if(!old)die("ASTC resource-copy physical retirement allocation");
-  *old=*d;image_recipes_changed();image_binding_replaced(d,old);
+  *old=*d;image_replacement_detach(d,old);image_recipes_changed();image_binding_replaced(d,old);
   d->views=NULL;d->format=format;d->description.format=format;d->decoded=0;d->bpp=16;
   image_allocate(d);d->astc_copy_encoding=1;d->astc_copy_stamp=o->stamp;
-  d->shared_dirty_scope=o->scope;o->scope=NULL;d->cpu_rebuildable=0;astc_copy_live++;
+  d->shared_dirty_scope=o->scope;o->scope=NULL;image_rebuildable_set(d,0);astc_copy_live++;
   d->checked_dirty_epoch=d->checked_dirty_stamp=0;d->checked_dirty_range=(nvn_dirty_range_proof){0};
   vk_completion(image_storage_destroy,old);
   LOG("[ASTC resource copy] serial=%llu logical=%#x physical=%u levels=%u layers=%u CPU-observed=%llu bytes=%llu",

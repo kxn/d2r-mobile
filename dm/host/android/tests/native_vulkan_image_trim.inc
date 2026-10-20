@@ -2,6 +2,8 @@
 // after eviction/recreation. No synthetic clock or fake completion watermark.
 #ifdef DM_VULKAN_TEST_EMBED
 extern int vk_test_texture_rebuildable(uint64_t);
+extern void vk_test_texture_budget(uint64_t,uint64_t *);
+extern void vk_texture_cache_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *);
 static void image_trim_probe(NVNtexture *texture,int id) {
   mtl_reg_tex(id,(const tex_t *)texture,NULL);
   VkImageLayout layout;
@@ -82,7 +84,24 @@ static void image_pressure_trim_test(void) {
   // Keep one CPU-authored texture recent; the logical descriptor remains valid
   // for both it and the cold texture that will disappear physically.
   mtl_sub_begin();image_trim_probe(&textures[3],id+3);vk_internal_wait(vk_internal_commit());
-  uint32_t count=vk_texture_count();CHECK(vk_texture_trim_idle()==1);CHECK(vk_texture_count()==count-1);
+  uint32_t count=vk_texture_count();
+  if(getenv("DM_IMAGE_CACHE_BUDGET_FIXTURE")) {
+    uint64_t before,after;
+    vk_test_texture_budget(0,&before);CHECK(before>0);
+    // Internal reopen is deliberately inert even though the real GPU is done,
+    // the cache is over budget and the CPU-backed texture is old enough.
+    mtl_sub_begin();CHECK(vk_texture_count()==count);
+    vk_texture_budget_maintain();CHECK(vk_texture_count()==count);
+    vk_internal_wait(vk_internal_commit());
+    // The actual next foreground guest-submit boundary runs maintenance;
+    // no Android trim callback, synthetic GPU clock or finish is used there.
+    mtl_sub_guest_begin();CHECK(vk_texture_count()==count-1);
+    vk_texture_budget_maintain();CHECK(vk_texture_count()==count-1);
+    vk_internal_wait(vk_internal_commit());
+    vk_test_texture_budget(0,&after);CHECK(after<before);
+    CHECK(vk_texture_trim_idle()==0);
+  } else CHECK(vk_texture_trim_idle()==1);
+  CHECK(vk_texture_count()==count-1);
   CHECK(vk_test_texture_rebuildable(((const tex_t *)&textures[0])->serial)==-1);
   CHECK(vk_test_texture_rebuildable(((const tex_t *)&textures[3])->serial)==1);
   mtl_sub_begin();image_trim_probe(&textures[0],id);vk_internal_wait(vk_internal_commit());
@@ -92,10 +111,68 @@ static void image_pressure_trim_test(void) {
   image_trim_pixels(&textures[1],0,0,clear);image_trim_pixels(&textures[2],0,0,copy);
   image_trim_pixels(&textures[4],0,0,raw_color);
   image_trim_pixels(&textures[1],1,0,seed);image_trim_pixels(&textures[2],2,0,seed);
+  if(getenv("DM_IMAGE_CACHE_BUDGET_FIXTURE")) {
+    // Distinct logical/physical images with identical immutable packaged
+    // source exercise quota/cursor progress. No fake completion frontier.
+    NVNtexture cold[40];uint64_t ignored;
+    vk_test_texture_budget(UINT64_MAX,&ignored);
+    for(unsigned n=0;n<40;n++) {
+      NVNtextureBuilder b;CALL(nvnTextureBuilderSetDefaults,&b);CALL(nvnTextureBuilderSetDevice,&b,&device);
+      CALL(nvnTextureBuilderSetTarget,&b,NVN_TEXTURE_TARGET_2D);
+      CALL(nvnTextureBuilderSetWidth,&b,16);CALL(nvnTextureBuilderSetHeight,&b,16);
+      CALL(nvnTextureBuilderSetLevels,&b,3);CALL(nvnTextureBuilderSetFormat,&b,NVN_FORMAT_RGBA8);
+      NVNpackagedTextureLayout layout={{0}};CALL(nvnTextureBuilderSetPackagedTextureLayout,&b,&layout);
+      CALL(nvnTextureBuilderSetStorage,&b,&pool,7*stride);CHECK(CALL(nvnTextureInitialize,&cold[n],&b));
+      if(!n) {
+        const tex_t *t=(const tex_t *)&cold[n];
+        for(unsigned level=0;level<3;level++) {
+          unsigned width=16>>level;uint8_t pixels[16*16*4];
+          for(unsigned k=0;k<width*width;k++)memcpy(pixels+k*4,seed,4);
+          CHECK(!nvn_swizzle(&t->d,level,0,pixels,width*4,t->mem));
+        }
+      }
+      mtl_sub_begin();image_trim_probe(&cold[n],id+16+n);vk_internal_wait(vk_internal_commit());
+    }
+    for(unsigned n=0;n<257;n++){mtl_sub_begin();vk_internal_wait(vk_internal_commit());}
+    uint32_t before=vk_texture_count();vk_test_texture_budget(0,&ignored);
+    mtl_sub_begin();CHECK(vk_texture_count()==before);
+    vk_internal_wait(vk_internal_commit());
+    mtl_sub_guest_begin();CHECK(vk_texture_count()==before-4);
+    vk_texture_budget_maintain();CHECK(vk_texture_count()==before-4); // borrowed recording
+    vk_internal_wait(vk_internal_commit());
+    for(unsigned n=0;n<16;n++){mtl_sub_guest_begin();vk_internal_wait(vk_internal_commit());}
+    for(unsigned n=0;n<40;n++)CHECK(vk_test_texture_rebuildable(((const tex_t *)&cold[n])->serial)==-1);
+    // Logical registration survives eviction and reconstructs the same mip
+    // content; GPU-authored siblings are still their clear/copy results.
+    mtl_sub_begin();image_trim_probe(&cold[0],id+16);
+    VkSemaphore gate=VK_NULL_HANDLE;
+    if(vk_async_submissions()&&V.timeline_semaphore)gate=pool_copy_gate();
+    uint64_t pending=vk_internal_commit();
+    if(gate) {
+      CHECK(vk_completed_serial()<pending);
+      vk_texture_budget_maintain();
+      CHECK(vk_test_texture_rebuildable(((const tex_t *)&cold[0])->serial)==1);
+      pool_copy_signal(&gate);
+    }
+    vk_internal_wait(pending);
+    if(gate)vkDestroySemaphore(V.device,gate,NULL);
+    for(unsigned level=0;level<3;level++)image_trim_pixels(&cold[0],level,0,seed);
+    image_trim_pixels(&textures[1],0,0,clear);image_trim_pixels(&textures[2],0,0,copy);
+    for(unsigned n=0;n<40;n++)CALL(nvnTextureFinalize,&cold[n]);
+  }
   CHECK(vk_validation_error_count()==0);
+  if(getenv("DM_IMAGE_CACHE_BUDGET_FIXTURE")) {
+    uint64_t bytes;vk_test_texture_budget(512ull<<20,&bytes);
+  }
   CALL(nvnCommandBufferFinalize,&cmd);
   for(unsigned n=0;n<5;n++)CALL(nvnTextureFinalize,&textures[n]);
-  mtl_finish();CALL(nvnMemoryPoolFinalize,&pool);free(storage);
+  mtl_finish();
+  if(getenv("DM_IMAGE_CACHE_BUDGET_FIXTURE")) {
+    uint64_t total,rebuildable,budget,released;
+    vk_texture_shutdown();vk_texture_cache_stats(&total,&rebuildable,&budget,&released);
+    CHECK(!total&&!rebuildable&&released>0);
+  }
+  CALL(nvnMemoryPoolFinalize,&pool);free(storage);
 }
 #else
 static void image_pressure_trim_test(void) {}

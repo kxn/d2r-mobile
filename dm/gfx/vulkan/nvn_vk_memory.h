@@ -17,6 +17,7 @@ enum { VK_MEMORY_INVALIDATE_BATCH = 16 };
 VkResult vk_memory_invalidate_batch(void *const *allocations, uint32_t count);
 VkResult vk_memory_image(VkImage image, VkDeviceMemory *memory, void **allocation);
 void vk_memory_free(void *allocation);
+uint64_t vk_memory_allocation_bytes(void *allocation);
 void vk_memory_stats(uint32_t *blocks, uint32_t *allocations, uint64_t *bytes);
 #ifdef __cplusplus
 }

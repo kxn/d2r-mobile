@@ -1066,7 +1066,7 @@ static mach_port_t g_x_port;
 static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
     mtl_host_apply(host);
     uint64_t t0 = now_ns(), c0 = dm_platform_clock_ns(CLOCK_THREAD_CPUTIME_ID), i0, y0, s0 = thr_sys_ns(); thr_counts(&i0, &y0);
-    mtl_sub_begin();
+    mtl_sub_guest_begin();
     mtl_sub_index(h, n);
     for (int i = 0; i < n; i++) { mtl_exec_rest(h + i + 1, n - i - 1); mtl_exec((const uint8_t *)h[i]); }
     mtl_exec_rest(NULL, 0);

@@ -3896,6 +3896,11 @@ static void begin_submission(int pool_migration) {
   if(r->submission_barrier_reference) vk_barrier();
 }
 void mtl_sub_begin(void) { begin_submission(0); }
+void mtl_sub_guest_begin(void) {
+  mtl_init();
+  vk_texture_budget_maintain();
+  begin_submission(0);
+}
 
 static void effect_copy_kind(void *dst,const void *src,size_t size,uint32_t kind) {
   vk_effect *e = calloc(1, sizeof *e);

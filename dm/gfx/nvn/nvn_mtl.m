@@ -567,6 +567,7 @@ static int tbdr_on(void);
 
 static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交只预测一次」用） | Submission index (used by the parallel precompile's 'predict only once per submission')
 static void tbdr_latch(void);
+void mtl_sub_guest_begin(void) { mtl_sub_begin(); }
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     tbdr_latch();

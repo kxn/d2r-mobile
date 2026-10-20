@@ -52,6 +52,9 @@ typedef struct image {
   VkImage handle;
   VkDeviceMemory memory;
   void *allocation;
+  uint64_t allocation_bytes;
+  int accounted_rebuildable;
+  struct image *list_prev;
   VkFormat format;
   VkImageCreateInfo description;
   VkExtent3D extent;
@@ -103,6 +106,36 @@ typedef struct image {
   unsigned read_proof_next;
   unsigned physical_traits;
 } image;
+// Physical VMA allocations only: imported native pages are already the guest
+// Pool, not a second private texture allocation. Completion can free promoted
+// storage while the recording owner manages the live candidate cursor.
+static _Atomic uint64_t private_image_bytes;
+static _Atomic uint64_t rebuildable_private_bytes,private_cache_released_bytes;
+static image *private_image_cursor;
+// Provisional candidate policy, pending original-game footprint review. This
+// limits only live CPU-rebuildable private cache allocations, not RTs/native.
+static uint64_t private_image_budget=512ull<<20;
+static void image_rebuildable_set(image *i,int rebuildable) {
+  i->cpu_rebuildable=rebuildable;
+  int account=!!rebuildable && !!i->allocation_bytes;
+  if(account==i->accounted_rebuildable)return;
+  i->accounted_rebuildable=account;
+  if(account)atomic_fetch_add(&rebuildable_private_bytes,i->allocation_bytes);
+  else {
+    uint64_t prior=atomic_fetch_sub(&rebuildable_private_bytes,i->allocation_bytes);
+    if(prior<i->allocation_bytes)die("Rebuildable private image accounting underflow");
+  }
+}
+static void image_replacement_detach(image *i,image *old) {
+  // old retains the physical bytes until completion, but is no longer a live
+  // cache candidate. The replacement will admit its own allocation separately.
+  if(old->accounted_rebuildable) {
+    uint64_t prior=atomic_fetch_sub(&rebuildable_private_bytes,old->allocation_bytes);
+    if(prior<old->allocation_bytes)die("Replaced private image accounting underflow");
+    old->accounted_rebuildable=0;
+  }
+  old->list_prev=NULL;i->allocation_bytes=0;i->accounted_rebuildable=0;
+}
 enum {
   IMAGE_MIP_TRACKED=1u<<0,
   IMAGE_LAYOUT_COLOR=1u<<1,
@@ -591,6 +624,15 @@ static VkImageView cached_view(image *i,
 }
 #include "nvn_vk_astc_contract.inc"
 static image *images;
+// O(1) physical-cache removal; a budget tick never rescans the full image list
+// to unlink one cold entry. Only the recording owner edits logical membership.
+static void image_list_remove(image *i) {
+  if(i->list_prev)i->list_prev->next=i->next;
+  else {if(images!=i)die("Vulkan image list ownership");images=i->next;}
+  if(i->next)i->next->list_prev=i->list_prev;
+  if(private_image_cursor==i)private_image_cursor=i->next;
+  i->next=i->list_prev=NULL;
+}
 static image *image_buckets[8192];
 #if defined(DM_VULKAN_TEST_EMBED)
 int vk_texture_test_astc_info(const tex_t *texture,VkImageView view,unsigned state[5]) {
@@ -677,6 +719,11 @@ static void image_allocate(image *i) {
   i->access_generation++;
   VK_CHECK(vkCreateImage(V.device, &i->description, NULL, &i->handle));
   VK_CHECK(vk_memory_image(i->handle, &i->memory, &i->allocation));
+  i->allocation_bytes=vk_memory_allocation_bytes(i->allocation);
+  if(!i->allocation_bytes)die("Private image allocation size");
+  uint64_t prior=atomic_fetch_add(&private_image_bytes,i->allocation_bytes);
+  if(prior>UINT64_MAX-i->allocation_bytes)die("Private image allocation accounting overflow");
+  image_rebuildable_set(i,i->cpu_rebuildable);
   VkImageMemoryBarrier barrier = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
       .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -706,6 +753,15 @@ void vk_test_texture_native_binding(uint64_t serial,VkDeviceMemory *memory,uint6
 #endif
 
 #endif
+static void image_allocation_free(image *i) {
+  image_rebuildable_set(i,0);
+  vk_memory_free(i->allocation);i->allocation=NULL;
+  if(i->allocation_bytes) {
+    uint64_t prior=atomic_fetch_sub(&private_image_bytes,i->allocation_bytes);
+    if(prior<i->allocation_bytes)die("Private image allocation accounting underflow");
+    i->allocation_bytes=0;
+  }
+}
 static void image_storage_destroy(void *context) {
   image *i = context;
   while (i->views) {
@@ -725,7 +781,7 @@ static void image_storage_destroy(void *context) {
     vk_pool_native_image_release(i->native_pool);
   } else
 #endif
-  vk_memory_free(i->allocation);
+  image_allocation_free(i);
   free(i->access);
   free(i);
 }
@@ -774,6 +830,9 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
   image *old=malloc(sizeof *old);
   if(!old) die("Vulkan image promotion allocation");
   *old=*i;
+  // Only i remains a logical lookup/candidate. old is exclusively retained by
+  // the existing completion callback; its bytes remain counted until then.
+  image_replacement_detach(i,old);
 #ifdef DM_VULKAN_SHARED_POOLS
   // The deferred physical copy is not a second owner of the same guest bytes.
   // The original image pointer remains the sole live list/index identity.
@@ -801,7 +860,7 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
   image_record(i,(VkImageSubresourceRange){i->aspect,0,i->levels,0,i->layers},
       VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,0);
   // Promotion preserves every mip/layer/aspect; it does not create new data.
-  i->cpu_rebuildable=cpu_rebuildable;
+  image_rebuildable_set(i,cpu_rebuildable);
 #ifdef DM_VULKAN_SHARED_POOLS
   // Copying a CPU-rebuildable image during promotion does not make its
   // packaged backing stale. Match the restored authority in the alias list.
@@ -1033,6 +1092,7 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
 image_publish:
 #endif
   i->next = images;
+  if(images)images->list_prev=i;
   images = i;
   i->hash_next = image_buckets[t->serial % 8192];
   image_buckets[t->serial % 8192] = i;
@@ -1053,7 +1113,7 @@ void vk_test_native_rgba_adopt(const tex_t *t,VkImage handle,VkDeviceMemory memo
       i->format!=VK_FORMAT_R8G8B8A8_UNORM || description->format!=i->format ||
       description->mipLevels!=i->levels || description->arrayLayers!=1 || !allocation || !entry)
     die("Owned native RGBA adoption requires a completed untouched matching placeholder");
-  image_shared_alias_remove(i);vkDestroyImage(V.device,i->handle,NULL);vk_memory_free(i->allocation);
+  image_shared_alias_remove(i);vkDestroyImage(V.device,i->handle,NULL);image_allocation_free(i);
   i->allocation=NULL;i->handle=handle;i->memory=memory;i->native_pool=allocation;i->native_entry=entry;
   i->description=*description;i->description.pNext=NULL;i->initialized=1;i->layout=VK_IMAGE_LAYOUT_GENERAL;
   i->layout_scope=0;i->physical_traits=image_physical_traits(i);
@@ -1200,7 +1260,7 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
   i->initialized = 1;
   // Raw VkImage users can retain a handle and write later without passing
   // through image_record. A later CPU upload cannot revoke that escape.
-  i->cpu_rebuildable = !i->external_access;
+  image_rebuildable_set(i,!i->external_access);
 #ifdef DM_VULKAN_SHARED_POOLS
   if(i->cpu_rebuildable)image_shared_alias_remove(i);
 #endif
@@ -1966,6 +2026,7 @@ void mtl_tex_release(tex_t *t) {
 }
 uint32_t vk_texture_count(void) { return atomic_load(&live_images); }
 static void image_destroy(image *i) {
+  image_list_remove(i);
 #ifdef DM_VULKAN_SHARED_POOLS
   if(i->astc_copy_encoding || i->bc_copy_decoded) {if(!astc_copy_live)die("ASTC copy live count underflow");astc_copy_live--;}
   image_shared_alias_remove(i);
@@ -2039,7 +2100,7 @@ void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes) {
   image **at=&images;
   while(*at) {image *i=*at;
     if((vk_pool_shared_active() || i->astc_copy_encoding) && i->tex.mem && i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
-        address+bytes>(uintptr_t)i->tex.mem) {*at=i->next;image_destroy(i);}else at=&i->next;
+        address+bytes>(uintptr_t)i->tex.mem) {image_destroy(i);}else at=&i->next;
   }
 }
 #endif
@@ -2056,7 +2117,6 @@ void vk_texture_shutdown(void) {
   texture_binding_scope_shutdown();
   while (images) {
     image *i = images;
-    images = i->next;
     image_destroy(i);
   }
   for(unsigned b=0;b<sizeof image_batches/sizeof *image_batches;b++) {
@@ -2424,7 +2484,6 @@ void vk_texture_end_submit(void) {
     }
     if (*ip) {
       image *i = *ip;
-      *ip = i->next;
       image_destroy(i);
     }
     for (int id = 0; id < texture_capacity; id++)
@@ -2455,13 +2514,53 @@ unsigned vk_texture_trim_idle(void) {
         !i->tex.mem || !i->tex.L.size || done<i->last_use || done-i->last_use<256) {
       at=&i->next;continue;
     }
-    *at=i->next;image_destroy(i);removed++;
+    image_destroy(i);removed++;
   }
   pthread_mutex_unlock(&V.resources);
   if(removed)LOG("[vulkan] memory pressure retired %u cold CPU-backed images",removed);
   return removed;
 }
+// Foreground memory pressure notifications are not supplied on Android 34+.
+// Bound the reconstructible private cache independently, at a guest-submit
+// owner boundary. This is a soft budget: hot, GPU-authored and in-flight
+// resources may exceed it. Never wait, touch guest bytes or evict native imports.
+void vk_texture_budget_maintain(void) {
+  if(!V.device || atomic_load(&rebuildable_private_bytes)<=private_image_budget ||
+      V.cmd || vk_recording_serial() || image_binding_active || vk_texture_binding_scope_active())return;
+  uint64_t done=vk_completed_serial(),freed=0;
+  unsigned scanned=0,removed=0;
+  pthread_mutex_lock(&V.resources);
+  if(!private_image_cursor)private_image_cursor=images;
+  while(private_image_cursor && scanned<32 && removed<4 && freed<(8ull<<20) &&
+      atomic_load(&rebuildable_private_bytes)>private_image_budget) {
+    image *i=private_image_cursor;private_image_cursor=i->next;
+    scanned++;
+    if(i->allocation_bytes && i->cpu_rebuildable && !i->external_access &&
+        i->initialized && i->tex.has_layout && i->tex.mem && i->tex.L.size &&
+        done>=i->last_use && done-i->last_use>=256) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      if(i->native_entry)die("Native image cannot own private allocation bytes");
+#endif
+      freed+=i->allocation_bytes;
+      atomic_fetch_add(&private_cache_released_bytes,i->allocation_bytes);
+      image_destroy(i);removed++;
+    }
+    if(!private_image_cursor)break; // resume from head at the next boundary
+  }
+  pthread_mutex_unlock(&V.resources);
+}
+void vk_texture_cache_stats(uint64_t *total,uint64_t *rebuildable,uint64_t *budget,uint64_t *released) {
+  *total=atomic_load(&private_image_bytes);
+  *rebuildable=atomic_load(&rebuildable_private_bytes);
+  *budget=private_image_budget;
+  *released=atomic_load(&private_cache_released_bytes);
+}
 #ifdef DM_VULKAN_TEST_EMBED
+void vk_test_texture_budget(uint64_t budget,uint64_t *bytes) {
+  if(V.cmd || image_binding_active || vk_texture_binding_scope_active())die("Owned image budget test during recording");
+  private_image_budget=budget;private_image_cursor=images;
+  *bytes=atomic_load(&private_image_bytes);
+}
 // Owned metadata boundary fixture only. This never runs in the game or changes
 // a real queue's frontiers; it temporarily withholds a retired entry's logical
 // admission, then restores the original watermark before actual reuse.
