@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tarfile
@@ -111,6 +112,24 @@ def proof(path, digest):
             require(composition['native_table_present'] is False and composition['DMN2_markers'] is False,
                     'control contains native markers')
         phase['composition_data'] = composition
+    if 'diagnostic_source_ready' in p:
+        helper_path = pinned(p['diagnostic_source_ready'])
+        require(p['diagnostic_source_ready']['sha256'] ==
+                'f4a71f8c1a75010070e9952c1b7514ac86ea731fd072004a9b0d26165d59f07b',
+                'exact reviewed one-stop helper required')
+        helper = read(helper_path)
+        require(helper['runtime_commit'] == p['runtime_commit']
+                and helper['runtime_ELF_sha256'] == p['new_elf']
+                and helper['capture_protocol'] == 'astc-copy-bb4-rejected-v1',
+                'diagnostic runtime or protocol mismatch')
+        for row in helper['files']:
+            pinned(row)
+        pinned(helper['server'])
+        require(helper['finite_breakpoint']['maximum_typed_stops'] == 1
+                and helper['payload_read'] is False and helper['target_calls_or_expressions'] is False,
+                'finite metadata-only official LLDB helper required')
+        p['debugger_entry'] = helper['run_debugger']
+        p['debugger_server'] = helper['server']
     p['controller_sources'] = {str(q): sha(q) for q in
                                [Path(__file__), OLD / 'transaction.py', OLD / 'installer.py',
                                 OLD / 'identity.py', m.COMMON,
@@ -164,12 +183,13 @@ def phase_game(dev, out, phase, p, token):
     own = None
     ambiguous = False
     launcher = None
+    debugger = None
 
     def pid():
         return dev.adb('shell', 'pidof ' + PKG + ' || true')
 
     def observe():
-        nonlocal own, ambiguous
+        nonlocal own, ambiguous, debugger
         now = pid()
         try:
             own = m.claim_pid(d, now, own)
@@ -178,6 +198,10 @@ def phase_game(dev, out, phase, p, token):
             raise
         if own:
             d['first_PID'] = int(own)
+            if p.get('debugger_entry') and debugger is None:
+                d['debugger_command'] = [sys.executable, p['debugger_entry'], own, str(out)]
+                debugger = subprocess.Popen(d['debugger_command'], cwd=R,
+                    stdout=(out / 'debugger-console.log').open('w'), stderr=subprocess.STDOUT)
         save()
         return now
 
@@ -231,6 +255,12 @@ def phase_game(dev, out, phase, p, token):
         d['scope'] = 'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance'
         save()
     finally:
+        if debugger is not None and debugger.poll() is None:
+            debugger.send_signal(signal.SIGINT)
+            debugger.wait(timeout=15)
+        if (out / 'debugger-result.json').is_file():
+            d['debugger_result'] = read(out / 'debugger-result.json')
+            save()
         if launcher is not None and launcher.poll() is None:
             launcher.terminate()
             launcher.wait(timeout=15)
@@ -287,6 +317,10 @@ def main():
             'phases': ['standard-ASTC4', 'native-ASTC4'], 'scale_3d': .60,
             'output': '2750x1260', 'profiling': False, 'recursive_RomFS_copy': False,
             'scope': 'Functional and system residency only, not sustained thermal/FPS proof'}
+    if p.get('debugger_entry'):
+        plan.update(phases=['standard-ASTC4-only-expected-copy-rejection'],
+                    scope='One official LLDB metadata stop at actual copy refusal; not functional/RAM/FPS acceptance',
+                    debugger=p['debugger_entry'], native_phase_executed=False)
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -328,7 +362,7 @@ def main():
         created = True
         owner = out / 'owner'
         owner.write_text(token + '\n')
-        for phase in p['phases']:
+        for phase in (p['phases'][:1] if p.get('debugger_entry') else p['phases']):
             active = phase
             name = phase['kind']
             incoming = stage + '/incoming/' + name
@@ -341,6 +375,8 @@ def main():
                     tar.add(Path(phase['overlay_root']) / n, arcname='overlay/' + n, recursive=False)
                 if name == 'native':
                     tar.add(phase['native_table']['path'], arcname='native/native-layouts.bin', recursive=False)
+                if p.get('debugger_server'):
+                    tar.add(p['debugger_server']['path'], arcname='temp/d2r-lldb-server', recursive=False)
                 for label, _ in DIRS:
                     tar.add(owner, arcname=label + '/' + m.OWNER, recursive=False)
             remote = '/data/local/tmp/d2r-native-bulk-' + token + '-' + name + '.tar'
@@ -350,6 +386,8 @@ def main():
             require(dev.digest(remote) == sha(payload), 'resource transfer changed')
             dev.app('mkdir', incoming)
             dev.app('tar', 'xf', remote, '-C', incoming)
+            if p.get('debugger_server'):
+                dev.app('chmod', '700', incoming + '/temp/d2r-lldb-server')
             if name == 'control':
                 for label, target in DIRS:
                     if d['old_dirs'][label] is not None:
@@ -391,7 +429,8 @@ def main():
             require(phase_result.get('original_HUD_reached') and phase_result.get('fresh_save_then_stopped'),
                     'phase did not reach HUD / fresh save2')
         owner.unlink()
-        d['stage'] = 'matched-resource-original-game-functional-pair-complete'
+        d['stage'] = ('single-control-diagnostic-ended-without-copy-refusal' if p.get('debugger_entry')
+                      else 'matched-resource-original-game-functional-pair-complete')
         write()
     except BaseException as e:
         d['error'] = repr(e)

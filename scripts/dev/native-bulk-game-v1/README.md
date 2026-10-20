@@ -25,3 +25,10 @@ Run with `--inputs PATH --inputs-sha256 SHA --report PATH`. Add `--execute` only
 after reviewing the exact immutable manifest and prerequisite receipts. There
 is no implicit retry, device discovery, installer settings change, game-state
 mutation, hot graphics-policy switch or recursive deletion of unknown files.
+
+The optional, hash-pinned `astc-copy-bb4-rejected-v1` helper runs only the control
+phase. It attaches the existing official LLDB once to the first owned PID,
+reads metadata at the exact refusal instruction, and detaches. Its NDK server
+is placed in the token-owned temporary directory. The original copy refusal
+and failed game result are preserved; this diagnostic cannot establish a
+functional pair, memory savings or performance.
