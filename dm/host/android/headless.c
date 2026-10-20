@@ -196,6 +196,7 @@ void dm_guest_write_prepare(void *address, size_t size) {
   for (unsigned i = 0; i < write_hook_count; i++)
     write_hooks[i](address, size);
 }
+#include "../guest_write_lease.inc"
 #endif
 
 double front_display_refresh(char *name, size_t n) {

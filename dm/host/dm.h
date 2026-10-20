@@ -104,6 +104,19 @@ void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len));
 void dm_res_report_register(void (*fn)(uint32_t tick, const char *why));   // 资源计数回调（图形层注册）：每 250 拍、读取画面已撤、记满退出时调 | Resource count callback (registered by the graphics layer): called every 250 ticks, when the loading screen has been dismissed, and on exit when the record is full
 void (*dm_res_report_cb(void))(uint32_t tick, const char *why);   // 取已注册的资源计数回调（未注册为空） | Get the registered resource count callback (null if not registered)
 void dm_guest_write_prepare(void *addr, size_t len);
+// Paired lease for real kernel writes into guest memory. Register one immutable
+// static-lifetime pair during cold initialization; NULL begin cookie means no
+// relevant tracked storage. A lease is single-owner and must be ended once.
+// This API is NOT signal-safe and does not replace ordinary user-write prepare.
+typedef struct {
+    void *(*begin)(void *addr, size_t len);
+    void (*end)(void *cookie);
+} dm_guest_write_lease_hooks;
+typedef struct { void (*end)(void *cookie); void *cookie; } dm_guest_write_lease;
+void dm_guest_write_lease_register(const dm_guest_write_lease_hooks *hooks);
+dm_guest_write_lease dm_guest_write_begin(void *addr, size_t len);
+void dm_guest_write_end(dm_guest_write_lease *lease);
+
 // 图形生命周期（hle_nvn.c）：on=1 挂起（之后提交 / 出图阻塞，返回前 GPU 在途工作清空），on=0 恢复；iOS 前端在进出后台时调用
 // Graphics lifecycle (hle_nvn.c): on=1 suspends (afterwards submit / present block, and in-flight GPU work is drained before returning), on=0 resumes; called by the iOS front end when entering and leaving the background
 void dm_gfx_suspend(int on);
