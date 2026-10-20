@@ -12,6 +12,9 @@
 #include "nvn_vk_freeze.h"
 #include "nvn_vk_system_trace.h"
 #include "nvn_vk_pool_copy_stats.h"
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+#include "nvn_vk_alias_interval.h"
+#endif
 #include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
@@ -64,6 +67,7 @@ typedef struct pool {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   _Atomic unsigned native_image_references;
   struct native_image_allocation *native_allocations;
+  alias_range_node *native_allocation_index;
 #endif
 #endif
   pool_cpu_authority *cpu_authority;
@@ -89,12 +93,15 @@ static int shared_union_visibility_pending;
 static void native_allocation_cache_locked(pool *,uint64_t,uint64_t,int);
 static void native_allocation_collect_locked(pool *);
 static int native_allocation_overlaps_locked(pool *,uint64_t,uint64_t);
+static int shared_pool_storage_covered_locked(pool *,uint64_t,uint64_t);
+static int native_allocation_write_range_locked(pool *,void *,uint64_t,uint64_t);
 #endif
 #ifdef DM_VULKAN_TEST_EMBED
 static int shared_gpu_gate_force;
 #endif
 static void shared_device_probe(void);
 static void shared_pool_materialize(pool *);
+static int shared_pool_has_imports_locked(const pool *);
 static void shared_cache(vk_buffer *,uint64_t,uint64_t,int);
 static VkResult shared_span_try_allocate(pool *,pool_backing_span *,uint64_t,uint64_t);
 static void shared_pool_cache_locked(pool *,uint64_t,uint64_t,int,int);
@@ -3296,7 +3303,7 @@ static uint64_t shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,
   // Snapshot the pair under its publication lock; release before completion
   // scanning or any GPU/CPU-effect wait (no resources -> completion lock edge).
   pthread_mutex_lock(&V.resources);
-  int backed=p->backings!=NULL;
+  int backed=shared_pool_has_imports_locked(p);
   VkMemoryPropertyFlags properties=p->shared_properties;
 #ifdef DM_VULKAN_TEST_EMBED
   if(shared_host_snapshot_test)shared_host_snapshot_test(0,backed,properties);
@@ -3773,7 +3780,7 @@ void vk_effect_copy(void *dst,const void *src,size_t size) {
   effect_copy_kind(dst,src,size,POOL_COPY_GENERIC);
 }
 static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *known,
-                             VkPipelineStageFlags producers,int actual_write) {
+                             VkPipelineStageFlags producers,int actual_write,void *native_token) {
   V.buffer_epoch++;
   if (!size) return;
   if (!recording_resources) die("Vulkan writeback outside a submission");
@@ -3781,7 +3788,15 @@ static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *kn
   pool *p = pool_find(dst, size);
   if (!p)
     die("Vulkan writeback outside a pool");
-  pool_materialize(p);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(native_token) {
+    if(!native_allocation_write_range_locked(p,native_token,dst,size))
+      die("Native image writeback outside retained immutable range");
+  } else
+#else
+  if(native_token)die("Native image writeback unavailable");
+#endif
+    pool_materialize(p);
   uint64_t off = dst - (uintptr_t)p->guest;
   pool_initialize_range(p,off,size);
   if(actual_write)pool_cpu_written(p,off,size);
@@ -3821,9 +3836,17 @@ static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *kn
   pthread_mutex_unlock(&V.resources);
 }
 static void buffer_writeback(uint64_t dst,uint64_t size,const uint8_t *known,VkPipelineStageFlags stages) {
-  buffer_writeback_intent(dst,size,known,stages,1);
+  buffer_writeback_intent(dst,size,known,stages,1,NULL);
 }
 #include "nvn_vk_cpu_demand.inc"
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+void vk_pool_native_image_writeback(void *token,uint64_t address,uint64_t bytes,VkPipelineStageFlags producers) {
+  // Actual image writer: same logical hazard/publication ledger, authenticated
+  // by its retained immutable import instead of forcing an unused VkBuffer.
+  if(!token)die("Native image writeback requires retained allocation token");
+  buffer_writeback_intent(address,bytes,NULL,producers,1,token);
+}
+#endif
 void vk_buffer_writeback_stage(uint64_t dst,uint64_t size,VkPipelineStageFlags producers) {
   buffer_writeback(dst,size,NULL,producers);
 }

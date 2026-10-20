@@ -11,12 +11,18 @@ static pool_operation_plan *pool_operation_plans[POOL_OPERATION_DEPTH];
 static uint64_t pool_operation_fallbacks;
 static int pool_operation_add(void *context,const vk_pool_requirement *range) {
   pool_operation_plan *plan=context;
-  if(!range || !range->address || !range->size || range->size>UINT64_MAX-range->address ||
+  if(!range || (range->binding_kind==VK_POOL_REQUIRE_NATIVE_IMAGE && range->prefix_alignment) || !range->address || !range->size || range->size>UINT64_MAX-range->address ||
       plan->count==VK_POOL_RESERVE_MAX_REQUIREMENTS)return 0;
   // Exact duplicates need only one physical reservation; keep access semantics
   // in the original consumers rather than modifying their dependency records.
   for(size_t k=0;k<plan->count;k++)if(plan->ranges[k].address==range->address &&
-      plan->ranges[k].size==range->size && plan->ranges[k].prefix_alignment==range->prefix_alignment)return 1;
+      plan->ranges[k].size==range->size && plan->ranges[k].prefix_alignment==range->prefix_alignment) {
+    // Same bytes may be consumed as BOTH an image and a real Buffer. The
+    // Buffer contract dominates regardless of enumeration order.
+    if(plan->ranges[k].binding_kind==VK_POOL_REQUIRE_NATIVE_IMAGE &&
+        range->binding_kind!=VK_POOL_REQUIRE_NATIVE_IMAGE)plan->ranges[k]=*range;
+    return 1;
+  }
   plan->ranges[plan->count++]=*range;return 1;
 }
 static void pool_operation_unpin(pool_operation_plan *plan) {
@@ -55,11 +61,12 @@ static void pool_operation_bound_nodes(pool_operation_plan *plan) {
   pthread_mutex_lock(&V.resources);
   for(size_t k=0;k<plan->count;k++) {
     vk_pool_requirement *r=&plan->ranges[k];pool *p=pool_find(r->address,r->size);
-    if(!p || pool_window_whole(p))continue;
+    if(!p || pool_window_whole(p) || pool_native_requirement(p,r))continue;
     unsigned nodes=0;for(pool_backing_span *b=p->backings;b;b=b->next)nodes++;
     unsigned missing=0;
     for(size_t j=0;j<plan->count;j++) {
       const vk_pool_requirement *q=&plan->ranges[j];
+      if(pool_native_requirement(p,q))continue;
       if(q->address<(uintptr_t)p->guest || q->address-(uintptr_t)p->guest>=p->size ||
           q->size>p->size-(q->address-(uintptr_t)p->guest))continue;
       pool_span_piece span;
@@ -90,13 +97,23 @@ static int pool_operation_pin(pool_operation_plan *plan) {
     }
     if(!p)p=pool_find(r->address,r->size);
     pool_span_piece span;
-    if(!p || !pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span)) {good=0;break;}
+    if(!p || (!pool_native_requirement(p,r) &&
+        !pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span))) {good=0;break;}
     if(j==plan->pin_count) {p->references++;plan->pins[plan->pin_count++]=p;}
   }
   pthread_mutex_unlock(&V.resources);
   if(!good)pool_operation_unpin(plan);
   return good;
 }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+static int pool_operation_retains_locked(const pool *p) {
+  for(unsigned d=0;d<pool_operation_depth;d++) {
+    const pool_operation_plan *plan=pool_operation_plans[d];
+    for(size_t k=0;k<plan->pin_count;k++)if(plan->pins[k]==p)return 1;
+  }
+  return 0;
+}
+#endif
 // Close existing work before copying old buffers. In particular a migration
 // must NOT be appended to a main CB whose later uploads execute before it.
 // Ghost replay is postponed across this maintenance-only pass end, then runs

@@ -5,6 +5,13 @@
 #include "dm_guest_heap.h"
 extern int dm_guest_heap_probe_views_create(size_t,size_t,dm_guest_heap_probe_views *) __attribute__((weak));
 extern void dm_guest_heap_probe_views_destroy(dm_guest_heap_probe_views *) __attribute__((weak));
+static int shared_pool_has_imports_locked(const pool *p) {
+  return p->backings!=NULL
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      || p->native_allocations!=NULL
+#endif
+      ;
+}
 static VkResult shared_buffer_create_types(void *host_pointer,uint64_t bytes,vk_buffer *fresh,uint32_t image_types) {
   uint64_t address=(uintptr_t)host_pointer;
   const char *stage="external-buffer-properties";
@@ -88,6 +95,11 @@ static void shared_pool_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int 
   native_allocation_cache_locked(p,offset,bytes,invalidate);
 #endif
   if(!shared_window_bytes) {shared_cache(&p->whole.buffer,offset,bytes,invalidate);return;}
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(complete && !shared_pool_storage_covered_locked(p,offset,bytes))
+    die("Shared cache range lacks physical Buffer/native import coverage");
+  complete=0; // Complete union proof above; actual Buffer holes stay holes.
+#endif
   uint64_t at=offset,end=offset+bytes;
   for(pool_backing_span *b=p->backings;b && b->begin<end;b=b->next) {
     if(b->end<=offset)continue;
@@ -117,7 +129,21 @@ static void shared_pool_host_barrier(pool *p,uint64_t offset,uint64_t bytes,VkPi
       .buffer=p->whole.buffer.handle,.offset=offset,.size=bytes};
     vkCmdPipelineBarrier(V.cmd,producers,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);return;
   }
-  pthread_mutex_lock(&V.resources);pool_span_iter it;pool_span_piece piece;
+  pthread_mutex_lock(&V.resources);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(!shared_pool_storage_covered_locked(p,offset,bytes))die("Shared HOST writer lacks physical import coverage");
+  uint64_t end=offset+bytes;
+  for(pool_backing_span *span=p->backings;span && span->begin<end;span=span->next) {
+    if(span->end<=offset)continue;
+    uint64_t first=offset>span->begin?offset:span->begin,last=end<span->end?end:span->end;
+    VkBufferMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+      .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+      .buffer=span->buffer.handle,.offset=first-span->begin,.size=last-first};
+    vkCmdPipelineBarrier(V.cmd,producers,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);
+  }
+#else
+  pool_span_iter it;pool_span_piece piece;
   if(!pool_span_iter_begin(p,offset,bytes,&it))die("Shared HOST barrier range");
   int next;
   while((next=pool_span_iter_next(&it,&piece))==1) {
@@ -128,6 +154,7 @@ static void shared_pool_host_barrier(pool *p,uint64_t offset,uint64_t bytes,VkPi
     vkCmdPipelineBarrier(V.cmd,producers,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);
   }
   if(next<0)die("Shared HOST writer range not imported");
+#endif
   pthread_mutex_unlock(&V.resources);
 }
 static VkResult shared_span_try_allocate(pool *p,pool_backing_span *span,uint64_t begin,uint64_t end) {
@@ -137,7 +164,7 @@ static VkResult shared_span_try_allocate(pool *p,pool_backing_span *span,uint64_
   if(!alias)return VK_ERROR_INVALID_EXTERNAL_HANDLE;
   VkResult result=shared_buffer_create(alias,end-begin,&span->buffer);
   if(result!=VK_SUCCESS)return result;
-  if(p->backings && span->buffer.properties!=p->shared_properties) {
+  if(shared_pool_has_imports_locked(p) && span->buffer.properties!=p->shared_properties) {
     vk_buffer_destroy(&span->buffer);return VK_ERROR_INVALID_EXTERNAL_HANDLE;
   }
   span->buffer.map=p->guest+begin;span->begin=begin;span->end=end;return VK_SUCCESS;
@@ -317,7 +344,7 @@ void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate) {
   // Explicit cache API never secretly waits an overlapping GPU. Existing
   // consumer bookkeeping is page-conservative, stronger than the atom bound.
   if(pending_gpu_access(p,first,end-first))die("Shared CPU cache publication overlaps pending GPU cacheline/page");
-  if(p->backings)shared_pool_cache_locked(p,offset,bytes,invalidate,0);
+  if(shared_pool_has_imports_locked(p))shared_pool_cache_locked(p,offset,bytes,invalidate,0);
   pthread_mutex_unlock(&V.resources);
 }
 

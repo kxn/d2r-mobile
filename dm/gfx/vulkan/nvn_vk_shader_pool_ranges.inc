@@ -74,7 +74,7 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
     }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
     // Image schemas use their existing immutable image iterator, independent
-    // of the buffer-only mask. Native payloads need physical admission too.
+    // of the buffer-only mask. Native payloads retain their logical Pool; immutable image imports are separate from real Buffer admission.
     if(vk_native_resources_active())for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
       unsigned k;if(!vk_image_binding_next(s,&it,&k))break;
       const vk_binding *b=&s->bindings[k];

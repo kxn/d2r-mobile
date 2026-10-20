@@ -6,34 +6,72 @@ typedef struct native_image_allocation {
   pool *owner;
   uint64_t identity,begin,end,address,bytes;
   vk_buffer storage;
+  alias_range_node range;
   _Atomic int released;
 } native_image_allocation;
+_Static_assert(sizeof(native_image_allocation)==184,"Native import node: original120B + exact AVL64B");
 static _Atomic uint64_t native_allocation_count,native_allocation_bytes;
 
+// Real physical allocation index, not an authority/cache shortcut. All changes
+// and queries hold resources. Existing max_end AVL prunes earlier envelopes;
+// traversal visits only O(logN + actual overlaps), including equal starts.
+static int native_allocation_alive(const alias_range_node *node,int unused) {
+  (void)unused;native_image_allocation *a=node->owner;
+  return !atomic_load_explicit(&a->released,memory_order_acquire);
+}
+static uint64_t native_allocation_cover_end(const alias_range_node *node,uint64_t at,uint64_t end) {
+  if(!node || node->max_end<=at)return at;
+  uint64_t covered=native_allocation_cover_end(node->left,at,end);
+  if(node->start>=end)return covered;
+  if(node->end>at && native_allocation_alive(node,0) && node->end>covered)covered=node->end;
+  uint64_t right=native_allocation_cover_end(node->right,at,end);
+  return right>covered?right:covered;
+}
+static int shared_pool_storage_covered_locked(pool *p,uint64_t offset,uint64_t bytes) {
+  if(!bytes || offset>p->size || bytes>p->size-offset)return 0;
+  uint64_t at=offset,end=offset+bytes;pool_backing_span *b=p->backings;
+  while(at<end) {
+    // All native intervals containing this exact point may extend coverage;
+    // then advance to the next boundary, never scan unrelated native records.
+    uint64_t next=native_allocation_cover_end(p->native_allocation_index,at,at+1);
+    while(b && b->begin<=at) {if(b->end>next)next=b->end;b=b->next;}
+    if(next==at)return 0;
+    at=next;
+  }
+  return 1;
+}
 static void native_allocation_collect_locked(pool *p) {
   native_image_allocation **at=&p->native_allocations;
   while(*at) {
     native_image_allocation *a=*at;
     if(atomic_load_explicit(&a->released,memory_order_acquire)!=2) {at=&a->next;continue;}
     *at=a->next;
+    int removed=0;p->native_allocation_index=alias_range_remove(p->native_allocation_index,&a->range,&removed);
+    if(!removed)die("Native allocation index retirement mismatch");
     atomic_fetch_sub(&native_allocation_count,1);
     atomic_fetch_sub(&native_allocation_bytes,a->end-a->begin);
     vk_buffer_destroy(&a->storage);free(a);
   }
+  if(!p->native_allocations && p->native_allocation_index)die("Native allocation index outlived imports");
 }
 static int native_allocation_overlaps_locked(pool *p,uint64_t offset,uint64_t bytes) {
-  for(native_image_allocation *a=p->native_allocations;a;a=a->next)
-    if(!atomic_load_explicit(&a->released,memory_order_acquire) && a->begin<offset+bytes && a->end>offset)return 1;
-  return 0;
+  return alias_range_overlap(p->native_allocation_index,offset,offset+bytes,native_allocation_alive,0);
 }
-static void native_allocation_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int invalidate) {
-  // Cache each actual imported allocation. A replacement Buffer memory object
-  // is not a substitute for the immutable memory bound to the VkImage.
-  for(native_image_allocation *a=p->native_allocations;a;a=a->next) {
-    if(atomic_load_explicit(&a->released,memory_order_acquire) || a->begin>=offset+bytes || a->end<=offset)continue;
-    uint64_t first=offset>a->begin?offset:a->begin,last=offset+bytes<a->end?offset+bytes:a->end;
+static void native_allocation_cache_visit(const alias_range_node *node,uint64_t offset,uint64_t end,int invalidate) {
+  if(!node || node->max_end<=offset)return;
+  native_allocation_cache_visit(node->left,offset,end,invalidate);
+  if(node->start>=end)return;
+  native_image_allocation *a=node->owner;
+  if(node->end>offset && native_allocation_alive(node,0)) {
+    uint64_t first=offset>a->begin?offset:a->begin,last=end<a->end?end:a->end;
     shared_cache(&a->storage,first-a->begin,last-first,invalidate);
   }
+  native_allocation_cache_visit(node->right,offset,end,invalidate);
+}
+static void native_allocation_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int invalidate) {
+  // Every intersecting immutable VkMemory has its own required cache op;
+  // one canonical Buffer's memory cannot replace this alias visibility.
+  native_allocation_cache_visit(p->native_allocation_index,offset,offset+bytes,invalidate);
 }
 void vk_pool_native_image_collect(void) {
   pthread_mutex_lock(&V.resources);
@@ -78,11 +116,11 @@ static void *native_image_try_bind(uint64_t address,uint64_t bytes,VkImage image
       !needs->alignment || (needs->alignment&(needs->alignment-1)) ||
       !needs->memoryTypeBits || !image || !memory)
     die("Native image requires live finite shared storage and exact requirements");
-  uint64_t logical=address-(uintptr_t)p->guest;
-  pool_span_piece current;
+
   if(shared_window_bytes) {
-    if(!pool_span_resolve_locked(p,logical,bytes,&current))
-      die("Native payload missing complete operation admission");
+    // The operation retains the exact logical Pool. This immutable image
+    // import supplies physical coverage; no VkBuffer consumer is implied.
+    if(!pool_operation_retains_locked(p))die("Native payload missing retained logical operation admission");
   } else shared_pool_materialize(p);
   uint64_t alignment=shared_alignment;
   if(needs->alignment>alignment)alignment=needs->alignment;
@@ -103,7 +141,8 @@ static void *native_image_try_bind(uint64_t address,uint64_t bytes,VkImage image
 #ifdef DM_VULKAN_TEST_EMBED
   if(result==VK_SUCCESS && native_allocation_test_fail)result=VK_ERROR_OUT_OF_DEVICE_MEMORY;
 #endif
-  if(result==VK_SUCCESS && a->storage.properties!=p->shared_properties)result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
+  if(result==VK_SUCCESS && shared_pool_has_imports_locked(p) &&
+      a->storage.properties!=p->shared_properties)result=VK_ERROR_INVALID_EXTERNAL_HANDLE;
   if(result==VK_SUCCESS)result=vkBindImageMemory(V.device,image,a->storage.memory,address-first);
   if(result!=VK_SUCCESS) {
     if(a){vk_buffer_destroy(&a->storage);free(a);}
@@ -115,6 +154,11 @@ static void *native_image_try_bind(uint64_t address,uint64_t bytes,VkImage image
   vkDestroyBuffer(V.device,a->storage.handle,NULL);a->storage.handle=VK_NULL_HANDLE;
   a->owner=p;a->identity=p->identity;a->begin=first-(uintptr_t)p->guest;a->end=last-(uintptr_t)p->guest;
   a->address=address;a->bytes=bytes;a->storage.map=p->guest+a->begin;
+  if(!shared_pool_has_imports_locked(p))p->shared_properties=a->storage.properties;
+  a->range=(alias_range_node){.start=a->begin,.end=a->end,.max_end=a->end,
+    .serial=a->address,.owner=a,.height=1};
+  int inserted=0;p->native_allocation_index=alias_range_insert(p->native_allocation_index,&a->range,&inserted);
+  if(!inserted)die("Native allocation index publication mismatch");
   a->next=p->native_allocations;p->native_allocations=a;
   atomic_fetch_add(&p->native_image_references,1);
   atomic_fetch_add(&native_allocation_count,1);atomic_fetch_add(&native_allocation_bytes,last-first);
@@ -134,15 +178,22 @@ void *vk_test_native_image_try_bind(uint64_t address,uint64_t bytes,VkImage imag
   return native_image_try_bind(address,bytes,image,needs,memory,failure);
 }
 #endif
+static int native_allocation_write_range_locked(pool *p,void *token,uint64_t address,uint64_t bytes) {
+  native_image_allocation *a=token;
+  return a && p==a->owner && a->identity==p->identity && p->shared && !p->shared_closing &&
+      !atomic_load_explicit(&a->released,memory_order_acquire) && bytes && address>=a->address &&
+      address-a->address<=a->bytes && bytes<=a->bytes-(address-a->address);
+}
 void vk_pool_native_image_use(void *token,uint64_t address,uint64_t bytes,VkPipelineStageFlags stages) {
   native_image_allocation *a=token;
   pthread_mutex_lock(&V.resources);pool *p=a?a->owner:NULL;
   if(!a || atomic_load(&a->released) || p!=pool_find(address,bytes) ||
       a->identity!=p->identity || !p->shared || p->shared_closing || address!=a->address || bytes!=a->bytes)
     die("Native image retained allocation/Pool lifetime mismatch");
-  pool_span_piece active;
-  if(!pool_span_resolve_locked(p,address-(uintptr_t)p->guest,bytes,&active))
-    die("Native image use missing active Buffer cache/access coverage");
+  // Token identity, exact immutable memory and retained logical Pool are the
+  // physical proof. Real Buffer callers still require canonical span lookup.
+  if(address<(uintptr_t)p->guest+a->begin || bytes>a->end-(address-(uintptr_t)p->guest))
+    die("Native image use outside immutable import coverage");
   record_pool_use(p,address-(uintptr_t)p->guest,bytes,stages,1);
   pthread_mutex_unlock(&V.resources);
 }
@@ -167,6 +218,55 @@ void vk_native_allocation_stats(uint64_t *count,uint64_t *bytes,uint64_t *metada
   *metadata_bytes=*count*sizeof(native_image_allocation);
 }
 #ifdef DM_VULKAN_TEST_EMBED
+unsigned vk_test_native_import_index(void) {
+  // Exact set oracle, independent of image recipes or CPU contents. Actual
+  // GPU imports/pixels and later Buffer unions are tested by native_lane.
+  enum {N=32};native_image_allocation a[N]={0};pool p={.size=4096};unsigned checks=0;
+  for(unsigned k=0;k<N;k++) {
+    unsigned n=(k*13)%N;uint64_t first=(n%8)*32,length=(n/8+1)*24;
+    a[n].begin=first;a[n].end=first+length;
+    a[n].range=(alias_range_node){.start=first,.end=first+length,.max_end=first+length,.serial=n,.owner=&a[n],.height=1};
+    int inserted=0;p.native_allocation_index=alias_range_insert(p.native_allocation_index,&a[n].range,&inserted);
+    if(!inserted)die("Native allocation test index duplicate");checks++;
+  }
+  for(unsigned pass=0;pass<3;pass++) {
+    for(uint64_t first=0;first<384;first+=3)for(uint64_t length=1;length<65;length+=7) {
+      uint64_t next=first;int overlaps=0;
+      for(unsigned n=0;n<N;n++)if(!atomic_load(&a[n].released) && a[n].begin<first+1 && a[n].end>first) {
+        if(a[n].end>next)next=a[n].end;
+      }
+      for(unsigned n=0;n<N;n++)if(!atomic_load(&a[n].released) && a[n].begin<first+length && a[n].end>first)overlaps=1;
+      if(native_allocation_cover_end(p.native_allocation_index,first,first+1)!=next ||
+          native_allocation_overlaps_locked(&p,first,length)!=overlaps)die("Native allocation indexed point/overlap mismatch");checks++;
+      uint64_t at=first;
+      while(at<first+length) {
+        uint64_t end=at;
+        for(unsigned n=0;n<N;n++)if(!atomic_load(&a[n].released) && a[n].begin<=at && a[n].end>end)end=a[n].end;
+        if(end==at)break;
+        at=end;
+      }
+      if(shared_pool_storage_covered_locked(&p,first,length)!=(at>=first+length))die("Native allocation union coverage mismatch");checks++;
+    }
+    if(pass==0)for(unsigned n=0;n<N;n+=2)atomic_store(&a[n].released,2);
+    if(pass==1)for(unsigned k=0;k<N/2;k++) {
+      unsigned n=(k*5)%16*2;int removed=0;
+      p.native_allocation_index=alias_range_remove(p.native_allocation_index,&a[n].range,&removed);
+      if(!removed)die("Native allocation test remove mismatch");checks++;
+    }
+  }
+  for(unsigned n=1;n<N;n+=2) {
+    atomic_store(&a[n].released,2);int removed=0;
+    p.native_allocation_index=alias_range_remove(p.native_allocation_index,&a[n].range,&removed);
+    if(!removed)die("Native allocation final retirement mismatch");checks++;
+  }
+  if(p.native_allocation_index || shared_pool_storage_covered_locked(&p,0,1))die("Native allocation index remained after release");checks++;
+  return checks;
+}
+int vk_test_native_import_coverage(uint64_t address,uint64_t bytes) {
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  int valid=p && p->shared && shared_pool_storage_covered_locked(p,address-(uintptr_t)p->guest,bytes);
+  pthread_mutex_unlock(&V.resources);return valid;
+}
 void vk_test_native_allocation_binding(void *token,VkDeviceMemory *memory,uint64_t *offset) {
   native_image_allocation *a=token;
   if(!a || atomic_load(&a->released))die("Native binding test outside lifetime");

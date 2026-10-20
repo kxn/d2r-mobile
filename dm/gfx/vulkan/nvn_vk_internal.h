@@ -441,6 +441,7 @@ void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes);
 
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 void *vk_pool_native_image_bind(uint64_t,uint64_t,VkImage,const VkMemoryRequirements *,VkDeviceMemory *);
+void vk_pool_native_image_writeback(void *,uint64_t,uint64_t,VkPipelineStageFlags);
 void vk_pool_native_image_use(void *,uint64_t,uint64_t,VkPipelineStageFlags);
 void vk_pool_native_image_release(void *);
 void vk_pool_native_image_collect(void);

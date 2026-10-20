@@ -107,13 +107,15 @@ int vk_texture_native_pool_collect(const tex_t *t,VkPipelineStageFlags stages,in
   if(!t || !t->has_layout || !nvn_native_layout_is_marker(t->layout))return 1;
   const nvn_native_entry *entry=native_image_entry(t);
   if(!entry || !sink || !t->mem || t->L.size!=entry->recipe.image_size)return 0;
-  vk_pool_requirement requirement={(uintptr_t)t->mem,entry->recipe.image_size,0,stages,writable,0};
+  vk_pool_requirement requirement={(uintptr_t)t->mem,entry->recipe.image_size,0,stages,writable,
+    VK_POOL_REQUIRE_NATIVE_IMAGE};
   return sink(context,&requirement);
 }
 static int native_pool_operation(const tex_t *t,VkPipelineStageFlags stages,int writable) {
   if(!V.options.pool_window_bytes || !t || !t->has_layout || !nvn_native_layout_is_marker(t->layout))return 0;
   const nvn_native_entry *entry=native_image_entry(t);
-  vk_pool_requirement requirement={(uintptr_t)t->mem,entry->recipe.image_size,0,stages,writable,0};
+  vk_pool_requirement requirement={(uintptr_t)t->mem,entry->recipe.image_size,0,stages,writable,
+    VK_POOL_REQUIRE_NATIVE_IMAGE};
   return vk_pool_operation_begin_ranges(&requirement,1);
 }
 static int native_acquire_alias_writer(const alias_range_node *node,int unused) {
@@ -324,13 +326,13 @@ static void native_image_record(image *i,VkImageSubresourceRange range,VkPipelin
     for(unsigned n=range.baseMipLevel;n<range.baseMipLevel+range.levelCount;n++) {
       const nvn_native_mip *m=&i->native_entry->recipe.mips[n];
       uint64_t address=(uintptr_t)i->tex.mem+m->offset;
-      // Both finite native allocation and active operation span are pinned. Acquire
+      // Both finite native allocation and logical operation Pool are pinned. Acquire
       // only a mip that is actually written, never every sampled-only asset.
       // The independent NC commit gate protects these pages through fence +
       // Invalidate. A missing gate is a hard experimental capability failure.
       native_image_write_scope(i,n);
       vk_buffer_transfer_written_range(address,m->size);
-      vk_buffer_writeback_stage(address,m->size,stages);
+      vk_pool_native_image_writeback(i->native_pool,address,m->size,stages);
     }
   }
 }

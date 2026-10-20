@@ -6,7 +6,7 @@
 #pragma once
 #include <stdint.h>
 #include <vulkan/vulkan.h>
-enum { VK_POOL_REQUIRE_VERTEX=-1,VK_POOL_REQUIRE_INDEX=-2 };
+enum { VK_POOL_REQUIRE_VERTEX=-1,VK_POOL_REQUIRE_INDEX=-2,VK_POOL_REQUIRE_NATIVE_IMAGE=-3 };
 
 typedef struct {
   uint64_t address,size;

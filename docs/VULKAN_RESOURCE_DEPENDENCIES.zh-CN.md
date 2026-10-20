@@ -1752,3 +1752,15 @@ DS 入场修复已实际部署：Mali 普通游戏3秒窗口+236 plans/+236 draw
 代价是一次全层 GPU 读/写与较大的持久 RGBA8 image，旧/新分配暂时共存。实测拒绝目标为 128²×42 层×7 mip，其理想 BC texel payload 917952 B、RGBA texels 3669792 B，差值 2751840 B；这不等于 Vulkan allocation 或实际驻留。每 image 新标志是否占用旧 padding 以最终 NDK DWARF 为准。工作量与内存成本必须和 bulk native payload 膨胀分别记录，不推断 FPS/RAM 净收益。
 
 独立 GPU fixture 为 `DM_MIXED_COMPRESSED_COPY_FIXTURE=1`；host 实际执行 BC→RGBA 全 layer/mip/ROI/旧 view/readback 生命周期，`DM_MIXED_COMPRESSED_ASTC_SOURCE=1` 只有实际 ASTC 支持才从原 production 分支验证混合输入，不支持会明确返回 unsupported。旧 `DM_ASTC_COPY_NEGATIVE=existing` 现显式验证 RGBA 而非 ASTC 的物理表示，真实 readback 原已定义 layer0 与新 ASTC layer41 的全部像素；新 preserving 矩阵进一步覆盖其它 layer/mip/ROI 及 CPU/alias/raw-export 负例。
+
+## 仅原生 VkImage 的独立导入与真实 Buffer 覆盖
+
+共享 window 模式中，原生贴图的 operation requirement 通过已有 binding_kind 标明只消费 VkImage；完整逻辑范围、Pool identity 和原 operation pin 仍被验证/保留。它不再仅为采样或 image→image copy 预留粗 Buffer window。相同字节同时有 native 与真实 Buffer requirement 时，Buffer 要求优先；不同范围仍逐项完整收集。whole0 参考策略保持原整池 Buffer 行为。materialized/span-query 始终只描述真实 Buffer，不把 native image 标成 Buffer。
+
+原生 VkImage 仍用独立且不可重绑的有限 VkMemory import，同一 memfd 页，不增加 payload 拷贝。首个实际 import 在资源锁内确定 Pool memory properties；后来真正 Buffer import 必须同属性。实际 native image writer 以 token+identity+immutable range 认证，复用原 GPU writer/writeback/publication/NC gate；不会通过通用 Buffer writeback 触发无消费者 Buffer import，也不会给 image writer 伪造 VkBuffer history。原历史不能证明提前移动 acquire 时只取消该优化，normal-primary 的实际像素消费照常执行。
+
+提交 Flush、完成 Invalidate 和 HOST barrier 的完整覆盖是 live native envelopes 与真实 Buffer spans 的并集；相交的每一个 VkMemory 各执行所需 cache 操作，native alias 仍用原真实跨内存 dependency，存在的真实 Buffer 交集仍有 named barrier。public Flush/Invalidate 可覆盖 untouched holes，但完整使用/写回不能凭孔洞得到授权。native-only 非 coherent CPU 阶段必须同样等待原 GPU+CPU-effects；不能因为 backings 为空就误判没有 GPU 使用。
+
+原 native allocation list 保留退休扫描；新增 resources 锁下的既有 AVL 区间索引，cache/overlap/coverage 仅查询相关区间（相同起点、交叠和 retiring 项均保守处理）。新增每 native allocation 64B、每 Pool 8B；无每 draw 全表扫描、无新计时/性能计数器。index oracle 用32节点旋转/删除/相同起点/交叠/已释放未回收状态与线性集合逐项比较，另用真实相邻 imports 的 GPU 像素/NC可用cache路径、晚真实 Buffer、两次 union 和最后退休作功能验证。
+
+预期减少无实际 VkBuffer 消费者的粗窗口 GUP/pin、未用页覆盖及 Buffer/driver metadata，不承诺恰好回收之前观察的64MiB PSS。native payload padding、CPU cache、系统 PSS、原 game 部署和原厂性能对照各自仍需实际证据；host RGBA 通过不能代替 AA ASTC 或真实游戏。

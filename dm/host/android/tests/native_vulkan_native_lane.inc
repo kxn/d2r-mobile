@@ -35,7 +35,7 @@ static void native_pending_acquire_gpu_cases(VkImage image,void *binding,uint64_
     p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3};vk_draw(&draw,NULL);CHECK(vk_render_active());
     if(test==2)V.nvn_barrier=NVN_BARRIER_ORDER_PRIMITIVES_BIT;
     extern int vk_test_native_pending_acquire(VkImage,void *,uint64_t,uint64_t,VkBuffer);
-    CHECK(vk_test_native_pending_acquire(image,binding,address,image_bytes,out->handle)==(test==0));
+    CHECK(vk_test_native_pending_acquire(image,binding,address,image_bytes,out->handle)==(test==0 && !getenv("DM_NATIVE_ONLY_WRITER_PENDING_FIXTURE")));
     if(test==2)vk_barrier();
     VkBufferMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
       .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
@@ -59,6 +59,7 @@ static void native_pending_acquire_gpu_cases(VkImage image,void *binding,uint64_
 }
 static void native_lane_gpu_test(void) {
   CHECK(vk_pool_shared_mode() && V.options.pool_window_bytes==65536);
+  extern unsigned vk_test_native_import_index(void);checks+=vk_test_native_import_index();
   NVNmemoryPoolBuilder pb;NVNmemoryPool memory;
   CALL(nvnMemoryPoolBuilderSetDefaults,&pb);CALL(nvnMemoryPoolBuilderSetDevice,&pb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&pb,bytes,4u<<20);
@@ -88,8 +89,10 @@ static void native_lane_gpu_test(void) {
   uint64_t initial_count,initial_bytes,count,allocated;
   extern void vk_test_native_allocation_stats(uint64_t *,uint64_t *);
   vk_test_native_allocation_stats(&initial_count,&initial_bytes);
-  mtl_sub_begin();vk_pool_requirement requirement={address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0};
+  mtl_sub_begin();vk_pool_requirement requirement={address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,VK_POOL_REQUIRE_NATIVE_IMAGE};
   int operation=vk_pool_operation_begin_ranges(&requirement,1);
+  vk_pool_span_info absent;CHECK(vk_pool_span_query(address,needs.size,&absent)==VK_POOL_SPAN_UNBACKED);
+  CHECK(!vk_pool_shared_materialized(address,needs.size));
   extern void vk_test_native_allocation_fail(int);
   extern void *vk_test_native_image_try_bind(uint64_t,uint64_t,VkImage,const VkMemoryRequirements *,VkDeviceMemory *,VkResult *);
   VkDeviceMemory failure_memory=VK_NULL_HANDLE;VkResult allocation_failure=VK_SUCCESS;
@@ -104,15 +107,20 @@ static void native_lane_gpu_test(void) {
     .newLayout=VK_IMAGE_LAYOUT_GENERAL,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
     .image=image,.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1},.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT};
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&general);
+  int pending_fixture=getenv("DM_NATIVE_PENDING_ACQUIRE_FIXTURE")!=NULL;
+  int native_writer_pending=getenv("DM_NATIVE_ONLY_WRITER_PENDING_FIXTURE")!=NULL;
   VkClearColorValue red={.float32={1,0,0,1}};
   vk_pool_native_image_use(binding,address,needs.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
   vkCmdClearColorImage(V.cmd,image,VK_IMAGE_LAYOUT_GENERAL,&red,1,&general.subresourceRange);
+  if(!pending_fixture || native_writer_pending) {
+    vk_buffer_transfer_written_range(address,needs.size);
+    vk_pool_native_image_writeback(binding,address,needs.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  }
   VkMemoryBarrier alias={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
     .dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT};
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&alias,0,NULL,0,NULL);
   void *raw;uint64_t offset;vk_buffer *source;
   void *saved_raw;uint64_t saved_offset;uint64_t saved_address=(uintptr_t)bytes+524288;
-  int pending_fixture=getenv("DM_NATIVE_PENDING_ACQUIRE_FIXTURE")!=NULL;
   if(pending_fixture) {
     VkImageMemoryBarrier release=general;release.oldLayout=release.newLayout=VK_IMAGE_LAYOUT_GENERAL;
     release.srcQueueFamilyIndex=V.queue_family;release.dstQueueFamilyIndex=VK_QUEUE_FAMILY_FOREIGN_EXT;
@@ -120,18 +128,62 @@ static void native_lane_gpu_test(void) {
     vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,0,NULL,1,&release);
   }
   vk_pool_operation_end(operation);vk_internal_wait(vk_internal_commit());
+  CHECK(vk_pool_span_query(address,needs.size,&absent)==VK_POOL_SPAN_UNBACKED);
+  CHECK(!vk_pool_shared_materialized(address,needs.size));
+  extern int vk_test_native_import_coverage(uint64_t,uint64_t);
+  CHECK(vk_test_native_import_coverage(address,needs.size));
+  // Adjacent actual native imports share no VkBuffer. Flush/Invalidate must
+  // visit each immutable VkMemory, including a complete joined GPU-use run.
+  if(!pending_fixture) {
+    uint64_t second_address=address+(allocated-initial_bytes);
+    CHECK(second_address+needs.size<(uintptr_t)bytes+(2u<<20));
+    VkImage second;VK_CHECK(vkCreateImage(V.device,&create,NULL,&second));
+    mtl_sub_begin();vk_pool_requirement adjacent[2]={{address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,VK_POOL_REQUIRE_NATIVE_IMAGE},
+      {second_address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,VK_POOL_REQUIRE_NATIVE_IMAGE}};
+    operation=vk_pool_operation_begin_ranges(adjacent,2);
+    VkDeviceMemory second_memory;void *second_binding=vk_pool_native_image_bind(second_address,needs.size,second,&needs,&second_memory);
+    CHECK(second_memory!=immutable_memory);CHECK(vk_test_native_import_coverage(address,second_address+needs.size-address));
+    CHECK(!vk_test_native_import_coverage(address-1,second_address+needs.size-address+1));
+    VkImageMemoryBarrier second_general=general;second_general.image=second;
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&second_general);
+    VkClearColorValue green={.float32={0,1,0,1}};vk_pool_native_image_use(second_binding,second_address,needs.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+    vkCmdClearColorImage(V.cmd,second,VK_IMAGE_LAYOUT_GENERAL,&green,1,&general.subresourceRange);
+    vk_buffer_transfer_written_range(second_address,needs.size);
+    vk_pool_native_image_writeback(second_binding,second_address,needs.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&alias,0,NULL,0,NULL);
+    vk_buffer *pixels=vk_temp_buffer(8192);VkBufferImageCopy copy={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},.imageExtent={32,32,1}};
+    vk_pool_native_image_use(binding,address,needs.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+    vkCmdCopyImageToBuffer(V.cmd,image,VK_IMAGE_LAYOUT_GENERAL,pixels->handle,1,&copy);copy.bufferOffset=4096;
+    vkCmdCopyImageToBuffer(V.cmd,second,VK_IMAGE_LAYOUT_GENERAL,pixels->handle,1,&copy);
+    VkBufferMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+      .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.buffer=pixels->handle,.size=8192};
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&host,0,NULL);
+    uint8_t both[8192];native_lane_readback publication={both,pixels->map,sizeof both};
+    vk_completion_write(native_lane_readback_done,&publication,both,sizeof both);
+    vk_pool_operation_end(operation);vk_internal_wait(vk_internal_commit());
+    CHECK(vk_pool_span_query(address,second_address+needs.size-address,&absent)==VK_POOL_SPAN_UNBACKED);
+    for(unsigned n=0;n<sizeof both;n+=4)CHECK(both[n]==(n<4096?255:0) && both[n+1]==(n<4096?0:255) && !both[n+2] && both[n+3]==255);
+    CALL(nvnMemoryPoolInvalidateMappedRange,&memory,address-(uintptr_t)bytes,second_address+needs.size-address);
+    CALL(nvnMemoryPoolFlushMappedRange,&memory,address-(uintptr_t)bytes,second_address+needs.size-address);
+    vkDestroyImage(V.device,second,NULL);vk_pool_native_image_release(second_binding);vk_pool_native_image_collect();
+    CHECK(!vk_test_native_import_coverage(second_address,needs.size));
+    CHECK(vk_test_native_import_coverage(address,needs.size));
+  }
   if(pending_fixture) {
     native_pending_acquire_gpu_cases(image,binding,address,needs.size,&memory);
     vkDestroyImage(V.device,image,NULL);vk_pool_native_image_release(binding);vk_pool_native_image_collect();
     vk_test_native_allocation_stats(&count,&allocated);CHECK(count==initial_count && allocated==initial_bytes);
     CALL(nvnMemoryPoolFinalize,&memory);CHECK(!vk_validation_error_count());
-    printf("{\"test\":\"native-pending-acquire-real-RGBA\",\"result\":\"passed\",\"checks\":%u,\"independent_preserved\":true,\"buffer_read_alias_split\":true,\"image_writer_alias_split\":true,\"explicit_order_split\":true,\"ASTC_executed\":false}\n",checks);return;
+    if(native_writer_pending)printf("{\"test\":\"native-only-writer-conservative-split\",\"result\":\"passed\",\"checks\":%u,\"no_fake_Buffer_history\":true,\"actual_RGBA_pixels_correct\":true}\n",checks);
+    else printf("{\"test\":\"native-pending-acquire-real-RGBA\",\"result\":\"passed\",\"checks\":%u,\"independent_preserved\":true,\"buffer_read_alias_split\":true,\"image_writer_alias_split\":true,\"explicit_order_split\":true,\"ASTC_executed\":false}\n",checks);return;
   }
   uint8_t *opaque=malloc(needs.size);CHECK(opaque);
   // Use a standard readback to obtain bytes rather than reading device tiling.
-  mtl_sub_begin();vk_pool_requirement copy_ranges[2]={{address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0},
+  mtl_sub_begin();vk_pool_requirement copy_ranges[3]={{address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,VK_POOL_REQUIRE_NATIVE_IMAGE},
+    {address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0},
     {saved_address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0}};
-  operation=vk_pool_operation_begin_ranges(copy_ranges,2);
+  operation=vk_pool_operation_begin_ranges(copy_ranges,3);
+  CHECK(vk_pool_shared_materialized(address,needs.size));
   CHECK(vk_pool_address_stage(address,needs.size,&raw,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));source=raw;
   CHECK(vk_pool_address_stage(saved_address,needs.size,&saved_raw,&saved_offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
   VkBufferCopy keep={.srcOffset=offset,.dstOffset=saved_offset,.size=needs.size};
@@ -157,7 +209,8 @@ static void native_lane_gpu_test(void) {
   }
   // Change actual image pixels, then restore its old opaque bytes via the NEW
   // active VkBuffer and check image readback. Bound VkDeviceMemory never moves.
-  mtl_sub_begin();operation=vk_pool_operation_begin_ranges(copy_ranges,2);
+  mtl_sub_begin();vk_pool_requirement swap=copy_ranges[0];copy_ranges[0]=copy_ranges[1];copy_ranges[1]=swap;
+  operation=vk_pool_operation_begin_ranges(copy_ranges,3);
   VkClearColorValue blue={.float32={0,0,1,1}};
   vk_pool_native_image_use(binding,address,needs.size,VK_PIPELINE_STAGE_TRANSFER_BIT);
   vkCmdClearColorImage(V.cmd,image,VK_IMAGE_LAYOUT_GENERAL,&blue,1,&general.subresourceRange);
@@ -188,5 +241,5 @@ static void native_lane_gpu_test(void) {
   vk_test_native_allocation_stats(&count,&allocated);CHECK(count==initial_count && allocated==initial_bytes);
   CHECK(!memcmp(opaque,(void *)(uintptr_t)saved_address,needs.size));free(opaque);
   CALL(nvnMemoryPoolFinalize,&memory);CHECK(!vk_validation_error_count());
-  printf("{\"test\":\"native-lane-window-lifetime\",\"result\":\"passed\",\"checks\":%u,\"two_unions\":true,\"fresh_RGBA_not_ASTC\":true,\"last_release_collected\":true}\n",checks);
+  printf("{\"test\":\"native-lane-window-lifetime\",\"result\":\"passed\",\"checks\":%u,\"native_only_no_Buffer_then_late_Buffer\":true,\"adjacent_native_memories_GPU_pixels\":true,\"two_unions\":true,\"fresh_RGBA_not_ASTC\":true,\"last_release_collected\":true}\n",checks);
 }

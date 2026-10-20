@@ -115,7 +115,7 @@ static int pool_cpu_prepare_identity(uint64_t address,uint64_t size,uint64_t exp
   pthread_mutex_unlock(&V.resources);
   // No fabricated GPU write/authority generation: this is a CPU observation.
   // Initial CPU edits are uploaded through the ordinary commit upload path.
-  for(unsigned k=0;k<count;k++)buffer_writeback_intent(needs[k].address,needs[k].size,NULL,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0);
+  for(unsigned k=0;k<count;k++)buffer_writeback_intent(needs[k].address,needs[k].size,NULL,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,NULL);
   uint64_t serial=vk_internal_commit();vk_internal_wait(serial);
   vk_pool_operation_end(operation);
   pthread_mutex_lock(&V.resources);

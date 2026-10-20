@@ -57,6 +57,17 @@ static int pool_window_plan_compare(const void *left,const void *right) {
   if(a->begin!=b->begin)return a->begin<b->begin?-1:1;
   return a->end==b->end?0:a->end>b->end?-1:1;
 }
+// A native-image requirement retains a real logical Pool but does not borrow
+// VkBuffer. Whole/reference imports preserve the original policy. Only the
+// immutable shared-window mode can use an independently imported image lane.
+static int pool_native_requirement(const pool *p,const vk_pool_requirement *r) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  return shared_window_bytes && p->shared && !p->shared_closing &&
+      r->binding_kind==VK_POOL_REQUIRE_NATIVE_IMAGE && !r->prefix_alignment;
+#else
+  (void)p;(void)r;return 0;
+#endif
+}
 int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
     uint64_t window_bytes,vk_pool_reserve_result *out) {
   vk_pool_reserve_result result={0};int status=VK_POOL_RESERVE_INVALID;
@@ -92,6 +103,12 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
           r->prefix_alignment>window_bytes)))goto done;
     pool *p=pool_find(r->address,r->size);
     if(!p || !pool_window_chain_valid(p))goto done;
+    if(r->binding_kind==VK_POOL_REQUIRE_NATIVE_IMAGE && !pool_native_requirement(p,r)) {
+      // Whole/legacy/reference callers retain their original Buffer policy;
+      // malformed native prefixes are not silently treated as native coverage.
+      if(r->prefix_alignment)goto done;
+    }
+    if(!whole_reference && pool_native_requirement(p,r))continue;
 #ifdef DM_VULKAN_SHARED_POOLS
     // A manual reservation API call must never install private/mirror nodes
     // in an immutable shared-whole Pool. Normal whole lookup imports it.
@@ -119,6 +136,7 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
   size_t planned=0;
   for(size_t k=0;k<count;k++) {
     const vk_pool_requirement *r=&requirements[k];pool *p=pool_find(r->address,r->size);
+    if(!whole_reference && pool_native_requirement(p,r))continue;
     pool_span_piece existing;
     if(pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&existing))continue;
     uint64_t begin,end;int single=pool_window_bounds(p,r,window_bytes,&begin,&end);
