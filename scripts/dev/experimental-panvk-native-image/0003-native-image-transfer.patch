@@ -1,0 +1,15 @@
+--- a/src/panfrost/vulkan/panvk_dm_native_image.h
++++ b/src/panfrost/vulkan/panvk_dm_native_image.h
+@@ -18,8 +18,10 @@
+            format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
+            format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK) &&
+           tiling == VK_IMAGE_TILING_OPTIMAL && flags == 0 &&
+-          usage == (VK_IMAGE_USAGE_SAMPLED_BIT |
+-                    VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT);
++          (usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)) ==
++             (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) &&
++          !(usage & ~(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT |
++                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT));
+ }
+ 
+ static inline bool

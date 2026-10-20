@@ -54,6 +54,7 @@ args = parser.parse_args()
 for key, value in vars(args).items():
     if isinstance(value, pathlib.Path):
         setattr(args, key, value.resolve())
+require(sha(HERE / '0003-native-image-transfer.patch') == LOCK['native_image_transfer_patch_sha256'], 'Native transfer patch hash mismatch')
 require(sha(HERE / '0002-native-astc-host-image.patch') == LOCK['native_image_patch_sha256'], 'Native image patch hash mismatch')
 require(sha(HERE / '0001-csf-host-import-ext.patch') == LOCK['host_import_patch_sha256'], 'Extension patch hash mismatch')
 require(sha(HERE / '0000-original-builder-jobs.patch') == LOCK['builder_jobs_patch_sha256'], 'Builder patch hash mismatch')
@@ -70,6 +71,8 @@ if args.prepare:
     subprocess.run(['git', '-C', str(args.mesa), 'apply', str(HERE / '0001-csf-host-import-ext.patch')], check=True)
     subprocess.run(['git', '-C', str(args.mesa), 'apply', '--check', str(HERE / '0002-native-astc-host-image.patch')], check=True)
     subprocess.run(['git', '-C', str(args.mesa), 'apply', str(HERE / '0002-native-astc-host-image.patch')], check=True)
+    subprocess.run(['git', '-C', str(args.mesa), 'apply', '--check', str(HERE / '0003-native-image-transfer.patch')], check=True)
+    subprocess.run(['git', '-C', str(args.mesa), 'apply', str(HERE / '0003-native-image-transfer.patch')], check=True)
 verify_mesa(args.mesa)
 if args.check_only:
     print('SOURCE-LOCK: PASS; no driver loaded, no GPU used')
@@ -104,8 +107,9 @@ inputs[str(args.build_dir / 'build.ninja')] = info(args.build_dir / 'build.ninja
 for source, frozen_name in [(HERE / 'source-lock.json', 'source-lock.json'),
                             (HERE / '0001-csf-host-import-ext.patch', 'extension.patch'),
                             (HERE / '0000-original-builder-jobs.patch', 'builder.patch'),
-                            (HERE / '0002-native-astc-host-image.patch', 'native-image.patch')]:
+                            (HERE / '0002-native-astc-host-image.patch', 'native-image.patch'),
+                            (HERE / '0003-native-image-transfer.patch', 'native-transfer.patch')]:
     shutil.copy2(source, args.dist_dir / frozen_name)
-record = {'status': 'NDK built and ELF validated; no hardware/import/game/performance result implied', 'source_lock': info(args.dist_dir / 'source-lock.json'), 'extension_patch': info(args.dist_dir / 'extension.patch'), 'builder_patch': info(args.dist_dir / 'builder.patch'), 'original_builder': info(args.checkout / 'scripts/build-android.sh'), 'api': LOCK['target_api'], 'parallelism': 2, 'profile': LOCK['profile'], 'ndk': info(args.ndk / 'source.properties'), 'compiler': info(llvm / 'clang'), 'compiler_version': run([llvm / 'aarch64-linux-android29-clang', '--version']).decode(), 'host_tools': [info(args.host_tools / name) for name in ['mesa_clc', 'vtn_bindgen2', 'panfrost_compile']], 'driver': info(so), 'build_id': re.findall(r'Build ID: ([0-9a-f]+)', elf), 'needed': re.findall(r'Shared library: \[([^\]]+)\]', elf), 'observed_inputs': info(args.dist_dir / 'observed-inputs.json'), 'options': info(args.dist_dir / 'meson-options.json'), 'default_enabled': False, 'runtime_opt_in': LOCK['runtime_env'], 'native_image_opt_in': 'PANVK_DM_NATIVE_IMAGE_IMPORT', 'native_image_patch': info(args.dist_dir / 'native-image.patch')}
+record = {'status': 'NDK built and ELF validated; no hardware/import/game/performance result implied', 'source_lock': info(args.dist_dir / 'source-lock.json'), 'extension_patch': info(args.dist_dir / 'extension.patch'), 'builder_patch': info(args.dist_dir / 'builder.patch'), 'original_builder': info(args.checkout / 'scripts/build-android.sh'), 'api': LOCK['target_api'], 'parallelism': 2, 'profile': LOCK['profile'], 'ndk': info(args.ndk / 'source.properties'), 'compiler': info(llvm / 'clang'), 'compiler_version': run([llvm / 'aarch64-linux-android29-clang', '--version']).decode(), 'host_tools': [info(args.host_tools / name) for name in ['mesa_clc', 'vtn_bindgen2', 'panfrost_compile']], 'driver': info(so), 'build_id': re.findall(r'Build ID: ([0-9a-f]+)', elf), 'needed': re.findall(r'Shared library: \[([^\]]+)\]', elf), 'observed_inputs': info(args.dist_dir / 'observed-inputs.json'), 'options': info(args.dist_dir / 'meson-options.json'), 'default_enabled': False, 'runtime_opt_in': LOCK['runtime_env'], 'native_image_opt_in': 'PANVK_DM_NATIVE_IMAGE_IMPORT', 'native_image_patch': info(args.dist_dir / 'native-image.patch'), 'native_transfer_patch': info(args.dist_dir / 'native-transfer.patch')}
 (args.dist_dir / 'build.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
 print(json.dumps({'driver': record['driver'], 'observed_input_count': len(inputs), 'report': str(args.dist_dir / 'build.json')}))

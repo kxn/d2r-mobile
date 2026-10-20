@@ -1,10 +1,11 @@
-# Experimental PanVK native image producer v1
+# Experimental PanVK native image producer with transfer uses
 
 This is a separate, **default-OFF**, source candidate. It does not change the
 system driver, game binary, NVN renderer, resource pack or allocation policy.
 It builds from the same pinned Mesa and original kbase patch stack as the
 buffer-only `bdd9df32...` candidate, followed by the declared host-import patch
-and `0002-native-astc-host-image.patch`. Do not modify the earlier frozen tree.
+and `0002-native-astc-host-image.patch`, then the separate declared
+`0003-native-image-transfer.patch`. The 6b15 driver/source remain frozen. Do not modify the earlier frozen tree.
 
 Both startup options are required:
 
@@ -22,10 +23,20 @@ hardware data test. Normal releases must keep it off until accepted.
 
 `GetPhysicalDeviceImageFormatProperties2` reports **import-only** HOST_ALLOCATION
 for exactly these native formats: ASTC 4x4 and 6x6, UNORM and sRGB. Allowed usage
-is exactly `SAMPLED | HOST_TRANSFER`; type is optimal 2D, flags zero, sample count
+requires `SAMPLED | HOST_TRANSFER` and allows only the optional
+`TRANSFER_SRC` / `TRANSFER_DST` bits; each image still has an exact usage recipe.
+Type is optimal 2D, flags zero, sample count
 one, array layers one, with the original supported mip count. BC emulation,
-HDR ASTC, other footprints, render targets, storage, GPU transfer destinations,
+HDR ASTC, other footprints, render targets, storage,
 mutable, sparse, multiplanar, export and foreign-pointer imports are not added.
+The same shared predicate is used by format query, CreateImage, memory requirements
+and BindImageMemory. This is not a property-only extension advertisement.
+
+The transfer uses follow the original PanVK image layout selection and command
+implementations; no tiling algorithm or copy implementation is added. HOST_TRANSFER
+already excludes AFBC. A new driver ELF/layout identity still requires newly baked
+payloads and real layout queries: old 6b15 sampling success is not proof for this
+binary or its new transfer recipes. Source+NDK readiness is not GPU acceptance.
 `HOST_TRANSFER` keeps this specific PanVK image in its existing CPU-compatible
 native modifier. It must not be added to general renderer images: it can disable
 AFBC there.
