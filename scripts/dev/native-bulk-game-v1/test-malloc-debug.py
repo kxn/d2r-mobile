@@ -186,6 +186,16 @@ class ColdCleanupTests(unittest.TestCase):
                 if args==('shell','pidof '+t.PKG+' || true'):return '54321' if kind=='replacement' and self.paused else '12345'
                 if args==('shell','input','keyevent','HOME'):self.paused=True;events.append('HOME');return ''
                 if args[:3]==('shell','dumpsys','activity'):
+                    if kind.startswith('actual-'):
+                        text=Path('/home/dl/d2r-mobile/.local/logs/native-bulk-bcbd751-malloc-control-v1/recovery/activities.txt').read_text()
+                        if kind=='actual-other':text=text.replace(t.PKG+'/.MainActivity','other.package/.MainActivity')
+                        if kind=='actual-paused':
+                            start=text.index('* Hist  #0: ActivityRecord{252071487')
+                            end=text.index('* Hist',start+1)
+                            text=text[:start]+text[start:end].replace('state=STOPPED','state=PAUSED')+text[end:]
+                        if kind=='actual-multiline':text=text.replace('* Hist  #0: ActivityRecord{252071487','* Hist\n  #0: ActivityRecord{252071487')
+                        if kind=='actual-tabs':text=text.replace('* Hist  #','*\tHist\t #')
+                        return text
                     pkg='other.package' if kind=='wrongactivity' else t.PKG
                     return '* Hist #0: ActivityRecord{abc u0 '+pkg+'/.MainActivity t3}\n  state=STOPPED\n'
                 if args[:3]==('shell','am','start'):events.append('foreground');return ''
@@ -207,13 +217,13 @@ class ColdCleanupTests(unittest.TestCase):
         cfg={'lifecycle_proof_checked':kind!='noproof','runtime_symbols':{'sha256':'d'*64}}
         with tempfile.TemporaryDirectory()as directory,patch.object(h.time,'monotonic',side_effect=[0,20,40]),patch.object(h.time,'sleep'):
             dev=Dev();journal=[]
-            if kind not in ('menu','savedworld'):
+            if kind not in ('menu','savedworld','actual-stopped','actual-tabs'):
                 with self.assertRaises(RuntimeError):h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append,cfg)
                 self.assertEqual('HOME'in events,kind not in ('noproof','foreignELF'))
             else:
                 result=h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append,cfg)
                 self.assertTrue(result['accepted'])
-                self.assertEqual(result.get('never_world_confirmed',False),kind=='menu')
+                self.assertEqual(result.get('never_world_confirmed',False),kind in ('menu','actual-stopped','actual-tabs'))
                 self.assertEqual(result.get('save_commits'),2 if kind=='savedworld' else None)
         return events
     def test_exact_target_positive_pause_menu_no_fake_save(self):self.run_case('menu')
@@ -226,5 +236,10 @@ class ColdCleanupTests(unittest.TestCase):
     def test_no_new_quiescence_never_assumes_completion(self):self.run_case('noquiescence')
     def test_no_new_focus_does_not_use_surface_only_suspend(self):self.run_case('nofocus')
     def test_previous_world_save_history_blocks_menu_assumption(self):self.run_case('previoussave')
+    def test_actual_Q_activities_double_space_STOPPED_accepted(self):self.run_case('actual-stopped')
+    def test_actual_Q_activities_horizontal_tabs_accepted(self):self.run_case('actual-tabs')
+    def test_actual_Q_only_target_PAUSED_others_STOPPED_rejected(self):self.run_case('actual-paused')
+    def test_actual_Q_target_replaced_by_other_activity_rejected(self):self.run_case('actual-other')
+    def test_actual_Q_hist_whitespace_cannot_cross_newline(self):self.run_case('actual-multiline')
 
 if __name__=='__main__':unittest.main()

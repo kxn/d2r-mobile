@@ -202,8 +202,8 @@ def pause_failed_cold_start(dev,out,pid,uid,journal,cfg):
         tracer=re.search(r'^TracerPid:\s+(\d+)',s,re.M)
         if not ids or ids.groups()!=(str(uid),)*4 or not tracer or tracer[1]!='0':raise RuntimeError('cold cleanup UID/tracer mismatch')
     def stopped(text):
-        blocks=re.split(r'(?m)(?=^\s*\* Hist #\d+: ActivityRecord\{)',text)
-        return any(re.match(r'\s*\* Hist #\d+: ActivityRecord\{[^\n]* '+re.escape(PKG)+r'/\.MainActivity(?:\s|\})',b)and re.search(r'\b(?:mState|state)=STOPPED\b',b)for b in blocks)
+        blocks=re.split(r'(?m)(?=^[ \t]*\*[ \t]+Hist[ \t]+#\d+:[ \t]+ActivityRecord\{)',text)
+        return any(re.match(r'[ \t]*\*[ \t]+Hist[ \t]+#\d+:[ \t]+ActivityRecord\{[^\n]*[ \t]'+re.escape(PKG)+r'/\.MainActivity(?:[ \t]|\})',b)and re.search(r'(?m)^[ \t]+(?:mState|state)=STOPPED(?:[ \t]|$)',b)for b in blocks)
     owned()
     maps=dev.app('cat','/proc/'+pid+'/maps');(out/'cold-cleanup-owned-maps.txt').write_text(maps)
     paths={line.split()[-1]for line in maps.splitlines()if line.endswith('/lib/arm64/libdmhost_android.so')}
