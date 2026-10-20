@@ -386,6 +386,13 @@ int vk_pool_shared_mode(void);
 int vk_pool_shared_active(void);
 int vk_pool_shared_materialized(uint64_t address,uint64_t bytes);
 int vk_pool_shared_observe_protect(uint64_t address,uint64_t bytes,uint64_t *stamp);
+// Prepare may submit/wait before physical borrows. Begin only checks that
+// proof and waits original FS leases/PG_BUSY, with no Vulkan or renderer call.
+// Retain scope and storage; end leaves RO and never advances captured stamp.
+typedef struct {void *owner,*gate;uint64_t stamp;} vk_shared_cpu_observation;
+int vk_pool_shared_cpu_observe_prepare(uint64_t address,uint64_t bytes);
+int vk_pool_shared_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_cpu_observation *token);
+void vk_pool_shared_cpu_observe_end(vk_shared_cpu_observation *token);
 void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate);
 #endif
 

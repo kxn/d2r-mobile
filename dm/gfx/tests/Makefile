@@ -16,6 +16,8 @@ t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_di
 	clang $(CFLAGS) -o $@ t_dirty_race.c ../../host/crash.c
 t_dirty_scope: t_dirty_scope.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty_gpu_gate.inc ../nvn/nvn_dirty.h ../nvn/nvn_platform.c
 	clang $(CFLAGS) -pthread -o $@ t_dirty_scope.c ../nvn/nvn_platform.c
+t_dirty_cpu_observe: t_dirty_cpu_observe.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty_gpu_gate.inc ../nvn/nvn_dirty.h ../nvn/nvn_platform.c ../../host/guest_write_lease.inc
+	clang $(CFLAGS) -pthread -o $@ t_dirty_cpu_observe.c ../nvn/nvn_platform.c
 t_dirty_gpu_gate: t_dirty_gpu_gate.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty_gpu_gate.inc ../nvn/nvn_dirty.h ../nvn/nvn_platform.c
 	clang $(CFLAGS) -pthread -o $@ t_dirty_gpu_gate.c ../nvn/nvn_platform.c
 t_dirty_prep_batch: t_dirty_prep_batch.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty_gpu_gate.inc ../nvn/nvn_dirty.h ../nvn/nvn_platform.c

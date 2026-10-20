@@ -68,7 +68,7 @@ typedef struct pool {
   int cpu_exposure_full; // metadata OOM/size fallback, never drops excluded pages
 } pool;
 #ifdef DM_VULKAN_SHARED_POOLS
-static int shared_requested,shared_active,shared_extension,shared_gpu_gate_phase;
+static int shared_requested,shared_active,shared_extension,shared_gpu_gate_phase,shared_cpu_observe_phase;
 static uint64_t shared_alignment;
 #ifdef DM_VULKAN_TEST_EMBED
 static int shared_gpu_gate_force;
@@ -3030,7 +3030,7 @@ uint64_t vk_test_shared_dependency_observed(void) {
 // Host cache maintenance / CPU effects need a CPU phase between overlapping
 // GPU users. Preserve asynchronous submission for nonoverlapping ranges.
 // Call only on the translation owner, outside resource and queue locks.
-static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int protect_host_page) {
+static uint64_t shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int protect_host_page,int wait) {
   int cache=!(p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 #ifdef DM_VULKAN_TEST_EMBED
   if(shared_dependency_test_force_cache)cache=1; // tests admission only, not NC Vk cache calls
@@ -3075,7 +3075,7 @@ static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int 
     if(conflict)serial=s->queue_serial;
   }
   pthread_mutex_unlock(&completion_mu);
-  if(serial) {
+  if(serial && wait) {
 #ifdef DM_VULKAN_TEST_EMBED
     pthread_mutex_lock(&shared_dependency_test_mu);
     if(shared_dependency_test_armed) {shared_dependency_test_armed=0;shared_dependency_test_observed=serial;
@@ -3084,6 +3084,7 @@ static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int 
 #endif
     vk_internal_wait(serial); // true GPU + CPU effects, not a full-queue drain
   }
+  return serial;
 }
 #endif
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -3091,14 +3092,14 @@ static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int 
 // original host-page/FS-write admission, but retain no GPU gate after the
 // protected baseline is captured. No Buffer allocation, pin or submit here.
 int vk_pool_shared_observe_protect(uint64_t address,uint64_t bytes,uint64_t *stamp) {
-  if(!shared_active || !shared_gpu_gate_phase || !bytes)return 0;
+  if(!shared_active || !shared_cpu_observe_phase || !bytes)return 0;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   if(!p || !p->shared || p->shared_closing || !p->backings) {
     pthread_mutex_unlock(&V.resources);return 0;
   }
   p->references++;uint64_t offset=address-(uintptr_t)p->guest;
   pthread_mutex_unlock(&V.resources);
-  shared_access_host_phase(p,offset,bytes,1);
+  shared_access_host_phase(p,offset,bytes,1,1);
   nvn_dirty_gpu_range range={(void *)(uintptr_t)address,bytes};
   nvn_dirty_gpu_gate *gate=nvn_dirty_gpu_gate_arm(&range,1);
   if(!gate)die("ASTC copy CPU observation missing scoped gate");
@@ -3109,13 +3110,67 @@ int vk_pool_shared_observe_protect(uint64_t address,uint64_t bytes,uint64_t *sta
   p->references--;pthread_cond_broadcast(&pool_cv);
   pthread_mutex_unlock(&V.resources);return 1;
 }
+// CPU conversion admission has two deliberately separate phases. Prepare
+// may submit/wait and MUST precede image/view/temp borrows. Begin never calls
+// the renderer or waits a GPU: only the existing FS lease/PG_BUSY handshake.
+static void shared_cpu_page_envelope(uint64_t address,uint64_t bytes,uint64_t *first,uint64_t *length) {
+  uint64_t page=(uint64_t)getpagesize();
+  if(!bytes || !page || (page&(page-1)) || bytes>UINT64_MAX-address ||
+      address+bytes>UINT64_MAX-(page-1))die("CPU image observation page envelope");
+  *first=address&~(page-1);*length=((address+bytes+page-1)&~(page-1))-*first;
+}
+int vk_pool_shared_cpu_observe_prepare(uint64_t address,uint64_t bytes) {
+  if(!shared_active || !shared_cpu_observe_phase || !bytes)return 0;
+  uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || !p->shared || p->shared_closing) {pthread_mutex_unlock(&V.resources);return 0;}
+  shared_pool_materialize(p);p->references++;
+  int recorded=recording_cpu_write(first,length);uint64_t offset=address-(uintptr_t)p->guest;
+  pthread_mutex_unlock(&V.resources);
+  uint64_t serial=pending_cpu_write(first,length);int reopen=V.cmd!=VK_NULL_HANDLE;
+  if(recorded) {uint64_t current=vk_internal_commit();if(current>serial)serial=current;}
+  if(serial)vk_internal_wait(serial); // GPU-written bytes matter on coherent memory too
+  if(recorded && reopen)mtl_sub_begin();
+  shared_access_host_phase(p,offset,bytes,1,1);
+  pthread_mutex_lock(&V.resources);
+  if(p->shared_closing || p!=pool_find(address,bytes) || !p->references)
+    die("CPU image observation preflight Pool lifetime changed");
+  p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);return 1;
+}
+int vk_pool_shared_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_cpu_observation *token) {
+  *token=(vk_shared_cpu_observation){0};
+  if(!shared_active || !shared_cpu_observe_phase || !bytes)return 0;
+  uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || !p->shared || p->shared_closing || !p->backings) {pthread_mutex_unlock(&V.resources);return 0;}
+  p->references++;uint64_t offset=address-(uintptr_t)p->guest;
+  int recorded=recording_cpu_write(first,length);pthread_mutex_unlock(&V.resources);
+  // A failed outer-preflight proof is not repaired while holding a physical
+  // borrow. In particular do not arm and then wait a completion CPU writer.
+  if(recorded || pending_cpu_write(first,length) || shared_access_host_phase(p,offset,bytes,1,0)) {
+    pthread_mutex_lock(&V.resources);p->references--;pthread_cond_broadcast(&pool_cv);
+    pthread_mutex_unlock(&V.resources);return 0;
+  }
+  nvn_dirty_gpu_range range={(void *)(uintptr_t)address,bytes};
+  nvn_dirty_gpu_gate *gate=nvn_dirty_gpu_gate_arm(&range,1);
+  if(!gate)die("CPU image observation needs retained image scope pages");
+  *token=(vk_shared_cpu_observation){.owner=p,.gate=gate,.stamp=nvn_dirty_now()};return 1;
+}
+void vk_pool_shared_cpu_observe_end(vk_shared_cpu_observation *token) {
+  pool *p=token->owner;nvn_dirty_gpu_gate *gate=token->gate;
+  if(!p || !gate)die("CPU image observation duplicate/invalid end");
+  *token=(vk_shared_cpu_observation){0};nvn_dirty_gpu_gate_cancel(gate);
+  pthread_mutex_lock(&V.resources);
+  if(!p->references || p->shared_closing)die("CPU image observation end Pool lifetime changed");
+  p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);
+}
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_shared_prearm_host_phase(uint64_t address,uint64_t bytes,int whole_host_page) {
   // Fixture retains Pool and uses the original translation owner contract.
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   pthread_mutex_unlock(&V.resources);
   if(!p || !p->shared)die("Prearm page fixture needs shared Pool");
-  shared_access_host_phase(p,address-(uintptr_t)p->guest,bytes,whole_host_page);
+  shared_access_host_phase(p,address-(uintptr_t)p->guest,bytes,whole_host_page,1);
 }
 #endif
 static void shared_arm_prewrite(submit_resources *r) {
@@ -3146,7 +3201,7 @@ static void shared_arm_prewrite(submit_resources *r) {
       // Original required old GPU+CPU-effects phase, now BEFORE protection.
       // Otherwise an old completion's CPU store could wait on this new gate
       // while our later Flush waits for that same old completion callback.
-      shared_access_host_phase(w->owner,p->offset,p->end-p->offset,1);
+      shared_access_host_phase(w->owner,p->offset,p->end-p->offset,1,1);
       ranges[n++]=(nvn_dirty_gpu_range){w->owner->guest+p->offset,p->end-p->offset};
     }
   }
@@ -3157,7 +3212,7 @@ static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(p->shared) {uint64_t off=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
     if(limit>p->size)limit=p->size;
-    shared_access_host_phase(p,off,limit-off,0);
+    shared_access_host_phase(p,off,limit-off,0,1);
     shared_cache(&p->whole.buffer,off,limit-off,0);return;}
 #endif
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;

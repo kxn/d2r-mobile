@@ -799,7 +799,7 @@ void vk_texture_cpu_preflight(const tex_t *t) {
       read=!i->initialized || !(epoch && i->checked_dirty_epoch==epoch &&
         i->checked_dirty_stamp==i->stamp) && nvn_dirty_since(t->mem,t->L.size,i->stamp);break;
     }
-    if(read && !vk_pool_shared_image_source((uintptr_t)t->mem,t->L.size,1))
+    if(read && !vk_pool_shared_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
       die("Shared packaged image source outside live shared Pool");
   }
 #endif
@@ -908,15 +908,18 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
     // Full GPU clears may deliberately skip the initial CPU upload. Observe
     // the CPU source version independently of that upload, before any image
     // writer: untracked is unknown, never evidence of a later CPU edit.
-    // Outer preflight already imported/pinned storage before this borrow;
-    // the readonly check cannot submit, wait or replace physical storage.
+    // Outer preflight already imported/pinned storage before this borrow.
+    // The GPU-dependency check cannot submit/wait; the following CPU phase
+    // waits only paired kernel leases, never renderer callbacks/replacement.
     if(!shared_image_backing((uintptr_t)t->mem,t->L.size) ||
         !vk_pool_shared_image_source((uintptr_t)t->mem,t->L.size,0))
       die("Shared image initial observation missing ordered source preflight");
     i->shared_dirty_scope=nvn_dirty_scope_acquire(t->mem,t->L.size);
     if(!i->shared_dirty_scope)die("Shared image initial dirty scope admission failed");
-    i->stamp=nvn_dirty_now();
-    nvn_dirty_protect(t->mem,t->L.size);
+    vk_shared_cpu_observation observation;
+    if(!vk_pool_shared_cpu_observe_begin((uintptr_t)t->mem,t->L.size,&observation))
+      die("Shared image initial observation missing page-level CPU preflight");
+    i->stamp=observation.stamp;vk_pool_shared_cpu_observe_end(&observation);
   }
 #endif
   image_allocate(i);
@@ -953,6 +956,7 @@ static void texture_dirty_mode_begin(void) {
   }
   texture_dirty_reference_active=reference;atomic_store(&texture_dirty_active,reference);
 }
+#include "nvn_vk_image_cpu_observe.inc"
 // Keep deswizzle/staging/copy state off the high-frequency readonly proof
 // path. Only image_upload calls this after the original ordered checks; its
 // body, upload/protection stamp and physical dependency ordering are unchanged.
@@ -975,6 +979,7 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
     i->shared_dirty_scope=nvn_dirty_scope_acquire(t->mem,t->L.size);
     if(!i->shared_dirty_scope)die("Shared image dirty scope admission failed");
   }
+  if(vk_pool_shared_active()) {image_upload_shared_contents(i);return;}
 #endif
   // Untracked sources are always uploaded; they must not acquire a proof.
   i->checked_dirty_epoch=0;
