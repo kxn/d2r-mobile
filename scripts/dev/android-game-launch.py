@@ -30,6 +30,9 @@ parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
+parser.add_argument('--native-resource-table',help='cold experimental authenticated DMNTBL table; requires explicit shared heap and matching app-local Turnip')
+parser.add_argument('--native-resource-pack-sha256',help='complete native pack content SHA256; all native-resource options are required together')
+parser.add_argument('--native-resource-producer-sha256',help='actual producer source SHA256 authenticated by native table')
 parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk'],help='cold explicit system/Adreno-tools/PanVK direct ICD; requires separately verified private driver')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
@@ -111,6 +114,16 @@ parser.add_argument('--runtime-extrap', action='store_true', help='debug opt-in 
 parser.add_argument('--timeout', type=float, default=120)
 parser.add_argument('--report', type=Path)
 args = parser.parse_args()
+native_resource_values=(args.native_resource_table,args.native_resource_pack_sha256,args.native_resource_producer_sha256)
+if any(x is not None for x in native_resource_values):
+    if not all(native_resource_values):
+        parser.error('all three --native-resource options are required together')
+    if args.attach or args.shared_guest_heap is not True or not (args.vulkan_provider=='adreno' or (args.custom_vulkan_driver and args.vulkan_provider in (None,'adreno'))):
+        parser.error('native resources require cold explicit shared heap and matching app-local Turnip')
+    if not Path(args.native_resource_table).is_absolute() or len(args.native_resource_table)>=4096:
+        parser.error('native resource table must be an absolute private device path shorter than 4096 bytes')
+    if not all(re.fullmatch('[0-9a-f]{64}',x) for x in native_resource_values[1:]):
+        parser.error('native resource digests must be complete lowercase SHA256')
 if args.native_opus is None:
     args.native_opus = not args.opus_shadow
 if args.external_profile is None:
@@ -212,6 +225,10 @@ if not args.attach:
         launch += ['--ez','shared_guest_heap',str(args.shared_guest_heap).lower()]
     if args.vulkan_provider is not None:
         launch += ['--es','vulkan_provider',args.vulkan_provider]
+    if args.native_resource_table is not None:
+        launch += ['--es','native_resource_table',args.native_resource_table,
+                   '--es','native_resource_pack_sha256',args.native_resource_pack_sha256,
+                   '--es','native_resource_producer_sha256',args.native_resource_producer_sha256]
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     if args.pixel_local is not None:
@@ -381,6 +398,9 @@ while time.monotonic() < deadline:
                                                              False if 'color attachment usage: actual attachment only' in log else None),
                               'eager_pool_mirrors_reference':state.get('pool_mirrors',{}).get('reference'),
                               'requested_shared_guest_heap':args.shared_guest_heap,
+                              'requested_native_resource_table':args.native_resource_table,
+                              'requested_native_resource_pack_sha256':args.native_resource_pack_sha256,
+                              'requested_native_resource_producer_sha256':args.native_resource_producer_sha256,
                               'requested_legacy_astc_copy':args.legacy_astc_copy,
                               'actual_guest_heap':state.get('guest_heap'),
                               'requested_vulkan_provider':args.vulkan_provider or ('adreno' if args.custom_vulkan_driver else 'system'),

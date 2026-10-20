@@ -57,5 +57,12 @@ static void native_resource_install(void) {
   uint8_t extra;if(read(fd,&extra,1)!=0 || close(fd))die("Native resource table changed during read");
   int installed=nvn_native_table_install(data,bytes,native_pack_digest,&identity);free(data);
   if(!installed)die("Native resource table identity/producer/pack/recipe rejected");
+  // One cold identity record for the existing explicit resource contract.
+  printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
+  for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);
+  printf("\",\"device_UUID\":\"");for(unsigned n=0;n<16;n++)printf("%02x",identity.device[n]);
+  printf("\",\"driver_UUID\":\"");for(unsigned n=0;n<16;n++)printf("%02x",identity.driver[n]);
+  printf("\",\"driver_sha256\":\"");for(unsigned n=0;n<32;n++)printf("%02x",identity.driver_sha256[n]);
+  printf("\"}\n");
   LOG("[native resources] fixed table installed, %zu metadata bytes; mutable NVN synchronization remains required",bytes);
 }
