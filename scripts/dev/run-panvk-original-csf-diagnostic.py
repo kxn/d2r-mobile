@@ -14,23 +14,23 @@ ORIGINAL_APK=R/'.local/build/image-binding-022d625-canonical-source/canonical.ap
 CANDIDATE_APK=SOURCE/'.local/build/android-apk/d2r-native-tlsdesc-debug.apk'
 CANDIDATE_BUNDLE=R/'.local/build/native-touch-x18-color-depth-comparison-v1'
 TOOL_REVIEW=R/'.local/logs/panvk-layered-vvl-tool-v1-mali-independent-review.json'
-DRIVER_READY=R/'.local/logs/panvk-original-csf-diagnostic-v1-driver-source-ready.json'
+DRIVER_READY=R/'.local/logs/panvk-original-csf-diagnostic-v2-driver-source-ready.json'
 RESOURCE_PROOF=R/'.local/logs/panvk-original-fork-ui-only-resource-proof-v2.json'
 PROMOTION=R/'.local/logs/image-binding-022d625-default-promote-mali-v1/root-result.json'
-DRIVER=R/'.local/build/panvk-original-csf-diagnostic-v1/frozen/candidate-driver.so'
+DRIVER=R/'.local/build/panvk-original-csf-diagnostic-v2/frozen/candidate-driver.so'
 UI=R/'.local/build/android-romfs-overlay'
 OVERLAY='files/runtime/romfs_overlay';DRIVER_DIR='files/runtime/vulkan-panfrost'
 LOCK='files/runtime/.astc6-full-controller-lock';OWNER='.original-fork-baseline-owner'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff'
 ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
-SO='4837635ef34fae25263b793f009ddb5f7b4604b2cfdd35a183e9585ba38f0b1e';CHAIN='cbd8d2da0b0f'
+SO='c4097527e5cd0f31fc135576f1b30b4a6a6710b976e17cd2a3321e0c0de6e9df';CHAIN='cbd8d2da0b0f'
 spec=importlib.util.spec_from_file_location('existing_resource_journal',COMMON);common=importlib.util.module_from_spec(spec);spec.loader.exec_module(common)
 require=common.require;journal=common.journal
 sha=lambda p:common.Hashes().file(p)
 read=lambda p:json.loads(Path(p).read_text())
 
 def proof():
- require(sha(DRIVER_READY)=='29f9393cea13499724277d9c299078dcf310a37e065ce9a2f66ad302c188c3aa','driver sourceReady changed')
+ require(sha(DRIVER_READY)=='8a9a7a41532a735eb17da189c86ce4e3969b75200df9e8fa1da79b1b8d93dbca','driver sourceReady changed')
  require(sha(RESOURCE_PROOF)=='76438192aedb73d5457901f4284581d1db6ff1d9db3aafbc3e80bd429d2ab1e5','UI resource proof changed')
  dr=read(DRIVER_READY);ui=read(RESOURCE_PROOF);pr=read(PROMOTION)
  require(dr['driver']['sha256']==sha(DRIVER)==SO and dr['original_base_SO']=='c5ecf526c0113c976366818c931173f661adb7df4f519b9a2e9b6ed9456a71b2','diagnostic driver identity')
