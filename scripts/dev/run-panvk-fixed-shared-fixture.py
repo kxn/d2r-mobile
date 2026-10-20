@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """One isolated appUID transaction: original fixed Buffer, native Event and Query byte oracles; not profiling."""
-import argparse, hashlib, io, json, re, subprocess, time, uuid, zipfile, xml.etree.ElementTree as ET
+import argparse, hashlib, io, json, re, subprocess, time, uuid, signal, zipfile, xml.etree.ElementTree as ET
 from pathlib import Path
 P=argparse.ArgumentParser()
 P.add_argument('--serial',required=True)
 P.add_argument('--artifact',type=Path,required=True)
 P.add_argument('--driver',type=Path,required=True)
 P.add_argument('--module-report',type=Path)
+P.add_argument('--resource-report',type=Path)
 P.add_argument('--expected-original-apk')
 P.add_argument('--expected-original-elf')
 P.add_argument('--expected-shaderchain')
@@ -19,32 +20,44 @@ sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 m=json.loads((a.artifact/'candidate.apk.build.json').read_text())
 assert m['package']==pkg and m['activity']=='com.d2rmobile.nativeport.MainActivity'
 assert sha(a.artifact/'candidate.apk')==m['apk_sha256']
+with zipfile.ZipFile(a.artifact/'candidate.apk') as archive:
+ for leaf,digest in m['native_library_sha256'].items():
+  assert hashlib.sha256(archive.read('lib/arm64-v8a/'+leaf)).hexdigest()==digest
+assert len(m['native_library_sha256'])==6
 assert sha(a.driver)=='bdd9df32c38f7c82fb58d815d6a021e8641a545f9fdb1b401416d6908d265d5d'
-baseline_bound=bool(a.module_report and a.expected_original_apk and a.expected_original_elf and a.expected_shaderchain)
-if a.execute:assert baseline_bound,'Execution requires current root APK/ELF/module-report/shaderchain bindings'
+baseline_bound=bool(a.module_report and a.resource_report and a.expected_original_apk and a.expected_original_elf and a.expected_shaderchain)
+if a.execute:assert baseline_bound,'Execution requires current root APK/ELF/28modules/6resources/shaderchain bindings'
 if a.expected_original_elf:assert re.fullmatch('[0-9a-f]{64}',a.expected_original_elf)
 if a.expected_original_apk:assert re.fullmatch('[0-9a-f]{64}',a.expected_original_apk)
 if a.expected_shaderchain:assert re.fullmatch('[0-9a-f]{12,64}',a.expected_shaderchain)
 expected={}
 if a.module_report:
  deployment=json.loads(a.module_report.read_text())
+ assert deployment['verified_on_device'] and deployment['serial']==a.serial and deployment['package']==original
  assert len(deployment['artifacts'])==28
  for name,item in deployment['artifacts'].items():
   assert re.fullmatch('[A-Za-z0-9_.-]+',name) and name not in ('.','..')
   assert re.fullmatch('[0-9a-f]{64}',item['sha256'])
   expected['files/runtime/modules/'+name]=item['sha256']
+if a.resource_report:
+ resources=json.loads(a.resource_report.read_text())
+ assert resources['stage']=='deployed' and resources['phone_hashes_verified'] and len(resources['expected_hashes'])==6
+ for name,digest in resources['expected_hashes'].items():
+  assert re.fullmatch('[A-Za-z0-9_./-]+',name) and not Path(name).is_absolute() and '..' not in Path(name).parts and re.fullmatch('[0-9a-f]{64}',digest)
+  expected['files/runtime/romfs_overlay/'+name]=digest
 plan={'scope':'ONE installation, THREE cold original NVN byte fixtures: buffer/event/query, each once; game=false; original package read-only; VVL explicitly disabled; no performance claim',
  'serial':a.serial,'package':pkg,'activity':m['activity'],'APK_sha256':m['apk_sha256'],
  'native_libraries':m['native_library_sha256'],'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),
- 'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,'module_report_sha256':sha(a.module_report) if a.module_report else None,'module_count':len(expected),
+ 'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,'module_report_sha256':sha(a.module_report) if a.module_report else None,'module_count':28 if a.module_report else 0,'resource_count':6 if a.resource_report else 0,'resource_report_sha256':sha(a.resource_report) if a.resource_report else None,
  'baseline_bound':baseline_bound,'expected_shaderchain':a.expected_shaderchain,
- 'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':3,'modes_once':['buffer','event','query'],'GUP_unprotect_retry':False,
+ 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':3,'modes_once':['buffer','event','query'],'GUP_unprotect_retry':False,
  'writes_only':'new independent package + unique /data/local/tmp directory; cleanup exact package only'}
 if not a.execute:
  print(json.dumps(plan,indent=2));raise SystemExit(0)
 a.output.mkdir(exist_ok=False,parents=True)
 tmp='/data/local/tmp/dm-shared-publication-'+uuid.uuid4().hex
-result={**plan,'stage':'preflight','cleanup_errors':[]};made_tmp=False;installation_requested=False;installed=False;launched=False;installer=None;launch=None;original_before=None
+result={**plan,'stage':'preflight','cleanup_errors':[]};made_tmp=False;installation_requested=False;installed=False;launched=False;installer=None;launch=None;original_before=None;first_pid=None;active_phase=None
+result['owned_tmp']=tmp
 
 def save():(a.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 def ad(*args,check=True):
@@ -57,6 +70,7 @@ def process(name):return ad('shell','pidof',name,check=False)
 def snapshot():
  assert not process(original),'Original game is running; leave it untouched'
  path=ad('shell','pm','path',original).removeprefix('package:')
+ assert path.startswith('/') and '\n' not in path
  digest=ad('shell','sha256sum',path).split()[0]
  assert digest==a.expected_original_apk,'Original APK changed since lease: do not install'
  # Read-only original APK extraction on the host; no original private write.
@@ -70,12 +84,86 @@ def snapshot():
  assert got==expected,'Original module baseline mismatch'
  chain=ad('exec-out','run-as',original,'cat','files/runtime/shaders/.chain')
  assert chain==a.expected_shaderchain,'Original shaderchain changed since lease'
- return {'APK':digest,'ELF':elf,'modules':got,'shaderchain':chain,'PID_absent':True}
+ return {'APK':digest,'ELF':elf,'modules_and_resources':got,'shaderchain':chain,'PID_absent':True}
 def exact_fixture():
  path=ad('shell','pm','path',pkg,check=False).removeprefix('package:')
  if not path:return False
+ assert path.startswith('/') and '\n' not in path
  assert ad('shell','sha256sum',path).split()[0]==m['apk_sha256'],'Unclaimed package; leave untouched'
  return True
+# PID/crash ownership helpers adapted from frozen5c185ca matrix controller.
+# Final JSON has no PID and cannot rescue ambiguous/replacement ownership.
+def read_oracle_log(phase):
+ log=ad('exec-out','run-as',pkg,'cat','files/runtime/vulkan-test.log',check=False)
+ if log:(a.output/(phase['name']+'-vulkan-test.log')).write_text(log)
+ return log
+
+def parse_oracle_log(log):
+ rows=[]
+ for line in log.splitlines():
+  if line.startswith('{'):
+   try:rows.append(json.loads(line))
+   except json.JSONDecodeError:pass
+ if 'FATAL' in log or 'native fault signal=' in log:return rows,'native-assertion-failed',None
+ finals=[r for r in rows if r.get('test')==active_phase['expected_test']]
+ if finals:return rows,'oracle-'+finals[-1].get('result','unknown'),finals[-1]
+ return rows,None,None
+
+def observe_pid(phase,allow_claim=True):
+ global first_pid
+ current=process(pkg)
+ # Persist raw text before interpreting or rejecting anything. Crash dump/fork
+ # transients must never erase the failed oracle or become another owned PID.
+ raw=phase.setdefault('pid_raw',[])
+ if not raw or raw[-1]!=current:raw.append(current)
+ phase['last_pid_raw']=current;save()
+ if not current:return current,'absent'
+ tokens=current.split()
+ if len(tokens)!=1 or not current.isdecimal():
+  phase['ownership_ambiguous']=True;phase['pid_anomaly']='multiple-or-invalid';save()
+  return current,'ambiguous'
+ if phase.get('ownership_ambiguous'):return current,'ambiguous'
+ if first_pid is None:
+  if not allow_claim:return current,'unclaimed'
+  first_pid=current;phase['first_pid']=int(current);save()
+ elif current!=first_pid:
+  phase['ownership_ambiguous']=True;phase['pid_anomaly']='replacement';save()
+  return current,'replacement'
+ return current,'owned'
+
+def wait_natural_exit(phase):
+ # Functional crash cleanup only; no process is claimed or force-stopped here.
+ wait=phase.setdefault('natural_exit',{'bound_seconds':30,'all_PIDs_absent':False})
+ if wait.get('timed_out'):raise TimeoutError('Unclaimed/crashing PIDs remain; no force-stop or repeated wait')
+ deadline=time.monotonic()+30
+ while True:
+  log=read_oracle_log(phase)
+  rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+  if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+  current,kind=observe_pid(phase,allow_claim=False)
+  if not current:
+   log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+   if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+   wait['all_PIDs_absent']=True;save();return log
+  if time.monotonic()>=deadline:
+   wait['timed_out']=True;save()
+   raise TimeoutError('Crash/ambiguous PIDs did not naturally exit; leave them untouched')
+  time.sleep(.2)
+
+def stop_owned(phase=None):
+ phase=phase if phase is not None else active_phase
+ if phase is None:
+  current=process(pkg);result['cleanup_pid_raw']=current;save()
+  assert not current,'No owned launch phase; preserve unclaimed process'
+  return
+ current,kind=observe_pid(phase,allow_claim=False)
+ if current and (phase.get('native_terminal_seen') or kind!='owned'):
+  wait_natural_exit(phase);return
+ if current:
+  assert first_pid is not None and current==first_pid
+  assert exact_fixture();ad('shell','am','force-stop',pkg)
+ assert not process(pkg)
+
 def install():
  global installer
  with (a.output/'install.txt').open('w') as log:
@@ -103,6 +191,9 @@ def install():
       ad('shell','input','tap',str((x+z)//2),str((y+w)//2));approvals.add(key)
    time.sleep(.5)
   assert installer.returncode==0,(a.output/'install.txt').read_text()
+def interrupted(sig,frame):raise KeyboardInterrupt('fixture interrupted; owned cleanup')
+signal.signal(signal.SIGTERM,interrupted);signal.signal(signal.SIGINT,interrupted)
+save() # Persist the precise unique tmp before any device-side mutation.
 try:
  original_before=snapshot();result['original_before']=original_before;save()
  assert not ad('shell','pm','path',pkg,check=False),'Existing independent fixture: do not replace'
@@ -134,27 +225,42 @@ try:
   args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--ez','run_game','false',
    '--ez','run_vulkan_tests','true','--ez','fixed_shared_pool_test','true','--ez','async_submit','true',
    '--es','fixed_shared_fixture_kind',kind,'--es','vulkan_driver','panvk','--ez','vulkan_test_validation','false']
-  run={'kind':kind,'expected_test':test_name,'launch_command':B+args,'launches':1}
+  first_pid=None;run={'name':kind,'kind':kind,'expected_test':test_name,'launch_command':B+args,'launches':1};active_phase=run
   result['runs'].append(run);result.update(stage='one-cold-'+kind,launches=len(result['runs']));save();launched=True
   with (a.output/(kind+'-launch.txt')).open('w') as launch_log:launch=subprocess.Popen(B+args,stdout=launch_log,stderr=subprocess.STDOUT)
-  deadline=time.monotonic()+45;seen=False;rows=[]
+  deadline=time.monotonic()+45;log='';rows=[];phase=run
   while True:
-   current=process(pkg);seen|=bool(current)
-   if current:run['fixture_PID_raw']=current
-   log=ad('exec-out','run-as',pkg,'cat','files/runtime/vulkan-test.log',check=False)
-   if log:(a.output/(kind+'-vulkan-test.log')).write_text(log)
-   rows=[]
-   for line in log.splitlines():
-    if line.startswith('{'):
-     try:rows.append(json.loads(line))
-     except json.JSONDecodeError:pass
-   finals=[r for r in rows if r.get('test')==test_name]
-   if finals:run['final']=finals[-1];break
-   if 'FATAL' in log or 'native fault signal=' in log:raise RuntimeError(kind+': original assertion/fault preserved; no retry')
-   if seen and not current:raise RuntimeError(kind+': fixture exited without final result')
-   if time.monotonic()>deadline:raise TimeoutError(kind+':45s functional limit; no retry')
+   # Retain oracle bytes/FATAL before examining transient crash PID lists.
+   log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+   if stage=='native-assertion-failed':phase['native_terminal_seen']=True;phase['stage']=stage
+   current,pid_kind=observe_pid(phase,allow_claim=not phase.get('native_terminal_seen',False))
+   if stage=='native-assertion-failed' or pid_kind in ('ambiguous','replacement','unclaimed'):
+    log=wait_natural_exit(phase);rows,stage,final=parse_oracle_log(log)
+    # Final JSON has no PID: after lost ownership a pass cannot be
+    # attributed to this launch. Only preserve an explicit native failure.
+    phase['stage']='native-assertion-failed' if stage=='native-assertion-failed' else 'ownership-failed'
+    phase['terminal_after_unowned_wait']=stage
+    if final is not None:phase['untrusted_final']=final
+    break
+   if stage is not None:
+    if final is not None and first_pid is None:
+     phase['stage']='ownership-failed';phase['untrusted_final']=final
+    else:
+     phase['stage']=stage
+     if final is not None:phase['final']=final
+    break
+   if first_pid is not None and not current:
+    # Re-read after exit so the last flushed FATAL/final row is not discarded.
+    log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log)
+    phase['stage']=stage or 'exited-without-final'
+    if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+    if final is not None:phase['final']=final
+    break
+   if time.monotonic()>=deadline:phase['stage']='functional-bound-reached';break
    time.sleep(.2)
-  launch.wait(timeout=5);run['results']=rows;final=run['final']
+  launch.wait(timeout=5);run['results']=rows;save()
+  assert run.get('stage')=='oracle-passed','Original failure or lost PID ownership; no later mode/retry'
+  final=run['final']
   assert final['result']=='passed' and final['checks']==checks_expected
   assert final['game_modules_executed'] is False
   memories=[r for r in rows if r.get('fixed_shared_memory') is True]
@@ -179,8 +285,7 @@ try:
    assert len(detail)==1 and detail[0]['timestamp_reports']==2055 and detail[0]['sample_prefixes']==4
    assert detail[0]['legacy_CPU_expression_exact'] is True and detail[0]['streaming_regression'] is True
   run.update(actual_memory=memory,cache_operations=cache_ops,result='passed');save()
-  assert exact_fixture(),'Stop only this exact owned APK'
-  if process(pkg):ad('shell','am','force-stop',pkg)
+  stop_owned(run)
   assert not process(pkg),'Owned process must stop between cold modes'
   run['PID_absent_after']=True;save()
  result.update(stage='actual-noncoherent-fixed-shared-buffer-event-query-passed',
@@ -198,11 +303,7 @@ finally:
   if installed:
    try:(a.output/'app-events.txt').write_text(ad('logcat','-d','-v','threadtime','-s','AndroidRuntime:E','DEBUG:E','libc:E','MESA:I'))
    except BaseException as capture_error:result['cleanup_errors'].append('capture: '+repr(capture_error))
-   if process(pkg):
-    assert installation_requested,'Process is not owned by this installation transaction'
-    assert exact_fixture(),'Refuse to stop unclaimed package'
-    ad('shell','am','force-stop',pkg)
-   assert not process(pkg);result['fixture_PID_absent']=True
+   stop_owned();assert not process(pkg);result['fixture_PID_absent']=True
    assert exact_fixture();ad('uninstall',pkg)
    assert not ad('shell','pm','path',pkg,check=False);result['fixture_uninstalled']=True
   if made_tmp:
