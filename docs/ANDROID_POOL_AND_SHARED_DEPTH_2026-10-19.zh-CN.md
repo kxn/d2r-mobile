@@ -980,3 +980,52 @@ Android 校验层。真实游戏默认 OFF 路径到达营地，截图中的人�
 该修改省去重复分类，不减少实际纹理上传或 shader 采样；截图中的 48.7 FPS
 不是与旧包匹配的工具对照，不能报告为该修改的涨帧收益。官方 Simpleperf 的
 翻译线程候选对照另行记录，持续游玩散热仍未验收。
+
+
+## 原版 Turnip：真实游戏基线已通过
+
+在 Adreno 735 上，未加入本项目 host-import 修改的 Mesa 26.2.5 KGSL Turnip
+已由原 APK、原始 ARM64 模块、原 BC 资源和四项上游触控 UI 运行到营地。
+源码归档的 12,808 项原文件相同、补丁列表为空；实际驱动 SHA256 为
+`032b7fd9457f1846aebecb0c9cbc1124dc3200272ddd7e397d784b3ca9d23a12`。
+真实进程确认 FD735／driverID，选角到营地约 17.23 秒，所留截图中人物、
+地形、传送门、血蓝球及药水正常。输出 2750×1260、固定 0.75 比例。
+
+这次关闭共享导入，使用原 pool mirror，不是共享内存实验通过，也不是 FPS
+对照。截图的 23.5 FPS 不能算驱动增益；GMEM/SYSMEM 未强制，默认按 Pass
+自动选择。已完成原生命周期 fresh save2、停机、旧私有驱动及缓存目录恢复，
+原 APK／宿主 ELF／模块／资源／shader chain 重验通过，清理无错误。本机完整
+证据为 `turnip-original-q735-v1/actual-game-acceptance-agent.json`。
+
+## PanVK 官方校验层：真机入口已核实
+
+独立普通应用 UID 的工具包 `2a27b976` 在 Mali 真机通过 Android 系统 Vulkan
+loader 与既有 libadrenotools DRIVER_CUSTOM 接入原 `c5ecf526` PanVK。实际
+映射及 driverID20 已核实，没有 GPU_MAPPING_IMPORT，也没有驱动修改。
+使用官方 Android Khronos validation layer 1.4.363；日志明确请求同步验证。
+
+同一 UID10353／PID15895 中，原 NVN 路径的完整 GPU 写入再读取字节正确，
+正例没有 VUID；随后刻意传入 size=0 的 VkBufferCreateInfo，官方层准确报告
+`VUID-VkBufferCreateInfo-size-00912` 一次，并在调用驱动前阻断。不能仅凭环境
+变量或可枚举层名称宣称成功，本次包括实际正负控及原生 terminal rc=0。
+
+此工具没有执行游戏模块，不是 PanVK 游戏兼容或性能验收。原生产 `022d625`
+APK、28 模块、六项资源、旧驱动及 shader chain 前后相同；独立包、进程、临时
+目录和本次工具客户端已清理。实际记录为
+`panvk-layered-vvl-tool-v1-mali-v1/result.json`。下一步用同一现成工具检查原版
+PanVK 的真实游戏设备丢失，不将新增共享接口预设为根因。
+
+## 36a→022 官方 CPU 对照的证据边界
+
+两包已分别完成相同原摇杆路线后的官方 Simpleperf 8 秒 per-thread stat 和
+8 秒、99Hz 用户态 DWARF 调用栈。每段采集后先 fresh save2、停机再传输，
+两包间停机冷却 45 秒，最终恢复当前 `022d625` 并停止，原调试设置恢复。
+记录为 `image-binding-36a-to-022-mali-cpu99-stat-v1/result.json`。
+
+旧包 stat 窗端点温控目标 60→60，record 窗 60→30；新包两窗均 30→30。
+PSO 数相同，但旧包 Uniform 变体从 31 变为 33，新包为 33。因此这不是稳定
+温控下的净 FPS 对照，不能将显示差异归因于索引枚举改动。ADB 端点包围约
+9 秒，而工具窗口为 8 秒，端点提交计数不能作为工具内精确帧数分母。
+`shader_present.selected` 统计选择路径，不能称作成功出图数。两边实际
+present_worker 均 reference=true／active=false，与 GPU 完成线程是不同职责。
+后续使用精确 BuildID 的离线符号分析定位翻译 CPU 热点，不额外让手机空跑。
