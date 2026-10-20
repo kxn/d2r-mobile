@@ -727,6 +727,8 @@ static int layer_probe_test(void) {
   return 0;
 }
 
+#include "native_vulkan_color_comparison.inc"
+
 int dm_vulkan_test_main(void) {
   crash_thread_init();
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -800,6 +802,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_VULKAN_LAYER_PROBE"))return layer_probe_test();
+  if(getenv("DM_COLOR_DEPTH_COMPARISON_TEST")){color_comparison_test();return 0;}
   if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_FIXED_SHARED_QUERY_REPORT_TEST")) {

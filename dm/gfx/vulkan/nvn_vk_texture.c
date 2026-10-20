@@ -43,6 +43,8 @@ typedef struct image {
   struct image *hash_next;
   tex_t tex;
   VkImage handle;
+  struct image *comparison; // lazily materialized color-value depth sampling
+  uint64_t comparison_version,comparison_stamp;
   VkDeviceMemory memory;
   void *allocation;
   VkFormat format;
@@ -645,6 +647,7 @@ static void image_allocate(image *i) {
 }
 static void image_storage_destroy(void *context) {
   image *i = context;
+  if(i->comparison)image_storage_destroy(i->comparison);
   while (i->views) {
     image_view *view = i->views;
     i->views = view->next;
@@ -698,6 +701,7 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
   image *old=malloc(sizeof *old);
   if(!old) die("Vulkan image promotion allocation");
   *old=*i;
+  old->comparison=NULL; // logical owner retains its comparison snapshot
   int cpu_rebuildable=i->cpu_rebuildable;
   image_binding_replaced(i,old);
   i->views=NULL;
@@ -2612,6 +2616,8 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   }
   return handle;
 }
+#include "nvn_vk_depth_compare.inc"
+
 VkImageView vk_texture_view_binding(int id,int storage,VkShaderStageFlagBits stage,VkImageLayout *layout) {
   return texture_view_binding_impl(id,storage,stage,layout,0);
 }

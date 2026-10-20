@@ -1206,6 +1206,7 @@ void vk_shader_prepare_images(vk_shader *const list[6],int compute) {
       if(b->reg<0 || b->reg>=(b->kind==4?32:128)) die("Vulkan texture slot unknown");
       uint64_t handle=b->kind==4?S.img[stage][b->reg]:S.tex[stage][b->reg];
       vk_texture_prepare_binding(handle & 0xfffff,b->kind==4,vk_stage(stage));
+      if(b->kind!=4 && (b->type&(1<<10)))vk_texture_prepare_comparison(handle&0xfffff,vk_stage(stage));
     }
 }
 // Only immutable-content misses need the Vulkan update arrays. Keep their
@@ -1431,7 +1432,8 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
         // closure. Other original FS resources retain their existing views.
         int quad_plain=s->quad_readonly_sources && s->stage==1 &&
             (b->kind==3 || b->kind==6) && b->type==3;
-        image.imageView = quad_plain ?
+        image.imageView = (b->kind!=4 && (b->type&(1<<10))) ?
+            vk_texture_view_comparison(h&0xfffff,vk_stage(s->stage),&image.imageLayout) : quad_plain ?
             vk_texture_view_binding_quad(h & 0xfffff,b->kind==4,vk_stage(s->stage),&image.imageLayout):
             vk_texture_view_binding(h & 0xfffff,b->kind==4,vk_stage(s->stage),&image.imageLayout);
       }

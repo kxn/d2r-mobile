@@ -125,6 +125,7 @@ static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelin
                           VkAccessFlags access,int visibility_proven) {
   int writing=!!image_writes(access);
   if(writing) {i->cpu_rebuildable=0;image_astc_proof(i,0);
+    if(i->comparison && ++i->comparison_version==0)die("Vulkan comparison content version exhausted");
 #ifdef DM_VULKAN_SHARED_POOLS
     i->shared_writer=1;i->shared_writer_source=0;i->shared_writer_region=(NVNcopyRegion){0};
     image_shared_alias_write(i);
