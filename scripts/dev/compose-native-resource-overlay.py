@@ -69,6 +69,27 @@ def compose(a):
         require(int(new['layoutData']).to_bytes(8, 'little').hex() == entry['layout8'], 'cache marker mismatch')
         changed.append(logical)
     require(changed == [logical], 'exact one selected descriptor change required')
+    old_selected = next(e for e in before if e['filename'].lower() == logical)
+    expected_format = {81: 158, 85: 166}.get(old_selected['format'])
+    require(expected_format is not None, 'this real-resource acceptance only covers ASTC4/6 sRGB')
+    phase = [r for r in acceptance['phases'] if r['format'] == expected_format]
+    require(len(phase) == 1 and phase[0]['result']['checks'] > 0 and
+            phase[0]['result']['full_all_mips'] and phase[0]['result']['tail_packaged_and_B2T'] and
+            phase[0]['result']['memory_flags'] == 11 and phase[0]['result']['shared_gpu_gate'],
+            'native full/tail actual phase differs')
+    actual_log = Path(phase[0]['log']['path'])
+    actual_result = Path(acceptance['result']['path'])
+    require(hashes.file(actual_log) == phase[0]['log']['sha256'] and
+            hashes.file(actual_result) == acceptance['result']['sha256'], 'actual runtime evidence changed')
+    actual = json.loads(actual_result.read_text())
+    runtime_name = 'resource4' if expected_format == 158 else 'resource6'
+    require(actual['stage'] == 'actual-original-NVN-native-family-owned-passed' and
+            actual['cleanup_errors'] == [] and actual['original_before'] == actual['original_after'] and
+            actual['driver_sha256'] == DRIVER and
+            actual['owned_resource_inputs'][runtime_name + '/native-layouts.bin'] == record['table_sha256'] and
+            actual['owned_resource_inputs'][runtime_name + '/native-resource.bin'] == entry['native_payload_sha256'],
+            'selected table/payload not covered by the actual original-NVN acceptance')
+
     declared = casc.read_replacements(pack / 'replacements.tsv')
     require(set(declared) == {logical, CACHE} and declared[logical].resolve() == texture and
             declared[CACHE].resolve() == cache, 'replacement declaration mismatch')
@@ -142,7 +163,7 @@ def compose(a):
     sources = [Path(__file__), Path(comp.__file__), Path(casc.__file__), Path(touch_layout.__file__),
                pack / 'native-pack.json', pack / 'replacements.tsv', table, texture, cache,
                a.baseline_cache, a.baseline_texture, a.baseline_index, a.baseline_pack_manifest, a.baseline_overlay_record,
-               a.runtime_acceptance, raw / 'data/.build.config', raw / 'data/build_manifest.psv']
+               a.runtime_acceptance, actual_log, actual_result, raw / 'data/.build.config', raw / 'data/build_manifest.psv']
     result = {'complete': True, 'not_deployed': True, 'source_revision': revision, 'source_clean': True,
               'CASC_workers': 2, 'commands': commands, 'selected': [logical], 'native_family_count': 1,
               'table_sha256': hashes.file(out / 'native-layouts.bin'),
