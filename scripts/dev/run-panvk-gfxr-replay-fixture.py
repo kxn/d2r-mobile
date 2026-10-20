@@ -7,6 +7,8 @@ import argparse,hashlib,json,re,subprocess,time,uuid,zipfile,signal,shlex,xml.et
 from pathlib import Path
 R=Path('/home/dl/d2r-mobile');P=argparse.ArgumentParser()
 for n in ('serial','artifact','driver','capture','capture-source-result','baseline-promotion','original-apk','output'):P.add_argument('--'+n,required=True,type=str if n=='serial'else Path)
+P.add_argument('--bc-route',choices=('gfx','compute'),required=True)
+P.add_argument('--rebind-gfx-reference',type=Path)
 P.add_argument('--execute',action='store_true');a=P.parse_args()
 pkg='com.d2rmobile.panvkgfxrfixture';original='com.d2rmobile.nativeport';sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 m=json.loads((a.artifact/'candidate.apk.build.json').read_text());promotion=json.loads(a.baseline_promotion.read_text())
@@ -15,6 +17,8 @@ assert sha(a.artifact/'candidate.apk')==m['APK']['sha256']
 for row in m['sources']+m['actual_compile_inputs']+m['actual_tools']:assert sha(row['path'])==row['sha256'],row['path']
 with zipfile.ZipFile(a.artifact/'candidate.apk')as z:assert {Path(n).name:hashlib.sha256(z.read(n)).hexdigest()for n in z.namelist()if n.startswith('lib/arm64-v8a/')}==m['native_libraries8']
 assert len(m['native_libraries8'])==8
+bridge=next(Path(q['path'])for q in m['sources']if q['path'].endswith('/replay_bridge.c'))
+assert 'setenv("PANVK_DEBUG"'not in bridge.read_text(),'Property experiment requires frozen bridge without PANVK_DEBUG env override'
 assert sha(a.driver)=='c5ecf526c0113c976366818c931173f661adb7df4f519b9a2e9b6ed9456a71b2'
 def verified_startup_capture(path,capture):
  q=json.loads(path.read_text())
@@ -32,16 +36,41 @@ def verified_startup_capture(path,capture):
  assert Path(raw['local_path']).resolve()==capture.resolve()and capture.stat().st_size==raw['bytes']and 64<raw['bytes']<(2<<30)
  assert sha(capture)==raw['sha256']
  return q
+def panvk_debug_environment_absent(text):
+ # Read only this single initial variable from the owned process metadata;
+ # never publish its complete environment. Frozen bridge never changes it.
+ assert not any(s.startswith('PANVK_DEBUG=')for s in text.split('\0')), 'Initial PANVK_DEBUG environment overrides Android property'
+ return True
+
+def verified_rebind_gfx_reference(path,expected):
+ q=json.loads(path.read_text());assert path.name=='result.json'
+ assert q['panvk_bc_route']=='gfx'and q['memory_translation']=='rebind'and q['debug_property_requested']=='0'
+ assert q['production_unchanged']and q['original_before']==q['original_after']and not q['cleanup_errors']
+ assert all(q[k]is True for k in('fixture_PID_absent','fixture_uninstalled','owned_tmp_absent','owned_clients_stopped','debug_property_restored','initial_PANVK_DEBUG_env_absent'))
+ assert all(q[k]==v for k,v in expected.items())
+ log=(path.parent/'replay.log').read_text();cat=(path.parent/'PID-logcat.txt').read_text();mesa=(path.parent/'mesa.log').read_text()
+ assert 'Core Checks'in log and '  - Synchronization'in log and 'identity verified driverID=20'in log
+ assert '[replay bridge] configured pid='+str(q['first_PID'])+' 'in log
+ assert 'API call at index: 149328 thread: 2 vkQueueSubmit returned error value VK_ERROR_DEVICE_LOST'in cat
+ assert 'VK_ERROR_DEVICE_LOST'in log and 'timeout on subqueue'in mesa
+ assert not re.findall(r'(?:VUID|SYNC)-[A-Za-z0-9_-]+',log+cat)
+ return q
+
 capture_source=verified_startup_capture(a.capture_source_result,a.capture)
 assert promotion['production_promoted_and_stopped']and promotion['fresh_save_then_stopped']and not promotion['rollback_errors']
+reference=None
+if a.bc_route=='compute':
+ assert a.rebind_gfx_reference,'Compute run needs a separately reviewed matching gfx+rebind failure result'
+ reference=verified_rebind_gfx_reference(a.rebind_gfx_reference,{'APK_SHA256':m['APK']['sha256'],'driver_SHA256':sha(a.driver),'capture_SHA256':sha(a.capture),'baseline_promotion_SHA256':sha(a.baseline_promotion),'controller_SHA256':sha(__file__)})
+else:assert a.rebind_gfx_reference is None,'gfx common baseline cannot adopt a reference'
 expected=promotion['promoted_module_and_resource_hashes'];assert len(expected)==35
 assert sha(a.original_apk)==promotion['canonical_APK_SHA256']
 with zipfile.ZipFile(a.original_apk)as z:assert hashlib.sha256(z.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()==promotion['host_ELF_SHA256']
 for n,h in expected.items():assert not Path(n).is_absolute()and '..'not in Path(n).parts and re.fullmatch('[a-f0-9]{64}',h)
-plan={'scope':'ONE official Arm Android GPU-call replay of frozen complete original-game startup prefix; no ARM64 game modules executed during replay; not FPS or playable-game acceptance','package':pkg,'activity':m['activity'],'APK_SHA256':m['APK']['sha256'],'manifest_SHA256':sha(a.artifact/'candidate.apk.build.json'),'controller_SHA256':sha(__file__),'capture_SHA256':sha(a.capture),'complete_startup_capture_result_SHA256':sha(a.capture_source_result),'recorded_original_submit_count':len(capture_source['recorded_submits']),'driver_SHA256':sha(a.driver),'baseline_promotion_SHA256':sha(a.baseline_promotion),'memory_translation':'none','official_sync_queue_submissions':True,'single_changed_replay_option':'--serialize-render-passes','official_serialize_render_passes':True,'diagnostic_serialization_not_runtime_fix':True,'validation':'official VVL requested + synchronization env requested; actual banner/errors retained, never assume pass','timeout_seconds':90,'launches':1,'production_package_read_only':True}
+plan={'scope':'ONE official Arm Android full-prefix GPU replay using common rebind allocator and explicit cold BC route; no guest modules, not FPS or playable-game acceptance','package':pkg,'activity':m['activity'],'APK_SHA256':m['APK']['sha256'],'manifest_SHA256':sha(a.artifact/'candidate.apk.build.json'),'controller_SHA256':sha(__file__),'capture_SHA256':sha(a.capture),'complete_startup_capture_result_SHA256':sha(a.capture_source_result),'recorded_original_submit_count':len(capture_source['recorded_submits']),'driver_SHA256':sha(a.driver),'baseline_promotion_SHA256':sha(a.baseline_promotion),'memory_translation':'rebind','panvk_bc_route':a.bc_route,'debug_property_name':'debug.mesa.panvk.debug','debug_property_requested':'bc_compute'if a.bc_route=='compute'else'0','gfx_reference_SHA256':sha(a.rebind_gfx_reference)if reference else None,'official_sync_queue_submissions':True,'single_changed_replay_option':'bc_compute versus gfx on common official rebind allocator','official_serialize_render_passes':True,'diagnostic_serialization_not_runtime_fix':True,'validation':'official VVL requested + synchronization env requested; actual banner/errors retained, never assume pass','timeout_seconds':90,'launches':1,'production_package_read_only':True}
 if not a.execute:print(json.dumps(plan,indent=2));raise SystemExit(0)
 a.output.mkdir(exist_ok=False,parents=True);token=uuid.uuid4().hex;tmp='/data/local/tmp/panvk-gfxr-replay-'+token;run='files/run-'+token
-B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',a.serial];result={**plan,'stage':'preflight','token':token,'owned_tmp':tmp,'cleanup_errors':[]};installed=False;install_requested=False;made_tmp=False;first=None;ambiguous=False;before=None;installer=None;launch=None
+B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',a.serial];result={**plan,'stage':'preflight','token':token,'owned_tmp':tmp,'cleanup_errors':[]};installed=False;install_requested=False;made_tmp=False;first=None;ambiguous=False;before=None;installer=None;launch=None;property_restore_required=False;property_original=None
 save=lambda:(a.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 def ad(*args,check=True,timeout=20):
  p=subprocess.run(B+list(map(str,args)),capture_output=True,timeout=timeout);err=p.stderr.decode(errors='replace');out=p.stdout.decode(errors='replace').strip()
@@ -70,6 +99,9 @@ def snapshot():
  chain=ad('exec-out','run-as',original,'cat','files/runtime/shaders/.chain');assert chain=='cbd8d2da0b0f'
  inv=inventory()
  return {'APK':promotion['canonical_APK_SHA256'],'ELF':promotion['host_ELF_SHA256'],'files35':got,'chain':chain,'driver_shader_inventory':inv,'PID_absent':True}
+def write_debug_property(value):
+ ad('shell','setprop',plan['debug_property_name'],shlex.quote(value))
+ assert ad('shell','getprop',plan['debug_property_name'])==value
 def exact():
  p=ad('shell','pm','path',pkg,check=False).removeprefix('package:')
  if not p:return False
@@ -132,13 +164,18 @@ try:
  assert ad('shell','sha256sum',tmp+'/driver.so').split()[0]==sha(a.driver)and ad('shell','sha256sum',tmp+'/capture.gfxr').split()[0]==sha(a.capture)
  ad('shell','run-as',pkg,'mkdir','-p','files/driver');ad('shell','run-as',pkg,'cp',tmp+'/driver.so','files/driver/libvulkan_panfrost.so');ad('shell','run-as',pkg,'cp',tmp+'/capture.gfxr','files/capture.gfxr')
  assert ad('shell','run-as',pkg,'sha256sum','files/driver/libvulkan_panfrost.so').split()[0]==sha(a.driver)and ad('shell','run-as',pkg,'sha256sum','files/capture.gfxr').split()[0]==sha(a.capture)
- args='--sync --serialize-render-passes --validate --log-file /data/user/0/'+pkg+'/'+run+'/gfxr.log --memory-translation none /data/user/0/'+pkg+'/files/capture.gfxr'
+ property_original=ad('shell','getprop',plan['debug_property_name']);result['debug_property_original']=property_original;property_restore_required=True;save()
+ write_debug_property(plan['debug_property_requested'])
+ args='--sync --serialize-render-passes --validate --log-file /data/user/0/'+pkg+'/'+run+'/gfxr.log --memory-translation rebind /data/user/0/'+pkg+'/files/capture.gfxr'
  cmd=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_token',token,'--es','args',shlex.quote(args)]
  result.update(stage='one-cold-replay',launch_command=B+cmd);save()
  with (a.output/'launch.txt').open('w')as f:launch=subprocess.Popen(B+cmd,stdout=f,stderr=subprocess.STDOUT)
  deadline=time.monotonic()+90;log=''
  while True:
-  log=logs();current=observe();terminal='====== Exiting android_main'in log
+  log=logs();current=observe()
+  if first and not result.get('initial_PANVK_DEBUG_env_absent'):
+   result['initial_PANVK_DEBUG_env_absent']=panvk_debug_environment_absent(ad('exec-out','run-as',pkg,'cat','/proc/'+first+'/environ'));save()
+  terminal='====== Exiting android_main'in log
   if terminal or ambiguous or(first and not current):break
   if time.monotonic()>deadline:raise TimeoutError('Replay bound reached, no retry')
   time.sleep(.2)
@@ -181,6 +218,11 @@ finally:
  if made_tmp:
   try:ad('shell','rm','-r',tmp);ad('shell','test','!','-e',tmp);result['owned_tmp_absent']=True
   except BaseException as e:result['cleanup_errors'].append('unique tmp cleanup: '+repr(e))
+ if property_restore_required:
+  try:
+   write_debug_property(property_original)
+   result['debug_property_restored']=True
+  except BaseException as e:result['cleanup_errors'].append('debug property restore: '+repr(e))
  result['owned_clients_stopped']=all(p is None or p.poll()is not None for p in(installer,launch))
  if before is not None:
   try:result['original_after']=snapshot();assert result['original_after']==before;result['production_unchanged']=True
