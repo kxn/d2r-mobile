@@ -540,3 +540,1330 @@ descriptor retarget 和随后 CPU 编辑；完整 async/sync 分别 22,031,792/2
 
 冻结源码、指令与测试：本机 `.local/logs/pool-binding-mask-v1-source-ready.json`；
 独立源码审查：`.local/logs/pool-binding-mask-v1-root-review.json`。
+
+## 2026-10-20：共享堆整游戏首次验证
+
+以下是独立实验分支 `codex/shared-guest-game-combined-v2` 的结果，实验源码
+`03cbdba5be720393efa6648bb8f4a7b9f5feed70` 尚未合入生产默认路径。
+983 项 APK 构建输入、6 个原生库已逐项校验。游戏模块仍由原始 NSO 经统一
+入口生成并验证，使用 `elfdesc-gate`、`touch-run-v4`、private gates 和 x18
+group size 3；没有叠改已加工的二进制。
+
+此前普通应用 UID 下，Mali-G710 MC10 的有限 4MiB 全 Pool 导入用例通过：
+Buffer 659 项、Event 117 项、Query 7827 项。实际内存属性为 `0xb`，即
+HOST_CACHED、非 HOST_COHERENT；用例执行了 Flush/Invalidate。这些是功能
+字节验证，不是游戏、整 Pool 内存开销或散热验收。直接 PanVK ICD 的这些
+Android 测试没有加载 VVL，不能写成真机验证层无错误。
+
+真实游戏 PID 32621 冷启动使用固定驱动 `bdd9df32…`，日志确认
+`actual_shared=1`；实际 timestampPeriod 为约 76.92308ns、valid bits 为 64，
+原模块开始原生执行，但在主菜单约第 60 帧触发：
+
+```
+Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not implemented
+```
+
+因此共享 Buffer/堆已实际启用，但整游戏共享路径没有通过。现有错误只证明
+图像 CPU 源的 dirty proof 失败，不能认定图像字节确实被 CPU 改过。源码有
+一条需修正的路径：首次 GPU 完整清屏可跳过 CPU 上传，图像已 initialized，
+但尚无 CPU 源 dirty scope/stamp；后续采样会将 untracked 保守判为 dirty。
+同页邻居写也可能导致页级误报。不能简单删除拒绝条件，或把 baseline 字节
+相等当作 GPU-owned 区域没有 CPU 后写的证明；CPU 写回与旧值相同的字节，
+仍可能是在覆盖 GPU 新值。任意 partial CPU 编辑与 optimal/linear 别名的
+发布规则仍未完成，不宣称已经消除了所有回写或等待。
+
+失败证据位于本机 `.local/logs/shared-game-03cbdba-mali-v1/`。进程已自行
+退出，没有为存档重新启动；已回读校验恢复 c8 APK、原有私有驱动和全部
+28 项模块，并确认游戏停止。原 full ASTC4 资源与存档未参与部署。没有取得
+本次共享游戏的稳定 PSS、FPS 或温度对照，不能据此宣称内存、帧率或散热
+改善。下一步先修正图像源追踪生命周期，再验证真实游戏；生产仍保留原路径。
+
+后继独立候选 `c075d41` 补齐首次 GPU 定义的源追踪、shared/defer0 下的
+draw/dispatch 准备、ReadTexels 原 owner 任务路由，以及 raw/image 别名检查和
+用途升级后的 CPU authority。983 项输入和六库再次闭合后，已从原始 NSO
+重新生成并验证模块，执行第二次真实共享游戏测试。它仍在主菜单失败：
+serial 2267、格式 `0x79`（ASTC 4×4 UNORM）、源范围 24064B；此时 scope=1、
+stamp=3404，所以首次未跟踪并非全部根因。Android 系统 tombstone 与同
+BuildID ELF 的 LLVM 符号化确定失败调用为 `vk_texture_copy_t2t` 的
+`image_upload(s)`，即纹理复制的源对象。此前具体哪个操作取得 GPU 写入
+权属仍待查明，不能据格式直接断言源来自 CPU，也不能直接删除保护条件。
+没有取得内存端点或游戏性能对照；已再次校验恢复 c8、全部模块及旧驱动，
+游戏停止。失败和系统栈证据在本机 `shared-game-c075d41-mali-v1/`。
+
+### 独立 ASTC 原生图像存储导入
+
+另一个默认关闭的实验已通过普通应用 UID 真机功能验证：驱动源码分支
+`codex/panvk-native-image-import-v1` 的 `3446abb`，独立测试应用分支
+`codex/panvk-native-image-app-v1` 的 `948d702`，驱动 SHA `6b15cf08…`。
+它使用原 Mesa Host Image Copy 生成目标原生排布，不另写 vendor swizzle。
+
+有限对象为 13×9、四级 mip、单层 2D 的 ASTC 4×4/6×6 UNORM 和 sRGB。
+两个独立进程分别生成文件、导入并采样；四格式各覆盖两次数据发布和两次
+导入生命周期。实际使用 HOST_CACHED 非一致性内存、非零 Pool 偏移及
+Flush；采样输出、前后邻居、文件不变性与原映射释放后仍存活的检查通过。
+消费端没有第二次图像内存分配，也未调用 Host Image Copy 恢复图像。
+初始内容依据明确的私有 producer GENERAL/FOREIGN 交接合同，不依赖从
+UNDEFINED 转换保留旧字节。Android 直接 ICD 仍明确未启用 VVL。
+
+本机验收记录为 `native-image-app-948d702-mali-v1-root-review.json`。
+原游戏包、模块、六项资源、shader chain 与原私有驱动均经前后校验未改，
+独立应用、临时文件与进程已清理。这证明的是有限图像直接导入机制；尚未
+实现游戏 packaged 8B layout、StorageSize、完整/缩略 mip 表及流式发布协议，
+没有游戏 PSS、带宽、FPS 或散热收益结论。
+
+后续 `86381c7` 资源工具与独立应用 `3324edf` 已使用真实游戏
+`firepit_a_ALB`（256×256、九级 mip）执行普通 UID 真机对照。原始资源经
+现有工具生成 ASTC4、ASTC6 两种输入，分别烘焙原生排布、在另一个冷进程
+导入。每种输入均另外通过标准 `vkCmdCopyBufferToImage` 建立 GPU 参考，
+全部九级 mip 的 87,381 个采样 texel 与各自参考相同；这不是 ASTC4 与
+ASTC6 有损编码之间的画质比较。消费端仍没有第二份导入图像存储。
+
+实际原生图像存储需求为 ASTC4 90,112B、ASTC6 45,056B；对应 NVN 排布
+资源为 89,600B、64,000B。这些是单资源排布大小，不是进程 PSS、实际
+DRAM 流量或整游戏节省量。该驱动目前只接纳 SAMPLED|HOST_TRANSFER；
+真实游戏已经使用纹理到纹理复制，因此 TRANSFER_SRC 用途与流式写入
+发布合同也必须补齐，不能将当前有限采样验收写成游戏直接导入完成。
+
+验收记录为本机 `native-image-resource-app-3324edf-mali-v1-root-review.json`。
+游戏 APK、模块、资源、shader chain 与原私有驱动均保持不变；独立应用
+已经卸载，测试进程与临时文件已清理。下一步是在默认关闭的独立路径中
+接入通用 NVN 元数据与资源工具链，再验证真实游戏内存和持续游玩散热。
+
+复制用途不能继承上述采样验收。独立 `4093920` 测试将用途明确扩为
+SAMPLED|HOST_TRANSFER|TRANSFER_SRC|TRANSFER_DST，并增加非零 block ROI
+的 Buffer→Image、局部 Image→Image 和全 mip Image→Image 对照。标准 BC3
+宿主路径在官方 VVL/SYNC 下通过，分别故意漏掉两类复制的负例均触发原
+数据断言。988 项 APK 输入、1,733 项实际编译依赖与新驱动输入均已闭合。
+
+Mali 普通 UID 真机使用 `5709f74` 驱动时，两套真实 ASTC 资源烘焙通过；
+导入却在首张 ASTC4 的 `vkBindImageMemory` 失败，尚未采样或复制。源码
+审查找到驱动内部 meta 为压缩 transfer 图像追加用途和 create flags 后，
+Bind 又误用这些内部扩展值验证原应用声明的严格合同。修复须保留 Create
+时已验证的原合同，不能放宽成任意 Storage/Attachment 导入。内部 meta
+也可能改变物理排布，必须使用新 recipe 重新烘焙，不能复用旧采样产物。
+
+此失败不算整游戏运行或性能结果。独立应用已卸载，原游戏与资源保持不变，
+游戏进程停止。记录为本机 `native-image-resource-copy-4093920-mali-v1-root-review.json`；
+驱动修复与非一致性内存 CPU 写入保护仍在独立分支推进。
+
+后继驱动 `01efc12` 已通过同一 `4093920` APK 的真实复测：两次冷进程分别
+烘焙、导入，ASTC4/ASTC6 均完成初始九级 mip 对照、非零 block ROI 的
+Buffer→Image 更新、Image→Image 局部更新，以及导入图像作为源的全 mip
+复制；每步采样与标准 GPU 上传参考一致，实际修改像素且未改动其余区域。
+真实内存属性为 `0xb`、atom 64，未分配第二份导入图像存储。CPU 没有在
+GPU 运行期间修改导入存储，因此不能用此证明并发写入保护已经完成。
+
+新 transfer recipe 的基础 rowPitch 为 ASTC4 1024B、ASTC6 704B，旧采样
+recipe 为 4096B、2816B；总图像分配仍为 90,112B、45,056B。实际排布变化
+进一步说明旧原生 payload 不能直接复用，也不能从这个功能结果推导带宽
+或散热收益。原游戏包、模块、资源和旧驱动未改，独立应用已卸载。
+本机验收为 `native-image-resource-copy-4093920-binding-v2-mali-root-review.json`；
+可复现 controller 在 `codex/native-image-resource-copy-app-v1` 的 `36c0896`。
+真正的游戏 NVN 资源表、缩略 mip 和流式更新集成尚未验收。
+
+### CSF 超时：完整队列输出与证据边界
+
+已有 Mesa 故障解码器的累计 ring 游标错误已在 `e8fc0ae` 修复；
+`8a73429` 只补充故障后对三条已知根命令流的有界解码，不改变 GPU 指令、
+正常提交、缓存操作或等待策略。原游戏 `277f74f` 真机复测得到约 20.5MB
+现成解码输出，VT、片元、计算三条根流均在内，原解码器 SIGSEGV 未再出现。
+游戏自身的 CSF progress timeout 仍然存在，尚未到 HUD。这是工具修复通过，
+不是游戏故障修复或性能提升。
+
+本次 job4351 的快照中，VT 已完成，片元与计算进入 CALL 但未观察到返回。
+两个独立审查对齐了 119 段时钟推进和 5,961 个跨队列等待；按源码定义的
+共同基准、寄存器保存及有限 GPU 工作条件，依赖图没有缺失的信号生产者，
+也没有固有循环。这排除了该条件下的静态计数依赖环，不能证明实际硬件
+寄存器相同，不能定位当前阻塞 PC，也不能排除 shader、scoreboard、堆或
+内存数据阻止命令完成。静态指令数量不是执行次数、耗时或带宽。
+
+下一证据缺口是已有内核／厂商工具提供的指令指针、等待对象和值、scoreboard
+或 blocked reason。普通 shell 的 dmesg 已被拒绝，预期 debugfs 节点未暴露；
+不能把应用映射的 user-IO 页面当成内核 CSF 寄存器区猜偏移读取。没有这些
+现场证据前，不根据“片元和计算都没返回”删除同步或改某个 shader。
+
+实际记录为本机 `panvk-csf-tool-8a73429-actual-v5-root-review.json`、
+`shared-compute-csf-v5-agent-v1/report.json` 及
+`shared-format-277f74f-driver-diag-v5-fragment-independent-agent.json`。
+本轮原 c8 APK、模块、资源和驱动已恢复，四项 Mesa 属性恢复原值，游戏已停止。
+
+随后只关闭私有驱动 BC 模拟的对照先触发另一处共享纹理 CPU 新鲜度检查，
+没有走到原 GPU 超时点；关闭共享的对照又先遇到 ASTC→BC3 格式检查。
+该驱动关闭 BC 模拟后仍可能声明原生 BC3 支持，不能把这个选项等同于系统
+Mali 驱动的 RGBA 回退。这两次均已恢复生产状态，不构成 GPU 超时根因结论。
+
+为独立验证压缩数组的实际价值，系统 Vulkan 候选核心 `8205364` 已完成：
+默认关闭，仅对整页、可跟踪且尚无内容的新数组沿用实际 ASTC4 编码；
+不满足条件仍走旧 RGBA 路径，普通非候选纹理不套用共享分支的全局限制。
+原始 CPU 字节暴露、Storage、其他 GPU 写入和未知编码更新受到单独保护。
+精确 CPU 暴露限制区保留至 Pool 关闭，直接裸指针 CPU 读取不在保证范围。
+
+该核心已独立审查、通过 NDK ARM64 构建和宿主功能回归；LVP 不支持 ASTC，
+宿主通过不代表物理压缩路径通过。测试包装 `1f29f2a` 显式控制验证层，复用
+已有 fd 日志出口，运行时渲染核心保持 `8205364`。994 项 APK 输入、六个运行库
+与生产签名核对；游戏模块在单独冻结的精确源码树中从原始 NSO 重建，再单独
+verify-only。控制器后续提交影响过一次源码指纹校验，旧失败保留，不曾部署。
+
+系统 Mali 驱动、普通应用 UID 的新独立 GPU 测试已经通过：42 层数组确实由
+decoded RGBA 路径变为实际 ASTC4，保持逻辑 BC3、mip/layer、局部复制、线性与
+sRGB 采样及原 Pool 字节；CPU 观察还验证了旧 GPU 快照、新 CPU 更新和下一次
+上传的顺序。验证层明确关闭，不把功能检查宣称为 VVL 或性能验收。独立包已
+卸载，生产文件前后相同。记录为 `legacy-astc-stock-1f29f2a-actual-oracle-root-review.json`。
+
+同六库的真实 ARM64 游戏随后在纹理绑定中触发
+`Shared CPU conversion missing page-level ordered preflight`。Android 崩溃栈与
+原 ELF 的 addr2line 已定位到 draw → shader bindings → texture view → CPU
+转换；draw/dispatch 的外层准备及公共源检查没有启用 legacy 模式。还须核对
+optional replay 禁止内部等待、已初始化干净纹理上的待完成 CPU 写回两类边界，
+不能仅删深层检查绕过。此轮没有到 HUD，原 c8 APK、模块、资源和驱动已恢复，
+游戏停止。不能据此声称已降低驻留、带宽或温度。
+
+后续修复 `1a5280a` 已补齐普通 draw、dispatch 和公共 helper 的 legacy 准入，
+并在借用资源前处理同 host 页尚未发布的 CPU effect，避免已初始化的 clean
+图像沿版本缓存跳过更新。可选 ghost 重播保守拒绝 tracked packaged 来源，
+实例展开的晚 pending 重验也保持非阻塞；原 NVN draw 不因此丢弃。
+
+同源新包的系统 Mali 普通 UID 独立 GPU 检查通过 1,040,777 项，新增 outer
+preflight 的七项条件均实际通过，包括 clean 图像后排 CPU effect、同页邻字节、
+不同页不额外等待，以及原 shader 的 GPU 像素。验证层和同步验证明确关闭，
+不将功能断言数量冒称为 VVL 验收。它与随后游戏使用相同六个运行库。
+
+该版本随后执行从原始 NSO 重新加工、单独核验的真实 ARM64 游戏，系统
+Vulkan、原 private guest heap、16 MiB 复制 Pool、完整 ASTC4 资源及
+`cbd8d2da0b0f` shader 链。serial19 的逻辑 BC3、42 层七级 mip 数组实际采用
+ASTC4，越过旧错误并到达原选角和营地 HUD；所留截图中地面、人物与 UI 正常。
+原生命周期确认 fresh save 两次提交成功后停机，生产 c8 包和原文件已回滚核验。
+新 APK SHA256 为 `d9171b7f17b48094ba4359dcf3f437b6446a09f2995d51f41f070ccf6eef0b2e`；
+宿主 ELF 为 `fb03f5d8065cec293ae04114e498b548cfaef8e29493389a5b6ddd5edd5c9f8b`。
+
+这是默认关闭候选的一次短营地功能通过，不是完全共享路径通过；独立 Pool
+backing、shadow 与复制仍在。截图的 30.4 只是该时刻显示值，没有受控对照，
+不能算涨帧；驻留、带宽净收益及持续散热尚未验收。后续只准备同 APK 的
+OFF/ON 官方工具对照，不把准备或连接重建写成已经采集。记录为本机
+`legacy-image-cpu-preflight-1a5280a-mali-v1/result.json` 和
+`legacy-image-cpu-preflight-1a5280a-original-mali-v2/root-result.json`，
+后者同时保留 launch、native log、HUD 截图和 fresh-save 证据。
+
+### 共享 Pool 的快照与非一致性写入保护
+
+共享分支不分配整个 Pool 的 `shadow`，也不通过内容扫描决定 Buffer 上传。
+保留的是访问范围、版本、Fence 和有限 image-scope 页的保护信息，并非整份
+数据快照。真正需要保留历史值的异步命令输入另算；NVN 排布与私有 VkImage
+之间的转换存储也不能冒称已经消除。原生图像直接绑定是后一项的独立工作。
+
+对生产 `c8e7a25`、共享 `277f74f` 和原生图像 `fbd09b2` 的分配与使用点复核：
+生产路径仍有延迟分配的 Pool CPU shadow 和独立 Vulkan Buffer 存储；共享
+路径在分配 shadow 前返回，直接导入原 guest 存储，known-copy/B2B 的 CPU
+内容快照也已关闭。因此，完整共享不要求再留一份全尺寸比较快照。
+版本、页状态、访问范围和 Fence 是元数据，不保存第二份内容。
+
+普通 Tegra 纹理仍同时保留原始排布和真正参与采样的 optimal 图像，短期
+转换 staging 也仍被使用；不能把它们按“没用的跟踪快照”删除。匹配原生
+资源的 full 图像已直接绑定原 Pool 内存，跳过第二份图像存储和初始上传，
+缩略图及未覆盖资源仍走原路径。这里只确认源码分配行为与有限真机功能，
+不把 VkMemory 声明容量、calloc 虚拟容量或离线资源总量当作实际 PSS 节省。
+本机源码审计为 `shared-mode-content-copies-source-audit-agent.json`。
+
+写前保护核心 `b1ea0ef` 与应用包装组合为 `14dae0e`。Mali 普通 UID 两次
+独立冷进程验证均通过：实际 `0xb` 非一致性 HOST_CACHED、atom64 下，GPU
+写一个 word、CPU 写同 atom 邻 word，CPU 经过保护等待，Fence/Invalidate
+后双方字节及后续 VkImage 读取均正确；原 NVN Buffer→Texture→Texture
+回归同时覆盖原生 ASTC、局部区域、多 mip/layer 和 CPU 写回原值的情况。
+同一包六库与生产签名、990 项构建输入已经核对，两次测试均退出和卸载，
+原 APK、模块、资源及 shader chain 前后未变。独立审查与实际记录在本机
+`shared-image-gate-14dae0e-nc-mali-v1-independent-review-panvk.json`、
+`shared-image-gate-14dae0e-retile-mali-v1/result.json`。直接 ICD 的 VVL 明确关闭，
+不以宿主 coherent 或统计检查数量代替这些真实 NC 结果。
+
+该组合也已从原始 NSO 重新加工、单独核验并执行真实游戏。运行不再首先
+停于此前的共享图像源保护条件，但在菜单加载约第 62 帧遇到新的实际阻断：
+`Vulkan format conversion unavailable: 157 -> 137`，即 ASTC4 UNORM 到 BC3
+UNORM。系统 Mali 驱动与私有驱动的 BC 能力声明影响目标物理格式选择；
+原 Metal 的 `no_bc` 路径原本处理的是 ASTC 到解压目标，不能直接把这里的
+ASTC 数据当 BC3 使用。需核实完整资源、子资源和 CPU 后续写入合同后修复。
+本次没有到达原游戏 HUD，不提供内存、FPS 或持续散热收益结论；现场保留在
+`shared-game-14dae0e-mali-v2/`，原 c8 APK、28 个模块及旧驱动已经恢复并停机。
+
+后续仅增强原错误输出的 `451b9b1` 实际复现确认：源为 128×128、八级 mip
+的 packaged ASTC4；目标为 128×128、42 层、七级 mip 的非 packaged BC3
+数组，尚未初始化且未向外暴露原始 VkImage。这次向第 41 层的第 0 级做
+完整同尺寸复制。它支持继续验证“新目标沿用源物理压缩编码”的受限方案，
+不允许将已有 BC3 内容或未知 CPU 更新当 ASTC。原可玩版再次恢复并停机。
+
+修复核心 `b8a727d` 与严格测试包装组合为 `277f74f`：仅允许已导入共享
+Pool 上尚无有效内容的新数组采用已知 ASTC4 物理编码，保留逻辑 BC3 描述
+及 Pool 原字节；观察 CPU 版本、保留旧存储直到 GPU 完成，并拒绝无法解释
+的原始字节、Storage、Attachment 和 CPU 后续更新。Mali 普通 UID 实测通过
+128×128×42、七级 mip 的整面/局部复制、mip/layer 保持及默认、线性、sRGB
+视图采样；新的独立检查项确实执行，不以旧 retile 通过冒充新路径。记录为
+`shared-format-277f74f-retile-root-review.json`，原生产包与资源前后相同。
+
+同版本从原始 NSO 重新生成并单独验证后运行真实游戏，serial19 的数组已
+成功采用 ASTC4，越过原格式错误。之后角色场景加载时，GPU 完成线程收到
+`VK_ERROR_DEVICE_LOST`（Fence wait -4），尚未到 HUD。Android 退出记录是
+该进程主动 abort；现有日志没有 GPU fault 地址或具体提交证据，不能据此
+归因最后一个 shader、ASTC 修复或 OOM。kernel dmesg 读取被系统拒绝，后续
+优先使用驱动已有诊断能力。现场 `shared-game-format-277f74f-mali-v1/`；原
+c8 APK、驱动和 34 项模块／资源校验恢复，进程已退出，不提供性能收益结论。
+
+同 APK／驱动的现成 Mesa 日志已进一步捕获 kernel CSF group1 progress
+timeout；带 `sync` 和不带 `sync` 各一次均复现，最先报告的子队列分别为
+1 和 0，不能仅据此归因片元 shader。四项 Android Mesa 诊断属性均已恢复，
+游戏及原驱动再次恢复并停止。现成故障解码器另有独立缺陷：直接将累计
+extract 游标加到 64KiB ring 地址，运行多圈后越界并在写出详情前崩溃。
+正在修复已有解码器的环形范围和错误检查；这项工具修复不等于 GPU 根因
+修复。记录为 `shared-format-277f74f-driver-diagnostic-pair-root-review.json`。
+
+另有已确认的保护边界：原 packaged 图像直接 `mprotect` 的两个入口未等待
+同 host 页上已有的 FS 写租约；kernel `pread` 与新保护交错可能返回 EFAULT。
+新观察握手必须等待旧页依赖、已有 FS 租约和 BUSY 发布后再完成只读保护，
+不能把一次保护成功或未遇到错误当作全部并发安全。此缺口与性能收益分别验收。
+
+当前已部署 fullASTC4 资源缓存的离线清点为 31,072 个描述，其中 27,195 个
+符合现有原生图像格式与单层 2D 形态范围，27,194 个还含缩略图。因此必须
+区分完整 opaque 原生资源与缩略图原有上传格式，不能仅凭尺寸或文件来源
+假定只读或直接导入。1040B/entry 的当前表预计占 28,282,960B 元数据；全部
+资源压缩块总量不代表运行时驻留量，也不能据此计算已经实现的内存节省。
+
+后续 `fbd09b2` 已将原生资源表、整图/缩略图规则和真实共享写前门控组合，
+并在 Mali 普通 UID 下通过原 NVN 接口执行两次独立冷进程测试。ASTC4 与
+ASTC6 各 307 项检查通过：九级整图的块读取与采样、五级缩略图原 packaged
+上传及 Buffer→Texture、原生图像的首个 Buffer 别名写入和后续复制/发布。
+实际共享内存属性为 `0xb`、atom64，4MiB 有限 Pool 没有整池快照；这次
+执行的是原 NVN Builder、Texture、命令录制/翻译及队列入口，较先前仅
+独立 Vulkan 导入测试更接近运行时合同。直接 ICD 的 VVL 仍明确关闭。
+
+测试使用 `01efc12` 驱动和重新烘焙的两套真实资源。原 APK、28 个模块、
+六项资源和 shader chain 前后完全相同；独立包、进程及临时文件均清理。
+本机记录为 `native-family-fbd09b2-mali-root-review.json`。这是有限对象的
+真实 GPU 正确性结果；原游戏 Builder 的查询/分配顺序、原 packaged 保护
+握手以及单资源真实游戏加载仍需验证，没有整游戏内存、FPS 或散热收益结论。
+
+## 1a5280a：系统驱动 ASTC 开关的官方工具结果
+
+同一 `1a5280a` APK、原始模块、全 ASTC4 资源和 `cbd8d2da0b0f` shader chain，
+在 Mali 上分别关闭、开启 legacy ASTC copy，各采集独立的 gatord 8 秒和
+Simpleperf stat 8 秒。保持系统 Vulkan、非共享 guest heap、固定 0.75 比例及
+2772×1240 输出；两侧均通过原摇杆营地路线、原生命周期 fresh save2 后停止，
+最终恢复并验证 `c8e7a25` APK、模块、资源和私有驱动文件。系统截图命令超时的
+首轮在采样前退出，失败记录保留；有效数据是本机 `legacy-astc-1a5280a-mali-arm-pair-v2`。
+
+Streamline 官方导出的整窗 GPU 外部读/写，OFF 为 4.300/2.766 GB/s，ON 为
+4.233/2.630 GB/s；纹理外读分别为 2.740/2.756 GB/s。按 fine quad 作描述性
+归一后，纹理外读仍基本不变。OFF 的温控目标在 20/30 FPS 间切换，ON 为
+20 FPS，Uniform 特化变体数也为 33/31，故这些数字不能作为 ASTC 的净收益或涨帧结论。
+完整 0–8 秒及 1–7 秒区间均保留；没有选择最好区间，也没有以内部 L2 流量
+冒充 DRAM：LS→L2 的写流量约 6.2–6.4 GB/s，与外部写是不同测量边界。
+本机分析记录 `legacy-astc-1a5280a-official-descriptive-comparison-agent-v2.json`。
+
+随后对同一 1a 进程补充官方 Simpleperf 99 Hz、8 秒用户态调用栈，原菜单通过
+正常触摸进入世界，采样后 fresh save2、停止并恢复 c8。1163 个样本没有丢失或
+截断，原始保留栈深度仍有差异；519 个翻译线程样本中，脏页代数查询自身仅
+4 个，不能据此把整池代数扫描当作主要 CPU 热点。绑定及访问依赖管理仍值得
+继续减负。完成线程的 40 个用户态样本里，17 个驱动叶样本的宿主调用点对应
+`vkResetCommandPool`，14 个 `memcpy` 叶样本对应 CPU effects 发布；内核没有
+被此次 `cpu-clock:u` 覆盖，不能把这些比例当作线程墙钟占比，更不能将全部
+minor faults 归于 mprotect。采样记录 `legacy-astc-1a5280a-mali-CPU99-recovered-v2`。
+
+## 36a9781：完成线程批处理与空预检减负
+
+当前 Mali 可玩包已更新为 `36a9781`，使用系统 Vulkan 驱动、非共享 guest heap、
+原 fullASTC4 资源；legacy ASTC copy 实验仍默认关闭。保留原同步与数据依赖，
+新增两项减负：真实 fence 完成后，将最多 16 个原 VMA allocation 的 invalidate
+合并调用，尾批仍执行；非 packaged、空内存或空布局的纹理，在原注册锁和有效性
+检查内提前退出 CPU 输入预检查，避免复制整个纹理描述及无效预检。
+
+前者不减少缓存维护范围或 GPU 写回字节，只减少驱动入口；后者不增加预测缓存，
+真实 packaged 输入的晚到 CPU effects 仍须发布。两项均不跳过实际 GPU 完成或
+数据新鲜度检查。完成线程增加有界临时栈空间，没有新增热路径堆分配。
+
+独立普通 UID 的 Mali 测试确认真实 `0xb` 非一致性内存上的 35 个写回范围正确，
+覆盖尾批、fence 后发布和命令池重置顺序。合并包的独立实际 GPU 回归也通过，
+新增预检检查覆盖描述符重新注册、空输入、不相关依赖及真实 draw/dispatch 采样。
+这些是字节和生命周期验收，不是性能测量。
+
+同一合并包随后分别以 legacy ASTC copy 开启及默认关闭运行原始 ARM64 游戏，
+均到达营地 HUD，截图未见明显黑块或几何损坏，通过原生命周期 fresh save2 后
+停止。默认关闭的一次已保留为手机当前安装包；APK、28 项模块、资源、shader
+chain 与私有驱动文件均已核验。原始 NSO 由该冻结源码重新加工并单独 verify，
+没有向历史加工 binary 叠补丁。记录为本机 `stock-cpu-batch-36a9781-owned-mali-v2`、
+`stock-cpu-batch-36a9781-original-mali-v1` 和
+`stock-cpu-batch-36a9781-default-promote-mali-v1`。
+
+这次只证明短营地功能及减少重复工作的机制；截图 FPS 不能证明净涨帧，持续
+游玩散热仍未验收。PanVK 共享内存实验不属于当前默认包。此前私有驱动对照含有
+本地修改，且在格式或保护条件处提前失败，尚未证明未修改 PanVK 能运行完整
+游戏；因此角色加载 GPU hang 不能归因于共享接口，需先补齐干净驱动基线。
+
+## full6 实际采样链核实
+
+`36a9781` 的一次官方 GFXReconstruct 捕获已完成：原营地第 739 帧，官方
+info 确认一帧非空 Vulkan 记录，原始文件 254,721,664B。使用现有 full6
+完整资源闭包，固定 0.75 比例、系统驱动及非共享 guest heap；没有再采集
+重复的 GPU 计数器基线。捕获关闭后先完成原生命周期 fresh save2、停止进程，
+再恢复 full4 资源、35 项生产文件哈希及调试层设置，最后才传输并官方转换。
+
+捕获前的同次运行截图中，3D 营地可辨，但底部血球、蓝球和药水图标明显异常。
+此时 full6 资源与 GFXR 层均与默认运行不同，尚不能归因其中任意一项；不作为
+full6 画质或性能验收。已有完整调用记录将用于核实上传源、数组复制目标和
+最终 sampled image 的实际物理格式，不能以离线转换数量代替最终压缩采样证据。
+原始记录在本机 `full6-adoption-36a9781-mali-api-v1/result.json`，手机已恢复
+默认 full4 并停止。截图上的 FPS 不参与性能比较。
+
+随后一次必要的无调试层 full6 短跑（不再抓帧）中，底部血球、蓝球及药水
+图标正常。原存档停机、默认 full4 和 35 项文件恢复均通过；这只能将异常
+收窄至带工具层运行或其时序交互，不能据此认定 GFXR 自身有缺陷。
+记录为 `full6-plain-36a9781-mali-visual-v1/result.json`。
+
+官方 API 和实际 shader 模块的关系已核实：主 HDR 组的三个主要材质槽，在
+586 个 draw 中共出现 1,758 次绑定，其中 788 次为最终 ASTC6 图像视图，
+其余 970 次仍为 ASTC4。此数只证明最终绑定覆盖，不是动态采样次数或 DRAM
+份额，不能将 44.8% 的绑定换算成带宽收益。当前证据排除了“资源虽转了、
+主场景完全没绑定 ASTC6”的猜测，仍未证明实际纹理带宽或持续帧率改善。
+
+同帧实际提交中没有 `vkCmdCopyBufferToImage`，故本帧的图像上传及其 CPU
+解排布不是主要渲染流量来源。离线生成可移植的上传块排列，能针对加载和
+流式更新消除 CPU 解排布，但不能据此认定能降低稳定画面每帧的采样带宽。
+GPU 最终 optimal 存储布局仍须与可移植上传布局区分；可移植上传源的加工不必
+依赖私有驱动。详细绑定记录为 `full6-adoption-36a9781-actual-resource-adoption-v1.json`。
+
+## 宿主同步验证记录纠错
+
+此前 `0856` 两份 source-ready 将 `official_host_VVL_sync` 记为 true，但旧成功
+日志没有启用同步验证的明确标记，只能支持 core VVL。后续显式启用同步验证
+发现测试自身将临时 buffer 的 `readback` 分类改为 1 后漏恢复，污染后续复用。
+`022d625` 仅修测试恢复原字段，不改运行时、不加屏障；完整 async 与 owned
+回归在明确启用 VVL+sync 后通过。原失败、成功日志和冻结报告均保留，新纠错
+记录为 `readback-host-sync-validation-erratum-agent-v1.json`。此纠错不撤销已执行
+的 Mali 非一致性 GPU 字节验收，也不能将宿主同步验证称作 Android 同步层验收。
+
+## 原 PanVK fork 的非共享真实游戏对照
+
+纯上游 Mesa `5a07217f` 不含此手机所需的 vendor kbase 后端，不能称作可用的
+零修改 Android 基线。可对照的是原 `zenithblue-oss/panvk-kbase-android`
+`5b87b74d` 及其原有 179 项补丁，未加入本项目的 host-import 或诊断修改。
+独立重新构建与最初原 fork 的 `c5ecf526…` 驱动逐字节相同。
+
+在同一 `36a9781` APK／原始模块上，关闭 shared guest heap、legacy ASTC copy
+及 decode8，使用原 BC 资源和原触控 UI。离线核实 31,093 个纹理及描述缓存的
+CFT 条目与原 RomFS 相同，避免此前 ASTC→BC 格式检查提前阻断。普通 UID
+真实进程确认加载 driverID20 的原 PanVK、private-anonymous guest heap。
+
+该次运行越过主菜单，打开选角期间仍出现 `Vulkan GPU fence wait: -4`
+及 SIGABRT，未达到营地 HUD。证明此次 GPU 失效不需要新增共享导入；不能
+据此证明与共享版同根因，也不能排除 Vulkan 后端的错误用法。当前 direct ICD
+入口绕过 Android loader，既有 validation 开关主动拒绝该组合，尚无官方
+校验层证明此次调用有效，下一步需先接通现成工具入口。
+
+进程已自行退出，未为存档重新启动；原 35 项文件、完整旧驱动及缓存目录恢复
+核验通过，临时资源清理完成。本机记录 `panvk-original-fork-ui-game-v4/result.json`。
+此前 v3 在启动前遇到缓存文件清单过长导致 ADB `error: closed`，未运行游戏，
+失败记录保留；v4 仅将哈希请求分批，并非另一项驱动改动。本次不提供性能结论。
+
+## 022d625：图像绑定的静态分类
+
+Mali 当前默认包进一步更新为 `022d625`，源码保存在
+`codex/readback-fixture-class-restore-v1` 分支。它在 `36a9781` 上增加图像 binding
+索引的构造期分类：三个每次绘制访问图像的入口只枚举已知图像索引，仍执行
+当前句柄、注册、脏页、CPU effects 和 hazard 检查，不预测动态资源内容。
+全图像 schema 保留连续扫描，未知或无效 schema 保留原错误路径；每个 shader
+增加 16B，NDK 编译确认相关热函数栈不变。测试自身的 readback 分类恢复修复
+包含在同一提交历史中，与运行时优化分开记录。
+
+完整 canonical APK、994 项输入、1744 项实际 NDK 依赖和六库已归档；原始 NSO
+重新生成并单独 verify。普通 UID 真机回归通过原 legacy ASTC／CPU prefilter
+字节与生命周期检查；Android 没有另跑宿主 1030 项分类边界测试，也没有启用
+Android 校验层。真实游戏默认 OFF 路径到达营地，截图中的人物、地形、血球和
+药水正常，通过 fresh save2 后停机并保留为当前包。记录为
+`image-binding-022d625-default-promote-mali-v1/root-result.json`。
+
+该修改省去重复分类，不减少实际纹理上传或 shader 采样；截图中的 48.7 FPS
+不是与旧包匹配的工具对照，不能报告为该修改的涨帧收益。官方 Simpleperf 的
+翻译线程候选对照另行记录，持续游玩散热仍未验收。
+
+
+## 原版 Turnip：真实游戏基线已通过
+
+在 Adreno 735 上，未加入本项目 host-import 修改的 Mesa 26.2.5 KGSL Turnip
+已由原 APK、原始 ARM64 模块、原 BC 资源和四项上游触控 UI 运行到营地。
+源码归档的 12,808 项原文件相同、补丁列表为空；实际驱动 SHA256 为
+`032b7fd9457f1846aebecb0c9cbc1124dc3200272ddd7e397d784b3ca9d23a12`。
+真实进程确认 FD735／driverID，选角到营地约 17.23 秒，所留截图中人物、
+地形、传送门、血蓝球及药水正常。输出 2750×1260、固定 0.75 比例。
+
+这次关闭共享导入，使用原 pool mirror，不是共享内存实验通过，也不是 FPS
+对照。截图的 23.5 FPS 不能算驱动增益；GMEM/SYSMEM 未强制，默认按 Pass
+自动选择。已完成原生命周期 fresh save2、停机、旧私有驱动及缓存目录恢复，
+原 APK／宿主 ELF／模块／资源／shader chain 重验通过，清理无错误。本机完整
+证据为 `turnip-original-q735-v1/actual-game-acceptance-agent.json`。
+
+## PanVK 官方校验层：真机入口已核实
+
+独立普通应用 UID 的工具包 `2a27b976` 在 Mali 真机通过 Android 系统 Vulkan
+loader 与既有 libadrenotools DRIVER_CUSTOM 接入原 `c5ecf526` PanVK。实际
+映射及 driverID20 已核实，没有 GPU_MAPPING_IMPORT，也没有驱动修改。
+使用官方 Android Khronos validation layer 1.4.363；日志明确请求同步验证。
+
+同一 UID10353／PID15895 中，原 NVN 路径的完整 GPU 写入再读取字节正确，
+正例没有 VUID；随后刻意传入 size=0 的 VkBufferCreateInfo，官方层准确报告
+`VUID-VkBufferCreateInfo-size-00912` 一次，并在调用驱动前阻断。不能仅凭环境
+变量或可枚举层名称宣称成功，本次包括实际正负控及原生 terminal rc=0。
+
+此工具没有执行游戏模块，不是 PanVK 游戏兼容或性能验收。原生产 `022d625`
+APK、28 模块、六项资源、旧驱动及 shader chain 前后相同；独立包、进程、临时
+目录和本次工具客户端已清理。实际记录为
+`panvk-layered-vvl-tool-v1-mali-v1/result.json`。下一步用同一现成工具检查原版
+PanVK 的真实游戏设备丢失，不将新增共享接口预设为根因。
+
+## 36a→022 官方 CPU 对照的证据边界
+
+两包已分别完成相同原摇杆路线后的官方 Simpleperf 8 秒 per-thread stat 和
+8 秒、99Hz 用户态 DWARF 调用栈。每段采集后先 fresh save2、停机再传输，
+两包间停机冷却 45 秒，最终恢复当前 `022d625` 并停止，原调试设置恢复。
+记录为 `image-binding-36a-to-022-mali-cpu99-stat-v1/result.json`。
+
+旧包 stat 窗端点温控目标 60→60，record 窗 60→30；新包两窗均 30→30。
+PSO 数相同，但旧包 Uniform 变体从 31 变为 33，新包为 33。因此这不是稳定
+温控下的净 FPS 对照，不能将显示差异归因于索引枚举改动。ADB 端点包围约
+9 秒，而工具窗口为 8 秒，端点提交计数不能作为工具内精确帧数分母。
+`shader_present.selected` 统计选择路径，不能称作成功出图数。两边实际
+present_worker 均 reference=true／active=false，与 GPU 完成线程是不同职责。
+后续使用精确 BuildID 的离线符号分析定位翻译 CPU 热点，不额外让手机空跑。
+
+
+## 修改版 Turnip：共享启动与早期选角失败
+
+高通用于激进共享内存实验，保留原 BC／四项 UI 资源及 `9507875007c6`
+shader 链，输出 2750×1260、固定 0.75；不为此搬运 Mali 的整套资源。
+原版 Turnip 对照后，改用既有 host-import `3c8710be`，没有混用两个驱动。
+
+`c7a511b` 只在原 `022d625` 的冷启动阶段补齐 Turnip 对应 opt-in，并显式
+开关 PanVK／Turnip 的导入请求。完整 canonical APK 与从原始 NSO 重新生成、
+单独 verify 的 28 项部署文件绑定同一冻结源码。关闭共享的真实 ARM64 游戏
+到达营地、人物／场景／UI 正常、fresh save2 后停止；一次官方 meminfo 的
+TOTAL PSS 为 2,289,085KiB，只是此时快照，不是峰值或内存收益对照。
+
+开启共享时，原 posix_memalign 的小启动探针导入失败，实际回退 legacy。
+严格控制器拒绝把回退算作共享通过，存档停机并完整恢复原包及私有目录。
+随后 `bcdf11a` 将此小探针改为与真实 guest heap 一致的 RW 匿名 mmap，
+保留原 Vulkan API、能力门及导入失败策略，并记录失败阶段。该版真实
+PID14638 启动字节检查通过，明确 actual_shared=1，不再是旧镜像路径。
+
+加载选角期间仍触发既有保护：同一起始地址的新 BC3 sRGB 纹理（serial3841、
+89,600B）与保留的 RGBA16F 图像（serial3290、98,304B）被判为 GPU 所有权
+冲突。进程自行 SIGABRT，未为存档重新启动；生产 d7 APK、29 项模块、UI4、
+shader chain、旧私有驱动及缓存目录恢复、清理通过。这不是 GPU timeout，也
+不是营地通过；不能报告共享内存／FPS／散热改善。下一步区分逻辑纹理退役、
+物理图像额外八提交宽限期及真实数据别名，不能将旧 HDR 数据写回覆盖新 BC3，
+也不能直接删除保护。实际记录在本机 `turnip-shared-game-c7a511b-v1` 和
+`turnip-shared-game-bcdf11a-v2`。
+
+当前 `3c8710be` 只支持 Buffer host import，明确拒绝 host-backed VkImage。
+纹理的直接共享与离线 native 排布仍是独立后继实验，不包含在上述通过范围。
+
+## PanVK：官方 VVL 捕获到真实游戏的首个 API 错误
+
+普通 Surface 路径下，系统 Android loader／校验层使用驱动的 Android native
+buffer 导入接口，与原 direct ICD 的 Mesa 自有 WSI 不同。该诊断组合先遇到
+`panvk_android.c` 的 INVALID_EXTERNAL_HANDLE，不能据此认定原 GPU hang
+就是显示缓冲问题。此次官方 INFO 已明确列出 Core／Synchronization 等启用
+项，但此前 draw 尚未执行，无 VUID 不能证明后续调用有效。失败完整保留，
+原 `022d625` 和 35 项文件、旧目录已恢复，进程停止。
+
+`7991333` 随后只在显式 layered-debug＋validate 冷入口保留真实 Surface 尺寸
+而不 attach Vulkan Window，复用原 offscreen_present，首次读回之后不逐帧等待；
+不是新渲染框架，也不是可玩或性能验收。原始 ARM64 游戏继续原菜单／选角
+绘制，官方 VVL 首先报 `VUID-vkCmdDrawIndexed-None-06479`：片元 Dref 采样
+绑定的 R16_UNORM 图像不具有 SAMPLED_IMAGE_DEPTH_COMPARISON 能力。其后
+出现 kbase subqueue timeout 和 fence -4，实际复现设备丢失。
+
+这提供了必须先修的明确 Vulkan 用法错误，尚不能证明它是所有设备丢失的
+唯一原因。修复应核对 NVN 深度 format／view、比较 sampler 与 shader 映射，
+不通过关闭比较、关闭校验或游戏 shader key 特判绕过。进程自行退出后，原
+`022d625`、35 项文件、完整旧目录恢复和清理均通过；没有重启游戏存档。
+本机证据为 `panvk-layered-offscreen-game-v1-mali-v1/native.log` 及其 result。
+
+## Turnip：固定共享池已到真实营地，收益仍待同包对照
+
+官方 LLDB 对真实失败现场的只读检查确认，冲突的旧 HDR 图像已经逻辑退役，
+此前提交也已翻译，最后 GPU 使用序号 2307 已小于完成序号 2328；但原八次
+提交的物理对象保留期尚未结束，别名表仍将旧地址判为该 HDR 的有效内容。
+不能把这一保留期解释为新 BC3 仍须读取旧 HDR，更不能为绕过保护覆盖新数据。
+
+`2f0d37d` 在翻译水位和 GPU 完成均满足时解除逻辑别名所有权，继续保留原
+物理对象、描述符和相关作用域的释放条件。新 GPU 回归在旧实现实际触发
+同类保护；修复后通过，并验证尚未翻译或 GPU 未完成时仍保留所有权。
+
+同一修改版 `3c8710be` 驱动、原 BC／UI4／shader 链下，真实 ARM64 游戏
+PID23854 已进入营地；截图中的地面、人物及 UI 未见明显异常。四个实际
+导入池共 1,167,065,088 字节，即 1113MiB；当前池拷贝统计的扫描、镜像、
+快照、上传及写回字节均为零。这里通过的是线性 Buffer 共享，纹理仍须按
+现有 Vulkan 图像路径处理，并不意味着全部图像也直接共享。
+
+一次官方 meminfo 的 TOTAL PSS 为 2,627,699KiB，而此前关闭共享的不同运行
+为 2,289,085KiB；Graphics 分类则从 483,936 变为 246,744KiB。两个启动端点
+不能作为稳定净收益对照，但足以说明目前不能宣称共享已降低总物理内存。
+也不能用两张启动截图的瞬时 FPS 判断涨跌。下一步使用同一 `2f0d37d` 包、
+相同路线的开关对照和官方 Simpleperf／内存报告，区分 CPU 工作量、映射
+分类及实际驻留成本。此次 fresh save2 后停止并完整恢复原包、模块、资源、
+私有驱动和缓存，清理无错误。证据：`turnip-retired-game-2f0d37d-v3/result.json`。
+
+## PanVK：比较采样错误已修复，设备丢失仍复现
+
+`c613662` 按 shader 反射中的 Shadow 类型处理比较采样。对于实际遇到的
+R16_UNORM 颜色源，使用 GPU 缓冲中转，把相同 UNORM16 位值复制到 D16
+比较采样图像；原生深度源保持原路径。首次使用或源实际被写入时更新，
+未改内容复用已有图像；没有回读 CPU、关闭比较或按游戏 shader key 特判。
+
+官方 VVL／同步验证下，原 NVN 调用的专项 GPU 检查通过 1574 项，包括
+cube 六层、源位值保留、GPU 改写刷新和原生 D16；默认回归通过。负控强制
+回到原颜色视图时，实际重现同一个 06479 并使检查失败。这证明修复命中了
+该 API 错误。
+
+冻结包随后已在同一原版 PanVK fork、原 BC、共享关闭的真实 ARM64 游戏中
+复测。实际源为 128×128、六层、单 mip 的 R16 cube（serial44、descriptor754），
+不能凭 packaged=0 认定是替代纹理。官方 Core／Synchronization 均开启，
+06479 不再出现、VUID 列表为空，但仍出现原 subqueue1 timeout／fence -4。
+因此比较采样修复成立，崩溃并未解决。原 `022d625`、35 项文件与完整旧
+缓存已恢复，进程已退出；没有重启游戏存档，也未替换生产默认包。
+证据为 `color-depth-comparison-c613662-mali-v1/result.json`。
+
+后续先解读既有 Mesa 命令流转储。故障报告的 last job 不是挂起程序计数器，
+应追踪实际 extract 到 insert 的待执行区间及 CALL 链；不能据此直接修改
+提交同步，或把没有 VUID 当作 GPU 编译及驱动完全正确的证明。
+
+## Turnip：同包共享对照及实际 CPU 大热点
+
+同一 `2f0d37d` APK／驱动／资源的开关对照已完成。官方 8 秒 stat 中，NvN
+task-clock 为 6302→6219ms，用户态 cycles 为 8.412→8.905G，内核态为
+1.666→0.363G，上下文切换为 6255→310。关闭共享的窗口有 PSO／Uniform
+变体编译变化，开启窗口稳定；不能将这些数值合成净 FPS 或单位帧收益。
+同包 meminfo 端点 TOTAL PSS 为 2,356,125→2,701,559KiB。镜像消失与总内存
+降低是不同结论，整池导入的驻留成本仍需处理。
+
+随后只对开启共享、PSO／变体稳定的真实游戏做官方 Simpleperf 99Hz、约
+8 秒用户态 DWARF 采样，使用精确 BuildID 符号化。NvN 共 577 个样本，其中
+248 个、约 42.98% 位于线性 Buffer／图像别名保护。实际链为
+`pool_address → shader_bindings_selected_impl → vk_draw_record`。LLVM 反汇编
+确认其遍历 `shared_gpu_aliases`，逐节点读取 initialized，并重复查询固定
+共享模式；这是地址重叠查找，不是纹理内容哈希或逐字节比较。
+
+本窗口脏页／CPU 观察命名函数约 1.04%，图像转换／上传约 0.35%，只描述
+稳定营地采样，不能外推首次加载／新场景，也不含内核态。这修正了“镜像
+计数零就代表纹理跟踪已消失”的错误推论。池计数没有覆盖全部纹理处理。
+
+后继 `7c60ff4` 已实现确定性的平衡区间索引，保留真实地址重叠、写入、退役
+和原错误保护，减少每次 Buffer 访问的全链遍历。真实游戏结果见下节。
+同一代码也适用于 Mali 共享模式；当前 Mali 生产包共享与旧 ASTC 复制实验
+均关闭，普通 Buffer 访问不进入此扫描，不能将该 43% 归因于当前 Mali。
+证据：`turnip-shared-2f0-on-cpu99-official-analysis-v1/final-hotspots-agent-v1.json`。
+
+## Turnip：直接共享纹理的独立 App 检查已通过
+
+`aa185374` 实验驱动已在普通 App UID 上通过 ASTC4／6、UNORM／sRGB 四种
+格式、四级 mip 的导入及 GPU 采样检查。bake 的 280 项仅检查原 host-image
+copy 排布和文件合同；后续 import 的 202016 项包括实际 GPU 采样、元数据
+和哨兵检查，不是片元数量或性能数据。实际驱动 maps／完整 SHA 和三项 UUID
+均核实；原游戏始终未启动、未修改，独立包已卸载。
+
+这尚未把游戏的大部分材质转换为直接共享纹理，也没有功耗或内存收益证据。
+下一步复用原资源加工及 NVN family 检查，先闭合一张真实火盆材质，不能将
+PanVK 的 opaque payload／offsets 用到 Turnip。证据：
+`turnip-host-image-app-v2-q-actual-evidence.json`。
+
+## Turnip：别名区间索引的真实游戏采样
+
+`7c60ff4` 使用同一 `3c8710be` 驱动、原 BC／UI4／950 shader 链，在普通
+应用 UID 的原始 ARM64 游戏中完成选角、营地和原触控路线。共享确实开启，
+地面、角色、建筑、火盆与 HUD 截图未见明显异常。没有启用 GPU 抓帧层。
+
+官方 Simpleperf 同为 99Hz、约 8 秒用户态 DWARF 采样。将新索引查询和资格
+判断函数也计入同一类别，别名保护的 self 样本从 `248/577`（42.98%）降到
+`19/451`（4.21%）。这是同类 CPU 热点显著缩小的证据；不是精确的每帧耗时、
+FPS、带宽或散热收益。两次窗口内 PSO 均稳定，但窗口间 PSO 数不同，也没有
+记录内核 CPU；不能用截图的瞬时 FPS 把此结果解释成整帧涨跌。
+
+每个图像新增 64 字节索引元数据及冷路径插入／删除维护，不新增图像内容
+快照。原地址重叠判断、尚未完成时的保护、逻辑退役和八提交物理保留期
+维持不变。真实游戏退出前完成原存档，之后恢复原 APK、模块、资源、驱动
+和缓存，进程已停止。证据：
+`shared-alias-7c60ff4-actual-game-CPU99-acceptance-agent.json`。
+
+## Turnip：只用于图像 CPU 转换的池不提前注册
+
+独立候选 `0b36faa` 包含上述索引，继续处理整池导入的驻留成本。图像 CPU
+读取准备不再顺带创建整个池的 VkBuffer；真正的线性 GPU Buffer 访问才注册。
+共享堆改用同一 memfd 的 guest 与内部 RW 两个映射，guest 保留原脏页写保护，
+驱动通过内部映射注册相同物理页，避免首次 Buffer 访问时临时解除 guest 保护。
+第二个虚拟映射不复制池内容，也不代表所有纹理都已直接共享。
+
+冷启动两页 GPU 检查复用同一映射构造，先将 guest 设为只读，再导入 RW
+映射、执行原 copy／fill 并从 guest 核对字节。host 真实堆、原 NVN GPU、
+原保护负控及异步／串行回归已通过。冻结的完整 Android 包随后在 Adreno735
+原游戏中完成同一 guest-RO 探针、实际 shared=1、营地和五段原触控走位，
+画面检查通过；完成两次原存档后停止，生产 APK、资源、驱动和缓存精确恢复。
+
+本次营地仍实际注册四池、共 1,167,065,088 字节；没有减少导入字节。官方
+meminfo 的 PSS 为 2,777,433KiB，不同运行的旧 7c 端点为 2,747,035KiB，
+不能当作受控内存对照。两个 memfd 映射已按相同设备号、inode 和文件偏移
+核对，合计内核 PSS 为 2,169,068KiB；不得把两份 RSS 当成两份物理副本，
+也不能遗漏导入视图的 PSS。线性池拷贝计数均为零，但不包含纹理转换成本。
+
+机制只对未被线性 GPU 访问的图像池省掉提前注册；当前真实场景的混合大池
+最终仍由 Buffer 访问整池注册，因此不能报告内存、发热或 FPS 改善。下一步
+沿既有 operation admission 和 canonical span 收窄共享注册范围，不通过恢复
+镜像或删除数据依赖绕过问题。原 ASTC 传播对未注册池仍保守回退，不能宣称
+覆盖及性能不变。此候选未替换可玩版本。详见本机
+`shared-image-cpu-only-0b36faa-actual-q-acceptance-agent.json` 及
+`shared-image-cpu-only-0b36faa-root-actual-review.json`。
+
+### 整池注册的首次触发已经用 LLDB 确认
+
+同一冻结 `0b36faa` APK、原游戏及 `3c8710be` 驱动，官方 LLDB 在实际导入
+调用点取得四个首次导入池的完整栈、NVN flags、pool 地址／大小和
+`pool_address` 的原始请求。四次 `backings` 均为空：
+
+| 整池容量 | NVN flags | 首次请求 | 触发路径 |
+| --- | ---: | ---: | --- |
+| 400 MiB | 34 | 3968 B | B2T 的线性上传源，池内偏移 512 |
+| 710 MiB | 33 | 24064 B | B2T 后的 canonical retile，池内偏移 17978368 |
+| 2 MiB | 18 | 16 B | 原 GPU 查询结果写入，池内偏移 528384 |
+| 1 MiB | 20 | 32 B | Compute storage binding，池内偏移 816 |
+
+这四次请求并没有扩张成 `pool_remaining`，整池大小来自
+`shared_pool_materialize` 的 `p->size`。首次范围不是后续所有 GPU 访问范围，
+不能据此只注册这几个字节便视为完成。特别是 retile 路径维护图像与线性
+内存的别名写入语义，不能删除其实际 GPU 写入来降低注册容量。
+
+窗口候选须复用操作预留、物理 span、真实完成及重收集流程，预留完整
+descriptor／VBO／IBO 和 retile 目标及其 storage 对齐前缀；跨窗需求必须由
+一个连续 VkBuffer 满足。后续候选及分阶段验证见下节。
+LLDB 退出后原营地、存档、停机与完整生产恢复均已闭合，工具服务和端口
+转发已清理。证据：`shared-image-cpu-only-0b36faa-materialize-debug-v1-analysis-agent.json`。
+
+## Turnip：共享池按实际 Buffer 范围注册
+
+独立候选 `eddb4ca` 在 `0b36faa` 的同一 memfd 上按需注册连续窗口，不创建
+镜像或内容快照。新范围无重叠时直接补充；跨越旧窗口的完整 binding 必须先
+完成已有 GPU 和 CPU effects、清理旧引用，再将必要范围合为一个 VkBuffer。
+合并不搬运内容，但会等待并重新注册，不能称为无额外成本。既有 operation
+admission 在借出物理句柄前收集完整依赖；不通过截短 descriptor 或忽略 retile
+写入来减少注册量。旧节点退休后的真实内存依赖保留。
+
+源码审查还修正了 CPU 观察者与首次窗口发布之间的竞态：在 resources 短锁内
+取得 backing 存在性和属性快照，在锁外进入完成等待。五组精确版本的 host
+GPU／失败回退检查通过；999 个构建输入、1749 个实际 NDK 依赖、APK 六库及
+从原始 ExeFS 生成的 28 项部署产物已独立核验。旧 `982487c` 包只留作已知
+竞态的参考，未部署。最终闭合记录为
+`shared-import-windows-eddb4ca-root-closure-review.json`。
+
+Adreno735 同一 APK、驱动、原 BC/UI4/950 资源、固定 0.75 倍率的营地对照
+已经取得两个官方 meminfo 端点：
+
+| 模式 | 活跃共享注册范围 | TOTAL PSS |
+| --- | ---: | ---: |
+| 整池，窗口 0 | 1113 MiB | 2,770,623 KiB |
+| 按需，窗口 16 MiB | 499 MiB | 2,193,647 KiB |
+
+观察到注册范围少 614 MiB、总 PSS 端点少 563.45 MiB。两次均执行原始 ARM64
+游戏、原营地及五段触控走位、原存档后停止。窗口版还通过冷启动重叠导入的
+双向 GPU 字节检查。第一轮窗口走位因脚本 5 秒时限未完成而保留为失败；仅
+窗口补测将每段时限放宽至 15 秒，目标、半径和输入方式不变，未重采整池。
+因此这仍是顺序端点比较，不是完全匹配的因果或峰值内存测试。
+
+两个 memfd 映射仍须合计内核 PSS，不能把两份 RSS 当物理副本；活跃注册
+范围也不等于唯一物理 RAM。实际双映射 PSS 为 2,164,444→1,525,728 KiB，
+主要差异位于导入视图；宿主 malloc PSS 增加 23,960 KiB，Graphics 分组增加
+37,660 KiB，不能忽略这些成本。线性池比较、镜像、快照及搬运计数均为零，
+不包括纹理转换。原生产包、模块、资源、驱动和缓存已精确恢复，进程停止。
+
+当前原 BC 真游戏检查不能代替原生 ASTC 窗口传播验证，更不能证明持续游玩
+散热或 6GB 设备已经达标。原始工具输出、两份 VMA 的 inode/offset、相同
+场景坐标及完整恢复已再次独立核验；记录为
+`shared-import-windows-eddb4ca-q-root-actual-review.json`，分组数据为
+`shared-import-windows-eddb4ca-q-pair-memory-analysis-agent.json`。
+
+随后独立普通 UID 包复用原 NVN 窗口和 ASTC 用例本体，在同一 Adreno735 的
+真实 memfd 堆、64KiB 窗口和 `3c8710be` 驱动上通过。实际 ASTC4 物理编码、
+fresh BC3 array 转为 ASTC4、mip/layer/ROI 保留及 canonical 字节不变均命中，
+不是 Lavapipe 的 unsupported 分支。终端 rc0；驱动两种私有路径按实际文件
+设备号、inode、大小、SHA 及同一活进程 maps 核对。独立包与临时文件已清理，
+原生产包和文件未变。记录为 `shared-window-android-oracle-v3-root-actual-review.json`。
+前两轮仅工具路径后置条件失败，原结果保留；没有因此修改原 GPU 字节断言、
+Java/JNI 包或渲染代码。这补齐独立 ASTC 路径覆盖，仍不是 ASTC 真游戏或
+持续游玩验证，也没有新增 Android VVL/SYNC 或性能结论。
+
+## PanVK：完整 API 重放已复现原 GPU 挂起
+
+未修改的 kbase fork 驱动 `c5ecf526` 在关闭共享的原游戏中也会挂起。
+官方 GFXReconstruct 已从 vkCreateInstance 开始取得完整启动前缀，没有
+裁剪快照重建；独立普通 UID 重放不运行游戏模块和 NVN 翻译线程，仍能复现
+最终第 186 次提交的 DeviceLost。Core 和同步校验没有 VUID，不等于已经
+证明所有 Shader 或调用语义正确。
+
+同一捕获、APK 和驱动，官方 `--sync` 的逐提交等待，以及再加
+`--serialize-render-passes` 的应用绘制执行屏障，均未消除该最终提交的失败。
+末次提交虽没有应用 Dispatch，但 52 次 B2T 全部上传七张 BC3 图像；原驱动
+内部实际执行 compute raw copy 和片元 BC 解码。应用层计数和执行屏障不能
+假定覆盖这些驱动内部调用，不能据此断言不存在 compute 或内部依赖问题。
+
+最后一轮实际记录为
+`panvk-gfxr-renderpass-serialize-v1-mali-v1/actual-independent-review.json`。
+所有测试工具已退出、独立包已卸载，原生产包、资源及 46,011 项缓存核验未变，
+Mali 游戏保持停止。接下来只针对原驱动现成的 BC 解码路线做合法对照：
+路线变化会改变图像内存要求，必须先用官方 replay 的内存重绑定建立共同
+基线，不能拿旧 allocation 直接套用，也不能把分配方式和解码路线同时变化
+冒称单变量结果。
+
+首次 gfx/rebind 实测还暴露了官方 SDK 的能力缺口：重放器给缓冲加入
+SHADER_DEVICE_ADDRESS，但捕获设备未启用 BDA，出现真实
+`VUID-VkBufferCreateInfo-None-09499`。因此本次不能作为合法解码路线对照，
+compute 轮被拒绝、未执行。原包和完整库存的只读复核及属性恢复均闭合；
+被 SIGINT 打断的首次收尾核验保留在原记录中，补充只读核验单独归档。
+记录为 `panvk-bc-rebind-gfx-v1-mali-v1/actual-independent-review.json`。
+需先解决现成工具的 feature/allocator 配置，不能据该 VUID 宣称游戏或驱动
+新增回归。
+
+## 共享窗口的官方 CPU 对照（2026-10-20）
+
+同一 `eddb4ca` 二进制的整池与 16MiB 窗口分别采集了官方 Simpleperf 和
+Perfetto。Simpleperf 的 8 秒窗口内，翻译线程 task-clock 为
+5608.93→5772.78ms，完成线程为 316.18→305.27ms。两个模式的 PSO/变体
+分别是 173/31 与 181/33，故这里只记录绝对 CPU 工作量，不能将差值写成
+窗口管理造成的整帧退化。Perfetto 是独立采集窗，不能与上述时间相加。
+
+窗口版 605 个翻译线程用户态样本中，准入调用链 inclusive 命中 44 个。
+已有 fast pin 会跳过稳态 reserve、分配和排序；余下包括真实范围收集、
+锁和覆盖查找，不能把这 44 个样本全算作可删除工作。另有 29 个 self
+样本位于图像别名 AVL 重叠查找，提示继续减少不相交子树遍历；这与
+vickwv 的脏区定位缓存是两处不同的开销。报告为
+`shared-import-windows-eddb4ca-cpu-cost-v1-official-analysis.json` 和
+`shared-window-eddb-steady-cpu-candidates-readonly-v1.json`。
+采集后高通生产包、缓存和资源已恢复，进程停止。
+
+## 原生图像的独立有限导入：Android 验证中
+
+候选 `bb4ac54` 基于 `eddb4ca`。每张原生 VkImage 独立导入 payload
+对应的原 memfd 页，图像绑定的 VkDeviceMemory 不随 Buffer 窗口 union
+改变。长期图像引用与短期提交引用分开，保留原 NC 缓存、写入保护和
+真实数据依赖；物理图像退休后才回收这份导入。没有额外纹理 payload
+副本，但目前仍有与 Buffer 窗口重复的导入登记及缓存维护成本。
+
+源码及实际依赖独立核验已闭合，七组 Lavapipe/VVL/SYNC 功能检查通过，
+包括真实 RGBA 图像与两次窗口 union 的双向别名读写。Lavapipe 不支持的
+ASTC 用例没有计为通过。此候选尚未完成 Android 真 ASTC 或真实游戏验收，
+不代表已改善帧率或降低带宽、内存和温度。记录为
+`native-image-window-bb4ac54-root-source-review.json`。
+
+随后使用独立普通 UID 包 `8eee0ad` 执行未改动的原 NVN 用例，在真实
+Adreno735/AA185 上通过一次完整验证：ASTC4 sRGB 的九级 mip、五级 tail、
+双向别名读写、两次窗口 union 保持绑定及最后释放均正确。实际独立 import
+为 135,168B，token 元数据 120B，未增加另一份纹理 payload。
+原生产包和文件不变，独立包、进程及临时文件已清理。原始结果和 live maps
+再次独立核验，记录为 `native-image-window-app-v1-q-root-actual-review.json`。
+这次内存类型为 coherent 的 `0xf`，不能据此宣称实证了 NC 硬件维护路径；
+私有 ICD 下 VVL/SYNC 明确未开启，也未运行真实游戏或采集性能。
+
+配套 `ba0b943` 工具已生成一张真实火盆材质的原生资源 overlay，其余
+原 BC 资源和上游 UI 保留。使用原 CASC 工具验证整个 VFS，仅该材质与
+总贴图缓存两个条目变化；其余 31,071 个缓存条目和 133,198 个 VFS
+条目不变。错误驱动、错误验收指纹、损坏布局表和已有输出均被拒绝。
+工具、源码指纹与重建参数已保存；没有部署，不能把资源加工成功当作
+原游戏已经使用它。记录为
+`turnip-one-native-overlay-ba0b943-source-ready.json`。
+
+PanVK 官方 replay 的 BDA 配置仍未闭合：最小调试桥接启用设备 BDA 后，
+09499 消失，但 SDK 的内部 allocator 未同步启用相应分配标志，转而出现
+`VUID-vkBindBufferMemory-bufferDeviceAddress-03339`。本轮立即停止，
+未运行 compute 解码对照；不能据此评价解码路线。原生产库存、属性及
+工具清理已经独立核验，Mali 停止。记录为
+`panvk-rebind-bda-gfx-caf392e-mali-v1/actual-independent-review.json`。
+
+## 原生图像：真实游戏单材质接入通过，尚未批量推广
+
+`bb4ac54`、AA185 驱动与原 BC／上游 UI 基线的组合，已在 Adreno735
+原生执行真实游戏模块。游戏程序从原始 ExeFS 经同一入口重新生成并独立验证，
+没有叠加游戏 binary 补丁。官方 LLDB 实际取得 135,168B、4KiB 对齐的
+完整九级 mip 图像绑定；资源表、三项 UUID、输入及 payload 指纹均匹配。
+随后实际 B2T 更新的是 mip 4 的 16×16 区域，源行跨度为 256B。
+
+同一 PID、图像 serial、分配 token 后续出现 FRAGMENT／SHADER_READ。
+其真实调用栈是 `vk_texture_shader_record → vk_draw_record`，位于 Draw
+录制之后。精确 canonical ELF 的反汇编确认所有进入该区间的路径都已经
+调用 `vkCmdDraw` 或 `vkCmdDrawIndexed`；当前批次的 begin／abandon／record
+清理规则也排除了准备重试或旧批次残留。它证明这张共享图像参与了真实
+游戏的已录制 Draw，不能据此指认 GPU 上某条采样指令或所有 mip 的像素。
+
+原工具只接受较早的 texture-view 调用栈，因此仍保存其失败结果；没有
+改写原状态或重采。补充分析使用同次捕获和官方反汇编闭合上述合法路径。
+两张原 HUD 截图及三段正常摇杆走位未见明显黑块或几何错误，但只是有限
+视角观察。原生命周期存档两次后停止游戏，原 APK、全部六个私有目录及
+shader chain 已直接核验恢复。根验收记录为
+`native-one-game-bb4ac54-q-v3-root-functional-acceptance.json`；原控制器
+结果保留在 `native-one-game-bb4ac54-q-actual-v3/result.json`。
+
+这次调试器断点会扰动运行，截图的 FPS／电池温度不能当性能或持续散热
+对照。目前只接入一张 135,168B 材质，不能声称全贴图共享或 6GB 已达标。
+下一批选用现有 ASTC4 的 Act1 环境及人物资源，排除 terrain-array 后有
+6,217 项，原 NVN 打包 payload 合计 414,950,400B；这不是驱动原生图像
+大小，也不是预测可节省的 PSS。批量加工将复用原 producer、packer 和
+CASC，逐条生成与释放工作集，再做真实批量运行及现成工具的内存／热验证。
+
+另一个提前 acquire 候选 `c78704e` 尚未部署。审查发现首次 FS acquire
+未必将依赖传到稍后读取未用 mip 的 Compute／Transfer，且独立性范围需
+覆盖真实导入区间及别名粒度。修复在独立后继中进行，不能以主机原测试
+通过代替这两个缺口的处理；当前游戏验收使用的是原保守同步版本。
+
+## 2026-10-21：批量资源的真实复制阻断与同步后继
+
+6,217 项已由同一 AA185 驱动、8064 producer 实际完成 49 批烘焙，原
+packer/CASC 生成 native 与普通 ASTC4 两套同选集、同质量资源。原 NVN
+payload 为 414,950,400B，native 为 696,385,536B；主要新增成本是
+1024B 最小行跨度及小 mip 填充。压缩后的资源 archive 只增加约 3.1MiB。
+展开体积既不是实际驻留量，也不能单独证明取消 GPU 副本后的净 RAM 收益。
+原 24,855 项未选缓存及上游 UI 保留，所有构建记录仍不声明批量游戏通过。
+
+同一 `bb4ac54` runtime、AA185、16MiB Buffer 窗口、固定 0.60 和
+2750×1260 的真实游戏对照，普通 ASTC4 control 进入营地后即触发已有
+ASTC copy 保护；native 阶段没有运行。随后官方 LLDB 只在拒绝点停一次：
+目标是已有 GPU 写入的 128×128、42 层、7 mip BC3 数组，本次 ASTC
+源要写 layer37/mip0。目标已有内容，不是缺 import/span 的未定义存储。
+不能直接把全数组换成 ASTC，也不能跳过复制；兼容后备需保留其它层内容
+及现有 CPU/别名保护，并单独核算可能增加的 decoded 图像内存。
+原失败、typed 快照、调试器清理与生产目录恢复记录均保留在
+`native-bulk-copy-bb4ac54-diagnostic-v1/`；不把此调试结果当 FPS 验收。
+
+同步后继 `f637327` 已改为在 pending primary 上为已知旧 Buffer writer
+建立原有 global memory dependency，再执行 native 图像 acquire；当前
+recording、未知 writer 和 private optimal alias 仍保守拒绝。真实 AA185
+的 ASTC4 九级 mip 测试通过新增 40 项及总计 412 项检查，两个正例要求
+像素实际改变，并覆盖后续 Compute/Transfer 的不同 mip。测试包装曾因
+宏未接入而只运行旧 372 项，该失败原样保留；修正后核对真实编译宏、
+预处理体、NDK 依赖和最终 ELF，才执行新的真实 GPU 检查。当前仅证明
+这个有限物理数据依赖场景，不是批量游戏或 NC 硬件、温控、6GB 验收。
+
+Mali 的 single-CSG 驱动已由原官方完整 GFXR prefix 实际验证：确认新
+驱动及三流同组后，仍在 API149328／submit186 报 DEVICE_LOST。此候选
+未修复原挂起。完整 MineGraph703db fork 正独立构建；它还改变了 BC
+图像布局和内存类型缓存属性，不能直接用旧 `none` 重放判定其好坏。
+
+### 后续：定义过的 BC 数组与完整 PanVK 的平台入口
+
+`56c91f7` 对上述混合复制增加独立的 decoded RGBA 后备：保留逻辑 NVN
+描述，先在 GPU 上保留目标所有 mip/layer，再写当前复制区域。原有未定义
+存储采用 ASTC 的规则不变。目标必须没有其它已定义别名，且完整逻辑范围
+具有 CPU 版本证明；同值 CPU 写入也会使证明失效。无法正确表达原 BC
+字节的 CPU 读回、原始 Buffer 访问及缓存出口仍明确拒绝，不能返回假数据。
+
+主机 BC→RGBA 的 mip/layer/ROI 像素与负例已通过，独审未发现源码阻断。
+Android canonical 的 1,008 项 producer 输入、1,759 项实际 NDK 依赖与
+六个库已独立核验；原 NSO 已重新加工并执行单独 verify-only。ASTC 的
+真实高通复制及这张 42 层数组仍待验证，不能写成原游戏已修复。后备图像
+的有效 texel 存储约为 BC3 的四倍，迁移期间还短暂保留旧存储，须记入
+批量资源内存对照，不能只统计共享导入节省。
+
+整批资源的驻留实验已接入官方 LLDB 单次只读快照：普通路线结束后，
+读取现有四个全局计数并立即 detach，再取系统 meminfo；不增加 runtime
+计时器、逐帧日志或 payload 扫描。import 地址范围与元数据字节不能冒充
+驻留 RAM，也不能单独与 PSS 相加。工具故障仍走原存档/停止路径，替代
+PID 不会被停止。实际配置已通过离线检查，但尚未获批量游戏验收。
+
+完整 MineGraph703db 已完成 native Android 构建，并在原 Mali APK、原
+full ASTC4、固定 0.60、shared/legacy-copy 均关闭的条件下实际启动原
+ARM64 游戏。首进程 13500 在加载 ICD 时明确失败：应用 namespace 无法
+加载依赖 `libhardware.so`。尚未执行 GPU 渲染，不能将其算作新 PanVK
+GPU 崩溃或 BC 错误。原包、资源、shader、PSO 及目录均恢复，游戏停止。
+下一步仅修正可选 legacy gralloc 探测的平台链接依赖，保留明确的
+unsupported 返回与公开 AHardwareBuffer 路径，不伪造 HAL 成功。
+
+### 同日实际后续：批量游戏已运行，净内存目标尚未实现
+
+高通 AA185 的独立普通 UID 包实际通过两个冷启动：原 42 层数组用例
+保住 layer0 并正确写入 ASTC layer41；另一个 3 层、3 mip、局部 ROI
+用例通过 4,100 项检查，覆盖其它 mip/layer 与区域外像素。两次均卸载
+测试包、清理工具且不改生产包；没有将主机不支持的 ASTC 分支冒充通过。
+
+随后同一 `56c91f7`、AA185、16MiB 窗口、固定 0.60、2750×1260 的
+普通 ASTC4/native 6,217 项真实游戏对照完整结束。两端都进入原营地，
+完成三段正常摇杆走位并原生命周期存档两次后停止，原生产目录与包恢复。
+有限截图未见明显黑块或几何缺失；终点相差数格、相机时机不同，不能
+当成相同帧或全游戏视觉验证。调试器暂停后的截图 FPS 不代表吞吐率。
+
+| 一次营地端点 | 普通 ASTC4 | native 布局 |
+| --- | ---: | ---: |
+| 系统 TOTAL PSS（KiB） | 2,158,504 | 2,224,214 |
+| 系统 Graphics PSS（KiB） | 281,920 | 264,448 |
+| 实际 native image 数 | 0 | 1,290 |
+| native import 地址 envelope（B） | 0 | 148,512,768 |
+| 普通 Buffer window backing（B） | 523,239,424 | 590,348,288 |
+
+这次 TOTAL PSS 增加 65,710KiB，不能宣称原生布局已省内存。Graphics
+属于总数的一部分，import 地址也不等于新增物理 RAM，不能相加推断。
+窗口 backing 恰好多 64MiB，且路线开始前已经出现该差异。源码还会为
+已有独立 image import 的纯纹理消费者强制取得普通 Buffer span，值得
+分离这项非必要物化；其与驻留增长的因果关系仍需修复后的实际对照。
+CPU cache、别名历史和真正的 Buffer 消费者不能随之删除。批量 native
+仍属未完成实验，不默认以省内存名义启用；持续散热与 6GB 验收尚未完成。
+
+完整 PanVK 静态链接现有 unsupported HAL 后，实际已越过 namespace
+并查询到新驱动，但原022/full ASTC4 随后拒绝 ASTC→BC3 的无编码转换。
+新驱动支持 BC 采样，改变了原来系统 Mali 自动采用 RGBA 的能力分支；
+这是资源包兼容路径缺口，不能当成 DEVICE_LOST。原包与 PSO 已恢复并
+停机；下一步以有来源、UI 相同的原 BC 资源确认这套驱动的绘制基线。
+
+### 10 月 21 日：纯图像导入与内存分析工具的实际边界
+
+候选 `bcbd751` 将原生 Image 的内存要求与普通 Buffer 的要求分开。仅采样、
+图像传输或映射缓存操作，不再为已有独立 Image import 的范围额外建立
+16MiB Buffer window；第一次真正的 Buffer 消费仍按原规则建立 backing。
+CPU/GPU 数据依赖、缓存同步、别名和 GPU 完成后的释放规则保留。原生
+import 区间使用已有的增强 AVL 索引，避免把省内存变成每次访问全链扫描。
+新增元数据为每个 native allocation 64B、每个 Pool 8B，不能算作免费优化。
+
+独立测试包装 `0a54ef2` 已在实际 Adreno 735／AA185、普通 UID 下通过：
+
+- 九级 ASTC mip 的原 NVN 采样和 ReadTexels，与普通 ASTC 参考一致；
+  该范围没有普通 Buffer backing。
+- 同值 CPU 写入、原 Flush/Invalidate 之后仍正确，且不建立 Buffer。
+- 随后的第一次真实 GPU Buffer copy 才建立 backing，并逐字节保留原生
+  payload；原有两个窗口合并、尾 mip 和释放检查保留。
+- 总计 447 项检查；原有旧 Buffer writer 的 40 项同步检查也通过。
+
+旧包装 `6febdbf` 的失败记录保留：它把“整个 Pool 尚无 Buffer”的
+`UNBACKED` 状态误用为“当前子范围没有 Buffer”。同 Pool 已有不相交的
+Buffer 时，公共查询返回 `CROSSING`；后继测试增加仅测试构建可用的精确
+区间相交检查，并加入部分覆盖负例，未放宽生产正确性要求。此失败不是
+生产图像被错误物化的证据。
+
+实际测试包已卸载、工具清理、原生产包及资源保持不变。该测试不执行游戏
+模块，验证层明确关闭；不能写成完整游戏、非 coherent 硬件、净 RAM、
+FPS、持续散热或 6GB 验收。整游戏对照仍使用相同的 6,217 项资源、AA185、
+16MiB window、固定 0.60 和原 PSO 种子，另行记录结果。
+
+该整游戏对照随后实际完成：两端均执行原 ARM64 模块、进入营地、完成
+三段摇杆路线并存档两次后停止，六个目录、原包与 PSO 恢复且工具清理。
+
+| 本轮 `bcbd751` 营地端点 | 普通 ASTC4 | native 布局 |
+| --- | ---: | ---: |
+| TOTAL PSS（KiB） | 2,083,374 | 2,188,271 |
+| Graphics PSS（KiB，已在 TOTAL 内） | 214,108 | 243,260 |
+| Native Heap 的 malloc Alloc（KiB） | 162,244 | 215,999 |
+| 普通 Buffer backing（MiB） | 499 | 547 |
+| 实际 native import 数 | 0 | 1,287 |
+| native import 地址 envelope（B） | 0 | 148,172,800 |
+
+本轮 native 总 PSS 仍多 102.44MiB，malloc Alloc 多 52.50MiB。native 的
+Buffer backing 比上一轮 563MiB 少 16MiB，但 live image 数也由 1,290
+变成 1,287；普通控制端本身的 PSS 也比上轮低约 73MiB。因此不能将
+跨轮 PSS 差额全部归因于本次优化。可保留的机制收益是独立图像不再
+强制物化 Buffer，而整条 native 路线仍未证明净省内存。
+
+现有表约 6.26MiB，当前 native allocation 节点 236,808B、区间容量
+65,536B，这些已知元数据不足以单独解释 52.50MiB 的 malloc 增量。
+后续需要完整的现成堆分析工具归因。两端截图未见明显黑块或几何缺失，
+但路线终点及相机时机有差别；截图 FPS 受此前 LLDB 暂停影响，不作
+吞吐率数据。批量 native 仍不以省内存或散热收益名义默认启用。
+
+分配归因方面，官方 heapprofd 冷启动实际两次均未获得可用的完整数据。
+第一次为 `CLIENT_ERROR_HIT_TIMEOUT`；一次有界重试后为
+`CLIENT_ERROR_INVALID_STACK_BOUNDS`。后者已没有 buffer overrun 报告，
+不能继续把失败归因于传输缓冲不足。两次都完成原游戏路线、存档、停止、
+原包恢复及采集器清理，但残缺堆数据不能解释此前的 malloc 增量。停止
+heapprofd 调参；后续仅尝试官方 bionic malloc_debug 的独立诊断包装，
+其分配跟踪和展开成本不作为优化前后 PSS/FPS 对照。
+
+官方 malloc_debug 的第一次实际冷启动也未得到有效归因：独立诊断 APK
+只增加包内 env wrapper，六个库、DEX、manifest、资源及原 NSO 不变。
+普通 UID 进程实际确认 enabled 和 SIG47 handler，但未达到 HUD，也未
+发送导出信号。日志有 142 次 `UNKNOWN POINTER (free)`，普通 pthread
+和游戏线程退出栈均出现。官方源码及本机系统库反汇编表明，这类验证
+失败会跳过真实释放，诊断本身可能增加内存滞留。因此不把这个工具失败
+写成游戏 TLS 错误，也不用不完整跟踪推算 malloc 增量。
+
+原失败报告保留。控制器已请求原 HOME/onPause，因菜单阶段没有新的
+OBS_TICK 而保守拒绝停止；随后独立核对同 PID/UID、Activity STOPPED、
+原暂停的正面图形清空记录，以及 exact bc ELF 的保存分支：谓词为真
+必在图形挂起前向同一无缓冲日志打印保存结果。结合完整菜单/无玩家
+历史，本次支持原暂停谓词为假，未伪造 save2 或为存档重启。受控停止
+后复用原 rollback 的完整 CAS 检查，原包、六个目录与 PSO 已恢复。
+后续仅考察现成默认 backtrace 算法，避免 full unwinder 的内部线程
+缓存路径；需重新验证覆盖，不能视为工具问题已解决。
+
+完整 MineGraph PanVK 加静态 unsupported HAL 后，原 BC 资源也实际触发
+GPU timeout；因此它尚不能作为 Mali 的可用驱动。已通过现有 Mesa
+pandecode 保存本次任务的完整 CS，Mali 已恢复系统驱动、原资源及 PSO
+并停止。当前数据只能定位到未完成任务，不能证明具体 shader 或死锁点。
+
+### 10 月 21 日：官方 Surface 完成节奏与翻译线程 CPU 对照
+
+`bcbd751` 的普通 ASTC4／native 布局整游戏对照另用官方 Perfetto、
+Simpleperf stat 与 99Hz 用户态调用栈完成采集。实际设备为 Adreno 735，
+相同 APK、AA185、6,217 项资源、16MiB window、固定 3D 0.60、输出
+2750×1260；两端 PID 分别为 29165／31763。官方采集在 LLDB 之前，
+没有将调试暂停后的截图 FPS 混入吞吐结果。两端原游戏路线、存档两次、
+停机、原包／六目录／PSO 恢复及工具清理均已完成。
+
+下表来自各自约 8 秒的 Perfetto 窗口，Surface、调度运行和 CPU 频率是
+同窗数据；没有从 Simpleperf 的独立窗口借用帧数。
+
+| 官方 Perfetto 指标 | 普通 ASTC4 | native 布局 |
+| --- | ---: | ---: |
+| 实际游戏 Surface 的完成节奏（Hz） | 31.74 | 34.41 |
+| NVN command replay 均值墙钟（ms／回放区间） | 25.03 | 22.97 |
+| NVN command replay 均值实际 CPU（ms／回放区间） | 24.96 | 22.79 |
+| 回放实际运行 CPU／墙钟 | 99.73% | 99.20% |
+| 回放运行区间加权 CPU 频率（MHz） | 1,572 | 1,722 |
+
+这里的完成节奏来自唯一游戏 Surface 的 `PresentFenceSignaled` 连续
+间隔，不是游戏模拟 tick，也不是独立 GPU shader 时间。该 SurfaceView
+没有 `actual_frame_timeline_slice` 行；不能改用显示器全局 SurfaceFlinger
+或 Activity 事务计数充当游戏帧。
+
+本轮观察到完成节奏约提高 8.41%，但 native 回放 CPU 频率也高约 9.6%。
+窗口内目标均稳定为 60，PSO／变体数没有变化；跨端 PSO 是 184／178，
+路线终点、相机及实际命令负载仍有差别。因此这是一次真实观察，尚不能
+把涨幅归因于 native 布局，也不能宣称已经等频省 CPU 或解决持续发热。
+
+能直接确定的是，回放区间几乎都在实际运行 CPU，24.96／22.79ms 不能
+解释为同等时长的 GPU 等待。它超过 60Hz 的 16.67ms 间隔，是当前应继续
+降低的 CPU 工作；这不表示整个程序没有 GPU 等待，或 GPU 已无瓶颈。
+例如 present call 墙钟仍为 5.99／5.62ms，而实际 CPU 只有
+0.60／0.49ms。不同线程、嵌套区间及可重叠工作不能相加成整帧成本。
+本轮没有 GPU 带宽、shader 硬件计数器或纯 GPU 执行时间，不能据此认定
+已经从带宽受限变成纯 CPU 受限。
+
+Simpleperf 是另外的 8 秒 stat 和 8 秒 99Hz 调用栈窗口，不能把其 CPU
+总量除以上表 Perfetto 的完成数来算每帧收益。stat 中翻译线程 task-clock
+为 6,811.73→6,559.84ms（−3.70%），用户态 cycles 却为
+9.960→10.730G（+7.73%）；完成线程 task-clock 为
+311.03→535.58ms。两线程实际 CPU 合计只少约 0.38%，整个目标 PID 的
+受监测线程 CPU 合计反而多约 11.21%。这些不是关键路径墙钟相加，
+但足以阻止“native 已证明净省 CPU”的结论。
+
+99Hz 翻译线程用户态记录分别有 639／622 个样本，主要方向仍是公共
+绑定和绘制准备：`shader_bindings_selected_impl` inclusive 为
+20.50%／21.70%，`texture_view_binding` 为 8.76%／8.84%，
+`alias_range_overlap` self 为 3.91%／3.70%。嵌套 inclusive 比例不能相加，
+也不能直接乘到另一窗口的 CPU 时间。具名去重排／解码／上传调用链只
+命中 5／4 个样本，且可能包含元数据或上传快速路径；它没有证明重排
+完全消失，也没有显示一次性转换避免已经削掉稳态的主要绑定热点。
+官方记录均没有丢样或截断标记，但单帧样本和未展开祖先仍存在，不能
+把“未命中”写成零成本。
+
+这些结果支持继续处理已观察到的重复绑定、别名证明与状态准备工作，
+并另取硬件 GPU Profile 判断带宽／shader 成本。原生图像 GENERAL 布局
+的后续真机结果见下节，不把减少布局指令等同于净 CPU 收益。上节独立内存
+端点的 native PSS **仍多 102.44MiB**、malloc Alloc 多 52.50MiB；本轮较快
+的完成节奏不抵消该成本，批量 native 的净内存／持续散热仍未验收。
+本轮 performance hint 为 reference、active=0，present worker 关闭，
+这些只描述本次实验设置，不能推广为所有正常用户启动的策略。
+
+本机可核查的官方结果与原始捕获哈希保存在：
+
+- `.local/logs/native-bulk-game-bcbd751-throughput-cpu-v2-root-Perfetto-review.json`
+- `.local/logs/native-bulk-bcbd751-throughput-cpu-v2-analysis/official-CPU-stat-99Hz-comparison-agent-v1.json`
+
+### 10 月 21 日：native GENERAL 与 1MiB window 的已闭合对照
+
+`6bc0b8a` 仅使已认证 native image 保持其 producer 合同的 GENERAL 布局，
+不推广到普通私有图像；FOREIGN 交接、真实读写依赖和首次布局初始化均保留。
+Adreno 735／AA185、相同 6,217 项资源、固定 0.60 的实际原游戏两端已完成
+路线、存档、停机和原包／六目录／PSO 恢复，截图未见明显新增黑块或缺图。
+本节没有使用 Mali，也不是 6GB 平板验收。
+
+在包围各自 8 秒 record 的 ADB 括号中，native 布局转换增量由旧版
+1,959,057 降至 35,689（约 −98.18%；括号分别为 10.240／11.195 秒）。
+这是消除反复 sampled／transfer 布局往返的工作量证据，不是每帧或耗时比例。
+新 native 回放实际 CPU 为 23.051ms@1707MHz，旧版为 22.786ms@1722MHz；
+未证明净 CPU／吞吐提升。新 native 的 PSS 2,318,988KiB，仍高于同轮普通
+ASTC4 的 2,149,472KiB；Native Heap Alloc 相对旧 native 几乎未变，不能
+把布局指令减少解释为已回收 command pool 或额外 malloc。机制保留，净 RAM
+与持续散热不宣称改善。
+
+随后保持同一 `6bc0b8a`／AA185／资源与渲染参数，仅用已有冷启动选项将
+window 从 16MiB 改为 1MiB；两端也均完整存档、停止、恢复，截图无明显缺图。
+
+| 指标 | 16MiB window | 1MiB window |
+| --- | ---: | ---: |
+| 普通 ASTC4／native Buffer backing（MiB） | 499／547 | 370／369 |
+| native 官方 TOTAL PSS（KiB） | 2,318,988 | 2,103,429 |
+| native 官方 SwapPSS（KiB） | 191 | 19,567 |
+| native 回放实际 CPU／加权频率 | 23.051ms／1707MHz | 23.561ms／1723MHz |
+| native Surface 完成间隔均值（ms） | 29.651 | 29.989 |
+| native 累计新增 span／promotion | 28／12 | 192／161 |
+
+native 实际 Buffer import extent 减少 **178MiB**，PSS 端点少约 **210.5MiB**；
+但 SwapPSS 增加约 18.9MiB、Graphics 分类减少约 96.6MiB，PSS+Swap 差为
+−191.6MiB，不能全部归因于 window 的唯一物理 RAM 节省。Graphics 已包含在
+TOTAL PSS，不能再相加。native image import 仅由 1290／148,512,768B 变为
+1287／148,172,800B；本次主要 extent 差来自普通 Buffer 窗口，而非少加载了
+大量 native 资源。1MiB 下 native Heap Alloc 仍比普通 ASTC4 多约 49.35MiB。
+
+较小窗口增加冷导入／合并和元数据成本；native 三个官方窗口没有继续 promotion，
+因此稳态工具窗不能给出这些冷成本。1MiB control 的 stat 窗口发生 PSO
+179→184、variant 31→33、promotion 204→208，**并非全部窗口稳定**；其
+record／Perfetto 与 native 三窗稳定。native 同窗 CPU 频率积分代理约增加
+3.15%，不证明净提速。Surface 值仍是实际游戏 buffer fence 完成间隔，不能
+混用独立 stat／record 的 CPU 和帧分母，也不使用调试后的浮屏 FPS。
+1MiB 是已证较低 import extent 的 Q 共享模式选项，不据此推广到 Mali 默认，
+不宣称 FPS、持续热态或 6GB 可玩目标完成。
+
+后续 alias 几何负证明候选 `3cfe473` 已推送并完成 host GPU、ASan、完整回归及
+canonical Android 构建：32 槽仅复用“无任何区间重叠”的精确范围证明，成员
+插入／移除推进代号，新增静态 metadata 776B，真实 hazard 和动态绑定仍执行。
+**尚未硬件测量**，不能把该微缓存写成已实测省 CPU。另一路 `f830` 已完成
+nearest、NVN 447／36／40、旧 AA 拒绝及有限 bilinear／trilinear GPU reference
+逐 floatbits 对照，独立包清理及原资产不变已核。全 6,217 项加工尚未闭合，
+不是该新过滤路径的整批游戏、净内存或热态验收。
+
+可复核的本机 receipt：
+
+- GENERAL：`.local/logs/native-general-layout-6bc0b8a-game-throughput-v1/result.json`；
+  官方分析 `.local/logs/native-general-layout-6bc0b8a-game-throughput-v1-analysis/official-comparison-agent-v1.json`。
+- 1MiB：`.local/logs/native-general-layout-6bc0b8a-window1m-game-v1/result.json`；
+  官方分析 `.local/logs/native-general-layout-6bc0b8a-window1m-game-v1-analysis/official-window1m-vs16m-comparison-agent-v1.json`。
+- 有限过滤：`.local/logs/native-astc-linear-filter-reference-q-v1-root-actual-review.json`。
+- alias 源／构建：`.local/logs/shared-alias-negative-proof-3cfe473-source-ready-agent.json`、
+  `.local/logs/shared-alias-negative-proof-3cfe473-canonical-source-ready-agent.json`。
+
+### 10 月 21 日：默认 malloc backtrace 的实际 ANR 及归因边界
+
+随后唯一一次官方默认 backtrace 诊断，只从包内 wrapper 去掉
+`backtrace_full`；生产六个库、原 NSO、资源和 AA185 不变。PID 9352
+确认官方 enabled／导出 handler，已导出的日志没有 UNKNOWN POINTER 或
+选项错误。这只证明该窗口没有重现第一次 full unwinder 的登记错误，
+不证明堆覆盖完整。它未完成原 HUD／路线，也未发送 SIG47 或生成可分析
+的 heap dump，因此 held allocation、未知／短栈字节均未测得，不能填零，
+也不能解释上面的 52.50MiB 增量。官方 malloc 路线目前没有可用的完整堆归因。
+
+本次最终原因由系统 exit-info 和官方 bugreport 确认为 **reason 6 ANR**：
+窗口失焦 `FocusEvent(hasFocus=false)` 等待 60,004ms 后被系统结束。
+这不是 OOM，也不能只写成“启动慢，超过 90 秒”。原始失败报告保留；
+对已经退出的进程沿原事务 CAS 检查恢复原包、六目录和 PSO，没有为
+存档重新启动游戏，也没有把该诊断的 RSS／帧率写成优化收益。
+
+官方 `adb bugreport` 随后成功导出真实目标 ANR，弥补了直接读取系统
+ANR 文件被拒权、`dumpsys activity lastanr` 没有线程栈的缺口。用 exact
+bc ELF 与 AA185 补符号后：
+
+- `nvn-translate` TID 9547 在 Turnip `tu_spirv_to_nir`／NIR copy-propagation
+  的 `ralloc_size` 分配中执行 `malloc_debug` 的默认
+  `_Unwind_Backtrace`，确证诊断展开已进入翻译／驱动编译关键路径。
+- `dm-pso-cache` TID 9548 等待 `cache_mutex`；源码在 pipeline 创建期间
+  持有该锁，与翻译线程正在编译相符，但捕获没有给出实际锁 owner。
+  `dm-gpu-complete` 在完成线程条件变量上等待，不是已捕获的 GPU fence 栈。
+- 标为主 TID 9352 的栈含 ART SIGQUIT／ANR dump 和 libunwindstack 初始化，
+  没有原始 `nativeSuspend` 调用链。实际系统库的 `debug_malloc+360`
+  对应恢复信号屏蔽的 `rt_sigprocmask`，不是 allocator 互斥锁入口；不能
+  仅凭 waiting-channel 的 futex 字样宣称 allocator 锁死。
+
+因此更支持诊断展开扰动了编译／翻译和关联等待，但单次栈不能给出其
+时间占比，也没有证明 60 秒锁环。原 UI 究竟卡在 `onPause` 图形排空还是
+其他事件、是否为死锁或极端诊断成本，仍不能下结论。它不用于正常版本
+CPU/GPU 等待或帧率瓶颈的判断，不据此修改生产 TLS、allocator 或 NVN
+同步；停止 malloc 参数重试。
+
+真实目标 trace、exact ELF、官方符号化输出和边界说明见
+`.local/logs/malloc-debug-default-v3-anr-stack-audit-v1/result.json`
+（SHA256 `049ec3760f00cfa7af0fdf5290591ca1fdbc9369f4ce04e4f74a494256548314`）。
+
+## 2026-10-21：原生布局体积、有效硬件带宽与驻留候选验收
+
+同一 6,217 项的 f830 原生资源已实际完成 49 批加工和 CASC 组合。
+原 NVN payload 395.73MiB，AA185 原生排布 664.125MiB，f830 的
+256B 行跨度线性排布为 423.039MiB，比 AA185 少 241.086MiB。
+ASTC 压缩块仍为 16B，没有展开为 RGBA；主要变化是行跨度和 mip 填充。
+这不是每帧节省的 DRAM 流量，也还不是游戏净驻留量：旧填充不一定被采样，
+线性排布反而可能降低二维过滤局部性。两条 native 路径原本都禁用 UBWC。
+
+f830 普通纹理 control 的官方 SDP 数据有效，旧捕获失败源于用电脑时间
+检查设备计数器时间，约 0.9 秒偏差导致末端覆盖误判。保留原失败报告；
+按 Perfetto 首次官方时钟快照限定的实际 8.006 秒窗口，九项计数均被覆盖。
+该窗口 GPU 纹理读取约 3.073GB/s、总读约 4.095GB/s、总写约 1.875GB/s，
+Shaders Busy 约 67.25%，Texture Pipes Busy 约 41.50%，时钟约 498.54MHz。
+同一 trace 的游戏 Surface 完整间隔均值约 33.277ms；不能将这些全局计数
+当成独占 Shader 时间、GMEM 流量或新布局的 A/B 收益。native 阶段未执行。
+分析见 `.local/logs/native-astc-linear-6bc0b8a-sdp-game-pair-v1-analysis/control-official-GPU-common-8s-analysis-agent-v1.json`。
+
+dad2c3d 驻留候选的独立 AA185 真机验收通过，原 447/36/40 项保留，
+新增 110 项实际 ASTC 检查覆盖 no-Flush CPU 写入、跨 chunk 使用和同一
+recording 的 Image 写入后通过已有 Buffer 进行完整 payload 的 CS 读取。
+原游戏包未改动，独立包、工具和暂存均已清理；这仍不是游戏性能验收。
+随后原游戏 control 暴露 `Shared image conversion missing ordered CPU preflight`
+崩溃，发生在尚无 native 表的 B2T 路径，候选保持待修，不默认启用。
+另一次 control 的附加 LLDB 握手失败仅为工具故障；后继移除可选调试快照，
+保留官方 CPU、系统内存和真实游戏检查，不用自制测量替代。两次均已恢复原包。
+
+### CPU 预检修正后，f830 的原游戏对照已完整结束
+
+`5d3d9df` 修正共享模式遗漏真实 CPU completion effect 的查询，并将 B2T
+必需的 render-pass 结束、重放与窗口 admission 放到最终 CPU 预检之前。
+旧代码在同一真实 callback 用例中读不到应发布的值 7；修正版及原 GPU-only
+不等待用例通过。相同固定 0.60、2750×1260、1MiB 窗口、6,217 项的普通
+ASTC4／原生 f830 两端都进入营地、完成三段行走、官方 CPU/GPU 采集和存档，
+没有再次触发该检查。原包及目录恢复，SDK 工具和游戏均已停止。
+
+| 系统端点（KiB） | 普通 ASTC4 | f830 原生布局 |
+| --- | ---: | ---: |
+| TOTAL PSS | 2,079,632 | 2,007,006 |
+| TOTAL SWAP PSS | 6,384 | 180 |
+| Graphics（已包含于 PSS） | 325,364 | 226,188 |
+| Native Heap Alloc | 168,715 | 150,527 |
+
+本次 PSS 减少 70.924MiB；它是单次真实端点，不是全部 241MiB payload
+缩减均转化成了驻留收益。两端截图人物、几何、UI 均在；两者已有彩色地面
+散点，姿态、镜头与动画也不同，不声明逐像素等价或整游戏完全正确。
+
+吞吐却退化：官方 Surface 完整间隔均值 32.143→78.585ms，GPU 时钟
+499.64→188.77MHz。相同完整间隔范围的纹理外访约 101.67→108.80MB，
+不能将每秒流量下降当成优化。NvN Running 时间约 26.10→52.12ms／完整
+间隔，最高 capacity 的 CPU7 占比约 21.28%→0.33%，不能把频率积分增加
+全称为新增 ISA 工作。8 秒内 completion-queue 等待 30→199 次，每次
+guest submission 的内部提交由 7→9；优先验证额外原生资源交接的成本。
+没有公开 thermal 状态证明降频原因，不称其为过热或纯布局退化。
+
+`external_profile` 只禁用自制计时器。hint 和 present worker 的 reference
+默认本来就为 true；本次二者关闭，不能写成因 external-profile 才被关闭。
+对照证据：`.local/logs/native-astc-linear-5d3d9df-sdp-game-pair-v2-analysis/official-pair-comparison-agent-v2.json`。
+
+后继 `7f946b5` 用真实 CPU-effect pending 数量的保守零门避免无事时每图像
+加锁；`6f8188e` 仅将已审 f830 加入 coherent 驻留资格。f830 真机独立薄包
+`9e593ef` 已通过原 447/36/40 和新增 110 项，实际使用 94,208B／9 mip
+资源，涵盖 no-Flush CPU 写及同 recording 的 Image→Buffer 全 payload CS
+读取，原包未变且清理完成。后继游戏吞吐、持续温度及 6GB 仍待验证；当前
+退速的 transient f830 实验不默认交付。
+
+### f830 队列驻留：原游戏吞吐恢复，并保留净内存下降
+
+`6f8188e` 的原游戏普通／native 对照已完成，资源仍为相同 6,217 项、
+f830 驱动、0.60 比例、2750×1260 输出和 1MiB 窗口。两端均完成营地
+原输入路线、官方 Simpleperf／Perfetto／SDP 窗口和原生命周期双存档。
+同一 Surface 的完整间隔均值为普通 31.796ms、native 30.972ms，约
+31.5／32.3 FPS，native 已没有上一版约 12.7 FPS 的吞吐退化。
+
+已审 coherent 导入保持队列所有权，仍保留首次 acquire 与真实资源 hazard。
+native 每次 guest submission 的内部提交从上一版的 9 降到 7，与普通
+纹理对照一致；官方 8 秒窗口的 queue-completion 等待从 199 降到 30 次，
+GPU 时钟约 499MHz。该后继同时包含真实 CPU-effect pending 零门，不能
+把所有 CPU 差异都单独归因于队列驻留。
+
+| 本轮系统端点（KiB） | 普通 ASTC4 | f830 native |
+| --- | ---: | ---: |
+| TOTAL PSS | 2,057,368 | 2,010,567 |
+| TOTAL SWAP PSS | 21,054 | 166 |
+
+本轮 PSS 少 45.70MiB，PSS 与 Swap 合计少 66.10MiB。它仍是端点，
+不是峰值或稳定跨轮幅度，也不能与 Graphics、malloc Alloc 再相加。
+按同一 Surface 完整间隔积分，纹理读取约 101.68／102.43MB，差不到 1%；
+没有证明大幅减少稳态每帧 DRAM 流量，不能把资源包缩小直接写成散热收益。
+两端实际截图未见新增明显黑块或几何缺失，保留动画、镜头和现存地面散点差异。
+
+原事务已恢复原包与目录，退出码 1 来自 SDP collector 在两次 `/proc` 读取间
+自然退出的清理观察竞态；原失败报告保留。独立复核确认 13 个本次 collector、
+GUI、Xvfb 和游戏均已退出，无须重跑有效的游戏／采集阶段。清理工具后继
+`55923e2` 单独修复身份核验，拒绝把复用 PID 当作原工具结束。
+
+本轮根验收：`.local/logs/native-resident-f830-6f8188e-sdp-game-pair-v3-root-actual-review.json`；
+官方分析：`.local/logs/native-resident-f830-6f8188e-sdp-game-pair-v3-analysis/official-resident-vs-transient-comparison-agent-v2.json`。
+后续为同候选持续游玩、公开 API 热状态与内存增长验证；短窗口仍不能证明
+长时间散热达标，也未完成真实 6GB 或 Mali 共享原生纹理游戏验收。
