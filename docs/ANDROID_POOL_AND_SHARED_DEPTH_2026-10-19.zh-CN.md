@@ -1945,3 +1945,37 @@ API34 起不再发送 RUNNING_MODERATE/LOW/CRITICAL，onLowMemory 也不再
 回收；不把逻辑 heap VA、native 同页映射或旧 OEM Graphics 合计误作
 可回收私有 cache。该候选尚未通过真机，不称其已减少内存或避免 LMK。
 官方依据：https://developer.android.com/reference/android/content/ComponentCallbacks2
+
+### Mali 的 BC3 基础路径已用两个独立 GPU 子集验证
+
+原 022 NVN runtime、普通应用 UID、同一 ac88 ICD（只 startup，额外 TRACE/
+shader_map 关闭）完成 52 个旧捕获来源的 BC3 完整 mip 区域、7 张 UNORM/
+sRGB 图像的 B2T → FS 采样与 T2B。371,731 像素的四通道与独立 bcdec /
+sRGB 参考误差 ≤2，371,920 个原始 BC 字节逐字节一致，后端未 CPU 解码。
+这不是原游戏或 v7 command-stream 的等价重放；atlas 合并改变了 pass 分组。
+
+后继保留相同 payload/几何与 oracle，使用 21 个独立 NVN command 对象及
+互不重叠的 32KiB 片段，按每图 upload / draw / rawcopy 分成 21 次提交。
+fixture 不在中间 QueueFinish 或 ReadTexels，仅最终一次原 Fence 等待；
+原上下文压力等待仍保留。所有对象和数据持有到完成，两组均在实际 Mali
+通过。独立包已停止、卸载，临时文件清理；原生产 APK、资源、目录、驱动
+设置与层配置前后相同，原游戏保持退出。JNI 未启硬件 VVL，不能将其中
+validationerror=0 写作实际 SYNC validation 通过。ac88 含诊断源码改动，
+不能称该 ICD 是未修改 Mesa 或系统 stock 驱动。
+
+结果否定“这批孤立 BC3 复制/采样必然失败”的判断，不能证明整游戏已修好，
+也不把记录数量、最后一条 TRACE 或单一 shader 名当作故障指令。下一步
+转向独立有确切主机负控的 active tiler descriptor slot 修正，不继续堆叠
+等价复制用例。实际根审：
+`.local/logs/panvk-original022-BC3-focused-mali-v1-root-actual-review.json`；
+`.local/logs/panvk-original022-BC3-queued21-mali-v1-root-actual-review.json`。
+
+前台预算旧候选 ed2c139 的产物与 9bbb54b 工具保留 HOLD。源码审计未证实
+UAF，但公共 mtl_sub_begin 会被 stream split / present / CPU preflight 等
+内部重开多次调用，与一次 guest submit 一次维护的成本目标不符。独立后继
+773d530 增加专用 guest 入口，只由原 x_submit 在 index/exec 前调用；内部
+begin 与 80a 保持相同，Metal 转发原函数。实际超预算且足够冷的 GPU 用例
+验证内部 begin 不淘汰、guest 入口有界淘汰与像素重建；恢复旧 ed 函数体
+的负控会在数量断言失败。新 canonical / fresh raw 尚在准备，未安装真机，
+512MiB 仍未作为最终默认预算验收。根源审见
+`.local/logs/private-image-cache-guest-773d530-root-source-review.json`。
