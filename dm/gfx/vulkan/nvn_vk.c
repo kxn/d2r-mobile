@@ -2277,6 +2277,7 @@ void vk_buffer_shader_read(uint64_t address,uint64_t size,VkPipelineStageFlags s
   if(legacy_astc_copy_enabled && !shared_active)vk_texture_shared_linear_access(address,size);
 #endif
   vk_mip_clear_buffer_access(address,size);
+  if(!address||!size) return;
   VkPipelineStageFlags known=VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT;
   VkPipelineStageFlags producers=0;
   VkCommandBuffer command=VK_NULL_HANDLE;
