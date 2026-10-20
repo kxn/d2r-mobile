@@ -20,6 +20,8 @@ def test(a):
     logical='data/hd/env/texture/act1/town/texture.texture'
     assert batch.selected(logical,base,set())
     assert batch.selected('data/hd/character/player/texture.texture',base,set())
+    assert batch.selected('data/hd/env/foliage/act1/texture/tree.texture',base,set())
+    assert batch.selected('data/hd/vfx/meshes/character/enemy/texture.texture',base,set())
     for field,value in [('format',99),('type',3),('depth',2),('layoutType',0),('levels',17),('layoutData',6),('thumbnailMip',0),('thumbnailMip',9)]:
         d=copy.deepcopy(base);d[field]=value;assert not batch.selected(logical,d,set()),field
     assert not batch.selected(logical,base,{logical})

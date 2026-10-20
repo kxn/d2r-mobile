@@ -15,7 +15,7 @@ MAX_BATCH_ENTRIES=128
 
 
 def selected(logical,entry,array_members):
-    family=(logical.startswith('data/hd/env/texture/') and '/act1/' in logical) or logical.startswith('data/hd/character/')
+    family=(logical.startswith('data/hd/env/') and '/act1/' in logical) or logical.startswith(('data/hd/character/','data/hd/vfx/meshes/character/'))
     thumb=entry.get('thumbnailBase64')
     return (family and logical not in array_members and entry['format'] in (81,95)
             and entry['type']==2 and entry['depth']==1 and entry['layoutType']==3
@@ -71,7 +71,7 @@ def run(a):
     context.common['full_astc_provenance']={**resource.record(a.full_astc_provenance),'historical_tool_files':historical}
     manifest={'schema':1,'complete':False,'contract':'DM native resource batch preparation v1',
               'source_context':context.common,'selection':{'kind':'act1env-and-characters-excluding-declared-terrain-array','formats':[81,95],
-              'array_closure':resource.record(a.array_closure_report),'expected_count':a.expected_count,
+              'logical_whitelist':['data/hd/env/ AND /act1/','data/hd/character/','data/hd/vfx/meshes/character/'],'array_closure':resource.record(a.array_closure_report),'expected_count':a.expected_count,
               'static_only':True,'thumbnail_tail_distinguishable':True,'unknown_runtime_array_uses_not_proven':True},
               'batch_max_entries':MAX_BATCH_ENTRIES,'entries':rows,'batches':[],
               'tool':resource.record(__file__),'encoder_used':False,'device_or_game_executed':False}
