@@ -6438,3 +6438,4 @@ void mtl_pool_defer_publication_disable(void) {}
 
 void mtl_pool_defer_publication(int enabled) { (void)enabled; }
 int mtl_pool_defer_publication_mode(void) { return 0; }
+int mtl_pool_shared_mode(void) { return 0; }

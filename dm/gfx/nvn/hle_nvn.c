@@ -438,13 +438,14 @@ static void read_texels(const tex_t *o, const view_t *v, const NVNcopyRegion *r,
     if (!row) row = wb;
     if (!img) img = row * hb;
     unsigned level = v && v->set_levels ? (unsigned)v->base_level : 0, layer0 = v && v->set_layers ? (unsigned)v->min_layer : 0;
-    if(mtl_pool_defer_publication_mode()) {
+    int defer=mtl_pool_defer_publication_mode();
+    if(defer || mtl_pool_shared_mode()) {
         if(r->depth<0 || !hb || !wb || row<0 || img<0)die("NVN CPU readback exposure footprint");
         uint64_t slices=r->depth>0?(uint64_t)(r->depth-1):0,a=(uint64_t)img,b=(uint64_t)row;
         if((slices && a>UINT64_MAX/slices) || b>UINT64_MAX/(hb-1?hb-1:1))die("NVN CPU readback exposure overflow");
         uint64_t last=slices*a,tail=(uint64_t)(hb-1)*b;
         if(tail>UINT64_MAX-last || wb>UINT64_MAX-last-tail)die("NVN CPU readback exposure overflow");
-        x_cpu_exposure((uintptr_t)dst,last+tail+wb);
+        if(defer)x_cpu_exposure((uintptr_t)dst,last+tail+wb);
         x_read_texels(o,level,layer0,r,dst,(size_t)row,(size_t)img);return;
     }
     x_drain();   // CPU 读贴图：已入队的提交先翻译完 | CPU texture read: submits already enqueued are translated first
@@ -979,6 +980,10 @@ static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t 
 static int g_x_sync; static pthread_t g_x_thr;
 static _Atomic int g_x_started;
 #ifdef DM_VULKAN_TEST_EMBED
+// Owned functional observer, installed/reset only while no readback job is in
+// flight. The existing queue mutex/wait supplies the cross-thread publication.
+static void (*g_readback_test_observer)(int);
+void nvn_test_readback_observer(void (*observer)(int)) {g_readback_test_observer=observer;}
 int nvn_test_idle_trim_started(void) {return atomic_load_explicit(&g_x_started,memory_order_acquire);}
 int nvn_test_idle_trim_supported(void) {
     return atomic_load_explicit(&g_x_started,memory_order_acquire) && !g_x_sync;
@@ -1027,6 +1032,10 @@ static void x_run(const xjob *j, uint64_t job) {
 #endif
     if(j->kind==XJ_READ_TEXELS) {
         const x_texels *r=j->read_texels;
+#ifdef DM_VULKAN_TEST_EMBED
+        if(g_readback_test_observer)
+            g_readback_test_observer(!g_x_sync && pthread_equal(pthread_self(),g_x_thr));
+#endif
         mtl_read_texels(&r->texture,r->level,r->layer,&r->region,r->dest,r->row,r->image);
         g_x_owner=prior_owner;return;
     }
