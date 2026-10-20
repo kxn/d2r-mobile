@@ -34,9 +34,11 @@
 enum { PG_NONE = 0, PG_PROT = 1, PG_BUSY = 2 };
 enum { BUSY_WAIT_MS = 2000 };
 // 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
-// Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
+// Legacy default ranges reuse dead slots. With explicit observer mode, gate-enabled
+// plain slot envelopes/arrays remain immutable; close drains state users and
+// waiters redo lookup. Both slot count and retained metadata have hard bounds.
 #define MAX_RANGE 4096   // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing
-typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes; _Atomic uint32_t *scope_refs; _Atomic uint32_t *gpu_gate; size_t scope_users; } range_t;
+typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes; _Atomic uint32_t *scope_refs; _Atomic uint32_t *gpu_gate; size_t scope_users, observer_users; _Atomic uint32_t closing, accesses; } range_t;
 static range_t g_r[MAX_RANGE];
 static _Atomic int g_nr;
 static uintptr_t g_pg, g_shift;
@@ -46,13 +48,21 @@ static _Atomic uint64_t g_now = 1;
 // Cache consumers retain their original per-page upload stamp.
 static _Atomic uint64_t g_changes = 1;
 static int gpu_gates_enabled; // immutable cold policy, before guest/FS and scopes
+// Opt-in immutable plain slots retain state/gen/gate arrays, not guest bytes.
+// Bound the complete retained metadata high-water, not just the slot count.
+enum { PLAIN_OBSERVER_METADATA_LIMIT=64*1024*1024 };
+static size_t plain_observer_metadata_used; // g_slot_mu, never decreases
 static int gpu_gate_before_unprotect(range_t *,uintptr_t,int);
 static int gpu_gate_claim_allowed(range_t *,uintptr_t);
+static int plain_access_enter(range_t *,uintptr_t);
+static void plain_access_exit(range_t *);
+static void plain_range_close(range_t *);
 static _Atomic uint64_t g_faults, g_preps;
 static _Atomic uint64_t g_adds_total;
 static _Atomic int g_live, g_live_peak;   // 在册的池数与峰值（内存读数行用） | number of registered pools and peak (for the memory readout line)
 void nvn_dirty_stat(int *live, int *peak, int *cap) { *live = atomic_load(&g_live); *peak = atomic_load(&g_live_peak); *cap = MAX_RANGE; }
 static _Atomic int g_overflow_logged;
+static pthread_cond_t gpu_host_cv=PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // 建池 / 销池（客体线程，可能并发）互斥选槽；缺页处理路径不碰它 | Pool creation / destruction (guest threads, possibly concurrent) pick slots under a mutex; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // 本模块的 mprotect：调用次数、覆盖页数、耗时（mach 时基，缺页路径里也安全） | This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
 static int mp(uintptr_t a, size_t len, int prot) {
@@ -134,11 +144,14 @@ static void unprotect_page(range_t *r, uintptr_t p, int host_write) {   // 调�
 }
 static int on_fault(void *addr, int is_write, void *uc) {
     (void)uc;
+    int was_ours=0;
+lookup:;
     range_t *r = is_write ? find(address(addr)) : NULL;
-    if (!r) return 0;
+    if (!r) return was_ours;
     uintptr_t p = (address(addr) - r->base) >> g_shift;
+    if(!plain_access_enter(r,p)){was_ours=1;goto lookup;}
 retry:
-    if(r->gpu_gate && !gpu_gate_before_unprotect(r,p,1))return 0;
+    if(r->gpu_gate && !gpu_gate_before_unprotect(r,p,1)){plain_access_exit(r);return 0;}
     uint8_t st = PG_PROT;
     if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) {
         // Arm may have happened after the first check / after owner protection.
@@ -146,19 +159,20 @@ retry:
         // owner never waits on a fault which is waiting for this submission.
         if(r->gpu_gate && !gpu_gate_claim_allowed(r,p)) {
             atomic_store(&r->state[p],PG_PROT);
-            if(!gpu_gate_before_unprotect(r,p,1))return 0;
+            if(!gpu_gate_before_unprotect(r,p,1)){plain_access_exit(r);return 0;}
             goto retry;
         }
-        unprotect_page(r, p, 0); atomic_fetch_add(&g_faults, 1); return 1;
+        unprotect_page(r, p, 0); atomic_fetch_add(&g_faults, 1); plain_access_exit(r);return 1;
     }
-    if (st == PG_BUSY) return busy_wait(r, p);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
-    return atomic_load(&r->gen[p]) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
+    if (st == PG_BUSY) {int ok=busy_wait(r,p);plain_access_exit(r);return ok;}   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
+    int ok=atomic_load(&r->gen[p]) != 0;plain_access_exit(r);return ok;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
 }
 static void prep_write(void *addr, size_t len) {
     uintptr_t a = address(addr), e = a + len;
     while (len && a < e) {
         range_t *r = find(a);
         if (!r) { a = (a + g_pg) & ~(g_pg - 1); continue; }
+        if(!plain_access_enter(r,(a-r->base)>>g_shift))continue;
         uintptr_t stop = e < r->end ? e : r->end;
         for (uintptr_t p = (a - r->base) >> g_shift, q = (stop - 1 - r->base) >> g_shift; p <= q;) {
             if(r->gpu_gate && !gpu_gate_before_unprotect(r,p,0))
@@ -195,7 +209,7 @@ static void prep_write(void *addr, size_t len) {
             if (st == PG_BUSY && busy_wait(r, p)) continue;
             p++;
         }
-        a = stop;
+        plain_access_exit(r);a = stop;
     }
 }
 
@@ -212,7 +226,16 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
     pthread_mutex_lock(&g_slot_mu);
     int n = atomic_load(&g_nr);
     uintptr_t request=address(mem),request_end=request+size;
-    if(size>UINTPTR_MAX-request)die("legacy dirty range overflow");
+    if(!size || size>UINTPTR_MAX-request || request_end>UINTPTR_MAX-(g_pg-1))die("legacy dirty range overflow");
+    // A retiring gated range still owns protection of these pages. Do not
+    // publish a replacement tracker until its final RW restore has completed.
+    for(int k=0;k<n;k++) {range_t *old=&g_r[k];
+        while(old->gpu_gate && !old->scope_refs && atomic_load(&old->closing)==1 &&
+              request<old->end && request_end>old->base)
+            pthread_cond_wait(&gpu_host_cv,&g_slot_mu);
+        n=atomic_load(&g_nr);
+    }
+    n=atomic_load(&g_nr);
     for(int k=0;k<n;k++) {
         range_t *r=&g_r[k];
         if(!r->scope_refs || !atomic_load(&r->live) || request>=r->end || request_end<=r->base)continue;
@@ -221,7 +244,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
             if(atomic_load(&r->scope_refs[page]))die("legacy dirty range overlaps owned image scope");
     }
     int slot = -1;
-    for (int i = 0; i < n; i++) if (!g_r[i].scope_refs && !atomic_load_explicit(&g_r[i].live, memory_order_acquire)) { slot = i; break; }
+    for (int i = 0; i < n; i++) if (!g_r[i].scope_refs && !g_r[i].gpu_gate && !atomic_load_explicit(&g_r[i].live, memory_order_acquire)) { slot = i; break; }
     if (slot < 0) {
         if (n >= MAX_RANGE) {
             int expected = 0;
@@ -230,14 +253,23 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
         }
         slot = n;
     }
+    uintptr_t base = address(mem) & ~(g_pg - 1), end = (address(mem) + size + g_pg - 1) & ~(g_pg - 1);
+    size_t np = (end - base) >> g_shift;
+    if(gpu_gates_enabled) {
+        size_t per=sizeof(_Atomic uint8_t)+sizeof(_Atomic uint64_t)+sizeof(_Atomic uint32_t);
+        if(np>(PLAIN_OBSERVER_METADATA_LIMIT-plain_observer_metadata_used)/per) {
+            LOG("Dirty observer metadata high-water exhausted; Pool %p remains untracked",mem);
+            pthread_mutex_unlock(&g_slot_mu);return;
+        }
+        plain_observer_metadata_used+=np*per;
+    }
     { int lv = atomic_fetch_add(&g_live, 1) + 1, pk = atomic_load(&g_live_peak); while (lv > pk && !atomic_compare_exchange_weak(&g_live_peak, &pk, lv)) {} }
     range_t *r = &g_r[slot];
     // Neither clock is reset on reuse. Invalidate the old token BEFORE publishing
     // any sequence which could otherwise be paired with that old lifetime.
     advance(&r->lifetime);
     advance(&r->changes);
-    uintptr_t base = address(mem) & ~(g_pg - 1), end = (address(mem) + size + g_pg - 1) & ~(g_pg - 1);
-    size_t np = (end - base) >> g_shift;
+
     _Atomic uint8_t *state = r->state;
     _Atomic uint64_t *gen = r->gen;
     if (r->cap < np) {
@@ -249,6 +281,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
     } else {
         memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen);
     }
+    if(gpu_gates_enabled) {r->gpu_gate=calloc(np,sizeof *r->gpu_gate);if(!r->gpu_gate)die("legacy observer gate allocation");}
     r->base = base; r->end = end; r->state = state; r->gen = gen;
     atomic_store(&r->latest, 0);
     if (slot == n) atomic_store(&g_nr, n + 1);
@@ -262,6 +295,7 @@ void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_lock(&g_slot_mu);
     range_t *r = find(address(mem));
     if (r && r->scope_refs) die("dirty scope must be released by its exact owner token");
+    if(r && r->gpu_gate) {plain_range_close(r);pthread_mutex_unlock(&g_slot_mu);return;}
     if (r) { advance(&r->lifetime); advance(&r->changes); prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); advance(&g_changes); }
     pthread_mutex_unlock(&g_slot_mu);
 }
@@ -269,7 +303,7 @@ int nvn_dirty_tracked(const void *addr, size_t len) {
     uintptr_t a=address(addr);if(!len || len>UINTPTR_MAX-a)return 0;
     uintptr_t end=a+len;
     while(a<end) {
-        range_t *r=find(a);if(!r)return 0;
+        range_t *r=find(a);if(!r || atomic_load(&r->closing))return 0;
         uintptr_t stop=r->end<end?r->end:end;
         if(r->scope_refs)for(uintptr_t p=(a-r->base)>>g_shift,q=(stop-1-r->base)>>g_shift;p<=q;p++)
             if(!atomic_load_explicit(&r->scope_refs[p],memory_order_acquire))return 0;
@@ -297,7 +331,8 @@ void nvn_dirty_protect(const void *addr,size_t len) {
     if(!nvn_dirty_tracked(addr,len))return;
     uintptr_t a=address(addr),end=a+len;
     while(a<end) {range_t *r=find(a);if(!r)return;
-        uintptr_t stop=r->end<end?r->end:end;protect_one(r,(void *)a,stop-a);a=stop;}
+        if(!plain_access_enter(r,(a-r->base)>>g_shift))continue;
+        uintptr_t stop=r->end<end?r->end:end;protect_one(r,(void *)a,stop-a);plain_access_exit(r);a=stop;}
 }
 uint64_t nvn_dirty_now(void) { return atomic_load(&g_now); }
 uint64_t nvn_dirty_change_epoch(void) {
@@ -312,6 +347,7 @@ int nvn_dirty_range_refresh(const nvn_dirty_range_proof *old, nvn_dirty_range_pr
     // No plain envelope/state pointer reads: slot reuse may be concurrent.
     if (life != old->lifetime || !seq || seq == UINT64_MAX ||
         !atomic_load_explicit(&r->live, memory_order_acquire) ||
+        atomic_load_explicit(&r->closing,memory_order_acquire) ||
         atomic_load_explicit(&r->lifetime, memory_order_acquire) != life) return 0;
     *proof = (nvn_dirty_range_proof){old->slot, 0, life, seq};
     return 1;

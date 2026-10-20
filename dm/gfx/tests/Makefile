@@ -131,3 +131,6 @@ run: \
 run-m3:
 	rm -rf ../tests_m3 && mkdir ../tests_m3 && cp Makefile *.c *.m *.py ../tests_m3/
 	$(MAKE) -C ../tests_m3 run CFLAGS="$(CFLAGS) -DDM_NVN_M3=1 -mmacosx-version-min=15.0"
+
+t_dirty_cpu_observe_legacy: t_dirty_cpu_observe_legacy.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty.h ../nvn/nvn_dirty_gpu_gate.inc ../nvn/nvn_dirty_scope.inc ../../host/guest_write_lease.inc
+	$(CC) $(CFLAGS) -pthread $< ../nvn/nvn_platform.c -o $@

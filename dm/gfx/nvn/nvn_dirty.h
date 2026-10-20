@@ -87,3 +87,18 @@ void nvn_dirty_gpu_gate_submitted(nvn_dirty_gpu_gate *gate);
 // effects. Cancel only when the command was not submitted. Both consume token.
 void nvn_dirty_gpu_gate_complete(nvn_dirty_gpu_gate *gate);
 void nvn_dirty_gpu_gate_cancel(nvn_dirty_gpu_gate *gate);
+
+// Optional short CPU-source observation, Linux only. Enable exactly once before
+// first FS/dirty range; owns the common paired-kernel hooks. Requires complete,
+// unambiguous live tracked page coverage and caller-retained mapped storage.
+// No GPU synchronization is implied: retire all prior GPU/CPU effects first.
+// Begin returns NULL with stamp unchanged if coverage/lifetime is unsupported.
+// While held only CPU source reads are allowed; end consumes token and leaves
+// pages RO, so released writers advance the original dirty generation.
+int nvn_dirty_cpu_observation_enable(void);
+nvn_dirty_gpu_gate *nvn_dirty_cpu_observation_begin(const void *address,size_t bytes,uint64_t *stamp);
+void nvn_dirty_cpu_observation_end(nvn_dirty_gpu_gate *token);
+
+#ifdef DM_DIRTY_RANGE_TEST_HOOKS
+void nvn_dirty_test_plain_close_hook(void (*hook)(unsigned phase));
+#endif

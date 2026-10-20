@@ -141,11 +141,10 @@ static void shared_device_probe(void) {
       LOG("[shared pool] startup legacy: NC atom exceeds image-page gate");valid=0;
     }
   }
-  if(valid && !nvn_dirty_gpu_gates_enable()) {
+  if(valid && !nvn_dirty_cpu_observation_enable()) {
     LOG("[shared pool] startup legacy: sleeping CPU observation unavailable");valid=0;
   } else if(valid) {
-    static const dm_guest_write_lease_hooks hooks={nvn_dirty_kernel_write_begin,nvn_dirty_kernel_write_end};
-    dm_guest_write_lease_register(&hooks);shared_cpu_observe_phase=1;
+    shared_cpu_observe_phase=1;
     shared_gpu_gate_phase=needs_gate; // coherent GPU submission policy unchanged
   }
   // Only a successful capability/byte probe changes the immutable backing

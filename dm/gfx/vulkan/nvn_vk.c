@@ -3151,15 +3151,15 @@ int vk_pool_shared_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_c
     pthread_mutex_lock(&V.resources);p->references--;pthread_cond_broadcast(&pool_cv);
     pthread_mutex_unlock(&V.resources);return 0;
   }
-  nvn_dirty_gpu_range range={(void *)(uintptr_t)address,bytes};
-  nvn_dirty_gpu_gate *gate=nvn_dirty_gpu_gate_arm(&range,1);
+  uint64_t stamp=0;
+  nvn_dirty_gpu_gate *gate=nvn_dirty_cpu_observation_begin((void *)(uintptr_t)address,bytes,&stamp);
   if(!gate)die("CPU image observation needs retained image scope pages");
-  *token=(vk_shared_cpu_observation){.owner=p,.gate=gate,.stamp=nvn_dirty_now()};return 1;
+  *token=(vk_shared_cpu_observation){.owner=p,.gate=gate,.stamp=stamp};return 1;
 }
 void vk_pool_shared_cpu_observe_end(vk_shared_cpu_observation *token) {
   pool *p=token->owner;nvn_dirty_gpu_gate *gate=token->gate;
   if(!p || !gate)die("CPU image observation duplicate/invalid end");
-  *token=(vk_shared_cpu_observation){0};nvn_dirty_gpu_gate_cancel(gate);
+  *token=(vk_shared_cpu_observation){0};nvn_dirty_cpu_observation_end(gate);
   pthread_mutex_lock(&V.resources);
   if(!p->references || p->shared_closing)die("CPU image observation end Pool lifetime changed");
   p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);
