@@ -1413,3 +1413,36 @@ CASC，逐条生成与释放工作集，再做真实批量运行及现成工具�
 未必将依赖传到稍后读取未用 mip 的 Compute／Transfer，且独立性范围需
 覆盖真实导入区间及别名粒度。修复在独立后继中进行，不能以主机原测试
 通过代替这两个缺口的处理；当前游戏验收使用的是原保守同步版本。
+
+## 2026-10-21：批量资源的真实复制阻断与同步后继
+
+6,217 项已由同一 AA185 驱动、8064 producer 实际完成 49 批烘焙，原
+packer/CASC 生成 native 与普通 ASTC4 两套同选集、同质量资源。原 NVN
+payload 为 414,950,400B，native 为 696,385,536B；主要新增成本是
+1024B 最小行跨度及小 mip 填充。压缩后的资源 archive 只增加约 3.1MiB。
+展开体积既不是实际驻留量，也不能单独证明取消 GPU 副本后的净 RAM 收益。
+原 24,855 项未选缓存及上游 UI 保留，所有构建记录仍不声明批量游戏通过。
+
+同一 `bb4ac54` runtime、AA185、16MiB Buffer 窗口、固定 0.60 和
+2750×1260 的真实游戏对照，普通 ASTC4 control 进入营地后即触发已有
+ASTC copy 保护；native 阶段没有运行。随后官方 LLDB 只在拒绝点停一次：
+目标是已有 GPU 写入的 128×128、42 层、7 mip BC3 数组，本次 ASTC
+源要写 layer37/mip0。目标已有内容，不是缺 import/span 的未定义存储。
+不能直接把全数组换成 ASTC，也不能跳过复制；兼容后备需保留其它层内容
+及现有 CPU/别名保护，并单独核算可能增加的 decoded 图像内存。
+原失败、typed 快照、调试器清理与生产目录恢复记录均保留在
+`native-bulk-copy-bb4ac54-diagnostic-v1/`；不把此调试结果当 FPS 验收。
+
+同步后继 `f637327` 已改为在 pending primary 上为已知旧 Buffer writer
+建立原有 global memory dependency，再执行 native 图像 acquire；当前
+recording、未知 writer 和 private optimal alias 仍保守拒绝。真实 AA185
+的 ASTC4 九级 mip 测试通过新增 40 项及总计 412 项检查，两个正例要求
+像素实际改变，并覆盖后续 Compute/Transfer 的不同 mip。测试包装曾因
+宏未接入而只运行旧 372 项，该失败原样保留；修正后核对真实编译宏、
+预处理体、NDK 依赖和最终 ELF，才执行新的真实 GPU 检查。当前仅证明
+这个有限物理数据依赖场景，不是批量游戏或 NC 硬件、温控、6GB 验收。
+
+Mali 的 single-CSG 驱动已由原官方完整 GFXR prefix 实际验证：确认新
+驱动及三流同组后，仍在 API149328／submit186 报 DEVICE_LOST。此候选
+未修复原挂起。完整 MineGraph703db fork 正独立构建；它还改变了 BC
+图像布局和内存类型缓存属性，不能直接用旧 `none` 重放判定其好坏。
