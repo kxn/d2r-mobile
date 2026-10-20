@@ -699,10 +699,24 @@ Mali 驱动的 RGBA 回退。这两次均已恢复生产状态，不构成 GPU �
 精确 CPU 暴露限制区保留至 Pool 关闭，直接裸指针 CPU 读取不在保证范围。
 
 该核心已独立审查、通过 NDK ARM64 构建和宿主功能回归；LVP 不支持 ASTC，
-物理压缩路径明确为未验证。`8205364` 的完整 APK 与原始 NSO 产物已重建，
-994 项 APK 输入、六个运行库与生产签名核对，NSO 另行 verify-only 通过。
-还需补强独立测试入口的显式验证层选择和日志输出，再做同 APK 的真实 GPU
-检查与游戏验证；不能据此声称已降低驻留、带宽或温度。
+宿主通过不代表物理压缩路径通过。测试包装 `1f29f2a` 显式控制验证层，复用
+已有 fd 日志出口，运行时渲染核心保持 `8205364`。994 项 APK 输入、六个运行库
+与生产签名核对；游戏模块在单独冻结的精确源码树中从原始 NSO 重建，再单独
+verify-only。控制器后续提交影响过一次源码指纹校验，旧失败保留，不曾部署。
+
+系统 Mali 驱动、普通应用 UID 的新独立 GPU 测试已经通过：42 层数组确实由
+decoded RGBA 路径变为实际 ASTC4，保持逻辑 BC3、mip/layer、局部复制、线性与
+sRGB 采样及原 Pool 字节；CPU 观察还验证了旧 GPU 快照、新 CPU 更新和下一次
+上传的顺序。验证层明确关闭，不把功能检查宣称为 VVL 或性能验收。独立包已
+卸载，生产文件前后相同。记录为 `legacy-astc-stock-1f29f2a-actual-oracle-root-review.json`。
+
+同六库的真实 ARM64 游戏随后在纹理绑定中触发
+`Shared CPU conversion missing page-level ordered preflight`。Android 崩溃栈与
+原 ELF 的 addr2line 已定位到 draw → shader bindings → texture view → CPU
+转换；draw/dispatch 的外层准备及公共源检查没有启用 legacy 模式。还须核对
+optional replay 禁止内部等待、已初始化干净纹理上的待完成 CPU 写回两类边界，
+不能仅删深层检查绕过。此轮没有到 HUD，原 c8 APK、模块、资源和驱动已恢复，
+游戏停止。不能据此声称已降低驻留、带宽或温度。
 
 ### 共享 Pool 的快照与非一致性写入保护
 
