@@ -199,7 +199,7 @@ VkResult __wrap_vk_memory_invalidate_batch(void *const *allocations,uint32_t cou
 static void readback_batch_order_test(void) {
 #ifdef DM_VULKAN_INVALIDATE_WRAP
   enum { count=35, size=64 };
-  mtl_finish();vk_buffer *buffers[count];VkMemoryPropertyFlags properties[count];
+  mtl_finish();vk_buffer *buffers[count];VkMemoryPropertyFlags properties[count];int readback_class[count];
   uint8_t output[count][size];
   memset(output,0xc5,sizeof output);volatile uint32_t event=0;
   VkSemaphore gate=VK_NULL_HANDLE;
@@ -209,7 +209,7 @@ static void readback_batch_order_test(void) {
   mtl_sub_begin();uint64_t serial=vk_recording_serial();unsigned actual_nc=0;
   for(unsigned i=0;i<count;i++) {
     buffers[i]=vk_temp_buffer(size);
-    properties[i]=buffers[i]->properties;
+    properties[i]=buffers[i]->properties;readback_class[i]=buffers[i]->readback;
     actual_nc+=!(properties[i]&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     // These owned temporaries have only GPU writers and CPU readers. On a
     // coherent device, force completion eligibility ONLY in this VkBuffer
@@ -247,7 +247,12 @@ static void readback_batch_order_test(void) {
   atomic_store_explicit(&invalidate_watch_active,0,memory_order_release);
   // Reset is still blocked: none of these allocations can have been recycled.
   for(unsigned i=0;i<count;i++)for(unsigned j=0;j<size;j++)CHECK(buffers[i]->map[j]==0x12+i);
-  for(unsigned i=0;i<count;i++)buffers[i]->properties=properties[i];
+  // The temporary cache uses readback as an allocation-class key. Restore
+  // both fixture-only overrides while reset still prevents retirement; never
+  // let a general temporary masquerade as a reusable cached-readback buffer.
+  for(unsigned i=0;i<count;i++) {
+    buffers[i]->properties=properties[i];buffers[i]->readback=readback_class[i];
+  }
   vk_command_reset_test_gate(0);mtl_finish();
   if(gate)vkDestroySemaphore(V.device,gate,NULL);
   CHECK(vk_validation_error_count()==0);
