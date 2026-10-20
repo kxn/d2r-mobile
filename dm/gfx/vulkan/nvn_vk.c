@@ -1934,6 +1934,9 @@ int vk_pool_read(uint64_t address, size_t size, void *out) {
   vk_mip_clear_buffer_access(address,size);
   atomic_fetch_add(&sync_cpu_reads,1);
   if (!V.cmd || !size || !out) return -1;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_active)vk_texture_shared_linear_access(address,size);
+#endif
   pthread_mutex_lock(&V.resources);
   int valid=pool_find(address,size)!=NULL;
   pthread_mutex_unlock(&V.resources);
@@ -1961,6 +1964,12 @@ int vk_pool_read(uint64_t address, size_t size, void *out) {
 int vk_pool_try_read(uint64_t address,size_t size,void *out) {
   vk_mip_clear_buffer_access(address,size);
   if(!V.cmd||!size||!out) return -1;
+#ifdef DM_VULKAN_SHARED_POOLS
+  // Optional CPU proofs cannot read stale linear storage for a GPU-owned
+  // optimal image. Decline the proof, preserving its original GPU fallback.
+  // The immutable mode check adds no initialization or environment lookup.
+  if(shared_active && vk_texture_shared_linear_conflict(address,size))return 0;
+#endif
   // Single recording owner: no later submission can be enqueued concurrently.
   // Completion only removes hazards, so a negative pending check stays safe.
   if(vk_pool_pending_writes(address,size)) return 0;

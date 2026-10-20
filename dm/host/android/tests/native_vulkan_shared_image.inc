@@ -66,6 +66,38 @@ static void shared_image_dirty_test(void) {
     CHECK(vk_pool_address_stage((uintptr_t)data,4,(void **)&buffer,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
     die("GPU-owned image alias was incorrectly accepted");
   }
+  if(getenv("DM_SHARED_IMAGE_CPU_READ_TEST") ||
+      (negative && !strcmp(negative,"required-cpu-read-alias"))) {
+    // Real GPU content differs from its old packaged backing. A CPU proof
+    // must not return those stale blue bytes as evidence about this image.
+    mtl_sub_begin();VkImage native=vk_texture_native((const tex_t *)&textures[0]);
+    VkClearColorValue value={.float32={0,1,0,1}};
+    VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    vkCmdClearColorImage(V.cmd,native,VK_IMAGE_LAYOUT_GENERAL,&value,1,&range);
+    vk_internal_wait(vk_internal_commit());
+    uint8_t observed[4]={0x71,0x72,0x73,0x74},untouched[4];
+    memcpy(untouched,observed,4);CHECK(!memcmp(data,blue,4));
+    mtl_sub_begin();
+    CHECK(vk_pool_read((uintptr_t)data,4,NULL)==-1);
+    CHECK(vk_pool_try_read((uintptr_t)data,4,NULL)==-1);
+    CHECK(vk_pool_try_read((uintptr_t)data,4,observed)==0);
+    CHECK(!memcmp(observed,untouched,4));
+    CHECK(!vk_cover_read((uintptr_t)data,4,observed));
+    CHECK(!memcmp(observed,untouched,4));
+    // A different linear range in the SAME Pool remains readable as before.
+    memcpy(data+65536,red,4);
+    CHECK(vk_pool_try_read((uintptr_t)data+65536,4,observed)==1);
+    CHECK(!memcmp(observed,red,4));
+    CHECK(vk_pool_read((uintptr_t)data+65536,4,observed)==0);
+    CHECK(!memcmp(observed,red,4));
+    if(negative && !strcmp(negative,"required-cpu-read-alias")) {
+      (void)vk_pool_read((uintptr_t)data,4,observed);
+      die("Required CPU read accepted stale GPU-owned image backing");
+    }
+    vk_internal_wait(vk_internal_commit());
+    shared_image_pixels(&textures[0],green); // original GPU image path still works
+    printf("{\"test_details\":\"shared-image-CPU-read-guard\",\"optional_stale_proof_declined\":true,\"same_pool_nonalias_linear_read\":true,\"GPU_image_preserved\":true}\n");
+  }
   int ready,shadow;uint32_t flags;extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
   CHECK(vk_test_fixed_shared_pool((uintptr_t)data,&ready,&shadow,&flags));CHECK(ready && !shadow);
   CALL(nvnTextureFinalize,&textures[0]);CALL(nvnTextureFinalize,&textures[1]);CALL(nvnMemoryPoolFinalize,&pool);
