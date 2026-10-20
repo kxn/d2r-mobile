@@ -354,6 +354,48 @@ static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int shared_guest_heap_startup;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+static char native_resource_startup_table[4096],native_resource_startup_pack[65],native_resource_startup_producer[65];
+#endif
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeNativeResources(
+    JNIEnv *env,jclass klass,jstring table,jstring pack,jstring producer) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  extern int vk_loader_is_initialized(void);
+  if(operation_mode_fixed || vk_loader_is_initialized()) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"native resources are fixed before native startup");return;
+  }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  const char *path=table?(*env)->GetStringUTFChars(env,table,NULL):NULL;
+  const char *p=pack?(*env)->GetStringUTFChars(env,pack,NULL):NULL;
+  const char *q=producer?(*env)->GetStringUTFChars(env,producer,NULL):NULL;
+  int valid=!table && !pack && !producer;
+  if(path && p && q && path[0]=='/' && strlen(path)<sizeof native_resource_startup_table &&
+      strlen(p)==64 && strlen(q)==64) {
+    valid=1;for(unsigned n=0;n<64;n++)
+      if(!((p[n]>='0'&&p[n]<='9')||(p[n]>='a'&&p[n]<='f')) ||
+         !((q[n]>='0'&&q[n]<='9')||(q[n]>='a'&&q[n]<='f')))valid=0;
+  }
+  if(valid) {
+    snprintf(native_resource_startup_table,sizeof native_resource_startup_table,"%s",path?path:"");
+    snprintf(native_resource_startup_pack,sizeof native_resource_startup_pack,"%s",p?p:"");
+    snprintf(native_resource_startup_producer,sizeof native_resource_startup_producer,"%s",q?q:"");
+  }
+  if(path)(*env)->ReleaseStringUTFChars(env,table,path);
+  if(p)(*env)->ReleaseStringUTFChars(env,pack,p);
+  if(q)(*env)->ReleaseStringUTFChars(env,producer,q);
+#else
+  int valid=!table && !pack && !producer;
+#endif
+  pthread_mutex_unlock(&operation_mode_mutex);
+  if((*env)->ExceptionCheck(env))return;
+  if(!valid) {
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,"native resource build option/path/complete digests required");
+  }
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedGuestHeap(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;
@@ -570,6 +612,18 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
       setenv("DM_VULKAN_SHARED_POOLS",shared_guest_heap_startup?"1":"0",1) ||
       (shared_guest_heap_startup && setenv("PANVK_DM_HOST_IMPORT","true",1)))
     die("Android shared guest heap cold request environment");
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(native_resource_startup_table[0]) {
+    if(!shared_guest_heap_startup)die("Native resources require the shared guest heap startup policy");
+    if(setenv("DM_VULKAN_NATIVE_RESOURCE_TABLE",native_resource_startup_table,1) ||
+       setenv("DM_VULKAN_NATIVE_PACK_SHA256",native_resource_startup_pack,1) ||
+       setenv("DM_VULKAN_NATIVE_PRODUCER_SHA256",native_resource_startup_producer,1) ||
+       setenv("PANVK_DM_NATIVE_IMAGE_IMPORT","true",1))die("Native resource cold environment");
+  } else {
+    unsetenv("DM_VULKAN_NATIVE_RESOURCE_TABLE");unsetenv("DM_VULKAN_NATIVE_PACK_SHA256");
+    unsetenv("DM_VULKAN_NATIVE_PRODUCER_SHA256");
+  }
+#endif
   // Freeze the optional module/descriptor policy before any game or Vulkan
   // worker exists. The backend samples this environment only once; Activity
   // recreation and later Intents must never change established PSO identities.

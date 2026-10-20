@@ -11,7 +11,9 @@ extern "C" {
 #endif
 void vk_loader_set_driver(const char *provider,const char *directory,const char *hooks);
 void vk_loader_initialize(void);
+int vk_loader_is_initialized(void);
 void vk_loader_check_instance(VkInstance instance,int android_surface);
+int vk_loader_native_driver_digest(uint8_t out[32]);
 void vk_loader_check_device(VkPhysicalDevice physical,int driver_properties);
 #ifdef __cplusplus
 }

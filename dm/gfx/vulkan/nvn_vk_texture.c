@@ -2,6 +2,7 @@
 // Map original NVN texture snapshots to Vulkan images, reusing the project's
 // Tegra deswizzle and BC decoding.
 #include "../nvn/nvn_dirty.h"
+#include "../nvn/nvn_native_layout.h"
 #include "../tex/nvn_bcdec.h"
 #include "../tex/nvn_deswizzle.h"
 #include "../tex/nvn_astc_metadata.h"
@@ -57,6 +58,15 @@ typedef struct image {
   nvn_dirty_scope *shared_dirty_scope;
   struct image *shared_alias_next;
   int shared_alias_linked;
+#endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  const nvn_native_entry *native_entry;
+  void *native_pool;
+  nvn_dirty_scope *native_write_scopes[NVN_NATIVE_LEVELS];
+  struct image *native_next;
+  uint64_t native_use_serial;
+  VkPipelineStageFlags native_recorded_stages;
+  int native_acquired;
 #endif
   uint64_t last_use;
   uint64_t trace_stamp, trace_levels;
@@ -133,9 +143,15 @@ static void image_shared_alias_remove(image *i) {
   *at=i->shared_alias_next;i->shared_alias_next=NULL;i->shared_alias_linked=0;
 }
 static void image_shared_alias_write(image *i) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(i->native_entry)return; // backing is already canonical; no Tegra conversion
+#endif
   if(!vk_pool_shared_mode() || i->shared_alias_linked)return;
   i->shared_alias_linked=1;i->shared_alias_next=shared_gpu_aliases;shared_gpu_aliases=i;
 }
+#endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+static void native_image_record(image *,VkImageSubresourceRange,VkPipelineStageFlags,VkAccessFlags);
 #endif
 #include "nvn_vk_image_dependencies.inc"
 static _Atomic int layout_requested=-1,layout_active=0;
@@ -625,6 +641,9 @@ static void image_allocate(image *i) {
   if(image_mip_tracked(i)) for(unsigned level=0;level<i->levels;level++)
     image_cell(i,0,level,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
 }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+#include "nvn_vk_native_image.inc"
+#endif
 static void image_storage_destroy(void *context) {
   image *i = context;
   while (i->views) {
@@ -635,6 +654,14 @@ static void image_storage_destroy(void *context) {
     free(view);
   }
   vkDestroyImage(V.device, i->handle, NULL);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(i->native_entry) {
+    // Physical storage retirement, after every referencing GPU submission and
+    // its cache publication/gate completion; never release on TextureFinalize.
+    for(unsigned n=0;n<NVN_NATIVE_LEVELS;n++)nvn_dirty_scope_release(i->native_write_scopes[n]);
+    vk_pool_native_image_release(i->native_pool);
+  } else
+#endif
   vk_memory_free(i->allocation);
   free(i->access);
   free(i);
@@ -664,6 +691,10 @@ static unsigned format_class(VkFormat f) {
 // Replace physical storage without changing guest texture identity. Keep old
 // views/framebuffers alive until the copy and all earlier queue users finish.
 static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags usage) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(i->native_entry && ((flags&~i->description.flags) || (usage&~i->description.usage)))
+    die("Native image recipe cannot change physical allocation online");
+#endif
   flags |= i->description.flags;
   usage |= i->description.usage;
   if(flags==i->description.flags && usage==i->description.usage) return;
@@ -769,6 +800,9 @@ static int shared_image_backing(uint64_t address,uint64_t bytes) {
 // Only logical copies of textures are used across a visibility callback.
 // Callers must invoke this before borrowing any image/view/descriptor/temp.
 void vk_texture_cpu_preflight(const tex_t *t) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(t && t->has_layout && nvn_native_layout_is_marker(t->layout))return; // no CPU deswizzle/dirty-source observation
+#endif
 #ifdef DM_VULKAN_SHARED_POOLS
   if(vk_pool_shared_mode() && t && t->has_layout && t->mem && t->L.size) {
     if(!shared_image_backing((uintptr_t)t->mem,t->L.size))
@@ -841,6 +875,15 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
     i->format = decoded_format(t->d.format);
     vk_format_properties(i->format, &props);
   }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  const nvn_native_entry *native=native_image_entry(t);
+  if(native) {
+    if(!shared_image_backing((uintptr_t)t->mem,t->L.size))die("Native image requires committed shared heap backing");
+    if(required&~native->recipe.usage)die("Native resource usage not in baked recipe");
+    native_image_create(i,native);
+    goto image_publish;
+  }
+#endif
   VkImageUsageFlags usage =
       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)
@@ -898,6 +941,9 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
   }
 #endif
   image_allocate(i);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+image_publish:
+#endif
   i->next = images;
   images = i;
   i->hash_next = image_buckets[t->serial % 8192];
@@ -1030,6 +1076,9 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
   image_astc_proof(i,ldr);
 }
 static void image_upload(image *i) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(i->native_entry) {native_image_use(i);return;}
+#endif
   // HLE texture initialization is an ordered CPU exposure, including late
   // aliases. Its sticky pages keep every later writer on original eager WB.
   // Check this before dirty/stamp earlyreturn; never commit with i borrowed.
