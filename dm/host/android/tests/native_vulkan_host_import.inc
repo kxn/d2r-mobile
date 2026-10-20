@@ -16,7 +16,7 @@ typedef struct {
   VkDebugUtilsMessengerEXT messenger;
   unsigned validation_errors;
   VkBool32 imported_host_coherent;
-  VkBool32 implicit_host_dependency,owned_dirty_cycle;
+  VkBool32 implicit_host_dependency,owned_dirty_cycle,shared_anonymous;
   VkDeviceSize noncoherent_atom;
 } host_import_context;
 
@@ -113,8 +113,13 @@ static void host_import_cache_range(host_import_context *context,VkDeviceMemory 
 static void host_import_round(host_import_context *context,VkDeviceSize alignment,unsigned round,
                                PFN_vkGetMemoryHostPointerPropertiesEXT properties) {
   const size_t extent=(size_t)alignment*2,mapping_size=(size_t)alignment*3;
-  void *mapping=mmap(NULL,mapping_size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+  // Only this fixture-owned mapping changes type; never protect/rebind a driver
+  // VkMap VA or any guest heap. Keep private as the original control.
+  int mapping_flags=MAP_ANONYMOUS|(context->shared_anonymous?MAP_SHARED:MAP_PRIVATE);
+  void *mapping=mmap(NULL,mapping_size,PROT_READ|PROT_WRITE,mapping_flags,-1,0);
   CHECK(mapping!=MAP_FAILED);
+  LOG("[host import mapping] round=%u anonymous=%s import_bytes=%zu mapping_bytes=%zu",round,
+    context->shared_anonymous?"shared":"private",extent,mapping_size);
   uint32_t *host=(void *)(((uintptr_t)mapping+(uintptr_t)alignment-1)&~((uintptr_t)alignment-1));
   memset(host,0,extent);
   VkMemoryHostPointerPropertiesEXT host_properties={
@@ -256,6 +261,12 @@ static int host_import_oracle(void) {
   const char *dirty=getenv("DM_VULKAN_HOST_IMPORT_OWNED_DIRTY");
   CHECK(!dirty || !strcmp(dirty,"0") || !strcmp(dirty,"1"));
   context.owned_dirty_cycle=dirty && !strcmp(dirty,"1");
+  const char *shared=getenv("DM_VULKAN_HOST_IMPORT_SHARED_ANON");
+  CHECK(!shared || !strcmp(shared,"0") || !strcmp(shared,"1"));
+  context.shared_anonymous=shared && !strcmp(shared,"1");
+  printf("{\"test_configuration\":\"host-import-anonymous-mapping\",\"kind\":\"%s\","
+    "\"scope\":\"fixture-owned mapping only; no guest heap or driver mapping mutation\"}\n",
+    context.shared_anonymous?"shared":"private");
   printf("{\"test_configuration\":\"standard-owned-dirty\",\"enabled\":%s}\n",
     context.owned_dirty_cycle?"true":"false");
   printf("{\"test_configuration\":\"host-import-publication\",\"implicit_host_dependency\":%s}\n",
