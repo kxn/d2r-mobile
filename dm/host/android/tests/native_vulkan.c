@@ -680,6 +680,9 @@ static void fixed_shared_buffer_test(void) {
 }
 #include "native_vulkan_shared_image.inc"
 #endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+#include "native_vulkan_native_resource.inc"
+#endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
@@ -776,6 +779,10 @@ int dm_vulkan_test_main(void) {
         (unsigned long long)V.options.pool_window_bytes,V.options.pool_mirror_reference,V.options.pool_defer_publication,checks);
     return 0;
   }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  const char *native_fixture=getenv("DM_NATIVE_RESOURCE_NVN_FIXTURE");
+  if(native_fixture)return native_resource_gpu_test(native_fixture);
+#endif
   if(getenv("DM_SHARED_IMAGE_DIRTY_FIXTURE")) {shared_image_dirty_test();return 0;}
   if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {
     CHECK(vk_pool_shared_mode());

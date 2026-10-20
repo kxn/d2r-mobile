@@ -413,4 +413,5 @@ void vk_pool_native_image_use(void *,uint64_t,uint64_t,VkPipelineStageFlags);
 void vk_pool_native_image_release(void *);
 int vk_pool_native_image_write_ready(void *);
 void vk_native_images_release(void);
+uint64_t vk_buffer_native_image_read(uint64_t,uint64_t,VkPipelineStageFlags,uint64_t);
 #endif

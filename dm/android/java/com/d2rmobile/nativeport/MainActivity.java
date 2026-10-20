@@ -42,7 +42,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativeSharedGuestHeap(boolean enabled);
-    private static native void nativeNativeResources(String table, String packSha256, String producerSha256);
+    private static native void nativeNativeResources(String table, String packSha256, String producerSha256, String fixtureDirectory);
     private static native void nativePoolDeferPublication(boolean enabled);
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
@@ -141,7 +141,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeNativeResources(getIntent().getStringExtra("native_resource_table"),
                     getIntent().getStringExtra("native_resource_pack_sha256"),
-                    getIntent().getStringExtra("native_resource_producer_sha256"));
+                    getIntent().getStringExtra("native_resource_producer_sha256"),
+                    getIntent().getBooleanExtra("run_vulkan_tests", false) ? getIntent().getStringExtra("native_resource_fixture_dir") : null);
             // Source-proved subpasses fall back when recipes, resources or
             // dependencies do not qualify. Shared-depth remains opt-in.
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", true));
@@ -307,7 +308,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
-        for (String key : new String[]{"native_resource_table", "native_resource_pack_sha256", "native_resource_producer_sha256"}) {
+        for (String key : new String[]{"native_resource_table", "native_resource_pack_sha256", "native_resource_producer_sha256", "native_resource_fixture_dir"}) {
             if (intent.hasExtra(key)) {
                 android.util.Log.w("D2RNativeResources", "native resources require a cold restart");
                 intent.removeExtra(key);

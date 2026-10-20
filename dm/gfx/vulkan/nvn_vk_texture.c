@@ -13,6 +13,9 @@
 #include <math.h>
 #include <stdatomic.h>
 #include <unistd.h>
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+#include <sys/mman.h>
+#endif
 typedef struct image_view {
   struct image_view *next;
   VkImageViewCreateInfo description;
@@ -64,7 +67,8 @@ typedef struct image {
   void *native_pool;
   nvn_dirty_scope *native_write_scopes[NVN_NATIVE_LEVELS];
   struct image *native_next;
-  uint64_t native_use_serial;
+  uint64_t native_use_serial,native_alias_generation;
+  VkPipelineStageFlags native_alias_visible_stages;
   VkPipelineStageFlags native_recorded_stages;
   int native_acquired;
 #endif
@@ -656,6 +660,7 @@ static void image_storage_destroy(void *context) {
   vkDestroyImage(V.device, i->handle, NULL);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(i->native_entry) {
+    native_range_remove(i);
     // Physical storage retirement, after every referencing GPU submission and
     // its cache publication/gate completion; never release on TextureFinalize.
     for(unsigned n=0;n<NVN_NATIVE_LEVELS;n++)nvn_dirty_scope_release(i->native_write_scopes[n]);
@@ -1704,6 +1709,9 @@ void vk_texture_shared_source_written(uint64_t address,uint64_t bytes) {
   // The known GPU write publishes page generation/epoch. Every converted
   // image's existing dirty/stamp proof therefore fails before reuse; actual
   // ASTC proof describes old physical bytes until original upload replaces it.
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  native_image_linear_written(address,bytes);
+#endif
   nvn_dirty_scope_gpu_write((void *)(uintptr_t)address,bytes);
 }
 int vk_texture_shared_linear_conflict(uint64_t address,uint64_t bytes) {
@@ -2938,6 +2946,9 @@ VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlag
 VkImage vk_texture_native(const tex_t *t) {
   vk_mip_clear_drain();vk_texture_cpu_preflight(t);
   image *i = image_get(t);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(i->native_entry)die("Native resource raw image escape has no tracked writer contract");
+#endif
   image_upload(i);
   image_general(i);
   image_unknown(i);
