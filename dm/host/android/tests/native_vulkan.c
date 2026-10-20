@@ -547,6 +547,62 @@ static void review_cpu_effect_then_gpu_write(void) {
   CHECK(*destination==9);
 }
 
+// Revision oracle: the releaser waits for the actual conflicting range
+// dependency. No elapsed time or arbitrary sleep is used as evidence.
+static uint64_t review_dependency_seen;
+static void *review_release_on_dependency(void *unused) {
+  (void)unused;extern uint64_t vk_test_shared_dependency_observed(void);
+  review_dependency_seen=vk_test_shared_dependency_observed();
+  pthread_mutex_lock(&review_effect_mu);review_effect_release=1;
+  pthread_cond_broadcast(&review_effect_cv);pthread_mutex_unlock(&review_effect_mu);return NULL;
+}
+static void review_fill_shared(uint32_t *destination,uint32_t value) {
+  vk_buffer *b;uint64_t offset;
+  CHECK(vk_pool_address_overwrite((uintptr_t)destination,4,(void **)&b,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  vkCmdFillBuffer(V.cmd,b->handle,offset,4,value);
+  vk_buffer_transfer_written_range((uintptr_t)destination,4);
+  vk_buffer_writeback_stage((uintptr_t)destination,4,VK_PIPELINE_STAGE_TRANSFER_BIT);
+}
+static void fixed_shared_dependency_test(void) {
+  const char *mode=getenv("DM_FIXED_SHARED_DEPENDENCY_TEST");
+  int separate=!strcmp(mode,"disjoint"),cache=!strcmp(mode,"cache-phase");
+  int gpu_only=!strcmp(mode,"gpu-only");
+  CHECK(separate || cache || gpu_only || !strcmp(mode,"cpu-effect") || !strcmp(mode,"same-recording"));
+  uint32_t *a=(void *)(bytes+(3u<<20)),*b=separate?(void *)(bytes+(3u<<20)+4096):cache?a+1:a;
+  *a=0;*b=0;mtl_sub_begin();
+  if(!strcmp(mode,"same-recording")) {
+    mtl_sub_event(a,0,7);review_fill_shared(a,9);vk_internal_commit();
+    die("Unsupported same-recording CPUeffect/shared GPU combination accepted");
+  }
+  if(cache || gpu_only)review_fill_shared(a,7);
+  vk_completion(review_effect_gate,NULL);if(!cache && !gpu_only)mtl_sub_event(a,0,7);
+  uint64_t first=vk_internal_commit();
+  pthread_mutex_lock(&review_effect_mu);
+  while(!review_effect_entered)pthread_cond_wait(&review_effect_cv,&review_effect_mu);
+  pthread_mutex_unlock(&review_effect_mu);
+  pthread_t releaser;
+  if(!separate && !gpu_only) {
+    extern void vk_test_shared_dependency_arm(int);vk_test_shared_dependency_arm(cache);
+    CHECK(!pthread_create(&releaser,NULL,review_release_on_dependency,NULL));
+  }
+  mtl_sub_begin();review_fill_shared(b,9);uint64_t last=vk_internal_commit();CHECK(last>first);
+  if(separate || gpu_only) {
+    // A GPU-only oracle fence observes execution while S1 completion is still
+    // gated. Production never gains a queue wait from this fixture.
+    pthread_mutex_lock(&V.queue_mu);VK_CHECK(vkQueueWaitIdle(V.queue));pthread_mutex_unlock(&V.queue_mu);
+    pthread_mutex_lock(&review_effect_mu);review_effect_release=1;
+    pthread_cond_broadcast(&review_effect_cv);pthread_mutex_unlock(&review_effect_mu);
+  } else {CHECK(!pthread_join(releaser,NULL));CHECK(review_dependency_seen==first);}
+  vk_internal_wait(last);CHECK(*b==9);if(b!=a)CHECK(*a==7);
+  // Early manual writeback flush keeps the pending CPU-read contract.
+  mtl_sub_begin();review_fill_shared(b,11);vk_buffer_writebacks_flush();
+  CHECK(vk_pool_pending_writes((uintptr_t)b,4));
+  vk_internal_wait(vk_internal_commit());CHECK(*b==11);
+  int ready,shadow;uint32_t properties;
+  CHECK(vk_test_fixed_shared_pool((uintptr_t)bytes,&ready,&shadow,&properties));
+  printf("{\"test_details\":\"fixed-shared-range-ownership\",\"mode\":\"%s\",\"actual_properties\":%u,\"cache_admission_injected\":%s,\"no_actual_noncoherent_claim\":true}\n",mode,properties,cache?"true":"false");
+}
+
 static void fixed_shared_buffer_test(void) {
   CHECK(vk_pool_shared_mode());
   CHECK(!setenv("DM_VULKAN_SHARED_POOLS","0",1)); // cannot change selected mode
@@ -668,6 +724,14 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {
+    CHECK(vk_pool_shared_mode());
+    NVNmemoryPoolBuilder b;CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
+    CALL(nvnMemoryPoolBuilderSetStorage,&b,bytes,4u<<20);CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    CHECK(CALL(nvnMemoryPoolInitialize,&memory,&b));fixed_shared_dependency_test();
+    CALL(nvnMemoryPoolFinalize,&memory);CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"fixed-shared-range-ownership\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
+  }
   if(getenv("DM_FIXED_SHARED_EVENT_ONLY_REVIEW")) {
     NVNmemoryPoolBuilder b;CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
     CALL(nvnMemoryPoolBuilderSetStorage,&b,bytes,4u<<20);CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
