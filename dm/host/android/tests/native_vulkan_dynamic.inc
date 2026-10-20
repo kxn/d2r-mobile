@@ -43,7 +43,7 @@ static void dynamic_uniform_variant_test(const void *vertex,unsigned marker) {
     CALL(nvnCommandBufferSetViewports,&local_cmd,0,1,viewport);
     CALL(nvnCommandBufferBindDepthStencilState,&local_cmd,&ds);CALL(nvnCommandBufferBindPolygonState,&local_cmd,&polygon);
     CALL(nvnCommandBufferBindColorState,&local_cmd,&color);CALL(nvnCommandBufferBindChannelMaskState,&local_cmd,&mask);
-    CALL(nvnCommandBufferBindVertexAttribState,&local_cmd,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&local_cmd,0,NULL);
+    CALL(nvnCommandBufferBindVertexAttribState,&local_cmd,0,&(NVNvertexAttribState){0});CALL(nvnCommandBufferBindVertexStreamState,&local_cmd,0,&(NVNvertexStreamState){0});
     CALL(nvnCommandBufferBindProgram,&local_cmd,&program,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
     for(unsigned draw=0;draw<4;draw++) {
       unsigned half=draw&1;
@@ -159,7 +159,7 @@ static void descriptor_shader_hint_test(const void *vertex) {
     CALL(nvnCommandBufferSetViewports,&local,0,1,viewport);
     CALL(nvnCommandBufferBindDepthStencilState,&local,&ds);CALL(nvnCommandBufferBindPolygonState,&local,&poly);
     CALL(nvnCommandBufferBindColorState,&local,&color);CALL(nvnCommandBufferBindChannelMaskState,&local,&mask);
-    CALL(nvnCommandBufferBindVertexAttribState,&local,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&local,0,NULL);
+    CALL(nvnCommandBufferBindVertexAttribState,&local,0,&(NVNvertexAttribState){0});CALL(nvnCommandBufferBindVertexStreamState,&local,0,&(NVNvertexStreamState){0});
     for(unsigned draw=0;draw<8;draw++) {
       unsigned which=draw&1,bank=(draw>=4)^((iteration>>1)&1);
       CALL(nvnCommandBufferBindProgram,&local,&programs[which],NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
