@@ -660,3 +660,36 @@ recipe 为 4096B、2816B；总图像分配仍为 90,112B、45,056B。实际排�
 本机验收为 `native-image-resource-copy-4093920-binding-v2-mali-root-review.json`；
 可复现 controller 在 `codex/native-image-resource-copy-app-v1` 的 `36c0896`。
 真正的游戏 NVN 资源表、缩略 mip 和流式更新集成尚未验收。
+
+### 共享 Pool 的快照与非一致性写入保护
+
+共享分支不分配整个 Pool 的 `shadow`，也不通过内容扫描决定 Buffer 上传。
+保留的是访问范围、版本、Fence 和有限 image-scope 页的保护信息，并非整份
+数据快照。真正需要保留历史值的异步命令输入另算；NVN 排布与私有 VkImage
+之间的转换存储也不能冒称已经消除。原生图像直接绑定是后一项的独立工作。
+
+写前保护核心 `b1ea0ef` 与应用包装组合为 `14dae0e`。Mali 普通 UID 两次
+独立冷进程验证均通过：实际 `0xb` 非一致性 HOST_CACHED、atom64 下，GPU
+写一个 word、CPU 写同 atom 邻 word，CPU 经过保护等待，Fence/Invalidate
+后双方字节及后续 VkImage 读取均正确；原 NVN Buffer→Texture→Texture
+回归同时覆盖原生 ASTC、局部区域、多 mip/layer 和 CPU 写回原值的情况。
+同一包六库与生产签名、990 项构建输入已经核对，两次测试均退出和卸载，
+原 APK、模块、资源及 shader chain 前后未变。独立审查与实际记录在本机
+`shared-image-gate-14dae0e-nc-mali-v1-independent-review-panvk.json`、
+`shared-image-gate-14dae0e-retile-mali-v1/result.json`。直接 ICD 的 VVL 明确关闭，
+不以宿主 coherent 或统计检查数量代替这些真实 NC 结果。
+
+该组合也已从原始 NSO 重新加工、单独核验并执行真实游戏。运行不再首先
+停于此前的共享图像源保护条件，但在菜单加载约第 62 帧遇到新的实际阻断：
+`Vulkan format conversion unavailable: 157 -> 137`，即 ASTC4 UNORM 到 BC3
+UNORM。系统 Mali 驱动与私有驱动的 BC 能力声明影响目标物理格式选择；
+原 Metal 的 `no_bc` 路径原本处理的是 ASTC 到解压目标，不能直接把这里的
+ASTC 数据当 BC3 使用。需核实完整资源、子资源和 CPU 后续写入合同后修复。
+本次没有到达原游戏 HUD，不提供内存、FPS 或持续散热收益结论；现场保留在
+`shared-game-14dae0e-mali-v2/`，原 c8 APK、28 个模块及旧驱动已经恢复并停机。
+
+当前已部署 fullASTC4 资源缓存的离线清点为 31,072 个描述，其中 27,195 个
+符合现有原生图像格式与单层 2D 形态范围，27,194 个还含缩略图。因此必须
+区分完整 opaque 原生资源与缩略图原有上传格式，不能仅凭尺寸或文件来源
+假定只读或直接导入。1040B/entry 的当前表预计占 28,282,960B 元数据；全部
+资源压缩块总量不代表运行时驻留量，也不能据此计算已经实现的内存节省。
