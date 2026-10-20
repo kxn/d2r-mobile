@@ -765,6 +765,13 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#ifndef DM_ANDROID_APP
+  if(getenv("DM_DESCRIPTOR_SHADER_HINT_FIXTURE")) {
+    uint8_t vertex[0x880]={0};descriptor_shader_hint_test(vertex);
+    dynamic_uniform_test(vertex);CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"descriptor-shader-slot-hint\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_FIXED_SHARED_QUERY_REPORT_TEST")) {
