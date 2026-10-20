@@ -164,10 +164,10 @@ static void shared_image_dirty_test(void) {
     CHECK(!vk_cover_read((uintptr_t)data,4,observed));
     CHECK(!memcmp(observed,untouched,4));
     // A different linear range in the SAME Pool remains readable as before.
-    memcpy(data+65536,red,4);
-    CHECK(vk_pool_try_read((uintptr_t)data+65536,4,observed)==1);
+    memcpy(data+131072,red,4);
+    CHECK(vk_pool_try_read((uintptr_t)data+131072,4,observed)==1);
     CHECK(!memcmp(observed,red,4));
-    CHECK(vk_pool_read((uintptr_t)data+65536,4,observed)==0);
+    CHECK(vk_pool_read((uintptr_t)data+131072,4,observed)==0);
     CHECK(!memcmp(observed,red,4));
     if(negative && !strcmp(negative,"required-cpu-read-alias")) {
       (void)vk_pool_read((uintptr_t)data,4,observed);
