@@ -1641,11 +1641,17 @@ void vk_texture_shared_source_written(uint64_t address,uint64_t bytes) {
   // ASTC proof describes old physical bytes until original upload replaces it.
   nvn_dirty_scope_gpu_write((void *)(uintptr_t)address,bytes);
 }
-void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes) {
-  if(!bytes || bytes>UINT64_MAX-address)return;
+int vk_texture_shared_linear_conflict(uint64_t address,uint64_t bytes) {
+  if(!bytes)return 0;
+  if(bytes>UINT64_MAX-address)return 1;
   for(image *i=shared_gpu_aliases;i;i=i->shared_alias_next)if(i->initialized && i->tex.mem &&
       i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
       address+bytes>(uintptr_t)i->tex.mem)
+    return 1;
+  return 0;
+}
+void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes) {
+  if(vk_texture_shared_linear_conflict(address,bytes))
     die("Shared linear access aliases GPU-owned optimal image: explicit conversion required");
 }
 void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes) {
