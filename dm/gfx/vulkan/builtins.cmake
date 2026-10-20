@@ -90,5 +90,16 @@ foreach(stage vert frag)
     VERBATIM)
   list(APPEND DM_VK_PRESENT_HEADERS "${header}")
 endforeach()
+set(DM_VK_EVENT_ADD_HEADER "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_event_add_spv.h")
+add_custom_command(OUTPUT "${DM_VK_EVENT_ADD_HEADER}"
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_event_add_spv.spv"
+             "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_event_add_spv.json"
+  COMMAND "${DM_VK_PYTHON}" "${DM_VK_BUILTIN_DIR}/build_builtin.py"
+          --source "${DM_VK_BUILTIN_DIR}/shaders/event-add.comp"
+          --output "${DM_VK_EVENT_ADD_HEADER}" --symbol dm_event_add_spv
+          --glslang "${DM_VK_GLSLANG}" --validator "${DM_VK_SPIRV_VAL}"
+  DEPENDS "${DM_VK_BUILTIN_DIR}/build_builtin.py" "${DM_VK_BUILTIN_DIR}/shaders/event-add.comp"
+  VERBATIM)
 add_custom_target(dm_vulkan_builtins DEPENDS "${DM_VK_BRIGHT_HEADER}" ${DM_VK_EXTRAP_HEADERS}
-                  "${DM_VK_NOFXAA_HEADER}" ${DM_VK_BLOOM_QUARTER_HEADERS} ${DM_VK_PRESENT_HEADERS})
+                  "${DM_VK_NOFXAA_HEADER}" ${DM_VK_BLOOM_QUARTER_HEADERS} ${DM_VK_PRESENT_HEADERS}
+                  "${DM_VK_EVENT_ADD_HEADER}")
