@@ -628,3 +628,20 @@ DRAM 流量或整游戏节省量。该驱动目前只接纳 SAMPLED|HOST_TRANSFE
 游戏 APK、模块、资源、shader chain 与原私有驱动均保持不变；独立应用
 已经卸载，测试进程与临时文件已清理。下一步是在默认关闭的独立路径中
 接入通用 NVN 元数据与资源工具链，再验证真实游戏内存和持续游玩散热。
+
+复制用途不能继承上述采样验收。独立 `4093920` 测试将用途明确扩为
+SAMPLED|HOST_TRANSFER|TRANSFER_SRC|TRANSFER_DST，并增加非零 block ROI
+的 Buffer→Image、局部 Image→Image 和全 mip Image→Image 对照。标准 BC3
+宿主路径在官方 VVL/SYNC 下通过，分别故意漏掉两类复制的负例均触发原
+数据断言。988 项 APK 输入、1,733 项实际编译依赖与新驱动输入均已闭合。
+
+Mali 普通 UID 真机使用 `5709f74` 驱动时，两套真实 ASTC 资源烘焙通过；
+导入却在首张 ASTC4 的 `vkBindImageMemory` 失败，尚未采样或复制。源码
+审查找到驱动内部 meta 为压缩 transfer 图像追加用途和 create flags 后，
+Bind 又误用这些内部扩展值验证原应用声明的严格合同。修复须保留 Create
+时已验证的原合同，不能放宽成任意 Storage/Attachment 导入。内部 meta
+也可能改变物理排布，必须使用新 recipe 重新烘焙，不能复用旧采样产物。
+
+此失败不算整游戏运行或性能结果。独立应用已卸载，原游戏与资源保持不变，
+游戏进程停止。记录为本机 `native-image-resource-copy-4093920-mali-v1-root-review.json`；
+驱动修复与非一致性内存 CPU 写入保护仍在独立分支推进。
