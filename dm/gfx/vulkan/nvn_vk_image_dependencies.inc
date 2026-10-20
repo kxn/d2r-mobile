@@ -167,6 +167,7 @@ static void image_record(image *i,VkImageSubresourceRange r,VkPipelineStageFlags
   image_record_normalized(i,image_access_range(i,r),stages,access,visibility_proven);
 }
 static void image_unknown(image *i) {
+  if(i->astc_copy_encoding)die("ASTC propagated image cannot escape as untyped logical BC3 storage");
   i->external_access=1;
   image_astc_proof(i,0);
   if(!i->access) return;

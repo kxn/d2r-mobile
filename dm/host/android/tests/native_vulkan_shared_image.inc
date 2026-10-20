@@ -183,6 +183,7 @@ static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
   printf("{\"test_details\":\"shared-native-copy-retile-formats\",\"native_ASTC_available\":%s}\n",V.features.textureCompressionASTC_LDR?"true":"false");
   printf("{\"test_details\":\"shared-native-copy-retile\",\"GPU_produced_B2T_source\":true,\"T2T_source_chain\":true,\"two_layers_three_mips\":true,\"same_value_CPU_edit\":true}\n");
 }
+#include "native_vulkan_astc_copy.inc"
 static void shared_image_dirty_test(void) {
   CHECK(vk_pool_shared_mode());
   size_t allocation=(4u<<20)+65536;
@@ -410,6 +411,7 @@ static void shared_image_dirty_test(void) {
   CALL(nvnTextureFinalize,&textures[0]);CALL(nvnTextureFinalize,&textures[1]);CALL(nvnMemoryPoolFinalize,&pool);
   CHECK(!nvn_dirty_tracked(data,4096));memset(data,0x81,4096); // scopes restored RW, original mapping still valid
   vk_test_shared_image_backing(NULL,0);if(raw)CHECK(!munmap(raw,allocation));
+  if(getenv("DM_SHARED_IMAGE_COPY_TEST"))astc_copy_encoding_test();
   CHECK(!vk_validation_error_count());
   printf("{\"test_configuration\":\"shared-image-provenance\",\"actual_early_heap\":%s,\"finite_test_certificate\":%s}\n",actual_heap?"true":"false",actual_heap?"false":"true");
   printf("{\"test\":\"shared-image-only-dirty\",\"checks\":%u,\"result\":\"passed\",\"actual_memory_flags\":%u,\"game_modules_executed\":false}\n",checks,flags);

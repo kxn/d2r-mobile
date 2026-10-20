@@ -3087,6 +3087,28 @@ static void shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int 
 }
 #endif
 #ifdef DM_VULKAN_SHARED_POOLS
+// Cold image-encoding observation of an ALREADY imported Pool. Reuse the
+// original host-page/FS-write admission, but retain no GPU gate after the
+// protected baseline is captured. No Buffer allocation, pin or submit here.
+int vk_pool_shared_observe_protect(uint64_t address,uint64_t bytes,uint64_t *stamp) {
+  if(!shared_active || !shared_gpu_gate_phase || !bytes)return 0;
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || !p->shared || p->shared_closing || !p->backings) {
+    pthread_mutex_unlock(&V.resources);return 0;
+  }
+  p->references++;uint64_t offset=address-(uintptr_t)p->guest;
+  pthread_mutex_unlock(&V.resources);
+  shared_access_host_phase(p,offset,bytes,1);
+  nvn_dirty_gpu_range range={(void *)(uintptr_t)address,bytes};
+  nvn_dirty_gpu_gate *gate=nvn_dirty_gpu_gate_arm(&range,1);
+  if(!gate)die("ASTC copy CPU observation missing scoped gate");
+  *stamp=nvn_dirty_now();nvn_dirty_gpu_gate_cancel(gate);
+  pthread_mutex_lock(&V.resources);
+  if(p->shared_closing || p!=pool_find(address,bytes) || !p->references)
+    die("ASTC copy CPU observation Pool lifetime changed");
+  p->references--;pthread_cond_broadcast(&pool_cv);
+  pthread_mutex_unlock(&V.resources);return 1;
+}
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_shared_prearm_host_phase(uint64_t address,uint64_t bytes,int whole_host_page) {
   // Fixture retains Pool and uses the original translation owner contract.
