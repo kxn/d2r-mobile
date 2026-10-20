@@ -577,3 +577,24 @@ Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not
 28 项模块，并确认游戏停止。原 full ASTC4 资源与存档未参与部署。没有取得
 本次共享游戏的稳定 PSS、FPS 或温度对照，不能据此宣称内存、帧率或散热
 改善。下一步先修正图像源追踪生命周期，再验证真实游戏；生产仍保留原路径。
+
+### 独立 ASTC 原生图像存储导入
+
+另一个默认关闭的实验已通过普通应用 UID 真机功能验证：驱动源码分支
+`codex/panvk-native-image-import-v1` 的 `3446abb`，独立测试应用分支
+`codex/panvk-native-image-app-v1` 的 `948d702`，驱动 SHA `6b15cf08…`。
+它使用原 Mesa Host Image Copy 生成目标原生排布，不另写 vendor swizzle。
+
+有限对象为 13×9、四级 mip、单层 2D 的 ASTC 4×4/6×6 UNORM 和 sRGB。
+两个独立进程分别生成文件、导入并采样；四格式各覆盖两次数据发布和两次
+导入生命周期。实际使用 HOST_CACHED 非一致性内存、非零 Pool 偏移及
+Flush；采样输出、前后邻居、文件不变性与原映射释放后仍存活的检查通过。
+消费端没有第二次图像内存分配，也未调用 Host Image Copy 恢复图像。
+初始内容依据明确的私有 producer GENERAL/FOREIGN 交接合同，不依赖从
+UNDEFINED 转换保留旧字节。Android 直接 ICD 仍明确未启用 VVL。
+
+本机验收记录为 `native-image-app-948d702-mali-v1-root-review.json`。
+原游戏包、模块、六项资源、shader chain 与原私有驱动均经前后校验未改，
+独立应用、临时文件与进程已清理。这证明的是有限图像直接导入机制；尚未
+实现游戏 packaged 8B layout、StorageSize、完整/缩略 mip 表及流式发布协议，
+没有游戏 PSS、带宽、FPS 或散热收益结论。
