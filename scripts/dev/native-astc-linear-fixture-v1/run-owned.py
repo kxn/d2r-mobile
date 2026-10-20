@@ -57,7 +57,7 @@ with zipfile.ZipFile(apk)as z:
  for n,h in m['native_libraries'].items():require(hashlib.sha256(z.read('lib/arm64-v8a/'+n)).hexdigest()==h,'SO identity')
 baseline=json.loads(a.baseline.read_text());require(baseline['serial']==a.serial and baseline['package']==GAME and baseline['game_PID_absent']and baseline['no_device_mutation'],'readonly original baseline');require(sha(a.original_apk)==baseline['APK_sha256'],'exact original APK');inventories=baseline['inventories'];require(len(inventories['files/runtime/modules'])>=28,'original modules bound');expected={}
 for folder,items in inventories.items():
- require(folder.startswith('files/')and '..'not in Path(folder).parts,'baseline folder')
+ require((folder.startswith('files/')or folder in('cache','shared_prefs'))and '..'not in Path(folder).parts,'baseline folder')
  if items is not None:
   require(isinstance(items,dict),'baseline inventory schema')
   for name,h in items.items():require(name.startswith(folder+'/')and '..'not in Path(name).parts and re.fullmatch('[0-9a-f]{64}',h),'baseline file identity');expected[name]=h
