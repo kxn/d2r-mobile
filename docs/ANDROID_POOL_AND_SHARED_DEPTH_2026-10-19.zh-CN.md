@@ -1446,3 +1446,32 @@ Mali 的 single-CSG 驱动已由原官方完整 GFXR prefix 实际验证：确�
 驱动及三流同组后，仍在 API149328／submit186 报 DEVICE_LOST。此候选
 未修复原挂起。完整 MineGraph703db fork 正独立构建；它还改变了 BC
 图像布局和内存类型缓存属性，不能直接用旧 `none` 重放判定其好坏。
+
+### 后续：定义过的 BC 数组与完整 PanVK 的平台入口
+
+`56c91f7` 对上述混合复制增加独立的 decoded RGBA 后备：保留逻辑 NVN
+描述，先在 GPU 上保留目标所有 mip/layer，再写当前复制区域。原有未定义
+存储采用 ASTC 的规则不变。目标必须没有其它已定义别名，且完整逻辑范围
+具有 CPU 版本证明；同值 CPU 写入也会使证明失效。无法正确表达原 BC
+字节的 CPU 读回、原始 Buffer 访问及缓存出口仍明确拒绝，不能返回假数据。
+
+主机 BC→RGBA 的 mip/layer/ROI 像素与负例已通过，独审未发现源码阻断。
+Android canonical 的 1,008 项 producer 输入、1,759 项实际 NDK 依赖与
+六个库已独立核验；原 NSO 已重新加工并执行单独 verify-only。ASTC 的
+真实高通复制及这张 42 层数组仍待验证，不能写成原游戏已修复。后备图像
+的有效 texel 存储约为 BC3 的四倍，迁移期间还短暂保留旧存储，须记入
+批量资源内存对照，不能只统计共享导入节省。
+
+整批资源的驻留实验已接入官方 LLDB 单次只读快照：普通路线结束后，
+读取现有四个全局计数并立即 detach，再取系统 meminfo；不增加 runtime
+计时器、逐帧日志或 payload 扫描。import 地址范围与元数据字节不能冒充
+驻留 RAM，也不能单独与 PSS 相加。工具故障仍走原存档/停止路径，替代
+PID 不会被停止。实际配置已通过离线检查，但尚未获批量游戏验收。
+
+完整 MineGraph703db 已完成 native Android 构建，并在原 Mali APK、原
+full ASTC4、固定 0.60、shared/legacy-copy 均关闭的条件下实际启动原
+ARM64 游戏。首进程 13500 在加载 ICD 时明确失败：应用 namespace 无法
+加载依赖 `libhardware.so`。尚未执行 GPU 渲染，不能将其算作新 PanVK
+GPU 崩溃或 BC 错误。原包、资源、shader、PSO 及目录均恢复，游戏停止。
+下一步仅修正可选 legacy gralloc 探测的平台链接依赖，保留明确的
+unsupported 返回与公开 AHardwareBuffer 路径，不伪造 HAL 成功。
