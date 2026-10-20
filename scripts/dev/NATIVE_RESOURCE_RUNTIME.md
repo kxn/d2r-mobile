@@ -216,3 +216,43 @@ only the new nativeNativeResources setter gets its own fourth argument. An
 oracle request cannot launch game modules. A custom-driver ordinary-UID app
 transaction and the separately reviewed prewrite-gate core are still required
 before executing this fixture on actual noncoherent hardware.
+
+
+## Integrated ordinary-UID candidate (14dae base)
+
+The `native-family-shared-integration-v1` branch composes the native runtime and
+family-v2 oracle with the real b1ea commit/completion prewrite gate, the original
+paired FS write leases, and the current GPU canonical retile implementation.
+`vk_pool_shared_gpu_gate_mode` is a required linked API here, not a weak stand-in
+for commit wiring. Full DMN resources are excluded at both retile preparation
+and eligibility; a declared small tail restores its source layout in the NVN
+Texture and retains the original generic conversion/retile behavior.
+
+A cold `native_resource_fixture_dir` Intent selects the original NativeTests
+entry before any Surface, game UI or game module starts. It requires explicit
+PanVK/shared/async/test=true and game=false. NativeStart and NativeTests retain
+their original signatures. Only the new startup table setter additionally
+retains a fixture validation boolean. Validation defaults to true; the direct
+PanVK ICD ordinary-UID transaction explicitly requests false and records that
+fact, because this loading path cannot compose Android loader layers. Host LVP
+regressions run with the official VVL and synchronization validation instead;
+they do not execute the new private ASTC native path.
+
+`build-android-native-family-fixture.py --inputs DECLARATION.json` packages the
+already built signed host under `com.d2rmobile.nativefamilyfixture`, retaining
+the original Java/JNI Activity name and all six native payload libraries. It
+copies two SHA-bound real ASTC inputs, their already baked native payloads,
+family-v2 tables, and the exact existing shader fixture. These are private local
+artifacts, never committed game assets. `run-panvk-native-family-fixture.py`
+plans by default without calling ADB. Execution additionally requires the
+current production APK/ELF/28-module/6-resource/shaderchain bindings and always
+checks them before and after. Only two fresh owned processes are allowed, one
+per ASTC format, with no retry or unsupported-as-pass fallback. The original
+PID ownership/crash preservation and exact-package cleanup remain in place.
+
+The original NVN oracle verifies every full native mip against standard B2T,
+all mip sample outputs, first Buffer alias writer/gate admission, native B2T/T2T,
+real CPU packaged thumbnail tails and linear B2T into the tail, neighbors,
+Finalize and mapping survival. A reference image exists only for this functional
+comparison, not in the production memory saving. Passing an isolated fixture
+would not prove real-game Builder/streaming acceptance or performance.

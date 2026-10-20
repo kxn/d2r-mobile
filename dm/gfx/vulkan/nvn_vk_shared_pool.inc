@@ -362,13 +362,13 @@ void vk_pool_native_image_use(void *token,uint64_t address,uint64_t bytes,VkPipe
 }
 // The independent prewrite-gate change supplies this startup-frozen query.
 // A scope alone does NOT prove the command commit/completion gate is wired.
-// Old cores can still sample native images; NC writers fail closed there.
-extern int vk_pool_shared_gpu_gate_mode(void) __attribute__((weak));
+// This integrated candidate requires the real commit/completion prewrite gate.
+// The getter reports its cold selected mode; a scope alone is insufficient.
 int vk_pool_native_image_write_ready(void *token) {
   pool *p=token;
   if(!p || !p->shared || !p->backings || p->shared_closing)return 0;
   return (p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ||
-    (vk_pool_shared_gpu_gate_mode && vk_pool_shared_gpu_gate_mode());
+    vk_pool_shared_gpu_gate_mode();
 }
 void vk_pool_native_image_release(void *token) {
   // Destroy is called both with resources held and from completion callbacks.

@@ -359,11 +359,12 @@ static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int shared_guest_heap_startup;
 extern int vk_loader_is_initialized(void);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+static int native_resource_fixture_validation=1;
 static char native_resource_startup_table[4096],native_resource_startup_pack[65],native_resource_startup_producer[65],native_resource_fixture_directory[4096];
 #endif
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeNativeResources(
-    JNIEnv *env,jclass klass,jstring table,jstring pack,jstring producer,jstring fixture) {
-  (void)klass;
+    JNIEnv *env,jclass klass,jstring table,jstring pack,jstring producer,jstring fixture,jboolean validation) {
+  (void)klass;(void)validation;
   pthread_mutex_lock(&operation_mode_mutex);
   if(operation_mode_fixed || vk_loader_is_initialized()) {
     pthread_mutex_unlock(&operation_mode_mutex);
@@ -384,6 +385,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeNativeRe
   }
   if(fixture && (!f || !path || f[0]!='/' || strlen(f)>=sizeof native_resource_fixture_directory))valid=0;
   if(valid) {
+    native_resource_fixture_validation=!!validation;
     snprintf(native_resource_fixture_directory,sizeof native_resource_fixture_directory,"%s",f?f:"");
     snprintf(native_resource_startup_table,sizeof native_resource_startup_table,"%s",path?path:"");
     snprintf(native_resource_startup_pack,sizeof native_resource_startup_pack,"%s",p?p:"");
@@ -883,10 +885,17 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
          (unsigned)getuid(),(unsigned)getpid(),validation_enabled?"requested":"disabled_explicitly",
          validation_enabled?"requested":"disabled_explicitly",legacy_astc_fixture?"true":"false",readback_batch?"true":"false");
   (*env)->ReleaseStringUTFChars(env, directory, path);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(native_resource_fixture_directory[0])printf("{\"native_resource_app_configuration\":true,\"uid\":%u,\"async\":%s,\"game_modules_executed\":false,\"validation\":%s}\n",
+      (unsigned)getuid(),async_submit?"true":"false",native_resource_fixture_validation?"true":"false");
+#endif
   int dm_vulkan_test_main(void);
   int result=dm_vulkan_test_main();
   printf("{\"native_vulkan_app_terminal\":true,\"uid\":%u,\"pid\":%u,\"rc\":%d}\n",
          (unsigned)getuid(),(unsigned)getpid(),result);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(native_resource_fixture_directory[0])printf("{\"native_resource_app_terminal\":true,\"rc\":%d,\"game_modules_executed\":false}\n",result);
+#endif
 }
 
 // Separate owned test selector; never freezes game startup policy or touches
