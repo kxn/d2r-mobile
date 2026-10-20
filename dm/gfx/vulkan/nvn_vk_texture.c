@@ -139,7 +139,8 @@ static void image_shared_alias_remove(image *i) {
   *at=i->shared_alias_next;i->shared_alias_next=NULL;i->shared_alias_linked=0;
 }
 static void image_shared_alias_write(image *i) {
-  if(!vk_pool_shared_mode() || i->shared_alias_linked)return;
+  int shared=vk_pool_shared_active(),legacy=vk_legacy_astc_copy_mode();
+  if((!shared && !legacy) || i->shared_alias_linked)return;
   // Cold first-writer admission only. A later physical alias cannot silently
   // give a propagated array a second, incompatible logical BC3 encoding.
   if(astc_copy_live || i->astc_copy_encoding)for(image *a=shared_gpu_aliases;a;a=a->shared_alias_next)
@@ -148,6 +149,9 @@ static void image_shared_alias_write(image *i) {
       if(y<=x?x-y<a->tex.L.size:y-x<i->tex.L.size)
         die("ASTC propagated image conflicts with another optimal-image writer identity");
     }
+  // Legacy raw guards concern only propagated encodings. Do not turn the
+  // list into a scan of every ordinary render target on every Buffer binding.
+  if(!shared && !i->astc_copy_encoding)return;
   i->shared_alias_linked=1;i->shared_alias_next=shared_gpu_aliases;shared_gpu_aliases=i;
 }
 #endif
@@ -790,8 +794,9 @@ static int shared_image_backing(uint64_t address,uint64_t bytes) {
 // Callers must invoke this before borrowing any image/view/descriptor/temp.
 void vk_texture_cpu_preflight(const tex_t *t) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(vk_pool_shared_mode() && t && t->has_layout && t->mem && t->L.size) {
-    if(!shared_image_backing((uintptr_t)t->mem,t->L.size))
+  if((vk_pool_shared_active() || vk_legacy_astc_copy_mode()) && t && t->has_layout && t->mem && t->L.size) {
+    if(!vk_pool_shared_active() && !nvn_dirty_tracked(t->mem,t->L.size))return; // original untracked/always-upload fallback
+    if(vk_pool_shared_active() && !shared_image_backing((uintptr_t)t->mem,t->L.size))
       die("Shared packaged image requires committed shared-heap backing");
     int read=1;
     for(image *i=image_buckets[t->serial%8192];i;i=i->hash_next)if(i->tex.serial==t->serial) {
@@ -799,7 +804,7 @@ void vk_texture_cpu_preflight(const tex_t *t) {
       read=!i->initialized || !(epoch && i->checked_dirty_epoch==epoch &&
         i->checked_dirty_stamp==i->stamp) && nvn_dirty_since(t->mem,t->L.size,i->stamp);break;
     }
-    if(read && !vk_pool_shared_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
+    if(read && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
       die("Shared packaged image source outside live shared Pool");
   }
 #endif
@@ -963,7 +968,7 @@ static void texture_dirty_mode_begin(void) {
 static __attribute__((noinline)) void image_upload_contents(image *i) {
   const tex_t *t=&i->tex;
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(vk_pool_shared_active() && vk_texture_shared_linear_conflict((uintptr_t)t->mem,t->L.size)) {
+  if((vk_pool_shared_active() || vk_legacy_astc_copy_mode()) && vk_texture_shared_linear_conflict((uintptr_t)t->mem,t->L.size)) {
     image *owner=NULL;
     for(image *a=shared_gpu_aliases;a;a=a->shared_alias_next)
       if(a->initialized && a->tex.mem && a->tex.L.size &&
@@ -979,7 +984,9 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
     i->shared_dirty_scope=nvn_dirty_scope_acquire(t->mem,t->L.size);
     if(!i->shared_dirty_scope)die("Shared image dirty scope admission failed");
   }
-  if(vk_pool_shared_active()) {image_upload_shared_contents(i);return;}
+  if(vk_pool_shared_active() || (vk_legacy_astc_copy_mode() && nvn_dirty_tracked(t->mem,t->L.size))) {
+    image_upload_observed_contents(i);return;
+  }
 #endif
   // Untracked sources are always uploaded; they must not acquire a proof.
   i->checked_dirty_epoch=0;
@@ -1765,12 +1772,17 @@ void vk_texture_shared_source_written(uint64_t address,uint64_t bytes) {
   // The known GPU write publishes page generation/epoch. Every converted
   // image's existing dirty/stamp proof therefore fails before reuse; actual
   // ASTC proof describes old physical bytes until original upload replaces it.
+  if(!vk_pool_shared_active()) {
+    if(vk_legacy_astc_copy_mode())vk_texture_shared_linear_access(address,bytes);
+    return;
+  }
   nvn_dirty_scope_gpu_write((void *)(uintptr_t)address,bytes);
 }
 int vk_texture_shared_linear_conflict(uint64_t address,uint64_t bytes) {
   if(!bytes)return 0;
   if(bytes>UINT64_MAX-address)return 1;
-  for(image *i=shared_gpu_aliases;i;i=i->shared_alias_next)if(i->initialized && i->tex.mem &&
+  for(image *i=shared_gpu_aliases;i;i=i->shared_alias_next)if(i->initialized &&
+      (vk_pool_shared_active() || i->astc_copy_encoding) && i->tex.mem &&
       i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
       address+bytes>(uintptr_t)i->tex.mem)
     return 1;
@@ -1784,7 +1796,7 @@ void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes) {
   // Original mtl_pool_del called finish first; no physical users remain.
   image **at=&images;
   while(*at) {image *i=*at;
-    if(i->tex.mem && i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
+    if((vk_pool_shared_active() || i->astc_copy_encoding) && i->tex.mem && i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
         address+bytes>(uintptr_t)i->tex.mem) {*at=i->next;image_destroy(i);}else at=&i->next;
   }
 }

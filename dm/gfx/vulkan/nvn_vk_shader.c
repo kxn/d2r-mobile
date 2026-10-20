@@ -1025,6 +1025,12 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
       }
       return &zero_constant;
     }
+#ifdef DM_VULKAN_SHARED_POOLS
+    // A historical copied constant is still a semantic read of this NVN
+    // range. Do not bypass a later propagated-encoding refusal on cache HIT.
+    if(vk_legacy_astc_copy_mode() && !vk_pool_shared_active())
+      vk_texture_shared_linear_access(u->addr,u->size);
+#endif
     unsigned bucket = ((u->addr >> 4) ^ (u->addr >> 20) ^ u->size) % 1024;
     for (constant_copy *copy = binding_state->constant_copies[bucket]; copy; copy = copy->next)
       if (copy->address == u->addr && copy->size == u->size &&

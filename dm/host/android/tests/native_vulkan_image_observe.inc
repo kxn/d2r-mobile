@@ -18,9 +18,10 @@ static void VKAPI_PTR observe_copy_after_cpu(VkCommandBuffer command,VkBuffer so
   observe_copy_original(command,source,image,layout,count,copies);
 }
 static void shared_image_cpu_observation_test(void) {
-  size_t size=(4u<<20)+65536;uint8_t *raw=mmap(NULL,size,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+  int legacy=vk_legacy_astc_copy_mode() && !vk_pool_shared_active();
+  size_t size=(4u<<20)+65536;uint8_t *raw=mmap(NULL,size,PROT_READ|PROT_WRITE,(legacy?MAP_PRIVATE:MAP_SHARED)|MAP_ANONYMOUS,-1,0);
   CHECK(raw!=MAP_FAILED);uint8_t *data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
-  vk_test_shared_image_backing(data,4u<<20);
+  if(!legacy)vk_test_shared_image_backing(data,4u<<20);
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,65536);
   CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
@@ -61,6 +62,7 @@ static void shared_image_cpu_observation_test(void) {
     CHECK(vk_texture_test_bc_decoded(t)==1);
   }
   vk_texture_test_force_bc_decode(0);CALL(nvnTextureFinalize,&texture);CALL(nvnMemoryPoolFinalize,&pool);
-  vk_test_shared_image_backing(NULL,0);CHECK(!munmap(raw,size));CHECK(!vk_validation_error_count());
-  printf("{\"test_details\":\"shared-image-CPU-observation\",\"paired_pread_after_CPU_capture\":true,\"first_GPU_snapshot_old\":true,\"next_GPU_upload_new\":true,\"clean_sample_no_upload\":true,\"original_BC_CPU_decode_protected\":true}\n");
+  if(!legacy)vk_test_shared_image_backing(NULL,0);
+  CHECK(!munmap(raw,size));CHECK(!vk_validation_error_count());
+  printf("{\"test_details\":\"%s\",\"paired_pread_after_CPU_capture\":true,\"first_GPU_snapshot_old\":true,\"next_GPU_upload_new\":true,\"clean_sample_no_upload\":true,\"original_BC_CPU_decode_protected\":true}\n",legacy?"legacy-image-CPU-observation":"shared-image-CPU-observation");
 }

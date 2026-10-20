@@ -8,6 +8,7 @@ typedef struct {
   nvn_dirty_scope *scope;
 #endif
   uint64_t stamp;
+  int legacy;
 } astc_copy_observation;
 static VkFormat astc_copy_format(int logical) {
   if(logical==0x44)return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
@@ -54,15 +55,29 @@ static void astc_copy_observation_release(astc_copy_observation *o) {
 #endif
   memset(o,0,sizeof *o);
 }
+static int astc_copy_legacy_envelope(const tex_t *t) {
+  uint64_t page=(uint64_t)getpagesize();
+  return t && t->mem && t->L.size && !((uintptr_t)t->mem&(page-1)) &&
+      !(t->L.size&(page-1)) && nvn_dirty_tracked(t->mem,t->L.size);
+}
 static astc_copy_observation image_astc_copy_preflight(const p_copy_t2t *p) {
   astc_copy_observation o={0};
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(!vk_pool_shared_active() || !astc_copy_target(p->src) || !astc_copy_target(p->dst) ||
+  if((!vk_pool_shared_active() && !vk_legacy_astc_copy_mode()) || !astc_copy_target(p->src) || !astc_copy_target(p->dst) ||
       !astc_copy_format(p->dst->d.format) || p->dst->has_layout || !p->dst->mem || !p->dst->L.size)
     return o;
   image *s=astc_copy_find(p->src),*d=astc_copy_find(p->dst);
   VkFormat source=s?s->format:vk_nvn_format(p->src->d.format);
   if(source!=astc_copy_format(p->dst->d.format) || (d && (d->astc_copy_encoding || d->initialized)))return o;
+  if(!vk_pool_shared_active()) {
+    // A page-level dirty event must describe this entire logical destination,
+    // never an unrelated neighbor. Do not invent CPU_NO_ACCESS provenance.
+    if(!astc_copy_legacy_envelope(p->dst) ||
+        !vk_pool_cpu_observe_prepare((uintptr_t)p->dst->mem,p->dst->L.size))return o;
+    vk_shared_cpu_observation phase;
+    if(!vk_pool_cpu_observe_begin((uintptr_t)p->dst->mem,p->dst->L.size,&phase))return o;
+    o.stamp=phase.stamp;o.legacy=1;vk_pool_cpu_observe_end(&phase);return o;
+  }
   // No new Pool materialization/pin is justified merely by this observation.
   // The existing startup provenance and already-imported identity are required.
   if(!shared_image_backing((uintptr_t)p->dst->mem,p->dst->L.size) ||
@@ -132,7 +147,8 @@ static int astc_copy_fresh(const image *d) {
 }
 static void image_astc_copy_propagate(image *s,image *d,const p_copy_t2t *p,astc_copy_observation *o) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(!vk_pool_shared_active()) {astc_copy_observation_release(o);return;}
+  int legacy=!vk_pool_shared_active() && vk_legacy_astc_copy_mode();
+  if(!vk_pool_shared_active() && !legacy) {astc_copy_observation_release(o);return;}
 #else
   // In particular preserve the original legacy ASTC -> decoded RGBA8 blit.
   astc_copy_observation_release(o);return;
@@ -143,21 +159,36 @@ static void image_astc_copy_propagate(image *s,image *d,const p_copy_t2t *p,astc
     astc_copy_observation_release(o);return;
   }
   VkFormat format=astc_copy_format(d->tex.d.format);
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(legacy && (!d->decoded || d->format!=(format==VK_FORMAT_ASTC_4x4_SRGB_BLOCK?
+      VK_FORMAT_R8G8B8A8_SRGB:VK_FORMAT_R8G8B8A8_UNORM))) {
+    astc_copy_observation_release(o);return;
+  }
+#endif
   if(!format || s->format!=format || s==d) {astc_copy_observation_release(o);return;}
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(!o->scope || !o->stamp || !astc_copy_fresh(d) || !astc_copy_region(s,d,p))
+  if(!(o->scope || (legacy && o->legacy)) || !o->stamp || !astc_copy_fresh(d) || !astc_copy_region(s,d,p)) {
+    if(legacy){astc_copy_observation_release(o);return;}
     die("ASTC resource-copy destination has no undefined-storage/CPU-version proof");
+  }
   // End/replay before the final eligibility check, without holding a view or
   // descriptor across it. A nested draw may have defined the destination.
   vk_mip_clear_drain();vk_render_end();
-  if(!astc_copy_fresh(d) || nvn_dirty_since(d->tex.mem,d->tex.L.size,o->stamp))
+  if(!astc_copy_fresh(d) || nvn_dirty_since(d->tex.mem,d->tex.L.size,o->stamp)) {
+    if(legacy){astc_copy_observation_release(o);return;}
     die("ASTC resource-copy destination changed during physical replacement");
+  }
   VkImageFormatProperties supported;
   VkResult valid=vkGetPhysicalDeviceImageFormatProperties(V.physical,format,d->description.imageType,
       d->description.tiling,d->description.usage,d->description.flags,&supported);
   if(valid!=VK_SUCCESS || d->extent.width>supported.maxExtent.width || d->extent.height>supported.maxExtent.height ||
       d->layers>supported.maxArrayLayers || d->levels>supported.maxMipLevels)
-    die("ASTC resource-copy physical image unsupported");
+    {if(legacy){astc_copy_observation_release(o);return;}die("ASTC resource-copy physical image unsupported");}
+  // Register the exact CPU-escape refusal BEFORE changing the physical
+  // encoding. Capacity/OOM leaves the original undefined RGBA image intact.
+  if(legacy && !vk_pool_legacy_encoding_guard_add((uintptr_t)d->tex.mem,d->tex.L.size)) {
+    astc_copy_observation_release(o);return;
+  }
   image *old=malloc(sizeof *old);if(!old)die("ASTC resource-copy physical retirement allocation");
   *old=*d;image_recipes_changed();image_binding_replaced(d,old);
   d->views=NULL;d->format=format;d->description.format=format;d->decoded=0;d->bpp=16;
@@ -216,8 +247,12 @@ unsigned vk_texture_test_astc_copy_policy(void *owned,size_t bytes) {
   free(d.access);
   // The real original tracker must reject any CPU publication, including an
   // unchanged byte. No memcmp/hash can turn equal bytes into an authority proof.
-  nvn_dirty_scope *scope=nvn_dirty_scope_acquire(owned,4096);ASTC_POLICY(scope!=NULL);
-  nvn_dirty_scope *other=nvn_dirty_scope_acquire((uint8_t *)owned+4096,4096);ASTC_POLICY(other!=NULL);
+  int legacy=vk_legacy_astc_copy_mode() && !vk_pool_shared_active();
+  nvn_dirty_scope *scope=NULL,*other=NULL;
+  if(legacy)nvn_dirty_add_range(owned,8192);
+  else {scope=nvn_dirty_scope_acquire(owned,4096);other=nvn_dirty_scope_acquire((uint8_t *)owned+4096,4096);}
+  ASTC_POLICY(legacy?nvn_dirty_tracked(owned,8192):scope!=NULL);
+  ASTC_POLICY(legacy?nvn_dirty_tracked((uint8_t *)owned+4096,4096):other!=NULL);
   nvn_dirty_protect(owned,8192);d.astc_copy_encoding=1;d.astc_copy_stamp=nvn_dirty_now();
   ASTC_POLICY(image_astc_copy_unchanged(&d));
   dm_guest_write_prepare((uint8_t *)owned+4096,1);((volatile uint8_t *)owned)[4096]=0x71;
@@ -229,7 +264,24 @@ unsigned vk_texture_test_astc_copy_policy(void *owned,size_t bytes) {
   ASTC_POLICY(image_astc_copy_unchanged(&d));
   *(volatile uint8_t *)owned=before;ASTC_POLICY(!image_astc_copy_unchanged(&d)); // original signal hook
   if(negative && !strcmp(negative,"fault"))image_astc_copy_check(&d);
-  nvn_dirty_scope_release(scope);nvn_dirty_scope_release(other);
+  if(legacy) {
+    // Raw guards must remain independent of shared-only Pool resolution. This
+    // is a metadata refusal oracle, not a fake ASTC-capable VkImage workload.
+    ASTC_POLICY(astc_copy_legacy_envelope(&d.tex));
+    d.tex.mem++;ASTC_POLICY(!astc_copy_legacy_envelope(&d.tex));d.tex.mem--;
+    d.tex.L.size--;ASTC_POLICY(!astc_copy_legacy_envelope(&d.tex));d.tex.L.size++;
+    image *aliases=shared_gpu_aliases;d.initialized=1;d.shared_alias_next=aliases;shared_gpu_aliases=&d;astc_copy_live++;
+    mtl_sub_begin();uint32_t unchanged=0x12345678;
+    ASTC_POLICY(vk_pool_try_read((uintptr_t)owned,4,&unchanged)==0 && unchanged==0x12345678);
+    for(unsigned ref=0;ref<2;ref++) {vk_cover_wait_reference(ref);ASTC_POLICY(!vk_cover_read((uintptr_t)owned,4,&unchanged)&&unchanged==0x12345678);}
+    vk_cover_wait_reference(0);
+    if(negative && !strcmp(negative,"required-linear"))vk_pool_read((uintptr_t)owned,4,&unchanged);
+    if(negative && !strcmp(negative,"gpu-linear")) {vk_buffer *raw;uint64_t off;vk_pool_address_stage((uintptr_t)owned,4,(void **)&raw,&off,VK_PIPELINE_STAGE_TRANSFER_BIT);}
+    if(negative && !strcmp(negative,"gpu-writer"))vk_texture_shared_source_written((uintptr_t)owned,4);
+    if(negative && !strcmp(negative,"writer-alias")){image w=d;w.astc_copy_encoding=0;w.shared_alias_linked=0;image_shared_alias_write(&w);}
+    shared_gpu_aliases=aliases;astc_copy_live--;vk_internal_wait(vk_internal_commit());
+    nvn_dirty_remove_range(owned);
+  } else {nvn_dirty_scope_release(scope);nvn_dirty_scope_release(other);}
   ASTC_POLICY(!image_astc_copy_unchanged(&d)); // unknown/lifetime cannot be cached as clean
   if(negative && !strcmp(negative,"lifetime"))image_astc_copy_check(&d);
 #undef ASTC_POLICY

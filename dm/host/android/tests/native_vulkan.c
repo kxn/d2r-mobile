@@ -687,6 +687,9 @@ static void fixed_shared_buffer_test(void) {
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE"))vk_legacy_astc_copy_startup(1);
+#endif
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
     extern void nvn_test_idle_trim_cold_poll(void);
     CHECK(!V.device);dm_gfx_trim_memory_request();
@@ -780,6 +783,12 @@ int dm_vulkan_test_main(void) {
     printf("{\"test\":\"fixed-shared-cold-policy\",\"mode\":\"%s\",\"window_bytes\":%llu,\"mirror\":%d,\"defer\":%d,\"checks\":%u,\"result\":\"passed\"}\n",expected,
         (unsigned long long)V.options.pool_window_bytes,V.options.pool_mirror_reference,V.options.pool_defer_publication,checks);
     return 0;
+  }
+  if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE")) {
+    CHECK(!vk_pool_shared_mode() && vk_legacy_astc_copy_mode());
+    legacy_astc_cpu_escape_test();astc_copy_encoding_test();shared_image_cpu_observation_test();
+    int astc_gpu=V.features.textureCompressionASTC_LDR && V.props.deviceType!=VK_PHYSICAL_DEVICE_TYPE_CPU;
+    printf("{\"test\":\"legacy-ASTC-copy-encoding\",\"checks\":%u,\"result\":\"%s\",\"actual_ASTC_GPU\":%s,\"CPU_phase_result\":\"passed\",\"game_modules_executed\":false}\n",checks,astc_gpu?"passed":"unsupported",astc_gpu?"true":"false");return 0;
   }
   if(getenv("DM_SHARED_IMAGE_NC_GATE_FIXTURE"))return shared_image_nc_gate_test();
   if(getenv("DM_SHARED_IMAGE_DIRTY_FIXTURE")) {shared_image_dirty_test();return 0;}

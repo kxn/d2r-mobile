@@ -8,11 +8,22 @@ int vk_pool_cpu_unknown(uint64_t address,uint64_t size) {
   pthread_mutex_unlock(&V.resources);return unknown;
 }
 uint64_t mtl_pool_cpu_access_needed(uint64_t address,uint64_t size,uint64_t *begin,uint64_t *bytes) {
-  if(!atomic_load_explicit(&pool_defer_publication_enabled,memory_order_acquire) || !size)return 0;
+  int deferred=atomic_load_explicit(&pool_defer_publication_enabled,memory_order_acquire);
+  int encoding=0;
+#ifdef DM_VULKAN_SHARED_POOLS
+  encoding=legacy_encoding_maybe(address,size);
+#endif
+  if((!deferred && !encoding) || !size)return 0;
   if(size>UINT64_MAX-address)die("Vulkan CPU exposure address overflow");
   uint64_t end=address+size,identity=0,best=UINT64_MAX,length=0;
   pthread_mutex_lock(&V.resources);
-  for(pool *p=pools;p;p=p->next)if(pool_publication_candidate(p)) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(encoding)for(pool *p=pools;p;p=p->next)for(legacy_encoding_range *g=p->encoding_guards;g;g=g->next) {
+    uint64_t lo=address>g->begin?address:g->begin,hi=end<g->end?end:g->end;
+    if(lo<hi && lo<best){identity=p->identity;best=lo;length=hi-lo;}
+  }
+#endif
+  for(pool *p=pools;deferred && p;p=p->next)if(pool_publication_candidate(p)) {
     uint64_t base=(uintptr_t)p->guest,lo=address>base?address:base;
     uint64_t hi=end<base+p->size?end:base+p->size;
     if(lo>=hi || lo>=best)continue;
@@ -46,6 +57,16 @@ void mtl_pool_defer_publication_disable(void) {
   V.options.pool_defer_publication=0;
 }
 static int pool_cpu_prepare_identity(uint64_t address,uint64_t size,uint64_t expected) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(legacy_encoding_maybe(address,size)) {
+    pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);
+    if(expected && (!p || p->identity!=expected)){pthread_mutex_unlock(&V.resources);return -1;}
+    for(pool *v=pools;v;v=v->next)for(legacy_encoding_range *g=v->encoding_guards;g;g=g->next)
+      if(range_overlap(address,size,g->begin,g->end-g->begin))
+        die("ASTC propagated storage cannot supply CPU exposure of logical BC3 bytes");
+    pthread_mutex_unlock(&V.resources);
+  }
+#endif
   if(!V.options.pool_defer_publication || !size)return 0;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);
   if(!p || (expected && p->identity!=expected)) {

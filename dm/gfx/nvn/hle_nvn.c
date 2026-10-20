@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 extern int vk_pool_shared_mode(void);
+extern int vk_legacy_astc_copy_mode(void);
 extern void vk_pool_shared_publish(uint64_t,size_t,int);
 static void x_shared_close(const void *);
 static void x_shared_cache(uint64_t,size_t,int);
@@ -238,7 +239,16 @@ NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBu
 }
 NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) {
 #ifdef DM_VULKAN_SHARED_POOLS
-    if(vk_pool_shared_mode()) {if(((pool_t *)p)->mem)x_shared_close(((pool_t *)p)->mem);((pool_t *)p)->magic=0;return;}
+    int shared=vk_pool_shared_mode();
+    if(shared || vk_legacy_astc_copy_mode()) {
+        if(((pool_t *)p)->mem) {
+            // Reuse the existing owner FIFO close/finish. Legacy tracker must
+            // outlive all queued texture uses, then retire its original pages.
+            x_shared_close(((pool_t *)p)->mem);
+            if(!shared)nvn_dirty_remove_range(((pool_t *)p)->mem);
+        }
+        ((pool_t *)p)->magic=0;return;
+    }
 #endif
     if (((pool_t *)p)->mem) { x_cpu_exposure((uintptr_t)((pool_t *)p)->mem,((pool_t *)p)->size); nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
 NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
@@ -251,9 +261,11 @@ NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, 
 }
 #ifdef DM_VULKAN_SHARED_POOLS
 NVN(nvnMemoryPoolInvalidateMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
-    if(!vk_pool_shared_mode()) {LOG("【红】MemoryPoolInvalidateMappedRange legacy unsupported");return;}
+    int shared=vk_pool_shared_mode();
     const pool_t *pool=(const pool_t *)p;
+    if(!shared && !vk_legacy_astc_copy_mode()) {LOG("【红】MemoryPoolInvalidateMappedRange legacy unsupported");return;}
     if(off<0 || (uint64_t)off>pool->size || n>pool->size-(uint64_t)off)die("Shared NVN mapped invalidate range");
+    if(!shared) {if(n)x_cpu_exposure((uintptr_t)pool->mem+(uint64_t)off,n);return;}
     if(n)x_shared_cache((uintptr_t)pool->mem+(uint64_t)off,n,1);
 }
 #endif
@@ -439,7 +451,11 @@ static void read_texels(const tex_t *o, const view_t *v, const NVNcopyRegion *r,
     if (!img) img = row * hb;
     unsigned level = v && v->set_levels ? (unsigned)v->base_level : 0, layer0 = v && v->set_layers ? (unsigned)v->min_layer : 0;
     int defer=mtl_pool_defer_publication_mode();
-    if(defer || mtl_pool_shared_mode()) {
+    int observed=mtl_pool_shared_mode();
+#ifdef DM_VULKAN_SHARED_POOLS
+    observed|=vk_legacy_astc_copy_mode();
+#endif
+    if(defer || observed) {
         if(r->depth<0 || !hb || !wb || row<0 || img<0)die("NVN CPU readback exposure footprint");
         uint64_t slices=r->depth>0?(uint64_t)(r->depth-1):0,a=(uint64_t)img,b=(uint64_t)row;
         if((slices && a>UINT64_MAX/slices) || b>UINT64_MAX/(hb-1?hb-1:1))die("NVN CPU readback exposure overflow");
@@ -559,7 +575,12 @@ NVN(nvnEventInitialize, NVNboolean, NVNevent *e, const NVNeventBuilder *b) {
     *(ev_t *)e = (ev_t){MAGIC('E', 'V', 'N', 'T'), (volatile uint32_t *)(s->pool->mem + s->off)}; return 1;
 }
 NVN(nvnEventFinalize, void, NVNevent *e) { ((ev_t *)e)->magic = 0; }
-NVN(nvnEventGetValue, uint32_t, const NVNevent *e) { return *((const ev_t *)e)->val; }
+NVN(nvnEventGetValue, uint32_t, const NVNevent *e) {
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(vk_legacy_astc_copy_mode())x_cpu_exposure((uintptr_t)((const ev_t *)e)->val,sizeof(uint32_t));
+#endif
+    return *((const ev_t *)e)->val;
+}
 static void ev_signal(const ev_t *e, int mode, uint32_t v) { if (mode == NVN_EVENT_SIGNAL_MODE_ADD) *e->val += v; else *e->val = v; }
 NVN(nvnEventSignal, void, NVNevent *e, NVNeventSignalMode m, uint32_t v) { ev_signal((const ev_t *)e, m, v); }
 

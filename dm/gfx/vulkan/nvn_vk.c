@@ -31,6 +31,7 @@ typedef struct pool_backing_span {
   uint64_t begin,end,generation;
   vk_buffer buffer;
 } pool_backing_span;
+typedef struct legacy_encoding_range {struct legacy_encoding_range *next;uint64_t begin,end;} legacy_encoding_range;
 typedef struct pool {
   struct pool *next;
   uint8_t *guest, *shadow;
@@ -60,6 +61,9 @@ typedef struct pool {
   int shared,shared_closing;
 #endif
   pool_cpu_authority *cpu_authority;
+#ifdef DM_VULKAN_SHARED_POOLS
+  legacy_encoding_range *encoding_guards; // exact CPU-escape exclusions, retained until Pool close
+#endif
   // Original NVN intent only; never interpreted as VkMemoryPropertyFlags.
   // Known zero flags and unknown legacy callers remain distinguishable.
   uint32_t nvn_flags;
@@ -69,6 +73,10 @@ typedef struct pool {
 } pool;
 #ifdef DM_VULKAN_SHARED_POOLS
 static int shared_requested,shared_active,shared_extension,shared_gpu_gate_phase,shared_cpu_observe_phase;
+static int legacy_astc_copy_fixed,legacy_astc_copy_requested,legacy_astc_copy_enabled;
+enum { LEGACY_ENCODING_GUARD_LIMIT=256 };
+static _Atomic unsigned legacy_encoding_guard_count;
+static _Atomic uint64_t legacy_encoding_low=UINT64_MAX,legacy_encoding_high;
 static uint64_t shared_alignment;
 #ifdef DM_VULKAN_TEST_EMBED
 static int shared_gpu_gate_force;
@@ -1708,6 +1716,51 @@ int vk_pool_shared_destination(uint64_t address,uint64_t size) {
   (void)address;(void)size;return 0;
 #endif
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+int vk_legacy_astc_copy_mode(void) {return legacy_astc_copy_enabled;}
+void vk_legacy_astc_copy_startup(int enabled) {
+  enabled=!!enabled;
+  if(legacy_astc_copy_fixed) {if(enabled!=legacy_astc_copy_requested)die("Legacy ASTC copy is startup-only");return;}
+  if(V.device || pools)die("Legacy ASTC copy selected after Vulkan/Pool startup");
+  legacy_astc_copy_requested=enabled;
+  if(enabled) {
+    extern int dm_gfx_shared_owner_ready(void);
+    if(!dm_gfx_shared_owner_ready()) {
+      LOG("Legacy ASTC copy unsupported: dedicated translation owner unavailable; original RGBA policy retained");
+      enabled=0;
+    } else if(!nvn_dirty_cpu_observation_enable()) {
+      LOG("Legacy ASTC copy unsupported: CPU observation unavailable; original RGBA policy retained");
+      enabled=0;
+    }
+  }
+  legacy_astc_copy_enabled=enabled;legacy_astc_copy_fixed=1;
+}
+#endif
+#ifdef DM_VULKAN_SHARED_POOLS
+static int legacy_encoding_maybe(uint64_t address,uint64_t bytes) {
+  if(!legacy_astc_copy_enabled || shared_active || !bytes ||
+      !atomic_load_explicit(&legacy_encoding_guard_count,memory_order_acquire))return 0;
+  if(bytes>UINT64_MAX-address)return 1;
+  return address<atomic_load_explicit(&legacy_encoding_high,memory_order_acquire) &&
+      address+bytes>atomic_load_explicit(&legacy_encoding_low,memory_order_acquire);
+}
+int vk_pool_legacy_encoding_guard_add(uint64_t address,uint64_t bytes) {
+  if(!legacy_astc_copy_enabled || shared_active || !bytes || bytes>UINT64_MAX-address)return 0;
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || p->shared_closing || atomic_load(&legacy_encoding_guard_count)>=LEGACY_ENCODING_GUARD_LIMIT) {
+    pthread_mutex_unlock(&V.resources);return 0;
+  }
+  for(legacy_encoding_range *g=p->encoding_guards;g;g=g->next)
+    if(range_overlap(address,bytes,g->begin,g->end-g->begin)){pthread_mutex_unlock(&V.resources);return 0;}
+  legacy_encoding_range *g=malloc(sizeof *g);
+  if(!g){pthread_mutex_unlock(&V.resources);return 0;}
+  *g=(legacy_encoding_range){.next=p->encoding_guards,.begin=address,.end=address+bytes};p->encoding_guards=g;
+  if(address<atomic_load(&legacy_encoding_low))atomic_store_explicit(&legacy_encoding_low,address,memory_order_release);
+  if(address+bytes>atomic_load(&legacy_encoding_high))atomic_store_explicit(&legacy_encoding_high,address+bytes,memory_order_release);
+  atomic_fetch_add_explicit(&legacy_encoding_guard_count,1,memory_order_release);
+  pthread_mutex_unlock(&V.resources);return 1;
+}
+#endif
 void mtl_pool_add(const void *mem, uint64_t size) { pool_add_metadata(mem,size,0,0); }
 void mtl_pool_add_flags(const void *mem, uint64_t size, int flags) {
   pool_add_metadata(mem,size,(uint32_t)flags,1);
@@ -1734,7 +1787,7 @@ void mtl_pool_del(const void *mem) {
 #endif
   mtl_finish();
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_active) {pthread_mutex_lock(&V.resources);pool *closing=pool_find((uintptr_t)mem,1);
+  if(shared_active || legacy_astc_copy_enabled) {pthread_mutex_lock(&V.resources);pool *closing=pool_find((uintptr_t)mem,1);
     uint64_t size=closing?closing->size:0;pthread_mutex_unlock(&V.resources);
     if(size)vk_texture_shared_pool_close((uintptr_t)mem,size);}
 #endif
@@ -1753,6 +1806,10 @@ void mtl_pool_del(const void *mem) {
     die("Vulkan pool registry epoch overflow");
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
   pool_spans_destroy(p);
+#ifdef DM_VULKAN_SHARED_POOLS
+  while(p->encoding_guards) {legacy_encoding_range *g=p->encoding_guards;p->encoding_guards=g->next;
+    atomic_fetch_sub_explicit(&legacy_encoding_guard_count,1,memory_order_release);free(g);}
+#endif
   free(p->cpu_exposure);
   free(p->cpu_authority);
   free(p->shadow);
@@ -1833,7 +1890,7 @@ int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset) {
 static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents) {
   vk_mip_clear_buffer_access(addr,len);
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_active)vk_texture_shared_linear_access(addr,len);
+  if(shared_active || legacy_astc_copy_enabled)vk_texture_shared_linear_access(addr,len);
 #endif
   // Admission is checked by the same exact physical resolution used below,
   // before initialization may copy CPU bytes into any backing. A missing
@@ -1950,7 +2007,7 @@ static int pool_read(uint64_t address,size_t size,void *out,int optional) {
   atomic_fetch_add(&sync_cpu_reads,1);
   if (!V.cmd || !size || !out) return -1;
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_active && vk_texture_shared_linear_conflict(address,size)) {
+  if((shared_active || legacy_astc_copy_enabled) && vk_texture_shared_linear_conflict(address,size)) {
     if(optional)return -1;
     vk_texture_shared_linear_access(address,size);
   }
@@ -1991,7 +2048,7 @@ int vk_pool_try_read(uint64_t address,size_t size,void *out) {
   // Optional CPU proofs cannot read stale linear storage for a GPU-owned
   // optimal image. Decline the proof, preserving its original GPU fallback.
   // The immutable mode check adds no initialization or environment lookup.
-  if(shared_active && vk_texture_shared_linear_conflict(address,size))return 0;
+  if((shared_active || legacy_astc_copy_enabled) && vk_texture_shared_linear_conflict(address,size))return 0;
 #endif
   // Single recording owner: no later submission can be enqueued concurrently.
   // Completion only removes hazards, so a negative pending check stays safe.
@@ -2005,7 +2062,7 @@ int vk_pool_try_read(uint64_t address,size_t size,void *out) {
 }
 int vk_cover_read(uint64_t address,size_t size,void *out) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_active && vk_texture_shared_linear_conflict(address,size))return 0;
+  if((shared_active || legacy_astc_copy_enabled) && vk_texture_shared_linear_conflict(address,size))return 0;
 #endif
   int reference=atomic_load(&cover_wait_reference);
   if(reference<0) {
@@ -2182,6 +2239,9 @@ static VkPipelineStageFlags buffer_read_producers(uint64_t address,uint64_t size
   return producers;
 }
 void vk_buffer_shader_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(legacy_astc_copy_enabled && !shared_active)vk_texture_shared_linear_access(address,size);
+#endif
   vk_mip_clear_buffer_access(address,size);
   if(!buffer_stage_pending(address,size,stages)) return;
   VkPipelineStageFlags known=VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -2306,7 +2366,7 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
 }
 void vk_buffer_transfer_written_range(uint64_t address,uint64_t size) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_active)vk_texture_shared_source_written(address,size);
+  if(shared_active || legacy_astc_copy_enabled)vk_texture_shared_source_written(address,size);
 #endif
   if(recording_resources->submission_barrier_reference) {
     pool *owner=buffer_recording_owner(address,size);
@@ -2316,7 +2376,7 @@ void vk_buffer_transfer_written_range(uint64_t address,uint64_t size) {
 }
 void vk_buffer_shader_written(uint64_t address,uint64_t size,VkPipelineStageFlags stages) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_active)vk_texture_shared_source_written(address,size);
+  if(shared_active || legacy_astc_copy_enabled)vk_texture_shared_source_written(address,size);
 #endif
   vertex_buffer_produced(address,size,stages);
 }
@@ -2330,6 +2390,10 @@ static void buffer_access_dependencies(const vk_buffer_use *uses,unsigned count,
   // All dispatch inputs/outputs have been collected. Completing the prior
   // pass can replay original UI draws; inspect histories only afterwards.
   vk_render_end();
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(legacy_astc_copy_enabled && !shared_active)for(unsigned k=0;k<count;k++)
+    vk_texture_shared_linear_access(uses[k].address,uses[k].size);
+#endif
   if(conservative || vertex_buffer_write_overflow || recording_resources->submission_barrier_reference) {
     if(destination==VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT) vk_compute_barrier();
     else vk_transfer_barrier();
@@ -3173,6 +3237,35 @@ void vk_test_shared_prearm_host_phase(uint64_t address,uint64_t bytes,int whole_
   shared_access_host_phase(p,address-(uintptr_t)p->guest,bytes,whole_host_page,1);
 }
 #endif
+int vk_pool_cpu_observe_mode(void) {return shared_cpu_observe_phase || legacy_astc_copy_enabled;}
+int vk_pool_cpu_observe_prepare(uint64_t address,uint64_t bytes) {
+  if(shared_active)return vk_pool_shared_cpu_observe_prepare(address,bytes);
+  if(!legacy_astc_copy_enabled || !bytes || !nvn_dirty_tracked((void *)(uintptr_t)address,bytes))return 0;
+  uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || p->shared_closing){pthread_mutex_unlock(&V.resources);return 0;}
+  p->references++;pthread_mutex_unlock(&V.resources);
+  // Private GPU Buffers do not alias CPU pages. Only real CPU effects/WB need
+  // to finish before protection; a private GPU reader does not cause a wait.
+  if(recording_cpu_write(first,length)){vk_internal_wait(vk_internal_commit());mtl_sub_begin();}
+  uint64_t serial=pending_cpu_write(first,length);if(serial)vk_internal_wait(serial);
+  pthread_mutex_lock(&V.resources);
+  int ok=p==pool_find(address,bytes) && !p->shared_closing && nvn_dirty_tracked((void *)(uintptr_t)address,bytes);
+  p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);return ok;
+}
+int vk_pool_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_cpu_observation *token) {
+  if(shared_active)return vk_pool_shared_cpu_observe_begin(address,bytes,token);
+  if(!legacy_astc_copy_enabled || !bytes)return 0;
+  uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
+  if(recording_cpu_write(first,length) || pending_cpu_write(first,length))return 0;
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || p->shared_closing){pthread_mutex_unlock(&V.resources);return 0;}
+  p->references++;pthread_mutex_unlock(&V.resources);
+  uint64_t stamp=0;nvn_dirty_gpu_gate *gate=nvn_dirty_cpu_observation_begin((void *)(uintptr_t)address,bytes,&stamp);
+  if(!gate){pthread_mutex_lock(&V.resources);p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);return 0;}
+  *token=(vk_shared_cpu_observation){.owner=p,.gate=gate,.stamp=stamp};return 1;
+}
+void vk_pool_cpu_observe_end(vk_shared_cpu_observation *token) {vk_pool_shared_cpu_observe_end(token);}
 static void shared_arm_prewrite(submit_resources *r) {
   if(!shared_gpu_gate_phase)return;
   size_t count=0;

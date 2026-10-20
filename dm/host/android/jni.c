@@ -370,6 +370,18 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedGu
   shared_guest_heap_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
+static int legacy_astc_startup,legacy_astc_fixture,legacy_astc_configured;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeLegacyAstcCopy(
+    JNIEnv *env,jclass klass,jboolean enabled,jboolean fixture) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed || (legacy_astc_configured &&
+      (legacy_astc_startup!=(enabled!=0) || legacy_astc_fixture!=(fixture!=0)))) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"legacy_astc_copy is fixed before native startup");return;
+  }
+  legacy_astc_configured=1;legacy_astc_startup=enabled!=0;legacy_astc_fixture=fixture!=0;pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int upload_dual_startup;
 static int astc_decode_startup,astc_decode_fixture;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAstcDecode(
@@ -539,6 +551,12 @@ static void *game_thread(void *unused) {
   char *args[] = {"dmhost_android", path, "--run", NULL};
   // Opt-in only. Paths, log, provider and Surface have already been selected;
   // freeze the SAME device before any loader/SDK/SVC can publish a guest heap.
+#ifdef DM_VULKAN_SHARED_POOLS
+  extern void vk_legacy_astc_copy_startup(int);
+  if(legacy_astc_startup)vk_legacy_astc_copy_startup(1);
+#else
+  if(legacy_astc_startup)die("Legacy ASTC copy experiment not compiled");
+#endif
   const char *shared_heap = getenv("DM_GUEST_HEAP_SHARED");
   if (shared_heap && strcmp(shared_heap,"0") && strcmp(shared_heap,"1"))
     die("DM_GUEST_HEAP_SHARED must be 0 or 1");
@@ -752,6 +770,13 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   if(setenv("DM_VULKAN_ASTC_DECODE_UNORM8",astc_decode_startup?"1":"0",1) ||
       (astc_decode_fixture?setenv("DM_ASTC_DECODE_FIXTURE","1",1):unsetenv("DM_ASTC_DECODE_FIXTURE")))
     die("Android ASTC fixture startup environment");
+#ifdef DM_VULKAN_SHARED_POOLS
+  extern void vk_legacy_astc_copy_startup(int);
+  if(legacy_astc_startup || legacy_astc_fixture)vk_legacy_astc_copy_startup(1);
+  if(legacy_astc_fixture && setenv("DM_LEGACY_ASTC_COPY_FIXTURE","1",1))die("Legacy ASTC fixture selection");
+#else
+  if(legacy_astc_startup || legacy_astc_fixture)die("Legacy ASTC experiment not compiled");
+#endif
   if (async_submit) setenv("DM_VULKAN_ASYNC", "1", 1);
   if (acquire_scope) setenv("DM_VULKAN_ACQUIRE_TEST", "1", 1);
   if (memory_only) setenv("DM_VULKAN_MEMORY_TEST", "1", 1);

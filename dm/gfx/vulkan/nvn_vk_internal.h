@@ -390,6 +390,13 @@ int vk_pool_shared_observe_protect(uint64_t address,uint64_t bytes,uint64_t *sta
 // proof and waits original FS leases/PG_BUSY, with no Vulkan or renderer call.
 // Retain scope and storage; end leaves RO and never advances captured stamp.
 typedef struct {void *owner,*gate;uint64_t stamp;} vk_shared_cpu_observation;
+int vk_legacy_astc_copy_mode(void);
+void vk_legacy_astc_copy_startup(int enabled);
+int vk_pool_legacy_encoding_guard_add(uint64_t address,uint64_t bytes);
+int vk_pool_cpu_observe_mode(void);
+int vk_pool_cpu_observe_prepare(uint64_t address,uint64_t bytes);
+int vk_pool_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_cpu_observation *token);
+void vk_pool_cpu_observe_end(vk_shared_cpu_observation *token);
 int vk_pool_shared_cpu_observe_prepare(uint64_t address,uint64_t bytes);
 int vk_pool_shared_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_cpu_observation *token);
 void vk_pool_shared_cpu_observe_end(vk_shared_cpu_observation *token);

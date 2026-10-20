@@ -42,8 +42,46 @@ static void astc_copy_sample_setup(NVNprogram *program,NVNsampler *sampler,NVNte
   NVNvertexStreamState stream;CALL(nvnVertexStreamStateSetDefaults,&stream);CALL(nvnVertexStreamStateSetStride,&stream,16);
   S.stream[0]=*(const vs_st *)&stream;S.vertex[0]=(NVNbufferRange){(uintptr_t)data+(3u<<20),48};vk_pipeline_state_changed();
 }
+// Metadata/real HLE oracle only: registered rejection regions stand for a
+// propagated encoding; this does not pretend to create unsupported ASTC GPU.
+static void legacy_astc_cpu_escape_test(void) {
+  size_t bytes=65536;uint8_t *data=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+  CHECK(data!=MAP_FAILED);*(uint32_t *)data=0x12345678;*(uint32_t *)(data+4096)=0xabcdef01;
+  NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,bytes);CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));
+  NVNeventBuilder eb;NVNevent before,ordinary;
+  CALL(nvnEventBuilderSetDefaults,&eb);CALL(nvnEventBuilderSetStorage,&eb,&pool,4096);CHECK(CALL(nvnEventInitialize,&before,&eb));
+  CALL(nvnEventBuilderSetStorage,&eb,&pool,0);CHECK(CALL(nvnEventInitialize,&ordinary,&eb));
+  CHECK(vk_pool_legacy_encoding_guard_add((uintptr_t)data+4096,4096));
+  uint64_t begin=0,length=0,id=mtl_pool_cpu_access_needed((uintptr_t)data+4094,4,&begin,&length);
+  CHECK(id && begin==(uintptr_t)data+4096 && length==2);
+  CHECK(!mtl_pool_cpu_access_needed((uintptr_t)data,4,&begin,&length));
+  CHECK(CALL(nvnEventGetValue,&ordinary)==0x12345678);
+  const char *negative=getenv("DM_LEGACY_ASTC_CPU_ESCAPE_NEGATIVE");
+  if(negative && !strcmp(negative,"event-prior"))CALL(nvnEventGetValue,&before);
+  if(negative && !strcmp(negative,"event-init")) {CALL(nvnEventBuilderSetStorage,&eb,&pool,4096);NVNevent event;CALL(nvnEventInitialize,&event,&eb);}
+  if(negative && !strcmp(negative,"invalidate"))CALL(nvnMemoryPoolInvalidateMappedRange,&pool,4096,4);
+  NVNcommandBuffer command;CHECK(CALL(nvnCommandBufferInitialize,&command,&device));
+  CALL(nvnCommandBufferAddCommandMemory,&command,&pool,32768,16384);CALL(nvnCommandBufferBeginRecording,&command);
+  CALL(nvnCommandBufferUpdateUniformBuffer,&command,(uintptr_t)data+16384,4,0,4,
+      negative && !strcmp(negative,"literal")?data+4096:data);
+  CALL(nvnCommandBufferEndRecording,&command);CALL(nvnCommandBufferFinalize,&command);
+  if(negative)die("Legacy ASTC CPU escape unexpectedly accepted: %s",negative);
+  // Exact guards have a hard bound, and registration fails BEFORE a caller
+  // changes physical encoding. Ordinary disjoint bytes remain accessible.
+  for(unsigned k=0;k<255;k++)CHECK(vk_pool_legacy_encoding_guard_add((uintptr_t)data+8192+k*4,4));
+  CHECK(!vk_pool_legacy_encoding_guard_add((uintptr_t)data+12288,4));
+  CHECK(!vk_pool_legacy_encoding_guard_add((uintptr_t)data+4096,4096));
+  CALL(nvnEventFinalize,&before);CALL(nvnEventFinalize,&ordinary);CALL(nvnMemoryPoolFinalize,&pool);
+  // Pool close retires metadata; the same VA has no stale encoding exclusion.
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&mb));CHECK(!mtl_pool_cpu_access_needed((uintptr_t)data+4096,4,&begin,&length));
+  CALL(nvnMemoryPoolFinalize,&pool);CHECK(!munmap(data,bytes));
+  printf("{\"test_details\":\"legacy-ASTC-CPU-escape-guard\",\"metadata_only\":true,\"nonoverlap_no_owner_job\":true,\"exact_clipping\":true,\"capacity_before_adopt\":true,\"retained_until_pool_close\":true,\"same_VA_new_pool_not_excluded\":true,\"result\":\"passed\"}\n");
+}
 static void astc_copy_encoding_test(void) {
-  size_t size=(4u<<20)+65536;uint8_t *raw=mmap(NULL,size,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+  int legacy=vk_legacy_astc_copy_mode() && !vk_pool_shared_active();
+  size_t size=(4u<<20)+65536;uint8_t *raw=mmap(NULL,size,PROT_READ|PROT_WRITE,(legacy?MAP_PRIVATE:MAP_SHARED)|MAP_ANONYMOUS,-1,0);
   CHECK(raw!=MAP_FAILED);uint8_t *data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
   memset(data,0xa7,4u<<20);
   unsigned policy=vk_texture_test_astc_copy_policy(data,8192);CHECK(policy>=20);
@@ -52,7 +90,7 @@ static void astc_copy_encoding_test(void) {
     CHECK(!munmap(raw,size));
     printf("{\"test_details\":\"ASTC4-copy-physical-encoding\",\"actual_ASTC_GPU\":false,\"result\":\"unsupported\"}\n");return;
   }
-  vk_test_shared_image_backing(data,4u<<20);
+  if(!legacy)vk_test_shared_image_backing(data,4u<<20);
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,4u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
@@ -74,6 +112,15 @@ static void astc_copy_encoding_test(void) {
   const float vertices[]={-1,-1,0,0,3,-1,2,0,-1,3,0,2};memcpy(data+(3u<<20),vertices,sizeof vertices);
   mtl_sub_begin();vk_texture_cpu_preflight(s);vk_texture_test_astc_copy_upload(s);
   vk_internal_wait(vk_internal_commit()); // actual source use materializes this Pool once
+  int initially_decoded=0;
+  if(legacy) {
+    // Reuse the existing owned selector, not a false device capability.
+    vk_texture_test_force_bc_decode(1);mtl_sub_begin();vk_texture_test_astc_copy_upload(d);
+    unsigned initial[5];CHECK(vk_texture_test_astc_copy_info(d,initial,NULL));
+    CHECK(!initial[0] && initial[1]==VK_FORMAT_R8G8B8A8_UNORM && initial[4]);initially_decoded=1;
+    CHECK(!((uintptr_t)d->mem&(getpagesize()-1)) && !(d->L.size&(getpagesize()-1)));
+    vk_texture_test_force_bc_decode(0);vk_internal_wait(vk_internal_commit());
+  }
   const char *negative=getenv("DM_ASTC_COPY_NEGATIVE");
   if(negative && !strcmp(negative,"existing")) {
     dm_guest_write_prepare(data+(3u<<20)+4096,16384);memset(data+(3u<<20)+4096,0,16384);
@@ -137,7 +184,8 @@ static void astc_copy_encoding_test(void) {
   S=saved;vk_pipeline_state_changed();CALL(nvnSamplerFinalize,&sampler);CALL(nvnProgramFinalize,&program);
   CALL(nvnTextureFinalize,&source);CALL(nvnTextureFinalize,&destination);
   for(unsigned n=0;n<2;n++)CALL(nvnTextureFinalize,&output[n]);
-  CALL(nvnMemoryPoolFinalize,&pool);vk_test_shared_image_backing(NULL,0);CHECK(!munmap(raw,size));
+  CALL(nvnMemoryPoolFinalize,&pool);if(!legacy)vk_test_shared_image_backing(NULL,0);CHECK(!munmap(raw,size));
   CHECK(!vk_validation_error_count());
+  if(legacy)printf("{\"test_details\":\"legacy-ASTC4-copy-storage\",\"actual_ASTC_GPU\":true,\"initial_decoded_RGBA\":%s,\"original_whole_dirty_tracker\":true,\"no_host_import\":true,\"complete_hostpage_destination\":true,\"result\":\"passed\"}\n",initially_decoded?"true":"false");
   printf("{\"test_details\":\"ASTC4-copy-physical-encoding\",\"actual_ASTC_GPU\":true,\"fresh_BC3_array_became_ASTC4\":true,\"logical_BC3_unchanged\":true,\"mip_layer_ROI_preserved\":true,\"default_and_BC3_srgb_views\":true,\"CPU_version_observer\":true,\"canonical_pool_bytes_unchanged\":true,\"result\":\"passed\"}\n");
 }

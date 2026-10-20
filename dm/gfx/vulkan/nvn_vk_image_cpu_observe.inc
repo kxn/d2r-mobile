@@ -7,7 +7,7 @@ typedef struct {
   VkBufferImageCopy copy;
   size_t pitch,rows,raw_bytes;
 } image_cpu_piece;
-static void image_upload_shared_contents(image *i) {
+static void image_upload_observed_contents(image *i) {
   const tex_t *t=&i->tex;
   if(t->d.samples>1 || i->aspect!=VK_IMAGE_ASPECT_COLOR_BIT)
     die("Vulkan packaged depth/MS image unsupported");
@@ -42,7 +42,7 @@ static void image_upload_shared_contents(image *i) {
     i->description.imageType==VK_IMAGE_TYPE_2D && i->layers==1 && i->extent.depth==1;
   image_astc_proof(i,0);
   vk_shared_cpu_observation observation;
-  if(!vk_pool_shared_cpu_observe_begin((uintptr_t)t->mem,t->L.size,&observation))
+  if(!vk_pool_cpu_observe_begin((uintptr_t)t->mem,t->L.size,&observation))
     die("Shared CPU conversion missing page-level ordered preflight");
   uint64_t stamp=observation.stamp;
   for(size_t n=0;n<count;n++) {
@@ -64,7 +64,7 @@ static void image_upload_shared_contents(image *i) {
   // Pages are still RO. End releases waiting kernel/user writes; all of them
   // receive a generation AFTER captured stamp. Never protect again afterwards
   // or assign a later global-now stamp which could swallow those new writes.
-  vk_pool_shared_cpu_observe_end(&observation);free(scratch);
+  vk_pool_cpu_observe_end(&observation);free(scratch);
   for(size_t n=0;n<count;n++) {
     image_cpu_piece *piece=&pieces[n];
     image_transfer(i,image_layer_range(piece->copy.imageSubresource),1);
