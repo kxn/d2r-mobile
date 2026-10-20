@@ -174,8 +174,8 @@ static void shared_window_recording_geometry_test(uint8_t *data) {
   for(unsigned i=0;i<8;i++) {
     expected[i]=0x71820000+i;pool_window_fill((uint8_t *)(uintptr_t)need[i].address,4,expected[i]);
   }
-  // Already-used spans must also serve a real nested admission: its first
-  // locked hint is the ninth node, so the eight earlier spans need the set.
+  // Already-used spans must also serve a real nested admission. Distinct
+  // disjoint requirements cannot all hit the original single locked hint.
   int nested=vk_pool_operation_begin_ranges(need,8);CHECK(nested>token);
   vk_pool_operation_end(nested);
   for(unsigned i=0;i<8;i++)CHECK(vk_test_recording_span_hint(need[i].address,4,&count)==info[i].handle && count==8);
