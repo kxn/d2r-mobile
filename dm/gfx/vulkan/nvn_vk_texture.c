@@ -804,7 +804,9 @@ void vk_texture_cpu_preflight(const tex_t *t) {
       read=!i->initialized || !(epoch && i->checked_dirty_epoch==epoch &&
         i->checked_dirty_stamp==i->stamp) && nvn_dirty_since(t->mem,t->L.size,i->stamp);break;
     }
-    if(read && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
+    // A queued CPU effect has no dirty generation until completion. Publish
+    // it even for an initialized/clean image, before any image/view borrows.
+    if((read || vk_pool_legacy_cpu_observe_pending((uintptr_t)t->mem,t->L.size)) && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
       die("Shared packaged image source outside live shared Pool");
   }
 #endif
@@ -1076,6 +1078,11 @@ static void image_upload(image *i) {
   const tex_t *t = &i->tex;
   if(!t->has_layout) return;
 #ifdef DM_VULKAN_SHARED_POOLS
+  // Do not let a late CPU effect hide behind the epoch/range clean fast path.
+  // No submit/wait is legal here: the outer logical operation owns admission.
+  if(vk_legacy_astc_copy_mode() && !vk_pool_shared_active() && nvn_dirty_tracked(t->mem,t->L.size) &&
+      vk_pool_legacy_cpu_observe_pending((uintptr_t)t->mem,t->L.size))
+    die("Legacy CPU texture source missing ordered outer preflight");
   if(vk_pool_shared_mode() && !shared_image_backing((uintptr_t)t->mem,t->L.size))
     die("Shared image conversion backing provenance changed");
 #endif

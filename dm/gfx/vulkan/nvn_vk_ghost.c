@@ -90,7 +90,11 @@ void vk_ghost_note(const p_draw *draw, vk_shader *fragment) {
   while (k < ghost.nt && ghost.textures[k] != texture) k++;
   if (k == ghost.nt && k < 128) { ghost.textures[k] = texture; ghost.counts[k] = 0; ghost.nt++; }
   if (k < ghost.nt) ghost.counts[k]++;
-  if(V.options.pool_defer_publication) {
+  if(V.options.pool_defer_publication
+#ifdef DM_VULKAN_SHARED_POOLS
+      || vk_legacy_astc_copy_mode()
+#endif
+      ) {
     vk_shader *stages[6]={0};vk_program_shaders(S.program,stages);
     if(!vk_ghost_cpu_draw_ready(stages,&S,draw,NULL))return;
   }
@@ -150,7 +154,11 @@ void vk_ghost_flush(void) {
       count = ghost.counts[k];
     if (count < least) { least = count; best = i; }
   }
-  if(V.options.pool_defer_publication) {
+  if(V.options.pool_defer_publication
+#ifdef DM_VULKAN_SHARED_POOLS
+      || vk_legacy_astc_copy_mode()
+#endif
+      ) {
     const vk_state *state=ghost.candidate[best].state;
     vk_shader *stages[6]={0};vk_program_shaders(state->program,stages);
     if(!vk_ghost_cpu_draw_ready(stages,state,&ghost.candidate[best].draw,NULL)) {

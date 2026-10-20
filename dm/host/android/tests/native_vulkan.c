@@ -786,7 +786,7 @@ int dm_vulkan_test_main(void) {
   }
   if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE")) {
     CHECK(!vk_pool_shared_mode() && vk_legacy_astc_copy_mode());
-    legacy_astc_cpu_escape_test();astc_copy_encoding_test();shared_image_cpu_observation_test();
+    legacy_astc_cpu_escape_test();legacy_image_outer_preflight_test();astc_copy_encoding_test();shared_image_cpu_observation_test();
     int astc_gpu=V.features.textureCompressionASTC_LDR && V.props.deviceType!=VK_PHYSICAL_DEVICE_TYPE_CPU;
     printf("{\"test\":\"legacy-ASTC-copy-encoding\",\"checks\":%u,\"result\":\"%s\",\"actual_ASTC_GPU\":%s,\"CPU_phase_result\":\"passed\",\"game_modules_executed\":false}\n",checks,astc_gpu?"passed":"unsupported",astc_gpu?"true":"false");return 0;
   }

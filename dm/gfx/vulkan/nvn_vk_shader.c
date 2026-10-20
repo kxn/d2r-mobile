@@ -1690,7 +1690,7 @@ static int dispatch_pool_collect(void *context,vk_pool_requirement_sink sink,voi
 void vk_dispatch(const p_dispatch *p) {
   int cpu_preflight=V.options.pool_defer_publication;
 #ifdef DM_VULKAN_SHARED_POOLS
-  cpu_preflight|=vk_pool_shared_active();
+  cpu_preflight|=vk_pool_shared_active() || vk_legacy_astc_copy_mode();
 #endif
   if(cpu_preflight) {
     vk_shader *stages[6]={0};vk_program_shaders(S.program,stages);

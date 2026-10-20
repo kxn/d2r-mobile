@@ -32,7 +32,11 @@ assert {p.name for p in (a.artifact/'vulkan-fixture').iterdir()}==set(fixture)
 for name,digest in fixture.items():
  assert (a.artifact/'vulkan-fixture'/name).is_file() and not (a.artifact/'vulkan-fixture'/name).is_symlink()
  assert sha(a.artifact/'vulkan-fixture'/name)==digest
-assert m['gate_source_revision']=='8205364fca3c1196d5be506a3b6ea5aeabe59d18'
+ready=json.loads((a.artifact/'gate-source-ready.json').read_text())
+assert ready['commit']==m['gate_source_revision'] and ready['initial_core_commit']=='8205364fca3c1196d5be506a3b6ea5aeabe59d18'
+assert ready['experiment']=='legacy-image-cpu-preflight-fix-v1'
+assert ready['canonical_native_library_sha256']==m['native_library_sha256']
+assert ready['canonical_APK_sha256']==m['base_apk_sha256']
 assert m['contains_game_binary'] is False
 baseline_bound=bool(a.module_report and a.resource_report and a.expected_original_apk and a.expected_original_elf and a.expected_shaderchain)
 if a.execute:assert baseline_bound,'Execution requires current root APK/ELF/28modules/6resources/shaderchain bindings'
@@ -152,6 +156,10 @@ def validate_success_rows(rows,log):
  storage=unique('test_details','legacy-ASTC4-copy-storage')
  truths(storage,('actual_ASTC_GPU','initial_decoded_RGBA','original_whole_dirty_tracker','no_host_import','complete_hostpage_destination'))
  assert storage.get('result')=='passed'
+ outer=unique('test_details','legacy-image-outer-preflight')
+ truths(outer,('defer_disabled','fresh_draw_and_dispatch','initialized_clean_pending_CPU_effect',
+  'hostpage_neighbor_effect','disjoint_effect_not_waited','optional_packaged_ghost_declined','real_GPU_pixels'))
+ assert outer.get('result')=='passed'
  cpu=unique('test_details','legacy-image-CPU-observation')
  truths(cpu,('paired_pread_after_CPU_capture','first_GPU_snapshot_old','next_GPU_upload_new',
   'clean_sample_no_upload','original_BC_CPU_decode_protected'))
@@ -170,7 +178,7 @@ def validate_success_rows(rows,log):
  terminal=unique('native_vulkan_app_terminal',True)
  assert terminal['rc']==0 and terminal['uid']==config['uid'] and terminal['pid']==config['pid']
  assert not re.search(r'VUID-|FATAL|native fault signal=|Validation Error',log)
- return {'physical':physical,'storage':storage,'CPU_observer':cpu,'CPU_escape':escape,'policy':policy}
+ return {'outer_preflight':outer,'physical':physical,'storage':storage,'CPU_observer':cpu,'CPU_escape':escape,'policy':policy}
 
 def observe_pid(phase,allow_claim=True):
  global first_pid

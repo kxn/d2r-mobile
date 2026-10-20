@@ -3238,6 +3238,13 @@ void vk_test_shared_prearm_host_phase(uint64_t address,uint64_t bytes,int whole_
 }
 #endif
 int vk_pool_cpu_observe_mode(void) {return shared_cpu_observe_phase || legacy_astc_copy_enabled;}
+int vk_pool_legacy_cpu_observe_pending(uint64_t address,uint64_t bytes) {
+  if(!legacy_astc_copy_enabled || shared_active || !bytes)return 0;
+  uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
+  // Legacy private GPU writers are independent of CPU storage. Only the
+  // original writeback/CPU-effect destinations can change this CPU source.
+  return recording_cpu_write(first,length) || pending_cpu_write(first,length);
+}
 int vk_pool_cpu_observe_prepare(uint64_t address,uint64_t bytes) {
   if(shared_active)return vk_pool_shared_cpu_observe_prepare(address,bytes);
   if(!legacy_astc_copy_enabled || !bytes || !nvn_dirty_tracked((void *)(uintptr_t)address,bytes))return 0;

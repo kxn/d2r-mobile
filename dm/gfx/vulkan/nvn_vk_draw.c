@@ -931,7 +931,11 @@ void vk_vertex_divisor_fallback(int enabled) { atomic_store(&vertex_divisor_fall
 int vk_ghost_cpu_draw_ready(vk_shader *const list[6],const vk_state *state,
     const p_draw *draw,const p_draw_idx *idx) {
   (void)draw;
-  if(!V.options.pool_defer_publication)return 1;
+  if(!V.options.pool_defer_publication
+#ifdef DM_VULKAN_SHARED_POOLS
+      && !vk_legacy_astc_copy_mode()
+#endif
+      )return 1;
   if(!vk_shader_cpu_sources_ready(list,state,0) || !list[0])return 0;
   uint32_t spans[16]={0},mask=0;
   int force=atomic_load(&vertex_divisor_fallback);if(force<0)force=V.options.vertex_divisor_fallback;
@@ -980,7 +984,15 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
     die("Vulkan draw without program");
   vk_shader *list[6] = {0};
   vk_program_shaders(S.program, list);
-  if(V.options.pool_defer_publication && vk_ghost_replaying() &&
+  int ghost_cpu_guard=V.options.pool_defer_publication;
+#ifdef DM_VULKAN_SHARED_POOLS
+  ghost_cpu_guard|=vk_legacy_astc_copy_mode();
+#endif
+  int cpu_preflight=ghost_cpu_guard;
+#ifdef DM_VULKAN_SHARED_POOLS
+  cpu_preflight|=vk_pool_shared_active();
+#endif
+  if(cpu_preflight && vk_ghost_replaying() &&
       !vk_ghost_cpu_draw_ready(list,&S,draw,idx))return;
   mip_clear_before_draw(list);
   list[5] = NULL;
@@ -995,10 +1007,6 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
   }
   // A saved optional ghost draw was checked without waiting at its entry;
   // it must never demand/commit inside an outer draw's borrowed resources.
-  int cpu_preflight=V.options.pool_defer_publication;
-#ifdef DM_VULKAN_SHARED_POOLS
-  cpu_preflight|=vk_pool_shared_active();
-#endif
   if(cpu_preflight && !vk_ghost_replaying())vk_shader_cpu_sources(list,&S,0);
   draw_pool_plan pool_plan={idx};
   int pool_operation=vk_pool_operation_begin(draw_pool_collect,&pool_plan);
@@ -1100,7 +1108,7 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
          S.vertex[i].address>UINT64_MAX-start)
         die("Vulkan instance source range invalid");
       // Restore persistent deferred bytes before allocating any expanded temp.
-      if(V.options.pool_defer_publication && vk_ghost_replaying()) {
+      if(ghost_cpu_guard && vk_ghost_replaying()) {
         if(vk_pool_pending_writes(S.vertex[i].address+start,end-start+span) ||
             vk_pool_cpu_unknown(S.vertex[i].address+start,end-start+span)) {
           free(local_ready);vk_pool_operation_end(pool_operation);return;
@@ -1110,7 +1118,7 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
       pending|=vk_pool_pending_writes(S.vertex[i].address+start,end-start+span);
     }
     if(pending) {
-      if(V.options.pool_defer_publication && vk_ghost_replaying()) {
+      if(ghost_cpu_guard && vk_ghost_replaying()) {
         free(local_ready);vk_pool_operation_end(pool_operation);return;
       }
       // Actual GPU-produced inputs retain the proven synchronous fallback.
@@ -1148,7 +1156,7 @@ static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable
         uint64_t at = element * S.stream[i].stride;
         if (at > S.vertex[i].size || span > S.vertex[i].size - at)
           die("Vulkan instance source range invalid");
-        if(V.options.pool_defer_publication && vk_ghost_replaying()) {
+        if(ghost_cpu_guard && vk_ghost_replaying()) {
           if(vk_pool_try_read(S.vertex[i].address+at,span,
                               expanded[i]->map+(base+instance)*stride)!=1) {
             free(local_ready);vk_pool_operation_end(pool_operation);return;

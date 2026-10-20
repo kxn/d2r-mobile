@@ -1,3 +1,4 @@
+#include "../nvn/nvn_dirty.h"
 // Recording-owner diagnostic for a FAILED logical proof, not timing/sampling.
 static const char *pool_range_error="batch/capacity or unsupported logical state";
 const char *vk_shader_pool_range_error(void) { return pool_range_error; }
@@ -155,7 +156,7 @@ static int compute_pool_requirement(void *context,const vk_pool_requirement *ran
 void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute) {
   if(!V.options.pool_defer_publication
 #ifdef DM_VULKAN_SHARED_POOLS
-      && !vk_pool_shared_mode()
+      && !vk_pool_shared_active() && !vk_legacy_astc_copy_mode()
 #endif
       )return;
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
@@ -177,7 +178,11 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
 // Optional host UI replay must never start a CPU demand after an outer draw
 // borrowed resources. Unknown image sources simply reject that extra replay.
 int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,int compute) {
-  if(!V.options.pool_defer_publication)return 1;
+  int legacy=0;
+#ifdef DM_VULKAN_SHARED_POOLS
+  legacy=vk_legacy_astc_copy_mode() && !vk_pool_shared_active();
+#endif
+  if(!V.options.pool_defer_publication && !legacy)return 1;
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
     for(unsigned k=0;k<s->nb;k++) {
@@ -185,14 +190,22 @@ int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,i
       if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
       if(b->reg<0 || b->reg>=(b->kind==4?32:128))return 0;
       uint64_t handle=b->kind==4?state->img[stage][b->reg]:state->tex[stage][b->reg];
-      tex_t t;if(vk_texture_descriptor(handle&0xfffff,&t) && t.mem && t.L.size &&
-          !vk_pool_cpu_source_ready((uintptr_t)t.mem,t.L.size))return 0;
+      tex_t t;if(vk_texture_descriptor(handle&0xfffff,&t) && t.mem && t.L.size) {
+        // Optional replay holds an outer operation's borrows. A packaged
+        // source can become dirty after a clean entry check; never enter the
+        // short, potentially FS-blocking observation phase from that replay.
+        if(legacy && t.has_layout && nvn_dirty_tracked(t.mem,t.L.size))return 0;
+        if(!vk_pool_cpu_source_ready((uintptr_t)t.mem,t.L.size))return 0;
+      }
     }
   }
   if(!compute) {
     for(int k=-1;k<state->targets.n;k++) {
       const tex_t *t=k<0?state->targets.depth:state->targets.color[k];
-      if(t && t->mem && t->L.size && !vk_pool_cpu_source_ready((uintptr_t)t->mem,t->L.size))return 0;
+      if(t && t->mem && t->L.size) {
+        if(legacy && t->has_layout && nvn_dirty_tracked(t->mem,t->L.size))return 0;
+        if(!vk_pool_cpu_source_ready((uintptr_t)t->mem,t->L.size))return 0;
+      }
     }
   }
   return 1;
