@@ -164,6 +164,146 @@ static void large_readback_reuse_test(void) {
   LOG("[vulkan large readback fixture] 4 repeated 2MiB GPU copies match every byte");
 }
 
+// Exercise real GPU writes across more than two completion batches, while a
+// timeline holds the fence and then reset holds resource retirement. The host
+// wrapper observes actual allocation arguments and that no CPU publication has
+// started. Coherent LVP only exercises the batch branch/lifetime, not NC caches.
+#ifdef DM_VULKAN_TEST_EMBED
+extern void vk_command_reset_test_gate(int);
+extern uint64_t vk_command_reset_test_wait_blocked(uint64_t);
+extern void vk_command_reset_test_snapshot(uint64_t *,uint64_t *,unsigned *);
+#endif
+#ifdef DM_VULKAN_INVALIDATE_WRAP
+static _Atomic unsigned invalidate_watch_active, invalidate_watch_calls, invalidate_watch_bad;
+static _Atomic uint64_t invalidate_watch_seen;
+static void *invalidate_watch_allocations[35];
+static uint8_t (*invalidate_watch_output)[64];
+static volatile uint32_t *invalidate_watch_event;
+VkResult __real_vk_memory_invalidate_batch(void *const *, uint32_t);
+VkResult __wrap_vk_memory_invalidate_batch(void *const *allocations,uint32_t count) {
+  if(atomic_load_explicit(&invalidate_watch_active,memory_order_acquire)) {
+    if(!count || count>VK_MEMORY_INVALIDATE_BATCH || __atomic_load_n(invalidate_watch_event,__ATOMIC_ACQUIRE))
+      atomic_store(&invalidate_watch_bad,1);
+    for(unsigned i=0;i<35;i++) for(unsigned j=0;j<64;j++)
+      if(invalidate_watch_output[i][j]!=0xc5)atomic_store(&invalidate_watch_bad,1);
+    for(unsigned a=0;a<count;a++) {
+      unsigned i=0;while(i<35 && allocations[a]!=invalidate_watch_allocations[i])i++;
+      if(i==35 || (atomic_fetch_or(&invalidate_watch_seen,UINT64_C(1)<<i)&(UINT64_C(1)<<i)))
+        atomic_store(&invalidate_watch_bad,1);
+    }
+    atomic_fetch_add(&invalidate_watch_calls,1);
+  }
+  return __real_vk_memory_invalidate_batch(allocations,count);
+}
+#endif
+static void readback_batch_order_test(void) {
+#ifdef DM_VULKAN_INVALIDATE_WRAP
+  enum { count=35, size=64 };
+  mtl_finish();vk_buffer *buffers[count];VkMemoryPropertyFlags properties[count];
+  uint8_t output[count][size];
+  memset(output,0xc5,sizeof output);volatile uint32_t event=0;
+  VkSemaphore gate=VK_NULL_HANDLE;
+  // Use the same queue gate as the existing completion/writeback byte tests.
+  // Its helpers are declared below this include, so use their forward decls.
+  if(vk_async_submissions()&&V.timeline_semaphore)gate=pool_copy_gate();
+  mtl_sub_begin();uint64_t serial=vk_recording_serial();unsigned actual_nc=0;
+  for(unsigned i=0;i<count;i++) {
+    buffers[i]=vk_temp_buffer(size);
+    properties[i]=buffers[i]->properties;
+    actual_nc+=!(properties[i]&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    // These owned temporaries have only GPU writers and CPU readers. On a
+    // coherent device, force completion eligibility ONLY in this VkBuffer
+    // wrapper. VMA keeps real memory properties and can correctly no-op.
+    buffers[i]->readback=1;
+    buffers[i]->properties&=~VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    invalidate_watch_allocations[i]=buffers[i]->allocation;
+    vkCmdFillBuffer(V.cmd,buffers[i]->handle,0,size,0x12121212u+i*0x01010101u);
+    vk_effect_copy(output[i],buffers[i]->map,size);
+  }
+  VkMemoryBarrier barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+    .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
+  vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
+                      0,1,&barrier,0,NULL,0,NULL);
+  mtl_sub_event(&event,0,1);
+  invalidate_watch_output=output;invalidate_watch_event=&event;
+  atomic_store(&invalidate_watch_calls,0);atomic_store(&invalidate_watch_bad,0);
+  atomic_store(&invalidate_watch_seen,0);
+  atomic_store_explicit(&invalidate_watch_active,1,memory_order_release);
+  vk_command_reset_test_gate(1);
+  uint64_t guest=mtl_sub_commit();
+  if(gate) {
+    CHECK(vk_completed_serial()<serial && !event);
+    CHECK(!atomic_load(&invalidate_watch_calls));
+    pool_copy_signal(&gate);
+  }
+  CHECK(mtl_wait(guest,UINT64_MAX));
+  CHECK(vk_command_reset_test_wait_blocked(serial)==serial);
+  uint64_t done,ready;unsigned sets;vk_command_reset_test_snapshot(&done,&ready,&sets);
+  CHECK(done==serial && ready<serial);
+  CHECK(event==1 && !atomic_load(&invalidate_watch_bad));
+  CHECK(atomic_load(&invalidate_watch_calls)==3);
+  CHECK(atomic_load(&invalidate_watch_seen)==((UINT64_C(1)<<count)-1));
+  for(unsigned i=0;i<count;i++) for(unsigned j=0;j<size;j++)CHECK(output[i][j]==0x12+i);
+  atomic_store_explicit(&invalidate_watch_active,0,memory_order_release);
+  // Reset is still blocked: none of these allocations can have been recycled.
+  for(unsigned i=0;i<count;i++)for(unsigned j=0;j<size;j++)CHECK(buffers[i]->map[j]==0x12+i);
+  for(unsigned i=0;i<count;i++)buffers[i]->properties=properties[i];
+  vk_command_reset_test_gate(0);mtl_finish();
+  if(gate)vkDestroySemaphore(V.device,gate,NULL);
+  CHECK(vk_validation_error_count()==0);
+  LOG("[vulkan readback batch fixture] 35 GPU allocations/3 completion batches, all CPU bytes and event after invalidate, before reset; actual_NC_allocations=%u (coherent eligibility is fixture-only)",actual_nc);
+#endif
+}
+
+// Use ordinary Pool writeback creation as well: its preferred readback memory
+// is really NC on Mali0xb and coherent on LVP, with no property overrides.
+static uint64_t readback_pool_invalidations;
+static void readback_batch_pool_test(void) {
+#ifdef DM_VULKAN_TEST_EMBED
+  enum {count=35,span=256*1024,size=64};uint8_t *data;
+  mtl_finish();CHECK(!posix_memalign((void **)&data,65536,span));memset(data,0xc5,span);
+  NVNmemoryPoolBuilder b={0};NVNmemoryPool pool;
+  CALL(nvnMemoryPoolBuilderSetDefaults,&b);CALL(nvnMemoryPoolBuilderSetDevice,&b,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&b,data,span);
+  CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&b));
+  vk_buffer_sync_stats before,after;vk_buffer_sync_snapshot(&before);
+  int reference=before.readback_reference;vk_readback_coherent_reference(0);
+  VkSemaphore gate=VK_NULL_HANDLE;
+  if(vk_async_submissions()&&V.timeline_semaphore)gate=pool_copy_gate();
+  mtl_sub_begin();uint64_t serial=vk_recording_serial();vk_buffer_sync_snapshot(&before);
+  for(unsigned i=0;i<count;i++) {
+    uint64_t address=(uintptr_t)(data+i*4096),offset;vk_buffer *buffer;
+    CHECK(mtl_addr(address,size,(void **)&buffer,&offset));
+    CHECK(vk_recording_serial()==serial);
+    vkCmdFillBuffer(V.cmd,buffer->handle,offset,size,0x27272727u+i*0x01010101u);
+    vk_buffer_transfer_written_range(address,size);vk_buffer_writeback(address,size);
+  }
+  volatile uint32_t event=0;mtl_sub_event(&event,0,1);vk_command_reset_test_gate(1);
+  uint64_t guest=mtl_sub_commit();
+  if(gate) {
+    CHECK(vk_completed_serial()<serial && !event);
+    for(unsigned i=0;i<span;i++)CHECK(data[i]==0xc5);
+    pool_copy_signal(&gate);
+  }
+  CHECK(mtl_wait(guest,UINT64_MAX));
+  CHECK(vk_command_reset_test_wait_blocked(serial)==serial);
+  uint64_t done,ready;unsigned sets;vk_command_reset_test_snapshot(&done,&ready,&sets);
+  CHECK(done==serial && ready<serial && event==1);
+  vk_buffer_sync_snapshot(&after);
+  CHECK(after.readback_ranges-before.readback_ranges==count);
+  CHECK(after.readback_bytes-before.readback_bytes==count*size);
+  readback_pool_invalidations=after.readback_invalidations-before.readback_invalidations;
+  CHECK(readback_pool_invalidations==0 || readback_pool_invalidations==count);
+  for(unsigned i=0;i<span;i++)CHECK(data[i]==(i/4096<count && i%4096<size?0x27+i/4096:0xc5));
+  vk_command_reset_test_gate(0);mtl_finish();
+  if(gate)vkDestroySemaphore(V.device,gate,NULL);
+  CALL(nvnMemoryPoolFinalize,&pool);free(data);vk_readback_coherent_reference(reference);
+  CHECK(vk_validation_error_count()==0);
+  LOG("[vulkan real readback batch fixture] original Pool 35 separate GPU ROI, event/byte guards before reset; actual_NC_invalidations=%llu (0 is coherent coverage only)",(unsigned long long)readback_pool_invalidations);
+#endif
+}
+
 // A partial upload must not consume dirty generations in untouched pages.
 // Include image-only internal work and transitions to/from the full policy.
 static void deferred_pool_upload_test(void) {

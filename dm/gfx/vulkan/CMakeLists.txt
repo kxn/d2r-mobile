@@ -57,3 +57,7 @@ if(DM_GUEST_HEAP_GPU_TESTS)
   target_sources(vulkan_host_test PRIVATE "${HOST}/hle_svc.c" tests/guest_heap_svc_stubs.c)
   target_compile_definitions(vulkan_host_test PRIVATE DM_GUEST_HEAP_GPU_TESTS=1)
 endif()
+
+# Observe completion batch calls in the owned GPU fixture, without production hooks.
+target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_INVALIDATE_WRAP=1)
+target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_memory_invalidate_batch")

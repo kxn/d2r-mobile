@@ -12,6 +12,9 @@ VkResult vk_memory_buffer(VkBuffer buffer, VkDeviceMemory *memory, uint8_t **map
 VkResult vk_memory_buffer_readback(VkBuffer buffer,VkDeviceMemory *memory,uint8_t **map,void **allocation);
 VkMemoryPropertyFlags vk_memory_properties(void *allocation);
 VkResult vk_memory_invalidate(void *allocation);
+// Bounded completion batches retain VMA's allocation/atom-range handling.
+enum { VK_MEMORY_INVALIDATE_BATCH = 16 };
+VkResult vk_memory_invalidate_batch(void *const *allocations, uint32_t count);
 VkResult vk_memory_image(VkImage image, VkDeviceMemory *memory, void **allocation);
 void vk_memory_free(void *allocation);
 void vk_memory_stats(uint32_t *blocks, uint32_t *allocations, uint64_t *bytes);

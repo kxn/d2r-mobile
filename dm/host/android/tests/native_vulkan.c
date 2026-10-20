@@ -419,6 +419,8 @@ static void bright_test(NVNtexturePool *pool) {
   }
 }
 #include "native_vulkan_freeze.inc"
+static VkSemaphore pool_copy_gate(void);
+static void pool_copy_signal(void *context);
 #include "native_vulkan_buffer.inc"
 #include "native_vulkan_pass.inc"
 #include "native_vulkan_zero.inc"
@@ -812,6 +814,7 @@ int dm_vulkan_test_main(void) {
     printf("{\"test\":\"fixed-shared-NVN-buffer\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
 #endif
+  if(getenv("DM_READBACK_BATCH_FIXTURE")) {readback_batch_order_test();readback_batch_pool_test();command_pool_reset_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"readback-batch\",\"checks\":%u,\"NC_invalidations\":%llu,\"result\":\"passed\"}\n",checks,(unsigned long long)readback_pool_invalidations);return 0;}
   if(getenv("DM_BUFFER_HISTORY_FIXTURE")) {
     // Initialize the active submission policy before the existing partition
     // fixture checks it; neither oracle's byte assertions are changed.
@@ -2290,6 +2293,8 @@ int dm_vulkan_test_main(void) {
   pool_upload_hazard_test();
   core_submission_overlap_test();
   internal_present_chain_test();
+  readback_batch_order_test();
+  readback_batch_pool_test();
   large_readback_reuse_test();
   deferred_pool_upload_test();
   float16_arithmetic_test();

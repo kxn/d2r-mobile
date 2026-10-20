@@ -55,6 +55,13 @@ VkMemoryPropertyFlags vk_memory_properties(void *allocation) {
 VkResult vk_memory_invalidate(void *allocation) {
   return vmaInvalidateAllocation(allocator,static_cast<VmaAllocation>(allocation),0,VK_WHOLE_SIZE);
 }
+VkResult vk_memory_invalidate_batch(void *const *allocations, uint32_t count) {
+  if (count > VK_MEMORY_INVALIDATE_BATCH) return VK_ERROR_INITIALIZATION_FAILED;
+  VmaAllocation handles[VK_MEMORY_INVALIDATE_BATCH];
+  for (uint32_t i = 0; i < count; ++i)
+    handles[i] = static_cast<VmaAllocation>(allocations[i]);
+  return vmaInvalidateAllocations(allocator, count, handles, nullptr, nullptr);
+}
 VkResult vk_memory_image(VkImage image, VkDeviceMemory *memory, void **allocation) {
   VmaAllocationCreateInfo create = {};
   create.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;

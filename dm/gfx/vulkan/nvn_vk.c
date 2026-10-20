@@ -1070,11 +1070,24 @@ static void *completion_thread(void *unused) {
     vk_profile_end(VK_TIME_GPU_WAIT, started);
     // Non-coherent CPU caches become valid only after the real GPU fence.
     // Keep cached readback allocations separate from all CPU-written uploads.
+    // Keep batches bounded and finish every invalidate before the first CPU
+    // source read/effect. VMA retains the exact allocation/atom ranges; only
+    // the number of driver entry calls changes, not the maintenance bytes.
+    void *readbacks[VK_MEMORY_INVALIDATE_BATCH];
+    uint32_t readback_count=0;
     for(temporary *t=s->resources->temporaries;t;t=t->next)
       if(t->b.readback&&!(t->b.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
-        VK_CHECK(vk_memory_invalidate(t->b.allocation));
-        atomic_fetch_add(&readback_invalidations,1);
+        readbacks[readback_count++]=t->b.allocation;
+        if(readback_count==VK_MEMORY_INVALIDATE_BATCH) {
+          VK_CHECK(vk_memory_invalidate_batch(readbacks,readback_count));
+          atomic_fetch_add(&readback_invalidations,readback_count);
+          readback_count=0;
+        }
       }
+    if(readback_count) {
+      VK_CHECK(vk_memory_invalidate_batch(readbacks,readback_count));
+      atomic_fetch_add(&readback_invalidations,readback_count);
+    }
     gpu_profile_complete(s->resources, s->frame);
     uint64_t gpu_ns = 0;
     if (s->resources->timing_active) {
