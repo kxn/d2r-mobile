@@ -118,7 +118,30 @@ def load_entry(spec, number):
     return entry, result, desc, detail, wire[112:160]
 
 
-def build(specifications, output, driver_manifest, base_cache=None):
+def queried_identity(path):
+    # Existing actual producer JSON: UUIDs are independent properties, never
+    # inferred from a driver ELF BuildID. Outer device tooling still authenticates
+    # the selected loaded driver against the complete driver build record.
+    record = json.loads(path.read_bytes())
+    if (record.get('contract') != 'DM native image producer v1' or
+            record.get('complete') is not True or record.get('driverID') != 18):
+        raise ValueError('Turnip identity requires complete actual producer query metadata')
+    result = bytearray()
+    for key in ('layout_UUID', 'device_UUID', 'driver_UUID'):
+        value = record.get(key)
+        if not isinstance(value, str) or len(value) != 32 or any(c not in '0123456789abcdef' for c in value):
+            raise ValueError('invalid queried native identity: ' + key)
+        part = bytes.fromhex(value)
+        if not any(part):
+            raise ValueError('zero queried native identity: ' + key)
+        result.extend(part)
+    producer = record.get('producer_source_sha256')
+    if not isinstance(producer, str) or len(producer) != 64 or any(c not in '0123456789abcdef' for c in producer):
+        raise ValueError('invalid queried producer source identity')
+    return bytes(result), bytes.fromhex(producer)
+
+
+def build(specifications, output, driver_manifest, base_cache=None, driver_query=None):
     driver_record = json.loads(driver_manifest.read_text())
     driver = Path(driver_record['driver']['path'])
     driver_sha = sha(driver.read_bytes())
@@ -131,10 +154,12 @@ def build(specifications, output, driver_manifest, base_cache=None):
     # published if a later entry fails; existing/partial directories reject.
     cache_bytes = base_cache.read_bytes() if base_cache else None
     old_cache = json.loads(cache_bytes) if cache_bytes is not None else None
-    build_ids = driver_record.get('build_id', [])
-    if len(build_ids) != 1 or len(build_ids[0]) < 32:
-        raise ValueError('PanVK build record needs its real ELF build ID')
-    layout_id = bytes.fromhex(build_ids[0])[:16]
+    actual_identity, query_producer = queried_identity(driver_query) if driver_query else (None, None)
+    if actual_identity is None:
+        build_ids = driver_record.get('build_id', [])
+        if len(build_ids) != 1 or len(build_ids[0]) < 32:
+            raise ValueError('PanVK build record needs its real ELF build ID; Turnip requires actual --driver-query')
+        layout_id = bytes.fromhex(build_ids[0])[:16]
     updates = {}
     output.mkdir(parents=True, exist_ok=False)
     loaded = []
@@ -144,7 +169,10 @@ def build(specifications, output, driver_manifest, base_cache=None):
         # This PanVK contract copies the ELF build ID into both UUIDs. Keep
         # the independent full binary SHA binding as well. Never re-label an
         # old payload with a different driver build record.
-        if identity[:16] != layout_id or identity[32:48] != layout_id:
+        if actual_identity is not None:
+            if identity != actual_identity:
+                raise ValueError('baked native identities differ from actual Turnip producer query')
+        elif identity[:16] != layout_id or identity[32:48] != layout_id:
             raise ValueError('baked native layout/driver UUID differs from selected PanVK ELF')
         if detail['logical'] in logicals:
             raise ValueError('duplicate logical texture')
@@ -175,6 +203,8 @@ def build(specifications, output, driver_manifest, base_cache=None):
     if len(producers) != 1:
         raise ValueError('mixed producer source fingerprints')
     producer_sha = producers.pop()
+    if query_producer is not None and producer_sha != query_producer:
+        raise ValueError('baked payload producer differs from actual Turnip query source')
     pack_sha = sha(canonical({'entries': details, 'driver_sha256': driver_sha.hex(), 'producer_source_sha256': producer_sha.hex()}))
     table = bytearray(struct.pack('<8s4IQ32s32s32s32s', b'DMNTBL2\0', 2, 160, len(loaded), 1040,
                                   160 + len(loaded) * 1056, pack_sha, driver_sha, producer_sha, bytes(32)))
@@ -219,6 +249,7 @@ def build(specifications, output, driver_manifest, base_cache=None):
                 'identity': loaded[0][4].hex(), 'entries': details,
                 'driver_binary_sha256': driver_sha.hex(), 'producer_source_sha256': producer_sha.hex(),
                 'driver_build_record_sha256': sha(driver_manifest.read_bytes()).hex(),
+                'actual_driver_query_sha256': sha(driver_query.read_bytes()).hex() if driver_query else None,
                 'family_protocol': 2, 'tail_source_encoding': 'original-NVN-through-original-backend',
                 'resident_table_bytes': len(table), 'complete_cache_merge': cache_record,
                 'replacements_sha256': sha((output / 'replacements.tsv').read_bytes()).hex(),
@@ -235,6 +266,7 @@ if __name__ == '__main__':
     parser.add_argument('--entries', type=Path, required=True, help='JSON list: source declaration, original texture, baked directory')
     parser.add_argument('--base-cache', type=Path, help='complete already-ASTC descriptor cache; merged once, unselected entries exact')
     parser.add_argument('--driver-manifest', type=Path, required=True)
+    parser.add_argument('--driver-query', type=Path, help='actual Turnip native-resource.json from exact authenticated driver; preserves all three queried UUIDs')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(build(json.loads(args.entries.read_text()), args.output, args.driver_manifest, args.base_cache), sort_keys=True))
+    print(json.dumps(build(json.loads(args.entries.read_text()), args.output, args.driver_manifest, args.base_cache, args.driver_query), sort_keys=True))
