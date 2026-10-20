@@ -89,9 +89,9 @@ g,s,phase,clock=setup(['{"native_image_app_terminal":true,"rc":77}\n'],['101'])
 rows,stage,final=g['parse_oracle_log']('{"native_image_app_terminal":true,"rc":77}\n')
 assert stage=='oracle-unsupported-or-terminal-error' and final is None
 cases.append('explicit-unsupported-terminal-is-failure/no-retry')
-# The one transaction has a fixed no-retry list of three original oracles.
+# The one transaction has a fixed no-retry list of two copy-contract modes.
 mode_loop=next(n for n in ast.walk(tree) if isinstance(n,ast.For) and isinstance(n.target,ast.Tuple) and [x.id for x in n.target.elts]==['kind','test_name'])
-assert ast.literal_eval(mode_loop.iter)==[('resources-bake','native-host-image-payload'),('resources-import','native-host-image-payload')]
+assert ast.literal_eval(mode_loop.iter)==[('resources-copy-bake','native-host-image-payload'),('resources-copy-import','native-host-image-payload')]
 cases.append('fixed-two-cold-native-modes-no-order-or-retry-CLI')
 # Verify inherited handlers route interruption into the single try/finally.
 handler=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='interrupted')

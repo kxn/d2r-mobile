@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two cold owned native-image modes; strict package/PID/provenance transaction, no game or profiling."""
+"""Two cold owned native-image COPY modes; strict package/PID/provenance transaction, no game or profiling."""
 import argparse, hashlib, io, json, re, subprocess, time, uuid, signal, zipfile, xml.etree.ElementTree as ET
 from pathlib import Path
 P=argparse.ArgumentParser()
@@ -24,7 +24,7 @@ with zipfile.ZipFile(a.artifact/'candidate.apk') as archive:
  for leaf,digest in m['native_library_sha256'].items():
   assert hashlib.sha256(archive.read('lib/arm64-v8a/'+leaf)).hexdigest()==digest
 assert len(m['native_library_sha256'])==6
-assert sha(a.driver)=='6b15cf088112720aebb5cec3342e43a2c14be67b16f0460e8d2db9a75889189f'
+assert sha(a.driver)=='57b7c6f136cd3a4c2351cdb02a6693a57a160246e718b6c2f312ee65cd79b0e7'
 assert m['resource_source_ready_sha256']=='0010dbb915f51341a49fb2907094079ef59b977d8fc5a607371ef88a3a2ff6ea'
 assert sha(a.artifact/'resource-source-ready.json')==m['resource_source_ready_sha256']
 resource_ready=json.loads((a.artifact/'resource-source-ready.json').read_text())
@@ -60,7 +60,7 @@ plan={'scope':'ONE installation, TWO cold real ASTC4/6 resource modes: bake/impo
  'native_libraries':m['native_library_sha256'],'owned_resource_inputs':resource_inputs,'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),
  'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,'module_report_sha256':sha(a.module_report) if a.module_report else None,'module_count':28 if a.module_report else 0,'resource_count':6 if a.resource_report else 0,'resource_report_sha256':sha(a.resource_report) if a.resource_report else None,
  'baseline_bound':baseline_bound,'expected_shaderchain':a.expected_shaderchain,
- 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':2,'modes_once':['resources-bake','resources-import'],'GUP_unprotect_retry':False,
+ 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':2,'modes_once':['resources-copy-bake','resources-copy-import'],'GUP_unprotect_retry':False,
  'writes_only':'new independent package + unique /data/local/tmp directory; cleanup exact package only'}
 if not a.execute:
  print(json.dumps(plan,indent=2));raise SystemExit(0)
@@ -226,7 +226,7 @@ try:
  raw=ad('exec-out','run-as',pkg,'sha256sum',*['files/runtime/'+name for name in resource_inputs])
  assert {line.split(None,1)[1].strip().removeprefix('files/runtime/'):line.split()[0] for line in raw.splitlines()}==resource_inputs
  result['runs']=[]
- for kind,test_name in [('resources-bake','native-host-image-payload'),('resources-import','native-host-image-payload')]:
+ for kind,test_name in [('resources-copy-bake','native-host-image-payload'),('resources-copy-import','native-host-image-payload')]:
   assert exact_fixture() and not process(pkg),'Each mode is a fresh owned process, never a warm reselection'
   ad('shell','run-as',pkg,'rm','-f','files/runtime/native-image-test.log')
   args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--ez','run_game','false',
@@ -279,7 +279,7 @@ try:
   inputs=[r for r in rows if r.get('native_resource_input_verified') is True]
   assert len(inputs)==4 and {r['format'] for r in inputs}=={158,166}
   assert all(r['width']==r['height']==256 and r['levels']==9 and r['game_readonly_authority'] is False for r in inputs)
-  if kind=='resources-bake':
+  if kind=='resources-copy-bake':
    baked=[r for r in rows if r.get('native_resource_bake_complete') is True]
    assert len(baked)==2 and {r['format'] for r in baked}=={158,166}
    assert all(r['width']==r['height']==256 and r['levels']==9 and r['physical_image_bytes']>0 and r['GPU_sampling_executed'] is False for r in baked)
@@ -297,6 +297,7 @@ try:
      assert meta['input_sha256']==resource_inputs[source+'/resource-input.bin'] and meta['declaration_sha256']==resource_inputs[source+'/resource-source.json']
      assert meta['driverID']==20 and meta['recipe']['mipLevels']==9 and meta['recipe']['width']==meta['recipe']['height']==256
      assert meta['recipe']['VkFormat']==(158 if source=='resource4' else 166)
+     assert meta['recipe']['usage']==0x400007
      assert meta['original_driver_roundtrip_compressed_blocks_exact'] is True
      assert len(meta['mips'])==9
    result['native_payload_hashes']=hashes
@@ -312,6 +313,9 @@ try:
     assert row['NC_Flush_offset']+row['NC_Flush_size']<=row['pool_bytes']
     assert row['native_backing_extra_image_allocation'] is False and row['reference_allocation_is_test_only'] is True
     assert row['neighbors_exact'] is True and row['original_mapping_survived_Free'] is True and row['game_modules_executed'] is False
+   copied=[r for r in rows if r.get('native_resource_copy_passed') is True]
+   assert len(copied)==2 and {r['format'] for r in copied}=={158,166}
+   assert all(r['usage']==0x400007 and r['B2T_nonzero_block_ROI'] is True and r['T2T_destination_ROI'] is True and r['T2T_source_all_mips'] is True and r['untouched_pixels_and_mips_exact'] is True and r['CPU_writes_during_GPU'] is False and r['game_modules_executed'] is False for r in copied)
    all_owned=result['native_payload_hashes']|{'files/runtime/'+n:h for n,h in resource_inputs.items()}
    raw=ad('exec-out','run-as',pkg,'sha256sum',*all_owned)
    assert {line.split(None,1)[1].strip():line.split()[0] for line in raw.splitlines()}==all_owned
@@ -319,7 +323,7 @@ try:
   stop_owned(run)
   assert not process(pkg),'Owned process must stop between cold modes'
   run['PID_absent_after']=True;save()
- result.update(stage='actual-noncoherent-native-resource-owned-passed',
+ result.update(stage='actual-noncoherent-native-resource-copy-owned-passed',
   no_game_acceptance=True,native_owned_only=True,performance_claim=False)
 
 except BaseException as e:result.update(stage='failed-preserved',error=repr(e))
@@ -346,4 +350,4 @@ finally:
  except BaseException as e:result['cleanup_errors'].append(repr(e))
  save()
 print(json.dumps(result))
-raise SystemExit(0 if result['stage']=='actual-noncoherent-native-resource-owned-passed' and not result['cleanup_errors'] else 1)
+raise SystemExit(0 if result['stage']=='actual-noncoherent-native-resource-copy-owned-passed' and not result['cleanup_errors'] else 1)

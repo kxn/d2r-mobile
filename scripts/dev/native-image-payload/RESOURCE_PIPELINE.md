@@ -189,3 +189,30 @@ unavailable. No device result is implied by source, host helper tests or APK
 compilation. A small host test calls the same standard reference-upload/sampling
 helpers with the original owned RGBA vectors under LVP/VVL/sync; it validates
 that standard path only, not Mali ASTC or native import.
+
+
+## Explicit native transfer contract experiment
+
+The separate `--resources-copy-bake` / `--resources-copy-import` modes use the
+exact recipe `SAMPLED | HOST_TRANSFER | TRANSFER_SRC | TRANSFER_DST` (0x400007).
+The original bake/import modes retain 0x400004. A different frozen driver and
+new producer fingerprint are required; old native-image proof does not cover
+these new usage flags. The dedicated controller binds driver SHA 57b7c6f1…
+from source 5709f74 and keeps original game artifacts read-only.
+
+Import first checks every original mip against standard GPU uploads, then
+updates one nonzero ASTC block ROI through Buffer-to-Image, another ROI through
+Image-to-Image, and copies all mips from the imported image into a standard
+image. References use modified valid source ASTC blocks and standard uploads,
+without a CPU ASTC decoder. GPU sampling must show actual changed pixels while
+all untouched pixels/mips match. Original backing neighbors and file hashes
+remain checked. Imported pool bytes are CPU-inspected only after GPU fence,
+HOST visibility, FOREIGN release and required noncoherent Invalidate. This
+experiment makes no claim about concurrent CPU writes during GPU execution.
+
+`--copy-reference-selftest unused` runs the identical copy/reference algorithm
+with ordinary BC3 images under Lavapipe and official VVL/SYNC. It does not
+exercise native ASTC import, the private driver, the Android game, performance
+or heat. The first selftest exposed an unaligned synthetic header offset; that
+failure is retained and fixed by the same 64-byte payload alignment used by
+real resource inputs.

@@ -49,8 +49,9 @@ static const VkExternalMemoryImageCreateInfo native_external = {
     .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
     .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
 #endif
-static const VkImageUsageFlags usage =
+static VkImageUsageFlags usage =
     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+static int resource_copy_mode;
 static VKAPI_ATTR VkBool32 VKAPI_CALL
 debug(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
       VkDebugUtilsMessageTypeFlagsEXT type,
@@ -856,6 +857,9 @@ static int fixture_main(int argc, char **argv) {
          !strcmp(argv[1], "--resource-bake") ||
          !strcmp(argv[1], "--resources-bake") ||
          !strcmp(argv[1], "--resources-import") ||
+         !strcmp(argv[1], "--resources-copy-bake") ||
+         !strcmp(argv[1], "--resources-copy-import") ||
+         !strcmp(argv[1], "--copy-reference-selftest") ||
          !strcmp(argv[1], "--verify-resource-input")
 #endif
              ));
@@ -864,7 +868,15 @@ static int fixture_main(int argc, char **argv) {
                 !strcmp(argv[1], "--native-import") ||
                 !strcmp(argv[1], "--resource-bake") ||
                 !strcmp(argv[1], "--resources-bake") ||
-                !strcmp(argv[1], "--resources-import");
+                !strcmp(argv[1], "--resources-import") ||
+                !strcmp(argv[1], "--resources-copy-bake") ||
+                !strcmp(argv[1], "--resources-copy-import");
+  resource_copy_mode = !strcmp(argv[1], "--resources-copy-bake") ||
+                       !strcmp(argv[1], "--resources-copy-import") ||
+                       !strcmp(argv[1], "--copy-reference-selftest");
+  usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+  if (resource_copy_mode)
+    usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   if (!strcmp(argv[1], "--verify-resource-input")) {
     resource_input r = resource_open(argv[2]);
     resource_close(&r);
@@ -893,9 +905,13 @@ static int fixture_main(int argc, char **argv) {
   };
   unsigned used = 0;
 #ifdef DM_NATIVE_IMPORTED_IMAGE
-  if (!strcmp(argv[1], "--resources-bake") ||
-      !strcmp(argv[1], "--resources-import")) {
-    resource_pair(argv[2], !strcmp(argv[1], "--resources-bake"));
+  if (!strcmp(argv[1], "--copy-reference-selftest")) {
+    resource_copy_reference_selftest();
+    used = 1;
+  } else if (!strcmp(argv[1], "--resources-bake") ||
+      !strcmp(argv[1], "--resources-import") || resource_copy_mode) {
+    resource_pair(argv[2], !strcmp(argv[1], "--resources-bake") ||
+                              !strcmp(argv[1], "--resources-copy-bake"));
     used = 2;
   } else if (!strcmp(argv[1], "--resource-bake")) {
     resource_bake(argv[2]);

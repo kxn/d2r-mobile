@@ -183,7 +183,8 @@ static VkImageCreateInfo resource_recipe(const dm_resource_input *h,
                              .usage = imported
                                           ? usage
                                           : VK_IMAGE_USAGE_SAMPLED_BIT |
-                                                VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                                VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                (resource_copy_mode ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0),
                              .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
                              .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
 }
@@ -317,6 +318,7 @@ static void resource_ownership(image *i, uint32_t levels, int acquire) {
                        0, 0, NULL, 0, NULL, 1, &b);
   resource_command_wait(cb);
 }
+#include "resource_copy.inc"
 static void resource_import(const char *directory) {
   resource_input r = resource_open(directory);
   const dm_resource_input *h = r.header;
@@ -431,14 +433,19 @@ static void resource_import(const char *directory) {
       break;
     }
   CHECK(varied);
+  if (resource_copy_mode)
+    resource_copy_tests(&imported, &r, native_pixels, reference_pixels, pixel_bytes);
   uint8_t pixel_sha[32];
   native_sha(native_pixels, pixel_bytes, pixel_sha);
   free(native_pixels);
   free(reference_pixels);
   destroy_image(&reference);
   resource_ownership(&imported, h->levels, 0);
+  if (resource_copy_mode && !coherent)
+    VK(vkInvalidateMappedMemoryRanges(device, 1, &flush));
   native_sha(pool + offset, wire.image_size, digest);
-  CHECK(!memcmp(digest, wire.payload_sha256, 32));
+  if (!resource_copy_mode)
+    CHECK(!memcmp(digest, wire.payload_sha256, 32));
   for (uint64_t n = 0; n < offset; n++)
     CHECK(pool[n] == 0xa5);
   for (uint64_t n = offset + wire.image_size; n < bytes; n++)
@@ -466,6 +473,13 @@ static void resource_import(const char *directory) {
       (unsigned long long)bytes, (unsigned long long)offset,
       (unsigned long long)flush.offset,
       (unsigned long long)(coherent ? 0 : flush.size));
+  if (resource_copy_mode)
+    printf("{\"native_resource_copy_passed\":true,\"format\":%u,"
+           "\"usage\":%u,\"B2T_nonzero_block_ROI\":true,"
+           "\"T2T_destination_ROI\":true,\"T2T_source_all_mips\":true,"
+           "\"untouched_pixels_and_mips_exact\":true,"
+           "\"CPU_writes_during_GPU\":false,\"game_modules_executed\":false}\n",
+           h->vk_format, usage);
   resource_close(&r);
 }
 static void resource_pair(const char *directory, int bake) {

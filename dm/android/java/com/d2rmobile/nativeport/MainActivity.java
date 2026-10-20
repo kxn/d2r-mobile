@@ -242,7 +242,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     getIntent().getBooleanExtra("vulkan_test_validation", true))
                 throw new IllegalArgumentException("Native image requires exclusive cold PanVK test, explicit validation=false and run_game=false");
             String imageMode = getIntent().getStringExtra("native_image_mode");
-            if (!"--native-bake".equals(imageMode) && !"--native-import".equals(imageMode) && !"--resources-bake".equals(imageMode) && !"--resources-import".equals(imageMode))
+            if (!"--native-bake".equals(imageMode) && !"--native-import".equals(imageMode) && !"--resources-bake".equals(imageMode) && !"--resources-import".equals(imageMode) && !"--resources-copy-bake".equals(imageMode) && !"--resources-copy-import".equals(imageMode))
                 throw new IllegalArgumentException("Unknown native image fixture mode");
             new Thread(() -> nativeNativeImageTest(root.getAbsolutePath(), imageMode, false),
                     "owned-native-image").start();
