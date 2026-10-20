@@ -284,6 +284,13 @@ static void shared_image_dirty_test(void) {
   CALL(nvnTextureBuilderSetStorage,&tb,&pool,65536);
   CHECK(CALL(nvnTextureInitialize,&first_clear,&tb));
   CHECK(!nvn_dirty_tracked(data+65536,4096));
+  // Query the future writer's bytes repeatedly before the real clear. A new
+  // optimal-image writer must revoke any geometric negative proof before a
+  // later Buffer/CPU interpretation can consume those same stale guest bytes.
+  CHECK(!vk_texture_shared_linear_conflict((uintptr_t)data+65536,4096));
+  extern int vk_test_shared_alias_negative_prime(uint64_t,uint64_t);
+  CHECK(vk_test_shared_alias_negative_prime((uintptr_t)data+65536,4096));
+  CHECK(!vk_texture_shared_linear_conflict((uintptr_t)data+65536,4096));
   dirty_range_fill(data+65536,4096,red);
   uint64_t cu,cr,cu2,cr2;mtl_pkg_stats(&cu,&cr);
   mtl_sub_begin();
@@ -292,6 +299,7 @@ static void shared_image_dirty_test(void) {
   vk_target_clear_color(&target,NULL,&clear);
   vk_internal_wait(vk_internal_commit());
   shared_image_pixels(&first_clear,green);
+  CHECK(vk_texture_shared_linear_conflict((uintptr_t)data+65536,4096));
   CHECK(nvn_dirty_tracked(data+65536,((tex_t *)&first_clear)->L.size));
   CHECK(vk_test_texture_rebuildable(((tex_t *)&first_clear)->serial)==0);
   mtl_pkg_stats(&cu2,&cr2);CHECK(cu2==cu && cr2==cr);

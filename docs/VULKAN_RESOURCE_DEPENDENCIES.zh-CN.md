@@ -1814,3 +1814,23 @@ B2T 本来就必须结束 render pass；现在先结束已有 pass、完成窗�
 回归在原 shared-image fixture 中加入实际录制和在途 completion CPU 写入；旧 dad2c3d preflight 不能先发布写入，负例在 `*(uint32_t *)data == 7` 失败；修正后通过，原 retile same-recording 不提交断言仍通过。LVP 是软件功能验证，不能替代真实游戏的重测，亦不证明真实游戏此次崩溃只有一个触发源。
 
 后继 CPU effect presence 门：仅在已提交且带真实 CPU effect 的 submission enqueue 时增加原子计数，在全部 CPU effects 完成并从 pending 摘链时减少，二者仍在原 completion mutex 内，含溢出/下溢检查。纹理 preflight 先检查 owner 的 recording effect，再 acquire 读取该计数；零时无需争抢 completion mutex，非零保留原精确页范围扫描。共享 GPU canonical publication 不计入该提示；它不是字节范围缓存，也不提前宣布 CPU 写入完成。
+
+### Shared linear alias 的纯几何负证明
+
+共享 Buffer/可选 CPU 证明继续执行原 linear-vs-optimal-image 别名守卫。仅当区间
+与 alias AVL 的任何节点都不相交时，可在32槽 exact-range direct-map 中记录
+负证明；绝不把当前 initialized/encoding 不符合条件的交叠节点缓存为安全。
+树插入/删除（含物理替换、退休与同址新身份）推进 owner epoch；溢出永久禁用
+缓存，不能 epoch ABA。节点地址、image指针、内容、stage/visibility 都不存入。
+
+每次 pool 初始化、资源引用、dirty/source 检查及真正读写依赖仍按原顺序执行；
+只有重复 AVL 搜索可省。alias index 与该证明同属现有 recording owner，
+不宣称任意线程并发录制安全。生产增加776B静态元数据（32×24B条目+8Bepoch），
+无逐 image/node 字段、锁或分配。无交叠首次查询做原几何搜索；真实几何交叠
+还需原 eligible 搜索，最多多一遍冷/拒绝路径搜索。direct-map collision只丢命中。
+
+依据6bc同闭合99Hz NvN样本：native binding子树134/632中alias leaf12；
+全部NvN alias leaf21，不能把父20%或21样本全算成可消除时间。原 descriptor
+last/history、dynamic UBO、texture recipe/snapshot、retained Pool地址与page
+bitmap证明均保留，不以descriptor命中跳过真实资源工作。实际CPU/热/FPS
+收益待原官方同条件对照；native GENERAL策略与实验默认开关不变。
