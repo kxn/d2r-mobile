@@ -1,0 +1,74 @@
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index a5c03b4..62f8975 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -1579,7 +1579,10 @@ tu_get_properties(struct tu_physical_device *pdevice,
+       _mesa_blake3_init(&blake3_ctx);
+ 
+       /* Make sure we don't match with other vendors */
+-      const char *driver = "turnip-v1";
++      /* Native HOST_ALLOCATION ASTC uses a different opaque physical layout.
++       * Reject AA185 and the abandoned mixed-tail experiment's payloads.
++       */
++      const char *driver = "turnip-v3-native-astc-whole-linear256";
+       _mesa_blake3_update(&blake3_ctx, driver, strlen(driver));
+ 
+       /* Hash in UBWC configuration */
+diff --git a/src/freedreno/vulkan/tu_image.cc b/src/freedreno/vulkan/tu_image.cc
+index 140364e..a86890b 100644
+--- a/src/freedreno/vulkan/tu_image.cc
++++ b/src/freedreno/vulkan/tu_image.cc
+@@ -529,6 +529,23 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
+    /* Force to either use tiled layout or linear for all mip layers. */
+    bool force_disable_linear_fallback = false;
+ 
++   /* Experimental native HOST_ALLOCATION ASTC images only.  Ordinary
++    * optimal/private images, RTs, non-ASTC, sparse/mutable images and external
++    * plane layouts keep their original AA185 policy.  Use the existing
++    * fully-linear FDL path so every baseMip view has one consistent pitch
++    * alignment; never combine a lower linear minimum with tiled mips.
++    */
++   const bool native_astc_linear =
++      image->vk.external_handle_types == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT &&
++      tu_host_image_format_supported(device->physical_device, image->vk.format,
++         image->vk.image_type, image->vk.tiling, image->vk.usage, image->vk.create_flags) &&
++      image->vk.array_layers == 1 && image->vk.extent.depth == 1 &&
++      image->vk.mip_levels > 0 && image->vk.mip_levels <= 16 &&
++      image->vk.samples == VK_SAMPLE_COUNT_1_BIT &&
++      modifier == DRM_FORMAT_MOD_INVALID && !plane_layouts;
++   if (native_astc_linear)
++      force_linear_tile = true;
++
+    /* use linear tiling if requested */
+    if (pCreateInfo->tiling == VK_IMAGE_TILING_LINEAR) {
+       force_linear_tile = true;
+@@ -772,9 +789,27 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
+          .plane = i,
+       };
+ 
++      const struct fdl_explicit_layout *fdl_explicit =
++         plane_layouts ? &plane_layout : NULL;
++      struct fdl_explicit_layout native_linear_layout;
++      if (native_astc_linear) {
++         /* Existing fully-linear explicit layouts permit 256B for cpp=16.
++          * Keep FDL's mip offsets and last-level overfetch padding.  The host
++          * external memory requirements below round the final size to the
++          * real host-pointer alignment, independently of the 64B FDL base.
++          */
++         assert(i == 0 && tile_mode == TILE6_LINEAR && !ubwc_enabled);
++         native_linear_layout = (struct fdl_explicit_layout) {
++            .offset = 0,
++            .pitch = align(util_format_get_nblocksx(format, width0) *
++                              util_format_get_blocksize(format), 256),
++         };
++         fdl_explicit = &native_linear_layout;
++      }
++
+       if (!fdl6_layout_image(layout, &device->physical_device->dev_info,
+-                             &params, plane_layouts ? &plane_layout : NULL)) {
+-         assert(plane_layouts); /* can only fail with explicit layout */
++                             &params, fdl_explicit)) {
++         assert(plane_layouts || native_astc_linear); /* explicit layout only */
+          return vk_error(device, VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT);
+       }
+ 
