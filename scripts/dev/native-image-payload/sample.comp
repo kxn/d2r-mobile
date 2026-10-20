@@ -1,0 +1,14 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2DArray source_image;
+layout(set = 0, binding = 1, std430) writeonly buffer Output { uint words[]; };
+layout(push_constant) uniform Parameters { uint width, height, layer, level; }
+p;
+void main() {
+  uvec2 at = gl_GlobalInvocationID.xy;
+  if (at.x >= p.width || at.y >= p.height)
+    return;
+  vec2 uv = (vec2(at) + vec2(0.5)) / vec2(p.width, p.height);
+  words[at.y * p.width + at.x] = packUnorm4x8(
+      textureLod(source_image, vec3(uv, float(p.layer)), float(p.level)));
+}
