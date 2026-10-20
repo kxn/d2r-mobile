@@ -134,6 +134,11 @@ def main():
     def current():
         return adb('shell', 'pidof ' + PKG + ' || true')
 
+    def cancelled(signum, _frame):
+        raise RuntimeError('caller cancelled owned debugger hook: signal ' + str(signum))
+
+    signal.signal(signal.SIGTERM, cancelled)
+    signal.signal(signal.SIGINT, cancelled)
     try:
         require(d['ELF_sha256'] == ELF_SHA and owned_pid(current(), pid), 'exact ELF/owned firstPID mismatch')
         path = adb('shell', 'pm', 'path', PKG)
@@ -204,6 +209,9 @@ def main():
     except BaseException as e:
         d['tool_error'] = repr(e)
     finally:
+        # Let the caller's one graceful cancellation complete owned cleanup.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         if client is not None and client.poll() is None:
             client.send_signal(signal.SIGINT)
             try:
