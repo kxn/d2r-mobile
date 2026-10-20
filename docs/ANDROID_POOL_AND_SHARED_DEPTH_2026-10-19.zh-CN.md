@@ -1152,8 +1152,8 @@ task-clock 为 6302→6219ms，用户态 cycles 为 8.412→8.905G，内核态�
 稳定营地采样，不能外推首次加载／新场景，也不含内核态。这修正了“镜像
 计数零就代表纹理跟踪已消失”的错误推论。池计数没有覆盖全部纹理处理。
 
-下一候选为确定性的平衡区间索引，保留真实地址重叠、写入、退役和原错误
-保护，减少每次 Buffer 访问的全链遍历。此时尚未实现／验收，不报告涨帧。
+后继 `7c60ff4` 已实现确定性的平衡区间索引，保留真实地址重叠、写入、退役
+和原错误保护，减少每次 Buffer 访问的全链遍历。真实游戏结果见下节。
 同一代码也适用于 Mali 共享模式；当前 Mali 生产包共享与旧 ASTC 复制实验
 均关闭，普通 Buffer 访问不进入此扫描，不能将该 43% 归因于当前 Mali。
 证据：`turnip-shared-2f0-on-cpu99-official-analysis-v1/final-hotspots-agent-v1.json`。
@@ -1170,3 +1170,36 @@ copy 排布和文件合同；后续 import 的 202016 项包括实际 GPU 采样
 下一步复用原资源加工及 NVN family 检查，先闭合一张真实火盆材质，不能将
 PanVK 的 opaque payload／offsets 用到 Turnip。证据：
 `turnip-host-image-app-v2-q-actual-evidence.json`。
+
+## Turnip：别名区间索引的真实游戏采样
+
+`7c60ff4` 使用同一 `3c8710be` 驱动、原 BC／UI4／950 shader 链，在普通
+应用 UID 的原始 ARM64 游戏中完成选角、营地和原触控路线。共享确实开启，
+地面、角色、建筑、火盆与 HUD 截图未见明显异常。没有启用 GPU 抓帧层。
+
+官方 Simpleperf 同为 99Hz、约 8 秒用户态 DWARF 采样。将新索引查询和资格
+判断函数也计入同一类别，别名保护的 self 样本从 `248/577`（42.98%）降到
+`19/451`（4.21%）。这是同类 CPU 热点显著缩小的证据；不是精确的每帧耗时、
+FPS、带宽或散热收益。两次窗口内 PSO 均稳定，但窗口间 PSO 数不同，也没有
+记录内核 CPU；不能用截图的瞬时 FPS 把此结果解释成整帧涨跌。
+
+每个图像新增 64 字节索引元数据及冷路径插入／删除维护，不新增图像内容
+快照。原地址重叠判断、尚未完成时的保护、逻辑退役和八提交物理保留期
+维持不变。真实游戏退出前完成原存档，之后恢复原 APK、模块、资源、驱动
+和缓存，进程已停止。证据：
+`shared-alias-7c60ff4-actual-game-CPU99-acceptance-agent.json`。
+
+## Turnip：只用于图像 CPU 转换的池不提前注册（待真机验收）
+
+独立候选 `0b36faa` 包含上述索引，继续处理整池导入的驻留成本。图像 CPU
+读取准备不再顺带创建整个池的 VkBuffer；真正的线性 GPU Buffer 访问才注册。
+共享堆改用同一 memfd 的 guest 与内部 RW 两个映射，guest 保留原脏页写保护，
+驱动通过内部映射注册相同物理页，避免首次 Buffer 访问时临时解除 guest 保护。
+第二个虚拟映射不复制池内容，也不代表所有纹理都已直接共享。
+
+冷启动两页 GPU 检查复用同一映射构造，先将 guest 设为只读，再导入 RW
+映射、执行原 copy／fill 并从 guest 核对字节。host 真实堆、原 NVN GPU、
+原保护负控及异步／串行回归已通过；Android 真游戏、整池注册和实际 PSS
+仍待验证，未替换可玩版本。原 ASTC 传播对未注册池仍保守回退，不能宣称
+覆盖及性能不变。详见候选分支的 `ANDROID_SHARED_IMAGE_CPU_ONLY_POOLS.zh-CN.md`
+和本机 `shared-image-cpu-only-v1-final-host-results.json`。
