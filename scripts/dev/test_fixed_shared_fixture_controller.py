@@ -18,7 +18,7 @@ cases=[]
 with tempfile.TemporaryDirectory(prefix='shared-anon-controller-test-')as td:
  def setup(logs,pids):
   state={'logs':list(logs),'pids':list(pids),'calls':[],'events':[],'snapshots':[]};clock=Clock()
-  phase={'name':'owned-cell','stage':'launch','expected_test':'PanVK-query-clock-capability'}
+  phase={'name':'owned-cell','stage':'launch','expected_test':'fixed-shared-NVN-buffer'}
   def process(unused):
    state['events'].append('pid');v=state['pids'][0]
    if len(state['pids'])>1:state['pids'].pop(0)
@@ -50,11 +50,11 @@ with tempfile.TemporaryDirectory(prefix='shared-anon-controller-test-')as td:
  assert phase['stage']=='native-assertion-failed';no_force(s)
  cases.append('firstPID-preserved-through-crash-child/natural-exit-only')
  # A final row without PID cannot rescue ambiguous/replacement ownership.
- passed='{"test":"PanVK-query-clock-capability","result":"recorded"}\n'
+ passed='{"test":"fixed-shared-NVN-buffer","result":"passed"}\n'
  for logs,pids in [([passed],['101 202','202','']),(['',passed],['101','202',''])]:
   g,s,phase,clock=setup(logs,pids);poll(g)
-  assert phase['stage']=='ownership-failed'and phase['terminal_after_unowned_wait']=='oracle-recorded'
-  assert phase['untrusted_final']['result']=='recorded'and 'final'not in phase
+  assert phase['stage']=='ownership-failed'and phase['terminal_after_unowned_wait']=='oracle-passed'
+  assert phase['untrusted_final']['result']=='passed'and 'final'not in phase
   assert phase['natural_exit']['all_PIDs_absent'];no_force(s)
  cases.append('ambiguous-or-replacement-plus-pass-rejected/untrusted-row-retained/no-force')
  # Unknown/replacement processes that do not exit fail boundedly, untouched.
@@ -69,8 +69,8 @@ with tempfile.TemporaryDirectory(prefix='shared-anon-controller-test-')as td:
   assert len(clock.sleeps)==before;no_force(s)
  cases.append('live-crash/replacement-bounded-timeout/no-force/no-repeated-wait')
  # Normal exact owned process remains eligible for the original explicit stop.
- normal='{"test":"PanVK-query-clock-capability","result":"recorded"}\n'
- g,s,phase,clock=setup([normal],['101','101']);poll(g);assert phase['stage']=='oracle-recorded'
+ normal='{"test":"fixed-shared-NVN-buffer","result":"passed"}\n'
+ g,s,phase,clock=setup([normal],['101','101']);poll(g);assert phase['stage']=='oracle-passed'
  g['stop_owned'](phase);assert any(c[:3]==('shell','am','force-stop')for c in s['calls'])
  cases.append('normal-single-owned-PID-original-stop')
  # Malformed raw PID text is saved and never adopted.
@@ -80,13 +80,13 @@ with tempfile.TemporaryDirectory(prefix='shared-anon-controller-test-')as td:
  cases.append('invalid-raw-PID-durable/no-adoption')
  # A final JSON without any observed owner PID is also untrusted.
  g,s,phase,clock=setup([passed],['']);poll(g)
- assert phase['stage']=='ownership-failed' and phase['untrusted_final']['result']=='recorded'
+ assert phase['stage']=='ownership-failed' and phase['untrusted_final']['result']=='passed'
  assert g['first_pid'] is None;no_force(s)
  cases.append('final-without-ever-observed-owner-rejected')
 # The one transaction has a fixed no-retry list of three original oracles.
 mode_loop=next(n for n in ast.walk(tree) if isinstance(n,ast.For) and isinstance(n.target,ast.Tuple) and [x.id for x in n.target.elts]==['kind','test_name','checks_expected'])
-assert ast.literal_eval(mode_loop.iter)==[('capability','PanVK-query-clock-capability',13)]
-cases.append('one-capability-only-cold-record-no-byte-workload-or-retry')
+assert ast.literal_eval(mode_loop.iter)==[('buffer','fixed-shared-NVN-buffer',659),('event','GPU-native-NVN-event-payload',117),('query','GPU-native-NVN-query-publication',7827)]
+cases.append('fixed-three-cold-original-oracles-no-order-or-retry-CLI')
 # Verify inherited handlers route interruption into the single try/finally.
 handler=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='interrupted')
 g={};exec(compile(ast.Module(body=[handler],type_ignores=[]),str(source),'exec'),g)

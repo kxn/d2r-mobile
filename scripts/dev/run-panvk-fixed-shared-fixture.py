@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One isolated appUID cold capability metadata record. No timestamp workload or profiler."""
+"""One isolated appUID transaction: original fixed Buffer, native Event and Query byte oracles; not profiling."""
 import argparse, hashlib, io, json, re, subprocess, time, uuid, signal, zipfile, xml.etree.ElementTree as ET
 from pathlib import Path
 P=argparse.ArgumentParser()
@@ -14,7 +14,7 @@ P.add_argument('--expected-shaderchain')
 P.add_argument('--output',type=Path,required=True)
 P.add_argument('--execute',action='store_true')
 a=P.parse_args();R=Path(__file__).resolve().parents[2]
-pkg='com.d2rmobile.querycapabilityfixture';original='com.d2rmobile.nativeport'
+pkg='com.d2rmobile.sharedpublicationv2fixture';original='com.d2rmobile.nativeport'
 B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',a.serial]
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 m=json.loads((a.artifact/'candidate.apk.build.json').read_text())
@@ -45,17 +45,17 @@ if a.resource_report:
  for name,digest in resources['expected_hashes'].items():
   assert re.fullmatch('[A-Za-z0-9_./-]+',name) and not Path(name).is_absolute() and '..' not in Path(name).parts and re.fullmatch('[0-9a-f]{64}',digest)
   expected['files/runtime/romfs_overlay/'+name]=digest
-plan={'scope':'ONE installation, ONE cold selected-driver query capability metadata record; no timestamp/Buffer byte workload; game=false; original package read-only; VVL explicitly disabled; no performance claim',
+plan={'scope':'ONE installation, THREE cold original NVN byte fixtures: buffer/event/query, each once; game=false; original package read-only; VVL explicitly disabled; no performance claim',
  'serial':a.serial,'package':pkg,'activity':m['activity'],'APK_sha256':m['apk_sha256'],
  'native_libraries':m['native_library_sha256'],'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),
  'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,'module_report_sha256':sha(a.module_report) if a.module_report else None,'module_count':28 if a.module_report else 0,'resource_count':6 if a.resource_report else 0,'resource_report_sha256':sha(a.resource_report) if a.resource_report else None,
  'baseline_bound':baseline_bound,'expected_shaderchain':a.expected_shaderchain,
- 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':1,'modes_once':['capability'],'GUP_unprotect_retry':False,
+ 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':3,'modes_once':['buffer','event','query'],'GUP_unprotect_retry':False,
  'writes_only':'new independent package + unique /data/local/tmp directory; cleanup exact package only'}
 if not a.execute:
  print(json.dumps(plan,indent=2));raise SystemExit(0)
 a.output.mkdir(exist_ok=False,parents=True)
-tmp='/data/local/tmp/dm-query-capability-'+uuid.uuid4().hex
+tmp='/data/local/tmp/dm-shared-publication-'+uuid.uuid4().hex
 result={**plan,'stage':'preflight','cleanup_errors':[]};made_tmp=False;installation_requested=False;installed=False;launched=False;installer=None;launch=None;original_before=None;first_pid=None;active_phase=None
 result['owned_tmp']=tmp
 
@@ -209,8 +209,17 @@ try:
  ad('shell','run-as',pkg,'mkdir','-p','files/runtime/vulkan-panfrost','files/runtime/vulkan-fixture')
  ad('shell','run-as',pkg,'cp',tmp+'/libvulkan_panfrost.so','files/runtime/vulkan-panfrost/libvulkan_panfrost.so')
  assert ad('exec-out','run-as',pkg,'sha256sum','files/runtime/vulkan-panfrost/libvulkan_panfrost.so').split()[0]==sha(a.driver)
+ fixture=json.loads((a.artifact/'fixture-hashes.json').read_text())
+ allowed={name+suffix for name,stage in [('9e59e8dc6bf96b4e','.comp'),('5626d9a8f1d7364b','.vert'),('e02a3672f851f66b','.frag')] for suffix in (stage,'.spv','.meta','.dkey')}
+ assert set(fixture)==allowed and all(re.fullmatch('[0-9a-f]{64}',v) for v in fixture.values())
+ # Original self-owned graphics0/1 and compute2 GLSL fixtures; no game inputs.
+ ad('push',a.artifact/'vulkan-fixture',tmp+'/vulkan-fixture')
+ ad('shell','run-as',pkg,'cp','-R',tmp+'/vulkan-fixture/.','files/runtime/vulkan-fixture/')
+ raw=ad('exec-out','run-as',pkg,'sha256sum',*['files/runtime/vulkan-fixture/'+n for n in fixture])
+ got={line.split(None,1)[1].strip().removeprefix('files/runtime/vulkan-fixture/'):line.split()[0] for line in raw.splitlines()}
+ assert got==fixture,'Fixture bytes mismatch'
  result['runs']=[]
- for kind,test_name,checks_expected in [('capability','PanVK-query-clock-capability',13)]:
+ for kind,test_name,checks_expected in [('buffer','fixed-shared-NVN-buffer',659),('event','GPU-native-NVN-event-payload',117),('query','GPU-native-NVN-query-publication',7827)]:
   assert exact_fixture() and not process(pkg),'Each mode is a fresh owned process, never a warm reselection'
   ad('shell','run-as',pkg,'rm','-f','files/runtime/vulkan-test.log')
   args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--ez','run_game','false',
@@ -250,26 +259,37 @@ try:
    if time.monotonic()>=deadline:phase['stage']='functional-bound-reached';break
    time.sleep(.2)
   launch.wait(timeout=5);run['results']=rows;save()
-  assert run.get('stage')=='oracle-recorded','Original failure or lost PID ownership; no later mode/retry'
+  assert run.get('stage')=='oracle-passed','Original failure or lost PID ownership; no later mode/retry'
   final=run['final']
-  assert final['result']=='recorded' and final['checks']==checks_expected
-  assert final['game_modules_executed'] is False and final['shared_pool_initialized'] is False
-  assert final['GPU_timestamp_verified'] is False
+  assert final['result']=='passed' and final['checks']==checks_expected
+  assert final['game_modules_executed'] is False
+  memories=[r for r in rows if r.get('fixed_shared_memory') is True]
+  assert len(memories)==1
+  memory=memories[0]
+  assert memory['properties']==11 and memory['host_coherent'] is False
+  assert memory['noncoherent_atom_size']==64 and memory['uid']>=10000
+  assert memory['whole_pool_bytes']==4194304 and memory['shadow'] is False
+  if kind=='buffer':assert memory['metadata_only_before_first_use'] is True
   assert 'provider=panvk' in log and 'driverID=20' in log
   assert any(r.get('validation_layer')=='disabled_explicitly' for r in rows)
   assert not re.search(r'VUID-|FATAL|native fault signal=',log)
-  details=[r for r in rows if r.get('test_details')=='native-query-clock-capability']
-  assert len(details)==1 and details[0]['GPU_timestamp_commands_executed'] is False
-  detail=details[0]
-  assert isinstance(detail['period_float_bits'],int) and 0<=detail['period_float_bits']<=0xffffffff
-  assert isinstance(detail['timestamp_valid_bits'],int) and 0<=detail['timestamp_valid_bits']<=0xffffffff
-  assert isinstance(detail['timestamp_period_ns_text'],str) and isinstance(detail['native_query_admitted'],bool)
-  assert detail['reason'] in ('supported','invalid-valid-bits','invalid-period','intermediate-domain-overflow','scaled-valid-input-domain-exceeds-u64')
-  run.update(capability=detail,result='recorded',no_GPU_timestamp_acceptance=True);save()
+  cache_ops=[r for r in rows if r.get('test_details')=='fixed-shared-cache']
+  assert {'flush','invalidate'}=={r['operation'] for r in cache_ops}
+  assert any(r['allocation_bytes']==4194304 for r in cache_ops)
+  for r in cache_ops:
+   assert r['memory_flags']==11 and r['atom']==64
+   assert r['memory_offset']%64==0 and r['cache_bytes']%64==0 and r['cache_bytes']>0
+   assert r['memory_offset']+r['cache_bytes']<=r['allocation_bytes']
+  if kind=='query':
+   detail=[r for r in rows if r.get('test_details')=='GPU-native-query-original-CPU-byte-oracle']
+   assert len(detail)==1 and detail[0]['timestamp_reports']==2055 and detail[0]['sample_prefixes']==4
+   assert detail[0]['legacy_CPU_expression_exact'] is True and detail[0]['streaming_regression'] is True
+   assert detail[0]['defined_saturating_reference'] is True and detail[0]['saturated_reports']==0
+  run.update(actual_memory=memory,cache_operations=cache_ops,result='passed');save()
   stop_owned(run)
   assert not process(pkg),'Owned process must stop between cold modes'
   run['PID_absent_after']=True;save()
- result.update(stage='selected-PanVK-query-capability-recorded',
+ result.update(stage='actual-noncoherent-fixed-shared-buffer-event-query-passed',
   no_game_or_image_acceptance=True,performance_claim=False)
 
 except BaseException as e:result.update(stage='failed-preserved',error=repr(e))
@@ -296,4 +316,4 @@ finally:
  except BaseException as e:result['cleanup_errors'].append(repr(e))
  save()
 print(json.dumps(result))
-raise SystemExit(0 if result['stage']=='selected-PanVK-query-capability-recorded' and not result['cleanup_errors'] else 1)
+raise SystemExit(0 if result['stage']=='actual-noncoherent-fixed-shared-buffer-event-query-passed' and not result['cleanup_errors'] else 1)
