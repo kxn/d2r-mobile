@@ -60,6 +60,9 @@ typedef struct pool {
   int cpu_copy_requires_gpu,cpu_authority_tracking;
 #ifdef DM_VULKAN_SHARED_POOLS
   int shared,shared_closing;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  _Atomic unsigned native_image_references;
+#endif
 #endif
   pool_cpu_authority *cpu_authority;
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -85,6 +88,9 @@ static int shared_gpu_gate_force;
 static void shared_device_probe(void);
 static void shared_pool_materialize(pool *);
 static void shared_cache(vk_buffer *,uint64_t,uint64_t,int);
+#endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+#include "nvn_vk_native_resource_device.inc"
 #endif
 #include "nvn_vk_cpu_authority.inc"
 #include "nvn_vk_cpu_exposure.inc"
@@ -1445,7 +1451,7 @@ static void init_device(void) {
   if(shared && strcmp(shared,"0") && strcmp(shared,"1"))die("DM_VULKAN_SHARED_POOLS expects0or1");
   shared_requested=shared && !strcmp(shared,"1");
 #endif
-  const char *device_extensions[16];
+  const char *device_extensions[24];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
   int have_driver_properties=0;
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
@@ -1495,6 +1501,9 @@ static void init_device(void) {
   }
 #if defined(DM_VULKAN_SHARED_POOLS) && defined(DM_VULKAN_TEST_EMBED)
   if(getenv("DM_FIXED_SHARED_CAPABILITY_DENY"))shared_extension=0; // strict negative only
+#endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  native_resource_options(available,extension_count_device);
 #endif
   free(available);
   vk_loader_check_device(V.physical,have_driver_properties);
@@ -1567,6 +1576,15 @@ static void init_device(void) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(shared_extension)device_extensions[dc.enabledExtensionCount++]=VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
 #endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(native_resource_path) {
+    native_host_copy.pNext=draw_parameters.pNext;draw_parameters.pNext=&native_host_copy;
+    const char *native_extensions[]={VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
+      VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME,VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME};
+    for(unsigned n=0;n<sizeof native_extensions/sizeof *native_extensions;n++)
+      device_extensions[dc.enabledExtensionCount++]=native_extensions[n];
+  }
+#endif
   VK_CHECK(vkCreateDevice(V.physical, &dc, NULL, &V.device));
   volkLoadDevice(V.device);
   LOG("[vulkan] explicit Float16 arithmetic: %s (32-bit interfaces)",V.shader_float16?"enabled":"unavailable");
@@ -1584,6 +1602,9 @@ static void init_device(void) {
   shared_device_probe(); // once, before any NVN registration or worker
   if(shared_active && (V.options.pool_window_bytes || V.options.pool_mirror_reference || V.options.pool_defer_publication))
     die("Fixed shared mode conflicts with legacy window/mirror/defer options");
+#endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  native_resource_install();
 #endif
   vk_pipeline_cache_init();
   pthread_t t;
@@ -1818,6 +1839,9 @@ void mtl_pool_del(const void *mem) {
   *pp = p->next;
   if(atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release)==UINT64_MAX)
     die("Vulkan pool registry epoch overflow");
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(atomic_load(&p->native_image_references))die("Shared Pool closed before bound native images");
+#endif
   while (p->references) pthread_cond_wait(&pool_cv, &V.resources);
   pool_spans_destroy(p);
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -3805,6 +3829,9 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   if(recording_resources->submission_barrier_reference) vk_barrier();
   else vk_render_end();
   vk_buffer_writebacks_flush();
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  vk_native_images_release();
+#endif
   submit_resources *r = recording_resources;
   if (!r) die("Vulkan commit without submission resources");
   // Covers query-result copies as well as pool snapshots. HOST is the actual

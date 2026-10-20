@@ -33,7 +33,7 @@ foreach(name ${names})
 endforeach()
 file(GLOB BACKEND CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 add_executable(vulkan_host_test tests/host.c ${BACKEND} "${GFX}/../third_party/volk/volk.c"
-  "${GFX}/nvn/nvn_platform.c" "${GFX}/nvn/nvn_dirty.c" "${GFX}/nvn/nvn_tex.c"
+  "${GFX}/nvn/nvn_platform.c" "${GFX}/nvn/nvn_dirty.c" "${GFX}/nvn/nvn_tex.c" "${GFX}/nvn/nvn_native_layout.c"
   "${GFX}/tex/nvn_deswizzle.c" "${GFX}/tex/nvn_bcdec.c" "${GFX}/tex/nvn_astc_metadata.cpp" "${SHA}/sha256.c")
 target_include_directories(vulkan_host_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${HOST}" "${SHA}" "${GFX}/nvn/include" ${Vulkan_INCLUDE_DIRS})
 target_compile_definitions(vulkan_host_test PRIVATE _GNU_SOURCE DM_STRICT_HLE=1 DM_HEADLESS=1 DM_VULKAN_TEST_EMBED=1 MBEDTLS_CONFIG_FILE="dm_sha_config.h")
@@ -63,3 +63,10 @@ endif()
 # Observe completion batch calls in the owned GPU fixture, without production hooks.
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_INVALIDATE_WRAP=1)
 target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_memory_invalidate_batch")
+option(DM_VULKAN_NATIVE_RESOURCES "Build versioned host-native resource experiment" OFF)
+if(DM_VULKAN_NATIVE_RESOURCES)
+  if(NOT DM_VULKAN_SHARED_POOLS)
+    message(FATAL_ERROR "DM_VULKAN_NATIVE_RESOURCES requires fixed shared Pools")
+  endif()
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_NATIVE_RESOURCES=1)
+endif()

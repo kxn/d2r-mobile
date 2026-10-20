@@ -1,3 +1,4 @@
+#include "nvn_native_layout.h"
 #ifdef DM_VULKAN_SHARED_POOLS
 #include <stdint.h>
 #include <stddef.h>
@@ -305,24 +306,34 @@ NVN(nvnTextureBuilderSetStride, void, NVNtextureBuilder *b, ptrdiff_t s) { TB(b)
 NVN(nvnTextureBuilderSetStorage, void, NVNtextureBuilder *b, NVNmemoryPool *p, ptrdiff_t off) { TB(b)->pool = (pool_t *)p; TB(b)->off = off; }
 NVN(nvnTextureBuilderSetPackagedTextureLayout, void, NVNtextureBuilder *b, const NVNpackagedTextureLayout *l) {
     TB(b)->has_layout = l != NULL; if (l) memcpy(TB(b)->layout, l->layout, 8);
-    TB(b)->d.pkg_block_h = l ? l->layout[0] + 1 : 0;
+    TB(b)->d.pkg_block_h = l && !nvn_native_layout_is_marker(l->layout) ? l->layout[0] + 1 : 0;
 }
 NVN(nvnTextureBuilderGetFlags, NVNtextureFlags, const NVNtextureBuilder *b) { return (NVNtextureFlags)((const tex_builder_t *)b)->d.flags; }
 static uint64_t g_layout_logged;
 static void log_layout(const tex_builder_t *b, const nvn_texlayout *L) {
-    if (b->has_layout && g_layout_logged++ < 16)
+    if (b->has_layout && !nvn_native_layout_is_marker(b->layout) && g_layout_logged++ < 16)
         LOG("[nvn] 预排布贴图 %ux%ux%u 级%u 格式%#x 目标%d 布局字节 %02x%02x%02x%02x%02x%02x%02x%02x → 块高 log2=%u（取布局第 0 字节）尺寸 %#llx",
             b->d.width, b->d.height, b->d.depth, b->d.levels, b->d.format, b->d.target, b->layout[0], b->layout[1], b->layout[2],
             b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], L->tileH, L->size);
 }
+// Native marker validation precedes the Tegra parser even in disabled builds.
+static void builder_storage(const tex_builder_t *b,nvn_texlayout *out) {
+    if(b->has_layout && nvn_native_layout_is_marker(b->layout)) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+        if(nvn_native_layout_storage(b->layout,&b->d,out))return;
+#endif
+        die("Native packaged layout disabled, unknown entry or incompatible recipe");
+    }
+    nvn_tex_layout(&b->d,out);
+}
 NVN(nvnTextureBuilderGetStorageSize, size_t, const NVNtextureBuilder *b) {
-    nvn_texlayout L; nvn_tex_layout(&((const tex_builder_t *)b)->d, &L);
+    nvn_texlayout L; builder_storage((const tex_builder_t *)b, &L);
     if (!L.bpb) LOG("【红】TextureBuilderGetStorageSize 未知格式 %#x", ((const tex_builder_t *)b)->d.format);
     log_layout((const tex_builder_t *)b, &L);
     return L.size;
 }
 NVN(nvnTextureBuilderGetStorageAlignment, size_t, const NVNtextureBuilder *b) {
-    nvn_texlayout L; nvn_tex_layout(&((const tex_builder_t *)b)->d, &L); return L.align;
+    nvn_texlayout L; builder_storage((const tex_builder_t *)b, &L); return L.align;
 }
 #define TX(t) ((tex_t *)(t))
 #define CTX(t) ((const tex_t *)(t))
@@ -403,9 +414,15 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     memset(o, 0, sizeof *o);
     o->magic = MAGIC('T', 'E', 'X', 0); o->d = s->d; o->pool = s->pool; o->off = s->off;
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8);
-    nvn_tex_layout(&o->d, &o->L);
+    builder_storage(s, &o->L);
+    if(s->has_layout && nvn_native_layout_is_marker(s->layout) &&
+       (!s->pool || !s->pool->mem || s->off<0 || (uint64_t)s->off>s->pool->size || o->L.size>s->pool->size-(uint64_t)s->off ||
+        (uint64_t)s->off%o->L.align ||
+        (uint64_t)s->off>UINTPTR_MAX-(uintptr_t)s->pool->mem ||
+        o->L.size>UINTPTR_MAX-(uintptr_t)s->pool->mem-(uint64_t)s->off))die("Native packaged storage range/alignment");
     o->mem = s->pool && s->pool->mem ? s->pool->mem + s->off : NULL;
-    if(o->d.target!=NVN_TEXTURE_TARGET_BUFFER && o->mem)
+    if(o->d.target!=NVN_TEXTURE_TARGET_BUFFER && o->mem &&
+       !(o->has_layout && nvn_native_layout_is_marker(o->layout)))
         x_cpu_exposure((uintptr_t)o->mem,o->L.size);
     o->serial = nvn_new_serial();
     OLOG("Texture %p %ux%ux%u lv%u fmt=%#x tgt=%d flags=%#x size=%#llx", (void *)t, o->d.width, o->d.height, o->d.depth,
@@ -420,7 +437,10 @@ NVN(nvnTextureGetDepth, int, const NVNtexture *t) { return (int)CTX(t)->d.depth;
 NVN(nvnTextureGetStorageSize, int, const NVNtexture *t) { return (int)CTX(t)->L.size; }
 NVN(nvnTextureCompare, NVNboolean, const NVNtexture *a, const NVNtexture *b) {
     const tex_t *x = CTX(a), *y = CTX(b);
-    return !memcmp(&x->d, &y->d, sizeof x->d) && x->mem == y->mem;
+    int nx=x->has_layout && nvn_native_layout_is_marker(x->layout);
+    int ny=y->has_layout && nvn_native_layout_is_marker(y->layout);
+    return !memcmp(&x->d, &y->d, sizeof x->d) && x->mem == y->mem &&
+      nx==ny && (!nx || !memcmp(x->layout,y->layout,8));
 }
 // 头文件无原型；main 0x174899c 一类调用点把返回值与 1 比，不等则置某状态位 0x100。含义未核，先给 1
 // No prototype in the header; call sites such as main 0x174899c compare the return value with 1 and set some status bit 0x100 if not equal. Meaning unverified; return 1 for now
@@ -437,6 +457,17 @@ NVN(nvnTextureViewGetLayers, NVNboolean, const NVNtextureView *v, int *min, int 
 NVN(nvnTextureGetViewOffset, ptrdiff_t, const NVNtexture *t, const NVNtextureView *v) {
     const tex_t *o = CTX(t); const view_t *w = (const view_t *)v;
     if (!w) return 0;
+    if(o->has_layout && nvn_native_layout_is_marker(o->layout)) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+        const nvn_native_entry *entry=nvn_native_layout_resolve(o->layout,&o->d);
+        unsigned level=w->set_levels?(unsigned)w->base_level:0;
+        if(!entry || level>=entry->recipe.levels ||
+           (w->set_layers && w->min_layer))die("Native packaged view offset");
+        return (ptrdiff_t)entry->recipe.mips[level].offset;
+#else
+        die("Native packaged view disabled");
+#endif
+    }
     uint64_t off = w->set_levels ? nvn_tex_level_offset(&o->d, (unsigned)w->base_level) : 0;
     if (w->set_layers) off += (uint64_t)w->min_layer * o->L.layer_size;
     return (ptrdiff_t)off;

@@ -1,0 +1,160 @@
+# Host-native packaged resources: default-OFF runtime candidate
+
+This is a generic NVN resource protocol, not a game patch or an immutability
+heuristic. It changes no original NSO, shader, codec, gameplay or filename/draw
+classification. The renderer base is frozen c075d41. The producer protocol and
+real resource extraction come from 86381c7/3324; those fixture programs are not
+linked into the runtime. Native resources currently require the explicit PanVK
+native-image driver contract; other vendors use their original resource pack.
+
+## One record decides storage, offsets and creation
+
+`pack-native-texture.py` consumes a JSON list of verified real source declaration,
+original `.texture`, and native bake directory. It validates the producer's
+fixed 992-byte record, SHA-bound original compact ASTC input, declaration, opaque
+payload and metadata. It preserves the source file header except layoutData and
+rebuilds every full mip-table span from actual physical offsets, including gaps
+and final allocation padding. It never re-encodes ASTC or implements swizzling.
+The versioned eight bytes are `DMN`, byte version1, little-endian u32 entry ID.
+The whole DMN namespace is reserved: unknown versions never reach Tegra parsing.
+
+Each 1040-byte table entry binds an exact NVN description to the complete Vulkan
+recipe and native producer record. The 160-byte header binds the selected
+native content, actual driver ELF SHA, and producer-source SHA. Startup also
+checks actual driver/layout/device UUIDs. These are additional checks, not a
+substitute for the build provenance. Before binding each image, the renderer
+queries the real format/import capabilities, memory requirements and every mip
+offset, MEMCPY size, row/array/depth pitch, and compares all of them with the
+record. UUID or a self-consistent digest alone cannot authorize a layout.
+
+The same table supplies original NVN Builder StorageSize/Alignment, texture
+StorageSize, Initialize and GetViewOffset. No NVN object ABI field is added.
+TextureCompare keeps marker identity symmetric. A failed/unknown native marker
+is rejected; interpreting it under the original byte0 block-height rule is not
+a fallback. Default/non-native resources retain their original code path.
+
+With `--base-cache`, the tool reads the complete already-ASTC cache once and
+updates only selected entries' layoutData. Every other field, all thumbnail
+bytes and every unselected entry remain equal. It emits `replacements.tsv` for
+the original `dm/tools/casc_overlay.py pack` entrypoint. It does not implement a
+new CASC writer, replace UI files, deploy anything or modify an existing pack.
+Missing or failed output never has a complete manifest; an existing/partial
+output directory cannot be reused as a successful cache hit. It processes one
+texture payload at a time rather than retaining a second full pack in RAM.
+
+Example (paths must refer to the newly verified driver and its own baked data):
+
+```
+python3 scripts/dev/pack-native-texture.py --entries INPUTS.json \
+  --driver-manifest DRIVER/build.json --base-cache COMPLETE_DESC_CACHE.json \
+  --output NEW_OUTPUT
+python3 dm/tools/casc_overlay.py pack ORIGINAL_ROMFS NEW_CASC_PACK \
+  NEW_OUTPUT/replacements.tsv UNUSED_CHUNK-ARCHIVE
+```
+
+The complete overlay/index/TVFS merge must retain the previously verified
+baseline and all unselected entries, using the original CASC pipeline. The
+native table and manifest belong to the host startup selection, not a new game
+binary import. The current tool deliberately labels its output as not yet a
+deployable game pack until the runtime/thumbnail gates below pass.
+
+## Runtime binding and publication
+
+An eligible native VkImage binds the original imported whole-Pool
+VkDeviceMemory at the actual NVN storage offset. `vk_memory_image` is not called:
+there is no second image allocation, Tegra deswizzle, pool shadow, image upload,
+per-draw hash or dirty scope for this path. The committed shared-heap provenance
+check is still required. It does not admit arbitrary private malloc memory or
+unprotect/retry an unsuccessful import.
+
+The original per-submission Pool GPU-access references, stages and noncoherent
+cache maintenance remain active. A separate image reference protects the
+bound Pool until image destruction. Pool Finalize retains its original ordering:
+finish submissions/callbacks, destroy matching images, then free the Pool.
+Destruction can occur with the resources mutex held or from completion; the
+image reference counter therefore does not recursively take that mutex.
+
+The external producer initially publishes the native backing in GENERAL.
+Images acquire from FOREIGN without an UNDEFINED discard. Each actually used
+native image is released to FOREIGN/GENERAL at the original command-chunk end;
+only the acquired list is walked, not the entire image cache. The release is not
+a CPU wait or permission for a CPU/GPU data race. Subsequent CPU writes still
+require the original NVN fence/QueueFinish and FlushMappedRange contract.
+Every reacquire invalidates previous read proofs, including same-value CPU
+writes. No "file origin means read-only" or "Flush means no-op" shortcut exists.
+
+Actual native shader/transfer accesses reuse the existing Pool dependency
+engine (`vk_buffer_shader_read`, `vk_transfer_buffer_dependencies`), because
+image-only histories would miss VkBuffer aliases. Native transfer writers
+publish actual physical mip ranges through original writer/writeback metadata;
+shared completion does the original fence-ordered NC Invalidate, with no CPU
+snapshot copying. CPU events/queries retain the original fixed-shared dependency
+rules. This path does not attempt to remove necessary producer/consumer barriers.
+
+## Startup-only opt-in
+
+Compile `build-android-apk.py --shared-pools --native-resources`; both are off by
+default. An explicit cold Android Intent provides `native_resource_table`
+(absolute private path), `native_resource_pack_sha256` and
+`native_resource_producer_sha256`. All are selected before the first device or
+game thread; later Intents cannot change them. The original nativeStart and
+nativeTests signatures are unchanged. A disabled build rejects a native request.
+
+The equivalent host startup environment is:
+
+```
+DM_VULKAN_SHARED_POOLS=1
+DM_VULKAN_NATIVE_RESOURCE_TABLE=/absolute/native-layouts.bin
+DM_VULKAN_NATIVE_PACK_SHA256=<native-pack.json pack_content_sha256>
+DM_VULKAN_NATIVE_PRODUCER_SHA256=<verified producer_source_sha256>
+```
+
+The process-local PanVK loader must also select the matching driver with both
+`PANVK_DM_HOST_IMPORT` and `PANVK_DM_NATIVE_IMAGE_IMPORT` enabled before loading.
+The Android cold path sets these with the explicit native/shared request. A
+wrong driver/recipe/pack fails before interpreting marked textures; fallback
+requires selecting the original byte-layout pack at startup.
+
+## Costs and remaining acceptance gates
+
+Runtime metadata is **160 + 1040 × entry_count bytes**, retained for process
+lifetime after a validated copy; at the hard 65536-entry limit it is about
+65 MiB. Startup temporarily holds the file snapshot plus the installed copy.
+Image access state and the original per-submission dependency bookkeeping also
+remain. The consumer still pays the game's original file/decompression write
+into its shared Pool; "one backing" does not mean zero loading work.
+
+The separate driver01efc12 retains strict public recipes while preserving the
+original CreateInfo certificate across PanVK's private meta flags. Its actual
+ordinary-UID ASTC4/6 copy validation is separate from this runtime candidate.
+TRANSFER can select LINEAR instead of the sampled-only modifier: choose actual
+usage per baked recipe, never globally assign both transfer bits as an assumed
+performance optimization. Old6b15 or failed5709 payloads are not reusable under
+new UUID/recipe/binary fingerprints. No steady-frame bandwidth/FPS claim follows
+from these source changes or from host correctness checks.
+
+ThumbnailBase64 remains compact linear ASTC, with its original mip/count table
+and bytes. The generic native destination B2T path can upload such linear blocks
+into a view of the full native image; it is not memcpy of opaque native bytes.
+We must still verify the real game's thumbnail Builder dimensions/levels and
+whether it reuses layoutData on a separately reduced image. The table currently
+requires an exact full recipe; a smaller Builder using the same marker must get
+an explicit separately baked variant, not an inferred reinterpretation.
+
+The new NVN binding/ownership path still needs its own ordinary-UID GPU oracle
+(including native-to-legacy and legacy-to-native copies, CPU stream publication,
+same-Pool buffer aliases, destruction and neighbors) before a game pack is
+enabled. Host LVP cannot execute this private ASTC/PanVK import contract; its
+full regression covers only unaffected original renderer paths. Native raw
+image escape, mutable-format/RT/storage recipes and arbitrary legacy/native
+layout aliases are not promised by this restricted sampled/transfer protocol.
+
+Native GPU writers lazily acquire a separate dirty scope for each actually
+written physical mip, after successful whole-Pool import. Pure sampling never
+acquires one. Scopes remain until physical image retirement, after GPU refs,
+fence/cache publication and the independent prewrite gate have completed. The
+base c075 core has no such gate: noncoherent native GPU writers fail closed
+unless the separately reviewed runtime supplies its frozen gate-mode query.
+This is a composition requirement, not a claim that the new NC path has run.
+The initial writer range is conservatively the full native mip; its larger
+protected envelope/callback cost must not be called a precise ROI optimization.
