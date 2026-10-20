@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(d2r_vulkan_validation C CXX)
 set(CMAKE_CXX_STANDARD 17)
+add_executable(alias_interval_test tests/alias_interval.c)
+target_compile_options(alias_interval_test PRIVATE -UNDEBUG -Wall -Wextra)
 add_executable(vulkan_pace_test tests/pace.c nvn_vk_pace.c)
 target_link_libraries(vulkan_pace_test PRIVATE m)
 add_executable(astc_metadata_test tests/astc_metadata.cpp "${CMAKE_CURRENT_SOURCE_DIR}/../tex/nvn_astc_metadata.cpp")

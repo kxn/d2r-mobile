@@ -12,6 +12,9 @@
 #include <math.h>
 #include <stdatomic.h>
 #include <unistd.h>
+#ifdef DM_VULKAN_SHARED_POOLS
+#include "nvn_vk_alias_interval.h"
+#endif
 typedef struct image_view {
   struct image_view *next;
   VkImageViewCreateInfo description;
@@ -56,6 +59,7 @@ typedef struct image {
 #ifdef DM_VULKAN_SHARED_POOLS
   nvn_dirty_scope *shared_dirty_scope;
   struct image *shared_alias_next;
+  alias_range_node shared_alias_range;
   int shared_alias_linked;
   uint32_t shared_writer; // 1 generic GPU access, 2 B2T, 3 T2T
   uint64_t shared_writer_source;
@@ -131,11 +135,16 @@ static int image_mip_tracked(const image *i) {
 }
 #ifdef DM_VULKAN_SHARED_POOLS
 static image *shared_gpu_aliases;
+static alias_range_node *shared_gpu_alias_ranges;
 static unsigned astc_copy_live;
 static void image_shared_alias_remove(image *i) {
   if(!i->shared_alias_linked)return;
   image **at=&shared_gpu_aliases;while(*at && *at!=i)at=&(*at)->shared_alias_next;
   if(!*at)die("Shared GPU image alias list lifetime");
+  int removed=0;
+  shared_gpu_alias_ranges=alias_range_remove(shared_gpu_alias_ranges,&i->shared_alias_range,&removed);
+  if(!removed)die("Shared GPU image alias index lifetime");
+  i->shared_alias_range=(alias_range_node){0};
   *at=i->shared_alias_next;i->shared_alias_next=NULL;i->shared_alias_linked=0;
 }
 static void image_shared_alias_write(image *i) {
@@ -152,6 +161,12 @@ static void image_shared_alias_write(image *i) {
   // Legacy raw guards concern only propagated encodings. Do not turn the
   // list into a scan of every ordinary render target on every Buffer binding.
   if(!shared && !i->astc_copy_encoding)return;
+  i->shared_alias_range=(alias_range_node){.start=(uintptr_t)i->tex.mem,
+      .end=(uintptr_t)i->tex.mem+i->tex.L.size,.serial=i->tex.serial,.owner=i,.height=1};
+  i->shared_alias_range.max_end=i->shared_alias_range.end;
+  int inserted=0;
+  shared_gpu_alias_ranges=alias_range_insert(shared_gpu_alias_ranges,&i->shared_alias_range,&inserted);
+  if(!inserted)die("Shared GPU image alias index duplicate");
   i->shared_alias_linked=1;i->shared_alias_next=shared_gpu_aliases;shared_gpu_aliases=i;
 }
 #endif
@@ -698,6 +713,12 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
   image *old=malloc(sizeof *old);
   if(!old) die("Vulkan image promotion allocation");
   *old=*i;
+#ifdef DM_VULKAN_SHARED_POOLS
+  // The deferred physical copy is not a second owner of the same guest bytes.
+  // The original image pointer remains the sole live list/index identity.
+  old->shared_alias_linked=0;old->shared_alias_next=NULL;
+  old->shared_alias_range=(alias_range_node){0};
+#endif
   int cpu_rebuildable=i->cpu_rebuildable;
   image_binding_replaced(i,old);
   i->views=NULL;
@@ -1785,15 +1806,19 @@ void vk_texture_shared_source_written(uint64_t address,uint64_t bytes) {
   }
   nvn_dirty_scope_gpu_write((void *)(uintptr_t)address,bytes);
 }
+static int image_shared_alias_eligible(const alias_range_node *node,int shared) {
+  const image *i=node->owner;
+  // Initialized/encoding can change without membership changes; do not cache
+  // these predicates in the tree or make a negative address prediction.
+  return i->initialized && (shared || i->astc_copy_encoding) && i->tex.mem && i->tex.L.size;
+}
 int vk_texture_shared_linear_conflict(uint64_t address,uint64_t bytes) {
   if(!bytes)return 0;
   if(bytes>UINT64_MAX-address)return 1;
-  for(image *i=shared_gpu_aliases;i;i=i->shared_alias_next)if(i->initialized &&
-      (vk_pool_shared_active() || i->astc_copy_encoding) && i->tex.mem &&
-      i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
-      address+bytes>(uintptr_t)i->tex.mem)
-    return 1;
-  return 0;
+  if(!shared_gpu_alias_ranges)return 0;
+  // Shared mode is fixed before guest execution, not a per-node property.
+  return alias_range_overlap(shared_gpu_alias_ranges,address,address+bytes,
+                             image_shared_alias_eligible,vk_pool_shared_active());
 }
 void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes) {
   if(vk_texture_shared_linear_conflict(address,bytes))
