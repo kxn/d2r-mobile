@@ -57,6 +57,9 @@ typedef struct image {
   nvn_dirty_scope *shared_dirty_scope;
   struct image *shared_alias_next;
   int shared_alias_linked;
+  uint32_t shared_writer; // 1 generic GPU access, 2 B2T, 3 T2T
+  uint64_t shared_writer_source;
+  NVNcopyRegion shared_writer_region;
 #endif
   uint64_t last_use;
   uint64_t trace_stamp, trace_levels;
@@ -1039,9 +1042,8 @@ static void image_upload(image *i) {
   const tex_t *t = &i->tex;
   if(!t->has_layout) return;
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(vk_pool_shared_mode() && (!shared_image_backing((uintptr_t)t->mem,t->L.size) ||
-      !vk_pool_shared_image_source((uintptr_t)t->mem,t->L.size,0)))
-    die("Shared image conversion missing ordered CPU preflight");
+  if(vk_pool_shared_mode() && !shared_image_backing((uintptr_t)t->mem,t->L.size))
+    die("Shared image conversion backing provenance changed");
 #endif
   vk_mip_clear_texture_access(t,NULL,0);
   if(i->initialized) {
@@ -1068,12 +1070,21 @@ static void image_upload(image *i) {
     }
   }
 #ifdef DM_VULKAN_SHARED_POOLS
+  // A clean physical GPU consumer needs no CPU observation, even while its
+  // canonical retile publication is pending. Only actual conversion reads
+  // require the outer preflight's completed CPU visibility, before borrowing.
+  if(vk_pool_shared_active() &&
+      !vk_pool_shared_image_source((uintptr_t)t->mem,t->L.size,0))
+    die("Shared image conversion missing ordered CPU preflight");
   if(vk_pool_shared_mode() && i->initialized && !i->cpu_rebuildable)
-    die("Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not implemented serial=%llu format=%#x target=%d source=%p bytes=%llu scope=%d stamp=%llu now=%llu epoch=%llu external=%d",
+    die("Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not implemented serial=%llu format=%#x target=%d source=%p bytes=%llu scope=%d stamp=%llu now=%llu epoch=%llu external=%d writer=%u writer_source=%#llx writer_xyz=%d,%d,%d writer_extent=%d,%d,%d",
         (unsigned long long)t->serial,t->d.format,t->d.target,t->mem,
         (unsigned long long)t->L.size,!!i->shared_dirty_scope,
         (unsigned long long)i->stamp,(unsigned long long)nvn_dirty_now(),
-        (unsigned long long)nvn_dirty_change_epoch(),i->external_access);
+        (unsigned long long)nvn_dirty_change_epoch(),i->external_access,
+        i->shared_writer,(unsigned long long)i->shared_writer_source,
+        i->shared_writer_region.xoffset,i->shared_writer_region.yoffset,i->shared_writer_region.zoffset,
+        i->shared_writer_region.width,i->shared_writer_region.height,i->shared_writer_region.depth);
 #endif
   image_upload_contents(i);
 }
@@ -1384,12 +1395,16 @@ static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int
   vk_pool_requirement need={p->src,n,0,VK_PIPELINE_STAGE_TRANSFER_BIT,write,0};
   return vk_pool_operation_begin_ranges(&need,1);
 }
+#include "nvn_vk_image_retile.inc"
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   vk_texture_cpu_preflight(p->tex);
   if(V.options.pool_defer_publication && p->tex && p->tex->d.format>=0x41 && p->tex->d.format<=0x50)
     vk_pool_cpu_prepare(p->src,copy_pool_footprint(p,row,img));
   int operation=copy_pool_operation(p,row,img,0);
   vk_mip_clear_drain();
+#ifdef DM_VULKAN_SHARED_POOLS
+  shared_copy_backing canonical=image_retile_prepare(p->tex);
+#endif
   image *i = image_get(p->tex);
   image_upload(i);
   VkBufferImageCopy c = copy_region(i, p, row, img);
@@ -1426,10 +1441,39 @@ void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   }
   c.bufferOffset = off;
   image_general_transfer(i);vk_transfer_barrier();
+#ifdef DM_VULKAN_SHARED_POOLS
+  int retile=image_retile_eligible(i,canonical,&c);
+  vk_buffer *gather=NULL;
+  uint64_t pitch=0,slice=0;
+  if(retile) {
+    int bw,bh,bpb=nvn_fmt_bpb(i->tex.d.format,&bw,&bh);
+    pitch=row?row:((uint64_t)p->r.width+bw-1)/bw*bpb;
+    slice=img?img:pitch*((p->r.height+bh-1)/bh);
+    // Gather at the original GPU copy position, never from mutable CPU bytes.
+    // It also makes a raw source alias of destination storage race-free.
+    vk_buffer_use read_source={p->src,n,0},write_backing={(uintptr_t)i->tex.mem,i->tex.L.size,1};
+    vk_transfer_buffer_dependencies(&read_source,1);
+    vk_compute_buffer_dependencies(&write_backing,1,0);
+    gather=vk_temp_buffer(n);
+    VkBufferCopy snapshot={.srcOffset=off,.size=n};
+    vkCmdCopyBuffer(V.cmd,src->handle,gather->handle,1,&snapshot);
+  }
+#endif
   image_record(i,image_layer_range(c.imageSubresource),VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,0);
   vkCmdCopyBufferToImage(V.cmd, src->handle, i->handle, VK_IMAGE_LAYOUT_GENERAL,
                          1, &c);
   i->initialized = 1;
+#ifdef DM_VULKAN_SHARED_POOLS
+  i->shared_writer=2;i->shared_writer_source=p->src;i->shared_writer_region=p->r;
+  if(retile) {
+    VkBufferMemoryBarrier ready={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT,
+      .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+      .buffer=gather->handle,.offset=0,.size=n};
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,NULL,1,&ready,0,NULL);
+    image_retile_publish(i,canonical,gather,0,pitch,slice,&c);
+  }
+#endif
   vk_pool_operation_end(operation);
 }
 void vk_texture_copy_t2b(const p_copy_b2t *p, uint64_t row, uint64_t img) {
@@ -1472,6 +1516,9 @@ static uint32_t full_zero_copy(image *s,VkImageSubresourceRange sr,image *d,
 void vk_texture_copy_t2t(const p_copy_t2t *p) {
   vk_texture_cpu_preflight(p->src);vk_texture_cpu_preflight(p->dst);
   vk_mip_clear_drain();
+#ifdef DM_VULKAN_SHARED_POOLS
+  shared_copy_backing canonical=image_retile_prepare(p->dst);
+#endif
   image *s = image_get(p->src), *d = image_get(p->dst);
   image_upload(s);
   // Metal resolves both textures through tex_mtl before copying. Preserve the
@@ -1539,6 +1586,9 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
                    VK_IMAGE_LAYOUT_GENERAL, 1, &b,
                    filter ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
     d->initialized = 1;
+#ifdef DM_VULKAN_SHARED_POOLS
+    d->shared_writer=3;d->shared_writer_source=s->tex.serial;d->shared_writer_region=p->dr;
+#endif
     return;
   }
   VkImageCopy c = {
@@ -1554,6 +1604,21 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
     c.srcOffset.z = c.dstOffset.z = 0;
     c.extent.depth = 1;
   }
+#ifdef DM_VULKAN_SHARED_POOLS
+  VkBufferImageCopy publication={.imageSubresource=c.dstSubresource,.imageOffset=c.dstOffset,.imageExtent=c.extent};
+  int retile=image_retile_eligible(d,canonical,&publication) && !s->decoded;
+  vk_buffer *gather=NULL;uint64_t pitch=0,slice=0;
+  if(retile) {
+    int bw,bh,bpb=nvn_fmt_bpb(s->tex.d.format,&bw,&bh);
+    pitch=((uint64_t)p->sr.width+bw-1)/bw*bpb;slice=pitch*((p->sr.height+bh-1)/bh);
+    vk_buffer_use write={(uintptr_t)d->tex.mem,d->tex.L.size,1};
+    vk_compute_buffer_dependencies(&write,1,0);
+    gather=vk_temp_buffer(slice*c.srcSubresource.layerCount);
+    VkBufferImageCopy read={.imageSubresource=c.srcSubresource,.imageOffset=c.srcOffset,.imageExtent=c.extent};
+    image_transfer(s,image_layer_range(c.srcSubresource),0);
+    vkCmdCopyImageToBuffer(V.cmd,s->handle,s->layout,gather->handle,1,&read);
+  }
+#endif
   image_transfer_pair(s,c.srcSubresource,d,c.dstSubresource);
   uint32_t copied_zero=full_zero_copy(s,sr,d,dr,p);
   for (unsigned aspect = 1; aspect <= VK_IMAGE_ASPECT_STENCIL_BIT; aspect <<= 1)
@@ -1564,6 +1629,17 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
     }
   d->initialized = 1;
   d->zero_mips|=copied_zero;
+#ifdef DM_VULKAN_SHARED_POOLS
+  d->shared_writer=3;d->shared_writer_source=s->tex.serial;d->shared_writer_region=p->dr;
+  if(retile) {
+    VkBufferMemoryBarrier ready={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT,
+      .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+      .buffer=gather->handle,.offset=0,.size=gather->size};
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,NULL,1,&ready,0,NULL);
+    image_retile_publish(d,canonical,gather,0,pitch,slice,&publication);
+  }
+#endif
 }
 typedef struct {
   vk_buffer *buffer;

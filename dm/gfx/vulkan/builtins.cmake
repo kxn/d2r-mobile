@@ -111,6 +111,16 @@ add_custom_command(OUTPUT "${DM_VK_QUERY_PUBLISH_HEADER}"
   DEPENDS "${DM_VK_BUILTIN_DIR}/build_builtin.py"
           "${DM_VK_BUILTIN_DIR}/shaders/query-publish.comp"
   VERBATIM)
+set(DM_VK_IMAGE_RETILE_HEADER "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_image_retile_spv.h")
+add_custom_command(OUTPUT "${DM_VK_IMAGE_RETILE_HEADER}"
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_image_retile_spv.spv"
+             "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_image_retile_spv.json"
+  COMMAND "${DM_VK_PYTHON}" "${DM_VK_BUILTIN_DIR}/build_builtin.py"
+          --source "${DM_VK_BUILTIN_DIR}/shaders/image-retile.comp"
+          --output "${DM_VK_IMAGE_RETILE_HEADER}" --symbol dm_image_retile_spv
+          --glslang "${DM_VK_GLSLANG}" --validator "${DM_VK_SPIRV_VAL}"
+  DEPENDS "${DM_VK_BUILTIN_DIR}/build_builtin.py" "${DM_VK_BUILTIN_DIR}/shaders/image-retile.comp"
+  VERBATIM)
 add_custom_target(dm_vulkan_builtins DEPENDS "${DM_VK_BRIGHT_HEADER}" ${DM_VK_EXTRAP_HEADERS}
                   "${DM_VK_NOFXAA_HEADER}" ${DM_VK_BLOOM_QUARTER_HEADERS} ${DM_VK_PRESENT_HEADERS}
-                  "${DM_VK_EVENT_ADD_HEADER}" "${DM_VK_QUERY_PUBLISH_HEADER}")
+                  "${DM_VK_EVENT_ADD_HEADER}" "${DM_VK_QUERY_PUBLISH_HEADER}" "${DM_VK_IMAGE_RETILE_HEADER}")

@@ -1,0 +1,23 @@
+#version 450
+// Original nvn_bl_offset GOB formula, inverted direction: native copy words
+// go to the original block-linear NVN allocation, never a CPU readback.
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Source { uint value[]; } src;
+layout(set=0,binding=1,std430) writeonly buffer Destination { uint value[]; } dst;
+layout(push_constant) uniform P {
+  uint src_word, dst_word, words, rows, pitch_words;
+  uint row_bytes, image_rows, x_byte, y_row, th, td;
+} p;
+void main() {
+  uint id=gl_GlobalInvocationID.x;
+  if(id>=p.words*p.rows)return;
+  uint row=id/p.words, x=p.x_byte+4u*(id%p.words), y=p.y_row+row;
+  uint bh=1u<<p.th, bd=1u<<p.td;
+  uint gobs_x=(p.row_bytes+63u)/64u;
+  uint blocks_y=(p.image_rows+8u*bh-1u)/(8u*bh);
+  uint block=512u*bh*bd;
+  uint off=(y/(8u*bh))*gobs_x*block+(x/64u)*block;
+  off+=((y%(8u*bh))/8u)*512u;
+  off+=(x%64u/32u)*256u+(y%8u/2u)*64u+(x%32u/16u)*32u+(y%2u)*16u+x%16u;
+  dst.value[p.dst_word+off/4u]=src.value[p.src_word+row*p.pitch_words+id%p.words];
+}

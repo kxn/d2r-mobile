@@ -16,6 +16,119 @@ static void shared_image_pixels(NVNtexture *t,const uint8_t rgba[4]) {
   vk_internal_wait(vk_internal_commit());
   for(unsigned n=0;n<256;n++)CHECK(!memcmp(result->map+4*n,rgba,4));
 }
+static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
+  const int formats[]={NVN_FORMAT_RGBA8,NVN_FORMAT_RGBA_DXT5,NVN_FORMAT_RGBA_ASTC_4x4};
+  unsigned format_count=V.features.textureCompressionASTC_LDR?3:2;
+  for(unsigned f=0;f<format_count;f++) {
+    NVNtexture t[2];NVNtextureBuilder b;
+    CALL(nvnTextureBuilderSetDefaults,&b);CALL(nvnTextureBuilderSetDevice,&b,&device);
+    CALL(nvnTextureBuilderSetTarget,&b,NVN_TEXTURE_TARGET_2D_ARRAY);
+    CALL(nvnTextureBuilderSetWidth,&b,16);CALL(nvnTextureBuilderSetHeight,&b,16);
+    CALL(nvnTextureBuilderSetDepth,&b,2);CALL(nvnTextureBuilderSetLevels,&b,3);
+    CALL(nvnTextureBuilderSetFormat,&b,formats[f]);
+    NVNpackagedTextureLayout layout={{0}};CALL(nvnTextureBuilderSetPackagedTextureLayout,&b,&layout);
+    VkImage physical[2];
+    for(unsigned n=0;n<2;n++) {
+      CALL(nvnTextureBuilderSetStorage,&b,pool,(1u<<20)+n*(256u<<10)+f*(64u<<10));
+      CHECK(CALL(nvnTextureInitialize,&t[n],&b));
+      tex_t *tex=(tex_t *)&t[n];CHECK(tex->L.size<65536);
+      dm_guest_write_prepare(tex->mem,tex->L.size);memset(tex->mem,0,tex->L.size);
+      mtl_sub_begin();VkImageLayout unused;physical[n]=vk_texture_present_source(tex,&unused);
+      vk_internal_wait(vk_internal_commit());
+    }
+    tex_t *a=(tex_t *)&t[0],*d=(tex_t *)&t[1];
+    int bw,bh,bpb=nvn_fmt_bpb(formats[f],&bw,&bh);
+    size_t pitch=(8u+bw-1)/bw*bpb,rows=(8u+bh-1)/bh,nbytes=pitch*rows;
+    uint8_t *linear=data+393216;memset(linear,0x11,nbytes);
+    // Source really is GPU-produced; the CPU source is intentionally old.
+    mtl_sub_begin();vk_buffer *buffer;uint64_t offset;
+    CHECK(vk_pool_address_overwrite((uintptr_t)linear,nbytes,(void **)&buffer,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+    vkCmdFillBuffer(V.cmd,buffer->handle,offset,nbytes,0x27272727);
+    vk_buffer_transfer_written_range((uintptr_t)linear,nbytes);
+    vk_buffer_writeback_stage((uintptr_t)linear,nbytes,VK_PIPELINE_STAGE_TRANSFER_BIT);
+    CHECK(linear[0]==0x11);
+    p_copy_b2t copy={.tex=a,.src=(uintptr_t)linear,.has_view=1,
+      .view={.set_levels=1,.base_level=1,.set_layers=1,.min_layer=1},
+      .r={.width=8,.height=8,.depth=1}};
+    vk_texture_copy_b2t(&copy,0,0);
+    vk_buffer *gpu=vk_temp_buffer(nbytes);
+    VkMemoryBarrier dependency={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT};
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&dependency,0,NULL,0,NULL);
+    VkBufferImageCopy read={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,1,1,1},.imageExtent={8,8,1}};
+    vkCmdCopyImageToBuffer(V.cmd,physical[0],VK_IMAGE_LAYOUT_GENERAL,gpu->handle,1,&read);
+    vk_internal_wait(vk_internal_commit());
+    uint8_t raw[1024];CHECK(nbytes<=sizeof raw);CHECK(!nvn_deswizzle(&a->d,1,1,a->mem,raw,pitch));
+    for(size_t n=0;n<nbytes;n++){CHECK(gpu->map[n]==0x27);CHECK(raw[n]==0x27);}
+    CHECK(vk_test_texture_rebuildable(a->serial)==1);
+    // The next operation reads this formerly GPU-owned texture as its source,
+    // exactly the failed game call chain. Other mips/layers remain canonical.
+    mtl_sub_begin();p_copy_t2t pair={.src=a,.dst=d,.has_sv=1,.has_dv=1,
+      .sv=copy.view,.dv=copy.view,.sr={.width=8,.height=8,.depth=1},.dr={.width=8,.height=8,.depth=1}};
+    vk_texture_copy_t2t(&pair);
+    gpu=vk_temp_buffer(nbytes);
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&dependency,0,NULL,0,NULL);
+    vkCmdCopyImageToBuffer(V.cmd,physical[1],VK_IMAGE_LAYOUT_GENERAL,gpu->handle,1,&read);
+    vk_internal_wait(vk_internal_commit());
+    CHECK(!nvn_deswizzle(&d->d,1,1,d->mem,raw,pitch));
+    for(size_t n=0;n<nbytes;n++){CHECK(gpu->map[n]==0x27);CHECK(raw[n]==0x27);}
+    CHECK(vk_test_texture_rebuildable(d->serial)==1);
+    // Nonzero compressed-block offsets into a different mip: preserve every
+    // untouched block, and a CPU edit in another mip while this GPU ROI runs.
+    mtl_sub_begin();pair.sr=(NVNcopyRegion){.xoffset=4,.yoffset=4,.width=4,.height=4,.depth=1};
+    pair.dv.base_level=0;pair.dr=pair.sr;
+    vk_texture_copy_t2t(&pair);
+    size_t big_pitch=(16u+bw-1)/bw*bpb,big_rows=(16u+bh-1)/bh,big_size=big_pitch*big_rows;
+    gpu=vk_temp_buffer(big_size);
+    read.imageSubresource.mipLevel=0;read.imageExtent=(VkExtent3D){16,16,1};
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&dependency,0,NULL,0,NULL);
+    vkCmdCopyImageToBuffer(V.cmd,physical[1],VK_IMAGE_LAYOUT_GENERAL,gpu->handle,1,&read);
+    uint64_t own_serial=vk_internal_commit();
+    uint8_t tail[64];memset(tail,0x38,sizeof tail);
+    uint32_t tr,ty,tz,tb;uint64_t to;unsigned th,td;
+    CHECK(!nvn_deswizzle_geom(&d->d,2,0,&tr,&ty,&tz,&to,&th,&td,&tb));
+    dm_guest_write_prepare(d->mem+to,tr*ty);CHECK(!nvn_swizzle(&d->d,2,0,tail,tr,d->mem));
+    vk_internal_wait(own_serial);
+    uint8_t partial[1024];CHECK(big_size<=sizeof partial);
+    CHECK(!nvn_deswizzle(&d->d,0,1,d->mem,partial,big_pitch));
+    for(size_t y=0;y<big_rows;y++)for(size_t x=0;x<big_pitch;x++) {
+      uint8_t expected=y>=4u/bh && y<8u/bh && x>=4u/bw*bpb && x<8u/bw*bpb?0x27:0;
+      CHECK(partial[y*big_pitch+x]==expected);CHECK(gpu->map[y*big_pitch+x]==expected);
+    }
+    CHECK(!nvn_deswizzle(&d->d,2,0,d->mem,tail,tr));
+    for(size_t n=0;n<tr*ty;n++)CHECK(tail[n]==0x38);
+    read.imageSubresource.mipLevel=1;read.imageExtent=(VkExtent3D){8,8,1};
+    uint8_t other[4096];size_t other_pitch=(16u+bw-1)/bw*bpb,other_rows=(16u+bh-1)/bh;
+    CHECK(!nvn_deswizzle(&d->d,0,0,d->mem,other,other_pitch));
+    for(size_t n=0;n<other_pitch*other_rows;n++)CHECK(other[n]==0);
+    // Canonical bytes now contain GPU 0x27. A later CPU write of the original
+    // zero value is a real edit and must survive the next source conversion.
+    uint8_t changed[1024]={0};dm_guest_write_prepare(d->mem,d->L.size);
+    CHECK(!nvn_swizzle(&d->d,1,1,changed,pitch,d->mem));
+    mtl_sub_begin();vk_texture_cpu_preflight(d);VkImageLayout current;
+    VkImage image=vk_texture_present_source(d,&current);gpu=vk_temp_buffer(nbytes);
+    vkCmdCopyImageToBuffer(V.cmd,image,current,gpu->handle,1,&read);
+    vk_internal_wait(vk_internal_commit());
+    for(size_t n=0;n<nbytes;n++)CHECK(gpu->map[n]==0);
+    if(!f) {
+      // Source is a genuinely noncanonical GPU image, not a CPU-known proof.
+      mtl_sub_begin();VkImage escaped=vk_texture_native(a);
+      VkClearColorValue color={.float32={128.f/255,128.f/255,128.f/255,128.f/255}};
+      VkImageSubresourceRange sub={VK_IMAGE_ASPECT_COLOR_BIT,1,1,1,1};
+      vkCmdClearColorImage(V.cmd,escaped,VK_IMAGE_LAYOUT_GENERAL,&color,1,&sub);
+      vk_internal_wait(vk_internal_commit());
+      CHECK(!nvn_deswizzle(&a->d,1,1,a->mem,raw,pitch));CHECK(raw[0]==0x27);
+      mtl_sub_begin();pair.sr=(NVNcopyRegion){.width=8,.height=8,.depth=1};pair.dr=pair.sr;pair.dv.base_level=1;
+      vk_texture_copy_t2t(&pair);gpu=vk_temp_buffer(nbytes);
+      vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&dependency,0,NULL,0,NULL);
+      vkCmdCopyImageToBuffer(V.cmd,physical[1],VK_IMAGE_LAYOUT_GENERAL,gpu->handle,1,&read);
+      vk_internal_wait(vk_internal_commit());CHECK(!nvn_deswizzle(&d->d,1,1,d->mem,raw,pitch));
+      for(size_t n=0;n<nbytes;n++){CHECK(gpu->map[n]==128);CHECK(raw[n]==128);}
+    }
+    CALL(nvnTextureFinalize,&t[0]);CALL(nvnTextureFinalize,&t[1]);
+  }
+  printf("{\"test_details\":\"shared-native-copy-retile-formats\",\"native_ASTC_available\":%s}\n",V.features.textureCompressionASTC_LDR?"true":"false");
+  printf("{\"test_details\":\"shared-native-copy-retile\",\"GPU_produced_B2T_source\":true,\"T2T_source_chain\":true,\"two_layers_three_mips\":true,\"same_value_CPU_edit\":true}\n");
+}
 static void shared_image_dirty_test(void) {
   CHECK(vk_pool_shared_mode());
   size_t allocation=(4u<<20)+65536;
@@ -33,6 +146,7 @@ static void shared_image_dirty_test(void) {
   CALL(nvnMemoryPoolBuilderSetStorage,&b,data,2u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&b,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&pool,&b));CHECK(!nvn_dirty_tracked(data,2u<<20));
+  if(getenv("DM_SHARED_IMAGE_COPY_TEST"))shared_image_copy_test(&pool,data);
   NVNtexture textures[2];NVNtextureBuilder tb;
   for(unsigned n=0;n<2;n++) {
     CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
