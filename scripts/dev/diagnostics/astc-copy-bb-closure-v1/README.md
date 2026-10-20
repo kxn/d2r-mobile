@@ -1,0 +1,11 @@
+# One rejected ASTC copy, frozen bb4 only
+
+Thin revision of the accepted native-image official LLDB hook. Caller owns the game transaction, exact server publication, first PID, screenshot/save/stop and restoration. Invoke `python3 run-debugger.py FIRST_PID EXISTING_OUTPUT_DIRECTORY`. This hook never launches or installs a game. No device action is authorized by this README.
+
+The sole unconditional breakpoint is bb4 ELF `0x33acf0`, the existing shared-path undefined-storage/CPU-version proof refusal, before original logging/abort at `0x33ad1c`. No ordinary T2T breakpoint/trap loop is added. The exact disassembly proves x20=p_copy_t2t*, x22=source image*, x21=destination image*, and immutable astc_copy_observation at SP+0xd0. SBValue/SBType and ReadMemory obtain the actual source/destination descriptor, views/ROI, scope/stamp, target freshness fields, write histories, intersecting image aliases, pool spans and startup mode fields. No inferior expression/function or target write is allowed.
+
+At most one typed stop is written to `astc-copy-stops.json`, then the official batch client detaches and the original refusal proceeds unchanged. The copied original 65s tool-process bound is not a timer/profile. If attach is late, proof fields disappear, or a bounded metadata walk is incomplete, report inconclusive. A captured refusal is not a repaired/successful copy, game acceptance, whole-frame sample or RAM/FPS result.
+
+The existing exact APK/ELF/BuildID, same ordinary UID/first PID, owned lldb-server argv/PID, unique forward/socket, detach/resume and cleanup checks remain. New socket d2r-astc-copy-bb4-closure-v1 and TCP39485 avoid reuse of the old hook's handles. Parent must prepublish the exact NDK server to files/runtime/temp/d2r-lldb-server inside its reversible transaction. JSON result retains debugger-result.json and owned_debugger_cleanup_complete; this purpose-specific hook does not report native_binding_accepted.
+
+Offline only: four local guards and official LLDB target/type resolution against the exact frozen ELF. Actual device metadata remains uncollected. Plain standard-ASTC4 control failed after entering camp; native phase never ran. Preserve the existing refusal and never remove guards or skip the real copy to make it pass.
