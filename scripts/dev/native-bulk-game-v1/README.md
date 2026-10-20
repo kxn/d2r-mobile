@@ -88,4 +88,3 @@ resource recipes or NSO rewriting. Smaller imports can avoid pinning unrelated
 pages but may increase driver objects, unions and descriptor changes. Compare
 actual Buffer backing, original-game CPU and memory; do not infer resident RAM
 or FPS savings from the chosen window size alone.
-
