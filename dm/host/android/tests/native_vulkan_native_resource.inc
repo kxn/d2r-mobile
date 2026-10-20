@@ -46,6 +46,16 @@ static void nr_samples(NVNtexture *native,NVNtexture *reference,NVNtexture *outp
     CHECK(!memcmp(expected,actual,sizeof actual));
   }
 }
+static void nr_tail_compare(NVNtexture *tail,unsigned first,NVNtexture *native,NVNtexture *output,
+                            const nr_input *input,const uint8_t *linear) {
+  uint8_t expected[1024],actual[1024];
+  for(unsigned level=first;level<input->levels;level++) {
+    const nr_input_mip *m=&input->mips[level];uint8_t *blocks=malloc(m->size);CHECK(blocks);
+    NVNtextureView v=nr_view(level-first);NVNcopyRegion region={0,0,0,m->width,m->height,1};
+    CALL(nvnTextureReadTexels,tail,&v,&region,blocks);CHECK(!memcmp(blocks,linear+m->offset,m->size));free(blocks);
+    nr_draw(native,level,output,expected);nr_draw(tail,level-first,output,actual);CHECK(!memcmp(actual,expected,sizeof actual));
+  }
+}
 static int native_resource_gpu_test(const char *directory) {
   enum {pool_bytes=4<<20,native_offset=(1<<20)+8192,reference_offset=2<<20,
     linear_offset=3<<20,vertex_offset=(3<<20)+(256<<10),output_offset=(3<<20)+(320<<10),
@@ -57,9 +67,12 @@ static int native_resource_gpu_test(const char *directory) {
   FILE *table_file=fopen(table_path,"rb");CHECK(table_file);
   nvn_native_table header;nvn_native_entry entry;
   CHECK(fread(&header,1,sizeof header,table_file)==sizeof header && header.count==1);
-  CHECK(fread(&entry,1,sizeof entry,table_file)==sizeof entry && fgetc(table_file)==EOF);
-  CHECK(!fclose(table_file));table_size=sizeof header+sizeof entry;CHECK(header.file_bytes==table_size);
-  uint8_t marker[8]={'D','M','N',1,1,0,0,0};
+  CHECK(fread(&entry,1,sizeof entry,table_file)==sizeof entry);
+  nvn_native_family family={0};
+  if(header.version==2)CHECK(fread(&family,1,sizeof family,table_file)==sizeof family);
+  CHECK(fgetc(table_file)==EOF && !fclose(table_file));
+  table_size=sizeof header+sizeof entry+(header.version==2?sizeof family:0);CHECK(header.file_bytes==table_size);
+  uint8_t marker[8]={'D','M','N',0,1,0,0,0};marker[3]=header.version;
   const nvn_native_entry *selected=nvn_native_layout_resolve(marker,&entry.description);
   CHECK(selected && !memcmp(selected,&entry,sizeof entry));
   uint8_t *payload=nr_read(directory,"native-resource.bin",&payload_size);
@@ -129,6 +142,26 @@ static int native_resource_gpu_test(const char *directory) {
   S.stream[0]=*(const vs_st *)&stream;S.vertex[0]=(NVNbufferRange){(uintptr_t)storage+vertex_offset,sizeof vertices};
   nr_samples(&native,&reference,&output,input->levels);
   CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));
+  NVNtexture tail;int has_tail=header.version==2 && family.thumbnail_mip;
+  if(has_tail) {
+    unsigned first=family.thumbnail_mip;CHECK(first<input->levels);
+    NVNtextureBuilder tb;CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
+    CALL(nvnTextureBuilderSetWidth,&tb,input->mips[first].width);CALL(nvnTextureBuilderSetHeight,&tb,input->mips[first].height);
+    CALL(nvnTextureBuilderSetLevels,&tb,input->levels-first);CALL(nvnTextureBuilderSetFormat,&tb,input->nvn_format);
+    NVNpackagedTextureLayout layout;memcpy(layout.layout,marker,8);CALL(nvnTextureBuilderSetPackagedTextureLayout,&tb,&layout);
+    CALL(nvnTextureBuilderSetStorage,&tb,&pool,reference_offset+(256<<10));CHECK(CALL(nvnTextureInitialize,&tail,&tb));
+    tex_t *source=(void *)&tail;CHECK(!nvn_native_layout_is_marker(source->layout));
+    CHECK(!memcmp(source->layout,family.source_layout,8) && source->L.size<(64<<10));
+    dm_guest_write_prepare(source->mem,source->L.size);memset(source->mem,0,source->L.size);
+    // First exercise the original packaged CPU encoding, using its existing
+    // NVN swizzler rather than treating family metadata as a native payload.
+    for(unsigned level=first;level<input->levels;level++) {
+      const nr_input_mip *m=&input->mips[level];size_t pitch=((m->width+input->block-1)/input->block)*16;
+      CHECK(!nvn_swizzle(&source->d,level-first,0,linear+m->offset,pitch,source->mem));
+    }
+    CALL(nvnMemoryPoolFlushMappedRange,&pool,source->off,source->L.size);
+    nr_tail_compare(&tail,first,&native,&output,input,linear);
+  }
   // First native GPU writer is deliberately a linear alias, before any image
   // B2T writer can establish scopes. Copy this exact mip's opaque producer
   // bytes, never infer a vendor block permutation. Scope checks catch a lost
@@ -155,6 +188,16 @@ static int native_resource_gpu_test(const char *directory) {
     CALL(nvnCommandBufferCopyBufferToTexture,&cmd,(uintptr_t)storage+linear_offset+m->offset,&reference,&v,&region,0);
   }
   submit(end());nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
+  if(has_tail) {
+    // The real descriptor's compact thumbnail blocks were independently
+    // checked equal to this verified input tail. Preserve linear B2T semantics.
+    unsigned first=family.thumbnail_mip;CALL(nvnCommandBufferBeginRecording,&cmd);
+    for(unsigned level=first;level<input->levels;level++) {
+      const nr_input_mip *m=&input->mips[level];NVNtextureView v=nr_view(level-first);NVNcopyRegion region={0,0,0,m->width,m->height,1};
+      CALL(nvnCommandBufferCopyBufferToTexture,&cmd,(uintptr_t)storage+linear_offset+m->offset,&tail,&v,&region,0);
+    }
+    submit(end());nr_tail_compare(&tail,first,&native,&output,input,linear);
+  }
   CHECK(nvn_dirty_tracked(storage+native_offset+entry.recipe.mips[4].offset,entry.recipe.mips[4].size));
   CHECK(!nvn_dirty_tracked(storage+native_offset,4096)); // mip0 stayed sample-only
   nr_draw(&reference,4,&output,after);CHECK(memcmp(before,after,sizeof after));
@@ -189,6 +232,7 @@ static int native_resource_gpu_test(const char *directory) {
   CHECK(!memcmp(storage+native_offset+payload_size,(uint8_t[64]){[0 ... 63]=0xa5},64));
   S=(vk_state){0};vk_pipeline_state_changed();CALL(nvnSamplerFinalize,&sampler);CALL(nvnProgramFinalize,&program);
   CALL(nvnTextureFinalize,&native);CALL(nvnTextureFinalize,&reference);CALL(nvnTextureFinalize,&output);
+  if(has_tail)CALL(nvnTextureFinalize,&tail);
   CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&pool);
   CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));vk_test_shared_image_backing(NULL,0);
   storage[native_offset]=0x42;CHECK(storage[native_offset]==0x42);CHECK(!munmap(raw,pool_bytes+65536));

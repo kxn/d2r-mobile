@@ -320,7 +320,10 @@ static void log_layout(const tex_builder_t *b, const nvn_texlayout *L) {
 static void builder_storage(const tex_builder_t *b,nvn_texlayout *out) {
     if(b->has_layout && nvn_native_layout_is_marker(b->layout)) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
-        if(nvn_native_layout_storage(b->layout,&b->d,out))return;
+        nvn_texdesc source;
+        int kind=nvn_native_layout_classify(b->layout,&b->d,&source,NULL);
+        if(kind==1 && nvn_native_layout_storage(b->layout,&b->d,out))return;
+        if(kind==2) {nvn_tex_layout(&source,out);return;}
 #endif
         die("Native packaged layout disabled, unknown entry or incompatible recipe");
     }
@@ -414,8 +417,16 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     memset(o, 0, sizeof *o);
     o->magic = MAGIC('T', 'E', 'X', 0); o->d = s->d; o->pool = s->pool; o->off = s->off;
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    if(s->has_layout && nvn_native_layout_is_marker(s->layout)) {
+        nvn_texdesc source;uint8_t source_layout[8];
+        int kind=nvn_native_layout_classify(s->layout,&s->d,&source,source_layout);
+        if(!kind)die("Native family unknown full/thumbnail Builder description");
+        if(kind==2) {o->d=source;memcpy(o->layout,source_layout,8);}
+    }
+#endif
     builder_storage(s, &o->L);
-    if(s->has_layout && nvn_native_layout_is_marker(s->layout) &&
+    if(o->has_layout && nvn_native_layout_is_marker(o->layout) &&
        (!s->pool || !s->pool->mem || s->off<0 || (uint64_t)s->off>s->pool->size || o->L.size>s->pool->size-(uint64_t)s->off ||
         (uint64_t)s->off%o->L.align ||
         (uint64_t)s->off>UINTPTR_MAX-(uintptr_t)s->pool->mem ||
