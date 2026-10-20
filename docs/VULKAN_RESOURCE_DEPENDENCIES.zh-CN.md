@@ -1802,3 +1802,5 @@ recording/command-pool 保留内存可能受益，但实际 CPU/PSS/吞吐均待
 驻留后继把 native Buffer/image 别名准备放到 `image_dependencies` 的实际 request 入口、所有 read-covered 快路之前。`vk_texture_shader_record` 在 Draw/Dispatch 后调用，只能记录访问、producer 和生命周期；未知 writer 若在那里才关闭 pass 并同步，已经晚于消费。native 写入保留原 Buffer/Pool 的 WAR/WAW 依赖准备；当前 native ASTC 只支持 TRANSFER 写入，原 Transfer 路径本来就发全局 memory barrier，所以不额外添加重复 write barrier，也不扩展尚未支持的 ASTC Storage 路径。
 
 隔离 host fault build 可通过 `DM_VULKAN_TEST_POSTRECORD_NATIVE_ALIAS` 恢复旧的 post-record 排序（仅 TEST_EMBED）。真实“GPU 绿 -> 同 recording 未知 compute 恢复红 -> FS”在 LVP 上正负版本均得到正确像素；这明确表示软件 GPU 没有检出故障，不能把其通过当有效的硬件排序负控。AA185 严格 ASTC oracle 和真实游戏验收完成前继续作为待验候选。
+
+Resident 后继的反向别名条件：原生 `VkImage` 写入后，已存在的同地址 Pool `VkBuffer` 只能借助全局内存依赖建立可见性，不能因为 producer 记录了 Pool backing 就当成实际 Buffer 写入。命名 Buffer barrier 的范围与可见性发布均覆盖整个 backing，因此只要该 backing 的任意区间与存活 native import 相交，就通过现有 native AVL 查询拒绝命名快路，回到原全局依赖；不是逐图像扫描。TRANSFER 消费原本已有全局 WAR/WAW，不另加重复屏障。新增同一 recording 的 B2T Image 写入→compute Buffer 完整 opaque payload 读回检查，消费者前没有中间 fence。先前 b351b1b、6fb5add、2767c8a 均为 HOLD，不可部署。

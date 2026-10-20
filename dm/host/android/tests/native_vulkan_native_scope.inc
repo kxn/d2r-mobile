@@ -249,7 +249,19 @@ static void native_acquire_scope_gpu_test(void) {
       CALL(nvnMemoryPoolFlushMappedRange,&pool,(3u<<20)+262144,4096);
       p_copy_b2t copy={.tex=(const tex_t *)&source,.src=(uintptr_t)linear,
         .view=*(const view_t *)&view,.has_view=1,.r={0,0,0,32,32,1}};
-      vk_texture_copy_b2t(&copy,0,0);vk_internal_wait(vk_internal_commit());
+      vk_texture_copy_b2t(&copy,0,0);
+      // The existing Buffer backing must not turn the Image producer into a
+      // named-Buffer visibility proof. Read the complete real opaque payload
+      // with compute in THIS recording, before any submit/fence/host read.
+      uint8_t *image_to_buffer=bytes+(3u<<20)+327680;
+      if(previous_writer) {
+        S=(vk_state){.program=(const prog_t *)&copy_compute};
+        S.ssbo[5][0]=(p_bind_buf){.addr=address,.size=needs.size};
+        S.ssbo[5][1]=(p_bind_buf){.addr=(uintptr_t)image_to_buffer,.size=needs.size};
+        vk_pipeline_state_changed();vk_dispatch(&(p_dispatch){1,1,1});
+      }
+      vk_internal_wait(vk_internal_commit());
+      if(previous_writer)CHECK(!memcmp(image_to_buffer,(void *)(uintptr_t)address,needs.size));
       S=graphics_state;vk_pipeline_state_changed();
       uint8_t rendered[1024];nr_draw(&source,0,&output,rendered);
       for(unsigned n=0;n<sizeof rendered;n+=4)CHECK(!rendered[n] && rendered[n+1]==255 && !rendered[n+2] && rendered[n+3]==255);
@@ -287,7 +299,7 @@ static void native_acquire_scope_gpu_test(void) {
       CHECK(vk_test_native_image_owner(((tex_t *)&source)->serial)==2);
       if(late_unbacked)CHECK(vk_pool_span_query(address,needs.size,&before_late)==VK_POOL_SPAN_SINGLE);
     }
-    printf("{\"test\":\"native-resident-owner-host-oracle\",\"result\":\"passed\",\"actual_imported_coherent_RGBA\":true,\"provider_override_test_only\":true,\"ASTC_executed\":false,\"CPU_restore_rounds\":4,\"explicit_and_noFlush\":true,\"same_value_flush\":true,\"Buffer_GPU_readback\":true,\"three_chunks_without_explicit_host_wait\":true,\"first_Buffer_materialized_late\":%s,\"previous_writers\":%s}\n",late_unbacked?"true":"false",previous_writer?"true":"false");
+    printf("{\"test\":\"native-resident-owner-host-oracle\",\"result\":\"passed\",\"actual_imported_coherent_RGBA\":true,\"provider_override_test_only\":true,\"ASTC_executed\":false,\"CPU_restore_rounds\":4,\"explicit_and_noFlush\":true,\"same_value_flush\":true,\"Buffer_GPU_readback\":true,\"three_chunks_without_explicit_host_wait\":true,\"first_Buffer_materialized_late\":%s,\"previous_writers\":%s,\"Image_writer_to_Buffer_CS_full_payload\":%s}\n",late_unbacked?"true":"false",previous_writer?"true":"false",previous_writer?"true":"false");
   }
   free(original_payload);
   CALL(nvnTextureFinalize,&source);CALL(nvnTextureFinalize,&output);

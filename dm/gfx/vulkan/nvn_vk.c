@@ -2273,6 +2273,17 @@ static int buffer_named_dependencies(VkCommandBuffer command,const vk_buffer_use
     if(!p || !pool_span_resolve(p,u->address-(uintptr_t)p->guest,u->size,&span)) return 0;
     unsigned at=0;while(at<owners_count && backings[at]!=span.backing) at++;
     if(at==owners_count) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      // This barrier and its visibility publication cover the WHOLE backing,
+      // not only u's bytes. An aliased VkImage writer cannot acquire a named
+      // VkBuffer proof through an unrelated read elsewhere in that backing.
+      // Reuse the existing live-import AVL index; never scan native textures.
+      pthread_mutex_lock(&V.resources);
+      int native_alias=native_allocation_overlaps_locked(p,span.backing->begin,
+          span.backing->end-span.backing->begin);
+      pthread_mutex_unlock(&V.resources);
+      if(native_alias)return 0;
+#endif
       if(owners_count==sizeof owners/sizeof *owners) return 0;
       owners[owners_count]=p;backings[owners_count++]=span.backing;
     }
