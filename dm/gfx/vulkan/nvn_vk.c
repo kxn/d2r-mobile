@@ -2236,6 +2236,11 @@ static int buffer_stage_pending(uint64_t address,uint64_t size,VkPipelineStageFl
   }
   return 0;
 }
+#ifdef DM_VULKAN_TEST_EMBED
+int vk_test_fragment_buffer_pending(uint64_t address,uint64_t size) {
+  return buffer_stage_pending(address,size,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+}
+#endif
 int vk_buffer_vertex_pending(uint64_t address,uint64_t size) {
   return buffer_stage_pending(address,size,
       VK_PIPELINE_STAGE_VERTEX_INPUT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT);
@@ -2251,18 +2256,36 @@ static VkPipelineStageFlags buffer_read_producers(uint64_t address,uint64_t size
   }
   return producers;
 }
+// A late fragment binding needs both overlap and producer stages. Collect them
+// in one walk while history is stable; pending is independent of a zero mask.
+static int buffer_pending_producers(uint64_t address,uint64_t size,
+                                    VkPipelineStageFlags stages,
+                                    VkPipelineStageFlags *producers) {
+  *producers=0;
+  if(!address||!size || !(stages&~buffer_common_visible)) return 0;
+  int pending=0;
+  for(unsigned i=buffer_write_start(address);i<vertex_buffer_write_count;i++) {
+    uint64_t a=vertex_buffer_writes[i].address;
+    if(a>=address && a-address>=size) break;
+    if(!(stages&~vertex_buffer_writes[i].visible)) continue;
+    pending=1;*producers|=vertex_buffer_writes[i].producers;
+  }
+  return pending;
+}
 void vk_buffer_shader_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(legacy_astc_copy_enabled && !shared_active)vk_texture_shared_linear_access(address,size);
 #endif
   vk_mip_clear_buffer_access(address,size);
-  if(!buffer_stage_pending(address,size,stages)) return;
   VkPipelineStageFlags known=VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT;
   VkPipelineStageFlags producers=0;
   VkCommandBuffer command=VK_NULL_HANDLE;
-  if(stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT && !vertex_buffer_write_overflow &&
-      !recording_resources->submission_barrier_reference) {
-    producers=buffer_read_producers(address,size,stages);
+  int fragment_query=stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT &&
+      !vertex_buffer_write_overflow && !recording_resources->submission_barrier_reference;
+  if(fragment_query) {
+    if(!buffer_pending_producers(address,size,stages,&producers)) return;
+  } else if(!buffer_stage_pending(address,size,stages)) return;
+  if(fragment_query) {
     // Compute and transfers always close a render pass before writing. These
     // known producers therefore precede the pending secondary; synchronize its
     // late fragment binding in the primary without a tile store/reload.

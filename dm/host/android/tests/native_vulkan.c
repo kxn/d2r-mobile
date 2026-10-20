@@ -458,6 +458,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_pool_ranges.inc"
 #include "native_vulkan_pool_binding_mask.inc"
 #include "native_vulkan_buffer_scope.inc"
+#include "native_vulkan_fs_query.inc"
 #include "native_vulkan_present.inc"
 #include "native_vulkan_sampled_array.inc"
 #include "native_vulkan_bc_cpu_scratch.inc"
@@ -815,6 +816,10 @@ int dm_vulkan_test_main(void) {
   }
 #endif
   if(getenv("DM_READBACK_BATCH_FIXTURE")) {readback_batch_order_test();readback_batch_pool_test();command_pool_reset_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"readback-batch\",\"checks\":%u,\"NC_invalidations\":%llu,\"GPU_ROI_count\":35,\"pool_GPU_bytes\":true,\"event_after_fence\":true,\"reset_blocked\":true,\"game_modules_executed\":false,\"result\":\"passed\"}\n",checks,(unsigned long long)readback_pool_invalidations);return 0;}
+  if(getenv("DM_FS_QUERY_FIXTURE")) {
+    fragment_buffer_query_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"fragment-buffer-query\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;
+  }
   if(getenv("DM_BUFFER_HISTORY_FIXTURE")) {
     // Initialize the active submission policy before the existing partition
     // fixture checks it; neither oracle's byte assertions are changed.
@@ -2242,7 +2247,7 @@ int dm_vulkan_test_main(void) {
   mip_stamp_test(controls[3],controls[4]);
   mip_stamp_write_test();
   subpass_render_cache_test();
-  buffer_scope_test();
+  buffer_scope_test();fragment_buffer_query_test();
   initialized_span_test();
   pool_backing_span_test();
   pool_span_cache_test();

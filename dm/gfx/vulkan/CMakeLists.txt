@@ -61,3 +61,7 @@ endif()
 # Observe completion batch calls in the owned GPU fixture, without production hooks.
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_INVALIDATE_WRAP=1)
 target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_memory_invalidate_batch")
+
+# Observe a real post-render-end producer in the owned FS dependency regression.
+target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_FS_QUERY_WRAP=1)
+target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_render_end_at")
