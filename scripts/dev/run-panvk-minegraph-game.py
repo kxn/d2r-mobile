@@ -9,8 +9,8 @@ R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
-READY=R/'.local/logs/panvk-minegraph-pandecode-file-v1-source-ready-agent.json'
-READY_SHA='8779d7162bf7dc2dda36a4904fae38ce2c4850b16baa109fa331cd16f8391dc3'
+READY=R/'.local/logs/panvk-minegraph-pandecode-file-v1-source-ready-agent-v2.json'
+READY_SHA='fa1d0d247cb981398362e195bac614fff77b6d753a579a69446265845d1da1ff'
 DRIVER_SHA='feebdd70a1aa4d6aa4ae26269aee69d565ed20d6e414ead5014e8637a34247ed'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
@@ -51,7 +51,7 @@ def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
  require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
  require(d['diagnostic_only'] and d['only_delta_from_static_hardware_v2_driver_source']==['src/panfrost/genxml/decode_common.c'],'not official pandecode output-only adaptation')
- require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build'],'not the static unsupported-HAL platform candidate')
+ require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build','src/panfrost/genxml/decode_common.c'],'not the static unsupported-HAL platform candidate')
  for key in ['source_identity','build_only_adaptation','generated_version','host_codegen','ELF','driver']:
   r=d[key];require(sha(r['path'])==r['sha256'],'driver provenance changed: '+key)
  require(d['driver']['sha256']==DRIVER_SHA and set(d['ICD_exports_verified'])=={'HMI','vk_icdGetInstanceProcAddr','vk_icdGetPhysicalDeviceProcAddr','vk_icdNegotiateLoaderICDInterfaceVersion'},'wrong ICD')
