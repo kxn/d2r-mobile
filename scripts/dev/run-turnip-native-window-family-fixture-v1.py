@@ -25,7 +25,7 @@ sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 m=json.loads((a.artifact/'candidate.apk.build.json').read_text())
 assert m['package']==pkg and m['activity']==pkg+'.MainActivity'
 assert m['contains_game_binary'] is False and m['original_game_classes_assets_packaged'] is False
-assert m['requires_actual_ASTC_GPU'] is True
+assert m['requires_actual_ASTC_GPU'] is True and m['previous_writer_ASTC_fixture'] is True
 assert sha(a.artifact/'candidate.apk')==m['apk_sha256']
 assert sha(a.original_artifact)==a.expected_original_apk
 with zipfile.ZipFile(a.artifact/'candidate.apk') as z:
@@ -302,12 +302,17 @@ try:
  assert terminal['game_modules_executed'] is False
  config=[r for r in rows if r.get('native_window_family_app_configuration') is True]
  assert len(config)==1 and config[0]['uid']==terminal['uid'] and config[0]['pid']==int(first_pid)
+ assert config[0]['previous_writer_ASTC'] is True
  assert config[0]['provider']=='adreno' and config[0]['async'] is True and config[0]['validation']=='disabled_explicitly'
  passed=[r for r in rows if r.get('test')=='native-resource-original-NVN']
- assert len(passed)==1 and passed[0]['result']=='passed' and passed[0]['checks']>=372
+ assert len(passed)==1 and passed[0]['result']=='passed' and passed[0]['checks']==408
  assert passed[0]['format']==158 and passed[0]['mips']==9 and passed[0]['family_version']==2 and passed[0]['tail_levels']==5
  assert passed[0]['no_pool_shadow'] is True and passed[0]['full_all_mips'] is True and passed[0]['tail_packaged_and_B2T'] is True
  assert passed[0]['native_offset']==1056768 and passed[0]['pool_bytes']==4194304 and passed[0]['game_modules_executed'] is False
+ previous=[r for r in rows if r.get('test')=='native-previous-writer-ASTC-pending-FS']
+ assert len(previous)==1 and previous[0]['result']=='passed' and previous[0]['checks']==36
+ assert previous[0]['positive_cases']==2 and previous[0]['unknown_negative_cases']==1 and previous[0]['mips']==[4,5,6]
+ for key in ('old_TRANSFER_and_COMPUTE_histories_retained','current_recording_denied','FS_pixels_reference_equal','CS_pixels_reference_equal','T2B_compressed_blocks_exact'):assert previous[0][key] is True
  lane=[r for r in rows if r.get('native_allocation_lane') is True]
  assert len(lane)==1 and lane[0]['imports']==1 and lane[0]['import_bytes']==135168 and lane[0]['metadata_bytes']==120
  for key in ('same_physical_pages_as_Buffer_imports','no_payload_copy','window_two_unions','last_release_collected'):assert lane[0][key] is True

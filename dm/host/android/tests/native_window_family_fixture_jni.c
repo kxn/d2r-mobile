@@ -47,7 +47,7 @@ JNIEXPORT jint JNICALL Java_com_d2rmobile_nativewindowfamilyfixture_MainActivity
   int error=dm_fixture_output_open(output);if(error)_exit(error);
   printf("{\"native_window_family_app_configuration\":true,\"uid\":%u,\"pid\":%u,"
          "\"provider\":\"adreno\",\"window_bytes\":65536,\"async\":true,"
-         "\"validation\":\"disabled_explicitly\",\"game_modules_executed\":false}\n",
+         "\"validation\":\"disabled_explicitly\",\"previous_writer_ASTC\":true,\"game_modules_executed\":false}\n",
          (unsigned)getuid(),(unsigned)getpid());
   if(g_nmod)die("Shared window oracle cannot execute game modules");
   vk_loader_set_driver("adreno",driver,hooks);
@@ -56,6 +56,7 @@ JNIEXPORT jint JNICALL Java_com_d2rmobile_nativewindowfamilyfixture_MainActivity
   fixture_env("DM_VULKAN_SHARED_POOLS","1");fixture_env("DM_VULKAN_POOL_WINDOW_BYTES","65536");
   fixture_env("DM_SHARED_GUEST_HEAP_FIXTURE","1");
   fixture_env("DM_NATIVE_RESOURCE_NVN_FIXTURE",resource);
+  fixture_env("DM_NATIVE_PREVIOUS_WRITER_ASTC_FIXTURE","1");
   fixture_env("DM_VULKAN_NATIVE_RESOURCE_TABLE",table);
   fixture_env("DM_VULKAN_NATIVE_PACK_SHA256",pack);fixture_env("DM_VULKAN_NATIVE_PRODUCER_SHA256",producer);
   fixture_env("DM_VULKAN_ASYNC","1");fixture_env("DM_VULKAN_TEXEL_STORAGE","1");

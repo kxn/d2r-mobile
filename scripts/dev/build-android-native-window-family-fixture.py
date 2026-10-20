@@ -85,7 +85,7 @@ pack=table[32:64].hex();producer=table[96:128].hex()
 assert pack=='9fb5a9d015b60a9857620419ae4fd70a4704786398a2ebaaf0f4f60f8cd72144'
 assert producer=='34ec895c3699da37f59b5af0a057ae0555934692917edd9bc62a775a9847a29f'
 result={'owned_resource_inputs':resources,'native_resource_pack_sha256':pack,'native_resource_producer_sha256':producer,
- 'native_payload_bytes':135168,'package':PKG,'activity':PKG+'.MainActivity','fixture_kind':'native-image-window-family-original-NVN-v1',
+ 'native_payload_bytes':135168,'package':PKG,'activity':PKG+'.MainActivity','fixture_kind':'native-image-window-family-previous-writer-ASTC-v1','previous_writer_ASTC_fixture':True,
  'source_revision':revision,'apk_sha256':sha(apk),'base_apk_sha256':sha(A.base_apk),
  'base_build_manifest_sha256':sha(manifest),'runtime_source_ready_sha256':sha(A.runtime_source_ready),
  'native_library_sha256':m['native_library_sha256'],'shader_files':shaders,

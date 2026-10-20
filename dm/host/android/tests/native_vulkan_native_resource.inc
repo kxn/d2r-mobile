@@ -57,6 +57,9 @@ static void nr_tail_compare(NVNtexture *tail,unsigned first,NVNtexture *native,N
     nr_draw(native,level,output,expected);nr_draw(tail,level-first,output,actual);CHECK(!memcmp(actual,expected,sizeof actual));
   }
 }
+#ifdef DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE
+#include "native_vulkan_native_previous_astc.inc"
+#endif
 static int native_resource_gpu_test(const char *directory) {
   enum {pool_bytes=4<<20,native_offset=(1<<20)+8192,reference_offset=2<<20,
     linear_offset=3<<20,vertex_offset=(3<<20)+(256<<10),output_offset=(3<<20)+(320<<10),
@@ -263,6 +266,12 @@ static int native_resource_gpu_test(const char *directory) {
   CHECK(!memcmp(storage+alias_offset,storage+native_offset,4096));
   CHECK(!memcmp(storage+native_offset-64,(uint8_t[64]){[0 ... 63]=0xa5},64));
   CHECK(!memcmp(storage+native_offset+payload_size,(uint8_t[64]){[0 ... 63]=0xa5},64));
+#ifdef DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE
+  if(getenv("DM_NATIVE_PREVIOUS_WRITER_ASTC_FIXTURE")) {
+    nr_previous_writer_astc(&native,&reference,&output,&pool,storage,input,linear,native_offset,
+      payload_size,linear_offset,vertex_offset,alias_offset,&S);
+  }
+#endif
   uint64_t native_import_count,native_import_bytes,native_metadata_bytes;
   vk_native_allocation_stats(&native_import_count,&native_import_bytes,&native_metadata_bytes);
   CHECK(native_import_count==1 && native_import_bytes>=payload_size && native_import_bytes<=payload_size+65536);
