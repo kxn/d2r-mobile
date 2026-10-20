@@ -81,16 +81,20 @@ static void legacy_astc_cpu_escape_test(void) {
 }
 static void astc_copy_encoding_test(void) {
   int legacy=vk_legacy_astc_copy_mode() && !vk_pool_shared_active();
-  size_t size=(4u<<20)+65536;uint8_t *raw=mmap(NULL,size,PROT_READ|PROT_WRITE,(legacy?MAP_PRIVATE:MAP_SHARED)|MAP_ANONYMOUS,-1,0);
-  CHECK(raw!=MAP_FAILED);uint8_t *data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
+  int real_window_heap=!legacy && V.options.pool_window_bytes && getenv("DM_SHARED_GUEST_HEAP_FIXTURE");
+  size_t size=(4u<<20)+65536;uint8_t *raw=NULL,*data=bytes;
+  if(!real_window_heap) {
+    raw=mmap(NULL,size,PROT_READ|PROT_WRITE,(legacy?MAP_PRIVATE:MAP_SHARED)|MAP_ANONYMOUS,-1,0);
+    CHECK(raw!=MAP_FAILED);data=(void *)(((uintptr_t)raw+65535)&~(uintptr_t)65535);
+  }
   memset(data,0xa7,4u<<20);
   unsigned policy=vk_texture_test_astc_copy_policy(data,8192);CHECK(policy>=20);
   printf("{\"test_details\":\"ASTC4-copy-admission-policy\",\"checks\":%u,\"same_value_CPU_prepare_and_fault_rejected\":true,\"unrelated_page_keeps_proof\":true}\n",policy);
   if(!V.features.textureCompressionASTC_LDR || V.props.deviceType==VK_PHYSICAL_DEVICE_TYPE_CPU) {
-    CHECK(!munmap(raw,size));
+    if(raw)CHECK(!munmap(raw,size));
     printf("{\"test_details\":\"ASTC4-copy-physical-encoding\",\"actual_ASTC_GPU\":false,\"result\":\"unsupported\"}\n");return;
   }
-  if(!legacy)vk_test_shared_image_backing(data,4u<<20);
+  if(!legacy && !real_window_heap)vk_test_shared_image_backing(data,4u<<20);
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,4u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
@@ -111,7 +115,23 @@ static void astc_copy_encoding_test(void) {
   astc_copy_seed(&source,astc_decode_constant);
   const float vertices[]={-1,-1,0,0,3,-1,2,0,-1,3,0,2};memcpy(data+(3u<<20),vertices,sizeof vertices);
   mtl_sub_begin();vk_texture_cpu_preflight(s);vk_texture_test_astc_copy_upload(s);
-  vk_internal_wait(vk_internal_commit()); // actual source use materializes this Pool once
+  vk_internal_wait(vk_internal_commit());
+  if(!legacy) {
+    // 0b defers CPU-only image sources. A REAL Buffer copy establishes the
+    // old required imported provenance without assuming image upload pins it.
+    mtl_sub_begin();vk_pool_requirement need={(uintptr_t)data,16,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+    int op=vk_pool_operation_begin_ranges(&need,1);uint8_t proof[16];
+    pool_window_read(data,16,proof);vk_pool_operation_end(op);vk_internal_wait(vk_internal_commit());
+    CHECK(!memcmp(proof,data,16));
+    if(real_window_heap) {
+      uint64_t w=V.options.pool_window_bytes;CHECK(d->L.size>w);
+      vk_pool_requirement adjacent[2]={
+        {(uintptr_t)d->mem,16,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0},
+        {(uintptr_t)d->mem+w,16,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0}};
+      vk_pool_reserve_result result;CHECK(vk_pool_reserve_ranges(adjacent,2,w,&result)==VK_POOL_RESERVE_OK);
+      CHECK(!vk_pool_shared_materialized((uintptr_t)d->mem,d->L.size));
+    }
+  }
   int initially_decoded=0;
   if(legacy) {
     // Reuse the existing owned selector, not a false device capability.
@@ -184,7 +204,7 @@ static void astc_copy_encoding_test(void) {
   S=saved;vk_pipeline_state_changed();CALL(nvnSamplerFinalize,&sampler);CALL(nvnProgramFinalize,&program);
   CALL(nvnTextureFinalize,&source);CALL(nvnTextureFinalize,&destination);
   for(unsigned n=0;n<2;n++)CALL(nvnTextureFinalize,&output[n]);
-  CALL(nvnMemoryPoolFinalize,&pool);if(!legacy)vk_test_shared_image_backing(NULL,0);CHECK(!munmap(raw,size));
+  CALL(nvnMemoryPoolFinalize,&pool);if(!legacy && !real_window_heap)vk_test_shared_image_backing(NULL,0);if(raw)CHECK(!munmap(raw,size));
   CHECK(!vk_validation_error_count());
   if(legacy)printf("{\"test_details\":\"legacy-ASTC4-copy-storage\",\"actual_ASTC_GPU\":true,\"initial_decoded_RGBA\":%s,\"original_whole_dirty_tracker\":true,\"no_host_import\":true,\"complete_hostpage_destination\":true,\"result\":\"passed\"}\n",initially_decoded?"true":"false");
   printf("{\"test_details\":\"ASTC4-copy-physical-encoding\",\"actual_ASTC_GPU\":true,\"fresh_BC3_array_became_ASTC4\":true,\"logical_BC3_unchanged\":true,\"mip_layer_ROI_preserved\":true,\"default_and_BC3_srgb_views\":true,\"CPU_version_observer\":true,\"canonical_pool_bytes_unchanged\":true,\"result\":\"passed\"}\n");

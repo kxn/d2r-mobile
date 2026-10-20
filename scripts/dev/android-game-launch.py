@@ -31,6 +31,7 @@ parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='s
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
 parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk'],help='cold explicit system/Adreno-tools/PanVK direct ICD; requires separately verified private driver')
+parser.add_argument('--expect-shared-import-windows',action='store_true',help='verify experimental shared import windows; requires explicit shared heap and nonzero cold window bytes')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
@@ -148,6 +149,8 @@ if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
         (args.pool_window_bytes != 0 and (args.pool_window_bytes < 4096 or
          args.pool_window_bytes & (args.pool_window_bytes - 1)))):
     parser.error('--pool-window-bytes must be 0 or a power of two >= 4096, within signed 64-bit range')
+if args.expect_shared_import_windows and (args.attach or args.shared_guest_heap is not True or not args.pool_window_bytes):
+    parser.error('--expect-shared-import-windows requires cold --shared-guest-heap and nonzero --pool-window-bytes')
 if args.external_profile and (args.gpu_profile or args.validate):
     parser.error('--external-profile conflicts with --gpu-profile/--validate')
 if args.stream_submits and not args.async_submit:
@@ -338,7 +341,7 @@ while time.monotonic() < deadline:
                     if not args.attach and state.get('sample_liveness',{}).get('reference') != args.dead_sample_queries_reference:
                         raise SystemExit('sample query liveness policy did not apply')
                     if (not args.attach and args.pool_window_bytes is not None and
-                            state.get('pool_windows',{}).get('window_bytes') != (0 if state.get('guest_heap',{}).get('shared') else args.pool_window_bytes)):
+                            state.get('pool_windows',{}).get('window_bytes') != (0 if state.get('guest_heap',{}).get('shared') and not args.expect_shared_import_windows else args.pool_window_bytes)):
                         raise SystemExit('pool backing window policy did not apply')
                     if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
                         raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
@@ -347,7 +350,9 @@ while time.monotonic() < deadline:
                         if marker not in log:raise RuntimeError('Actual Vulkan provider did not match explicit request')
                     if not args.attach and args.shared_guest_heap is False and state.get('guest_heap',{}).get('shared') is not False:
                         raise RuntimeError('Actual guest heap does not match explicit private request')
-                    if state.get('guest_heap',{}).get('shared') and state.get('pool_windows',{}).get('window_bytes') != 0:
+                    if args.expect_shared_import_windows and (state.get('guest_heap',{}).get('shared') is not True or '[shared pool] immutable startup shared; import_window_bytes='+str(args.pool_window_bytes) not in log):
+                        raise RuntimeError('Actual shared import window startup proof did not apply')
+                    if state.get('guest_heap',{}).get('shared') and state.get('pool_windows',{}).get('window_bytes') != (args.pool_window_bytes if args.expect_shared_import_windows else 0):
                         raise RuntimeError('Actual shared heap requires the fixed whole-pool policy')
                     if (not args.attach and args.pixel_local_shared_ds is not None and
                             state.get('pixel_local',{}).get('shared_readonly_ds') != args.pixel_local_shared_ds):

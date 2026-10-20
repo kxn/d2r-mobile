@@ -1,5 +1,6 @@
-// Fixed startup mode, whole-pool lazy import. No borrowed-window admission,
-// mirror demotion or legacy content proof is used by a shared Pool.
+// Fixed startup shared mode. Whole imports remain the reference; an explicit
+// experimental build can reserve canonical imported spans before any borrows.
+// Neither form has a shadow/mirror or online change to legacy allocation.
 #include "nvn_vk_shared_import.h"
 #include "dm_guest_heap.h"
 extern int dm_guest_heap_probe_views_create(size_t,size_t,dm_guest_heap_probe_views *) __attribute__((weak));
@@ -73,13 +74,63 @@ static void shared_cache(vk_buffer *b,uint64_t offset,uint64_t bytes,int invalid
   if(invalidate)VK_CHECK(vkInvalidateMappedMemoryRanges(V.device,1,&range));
   else VK_CHECK(vkFlushMappedMemoryRanges(V.device,1,&range));
 }
+// Caller holds resources; holes mean no imported GPU user, not a need to pin.
+// Complete writer/used ranges must be fully backed; public Flush/Invalidate may
+// cover untouched holes and visits only their actual imported intersections.
+static void shared_pool_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int invalidate,int complete) {
+  if(!p->shared || offset>p->size || bytes>p->size-offset)die("Shared cache logical range");
+  if(!shared_window_bytes) {shared_cache(&p->whole.buffer,offset,bytes,invalidate);return;}
+  uint64_t at=offset,end=offset+bytes;
+  for(pool_backing_span *b=p->backings;b && b->begin<end;b=b->next) {
+    if(b->end<=offset)continue;
+    uint64_t a=offset>b->begin?offset:b->begin,z=end<b->end?end:b->end;
+    if(complete && a!=at)die("Shared cache range crosses unimported hole");
+    shared_cache(&b->buffer,a-b->begin,z-a,invalidate);at=z;
+  }
+  if(complete && at!=end)die("Shared cache range not imported");
+}
+static void shared_pool_host_barrier(pool *p,uint64_t offset,uint64_t bytes,VkPipelineStageFlags producers) {
+  if(!shared_window_bytes) {
+    VkBufferMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+      .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+      .buffer=p->whole.buffer.handle,.offset=offset,.size=bytes};
+    vkCmdPipelineBarrier(V.cmd,producers,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);return;
+  }
+  pthread_mutex_lock(&V.resources);pool_span_iter it;pool_span_piece piece;
+  if(!pool_span_iter_begin(p,offset,bytes,&it))die("Shared HOST barrier range");
+  int next;
+  while((next=pool_span_iter_next(&it,&piece))==1) {
+    VkBufferMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+      .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+      .buffer=piece.backing->buffer.handle,.offset=piece.offset,.size=piece.size};
+    vkCmdPipelineBarrier(V.cmd,producers,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);
+  }
+  if(next<0)die("Shared HOST writer range not imported");
+  pthread_mutex_unlock(&V.resources);
+}
+static VkResult shared_span_try_allocate(pool *p,pool_backing_span *span,uint64_t begin,uint64_t end) {
+  if(!p->shared || p->shared_closing || begin>=end || end>p->size ||
+      begin%shared_alignment || (end-begin)%shared_alignment)return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+  void *alias=shared_import_host_pointer((uintptr_t)p->guest+begin,end-begin);
+  if(!alias)return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+  VkResult result=shared_buffer_create(alias,end-begin,&span->buffer);
+  if(result!=VK_SUCCESS)return result;
+  if(p->backings && span->buffer.properties!=p->shared_properties) {
+    vk_buffer_destroy(&span->buffer);return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+  }
+  span->buffer.map=p->guest+begin;span->begin=begin;span->end=end;return VK_SUCCESS;
+}
 static void shared_pool_materialize(pool *p) {
   if(p->shared_closing)die("Shared Pool address after closing");
   if(p->backings)return;
+  if(shared_window_bytes)die("Shared window access requires complete operation admission");
   void *import_pointer=shared_import_host_pointer((uintptr_t)p->guest,p->size);
   if(!import_pointer)die("Shared Pool lacks committed RW import alias");
   vk_buffer b={0};VkResult result=shared_buffer_create(import_pointer,p->size,&b);
   if(result!=VK_SUCCESS) {vk_buffer_destroy(&b);die("Shared whole Pool import failed: %d; no online legacy fallback",result);}
+  p->shared_properties=b.properties;
   b.map=p->guest; // CPU-facing addresses remain the original protected VMA.
   pool_materialize_metadata(p);p->whole.buffer=b;p->whole.begin=0;p->whole.end=p->size;
   if(p->backing_generation==UINT64_MAX)die("Shared generation exhausted");
@@ -92,7 +143,9 @@ int vk_pool_shared_active(void) {return shared_active;}
 int vk_pool_shared_materialized(uint64_t address,uint64_t bytes) {
   if(!shared_active || !bytes)return 0;
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
-  int ready=p && p->shared && !p->shared_closing && p->backings;
+  pool_span_piece covered;
+  int ready=p && p->shared && !p->shared_closing &&
+      pool_span_resolve_locked(p,address-(uintptr_t)p->guest,bytes,&covered);
   pthread_mutex_unlock(&V.resources);return ready;
 }
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(__ANDROID__)
@@ -113,8 +166,10 @@ static void shared_probe_release(dm_guest_heap_probe_views *views,void *memory,s
   if(views->guest)dm_guest_heap_probe_views_destroy(views);
   else if(memory && munmap(memory,bytes))die("Shared probe unmap failed");
 }
+#include "nvn_vk_shared_overlap_probe.inc"
 static void shared_device_probe(void) {
   if(!shared_requested)return;
+  uint64_t candidate_window=0;
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
   extern int dm_gfx_shared_owner_ready(void);
   if(!dm_gfx_shared_owner_ready()) {LOG("[shared pool] startup legacy: dedicated NVN owner unavailable");return;}
@@ -186,7 +241,25 @@ static void shared_device_probe(void) {
   shared_gpu_gate_force=getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE")!=NULL;
   if(shared_gpu_gate_force)needs_gate=1; // admission only, not NC Vk cache calls
 #endif
-  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);shared_probe_release(&views,memory,bytes);
+  vkDestroyFence(V.device,fence,NULL);vkDestroyCommandPool(V.device,pool_handle,NULL);vk_buffer_destroy(&b);
+#ifdef DM_VULKAN_SHARED_IMPORT_WINDOWS
+  uint64_t requested_window=V.options.pool_window_bytes;
+  if(valid && requested_window) {
+    const char *sync=getenv("DM_VULKAN_POOL_SYNC_REFERENCE");
+    if(atomic_load(&pool_sync_requested)==1 || (sync && strcmp(sync,"0")))
+      die("Shared import windows do not support full-pool sync reference; cold window bytes 0 required");
+    uint64_t alignments[]={shared_alignment,(uint64_t)getpagesize(),V.props.limits.nonCoherentAtomSize,
+      V.props.limits.minUniformBufferOffsetAlignment,V.props.limits.minStorageBufferOffsetAlignment,
+      V.props.limits.minTexelBufferOffsetAlignment};
+    if((requested_window&(requested_window-1)) || requested_window<4096)die("Shared window granularity");
+    for(unsigned k=0;k<sizeof alignments/sizeof *alignments;k++)
+      if(!alignments[k] || (alignments[k]&(alignments[k]-1)) || alignments[k]>requested_window)
+        die("Shared window alignment cannot preserve cache/descriptor prefix");
+    if(!shared_overlap_probe(import_pointer,memory,bytes))die("Requested shared import windows require overlapping-import GPU byte proof");
+    candidate_window=requested_window;
+  }
+#endif
+  shared_probe_release(&views,memory,bytes);
   if(valid && needs_gate) {
     uint64_t atom=V.props.limits.nonCoherentAtomSize,page=(uint64_t)getpagesize();
     if(!atom || (atom&(atom-1)) || !page || (page&(page-1)) || atom>page) {
@@ -202,13 +275,14 @@ static void shared_device_probe(void) {
   // Only a successful capability/byte probe changes the immutable backing
   // policy. Every unsupported return above keeps the original legacy options,
   // including Android's default windows and the published defer getter.
+  shared_window_bytes=valid?candidate_window:0;
   if(valid) {
-    V.options.pool_window_bytes=0;
+    V.options.pool_window_bytes=shared_window_bytes;
     V.options.pool_mirror_reference=0;
     V.options.pool_defer_publication=0;
     atomic_store_explicit(&pool_defer_publication_enabled,0,memory_order_release);
   }
-  shared_active=valid;LOG("[shared pool] immutable startup %s; lazy whole Pool, no online mirror fallback",valid?"shared":"legacy: byte probe mismatch");
+  shared_active=valid;LOG("[shared pool] immutable startup %s; import_window_bytes=%llu no online mirror fallback",valid?"shared":"legacy: byte probe mismatch",(unsigned long long)shared_window_bytes);
 }
 
 void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate) {
@@ -221,7 +295,7 @@ void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate) {
   // Explicit cache API never secretly waits an overlapping GPU. Existing
   // consumer bookkeeping is page-conservative, stronger than the atom bound.
   if(pending_gpu_access(p,first,end-first))die("Shared CPU cache publication overlaps pending GPU cacheline/page");
-  if(p->backings)shared_cache(&p->whole.buffer,offset,bytes,invalidate);
+  if(p->backings)shared_pool_cache_locked(p,offset,bytes,invalidate,0);
   pthread_mutex_unlock(&V.resources);
 }
 
@@ -229,7 +303,7 @@ void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate) {
 int vk_test_fixed_shared_pool(uint64_t address,int *ready,int *shadow,uint32_t *properties) {
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
   int valid=p && p->shared;if(valid) {*ready=p->backings!=NULL;*shadow=p->shadow!=NULL;
-    *properties=p->whole.buffer.properties;}
+    *properties=p->shared_properties;}
   pthread_mutex_unlock(&V.resources);return valid;
 }
 #endif
@@ -259,3 +333,5 @@ int vk_pool_shared_image_source(uint64_t address,uint64_t bytes,int prepare) {
   p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);
   return 1;
 }
+
+#include "nvn_vk_shared_union.inc"

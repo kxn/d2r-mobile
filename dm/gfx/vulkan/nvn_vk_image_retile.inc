@@ -25,20 +25,24 @@ static void image_retile_create(void) {
   VK_CHECK(vkCreateComputePipelines(V.device,V.pipeline_cache,1,&pi,NULL,&image_retile_pipeline));
   vkDestroyShaderModule(V.device,module,NULL);
 }
-// Before borrowing any physical image/temporary/descriptor. Whole-pool shared
-// storage cannot relocate; this exact original lookup retains its lifetime and
-// records ordinary buffer dependencies, including prior raw readers.
-static shared_copy_backing image_retile_prepare(const tex_t *t) {
-  shared_copy_backing p={0};
+// Pure logical eligibility. No image/descriptor/physical buffer is borrowed.
+// The operation collector repeats this on every post-maintenance recollection.
+static int image_retile_logical(const tex_t *t) {
   if(!vk_pool_shared_active() || !t || !t->has_layout || !t->mem || !t->L.size ||
       t->d.samples>1 || (t->d.flags&NVN_TEXTURE_FLAGS_LINEAR) ||
       (t->d.target!=NVN_TEXTURE_TARGET_2D && t->d.target!=NVN_TEXTURE_TARGET_2D_ARRAY &&
-       t->d.target!=NVN_TEXTURE_TARGET_CUBEMAP && t->d.target!=NVN_TEXTURE_TARGET_CUBEMAP_ARRAY))return p;
+       t->d.target!=NVN_TEXTURE_TARGET_CUBEMAP && t->d.target!=NVN_TEXTURE_TARGET_CUBEMAP_ARRAY))return 0;
   int bw,bh,bpb=nvn_fmt_bpb(t->d.format,&bw,&bh);
-  if(bpb<=0 || bpb%4 || aspect_for(t->d.format)!=VK_IMAGE_ASPECT_COLOR_BIT)return p;
+  if(bpb<=0 || bpb%4 || aspect_for(t->d.format)!=VK_IMAGE_ASPECT_COLOR_BIT)return 0;
   for(image *i=image_buckets[t->serial%8192];i;i=i->hash_next)if(i->tex.serial==t->serial)
-    if(i->external_access || (i->initialized&&!i->cpu_rebuildable))return p;
-  if(vk_texture_shared_linear_conflict((uintptr_t)t->mem,t->L.size))return p;
+    if(i->external_access || (i->initialized&&!i->cpu_rebuildable))return 0;
+  if(vk_texture_shared_linear_conflict((uintptr_t)t->mem,t->L.size))return 0;
+  return 1;
+}
+// Called only after the operation admitted the complete retile destination.
+static shared_copy_backing image_retile_prepare(const tex_t *t) {
+  shared_copy_backing p={0};
+  if(!image_retile_logical(t))return p;
   vk_buffer *b;uint64_t offset;
   if(!vk_pool_address_stage((uintptr_t)t->mem,t->L.size,(void **)&b,&offset,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT))
     die("Shared image retile target outside live Pool");

@@ -36,6 +36,11 @@ static int pool_window_bounds(const pool *p,const vk_pool_requirement *r,uint64_
   *begin=logical&~(window-1);
   *end=p->size-*begin>window?*begin+window:p->size;
   uint64_t prefix_begin=r->prefix_alignment?logical&~(r->prefix_alignment-1):logical;
+  if(pool_shared_window_policy(p)) {
+    uint64_t last=logical+r->size;
+    if(last>UINT64_MAX-(window-1))return 0;
+    *end=(last+window-1)&~(window-1);if(*end>p->size)*end=p->size;
+  }
   return prefix_begin>=*begin && logical+r->size<=*end;
 }
 static int pool_window_overlaps(const pool *p,uint64_t begin,uint64_t end) {
@@ -87,6 +92,11 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
           r->prefix_alignment>window_bytes)))goto done;
     pool *p=pool_find(r->address,r->size);
     if(!p || !pool_window_chain_valid(p))goto done;
+#ifdef DM_VULKAN_SHARED_POOLS
+    // A manual reservation API call must never install private/mirror nodes
+    // in an immutable shared-whole Pool. Normal whole lookup imports it.
+    if(p->shared && !shared_window_bytes && !p->backings)goto done;
+#endif
     if(whole_reference && p->backings && !pool_window_whole(p)) {
       if(!need_identity) { need_base=(uintptr_t)p->guest;need_identity=p->identity; }
       continue;
@@ -123,6 +133,12 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
     pool_window_plan q=plan[k];
     if(unique && plan[unique-1].owner==q.owner && plan[unique-1].begin<=q.begin &&
         plan[unique-1].end>=q.end)continue;
+    if(unique && plan[unique-1].owner==q.owner && pool_shared_window_policy(q.owner) &&
+        q.begin<plan[unique-1].end) {
+      uint64_t extra=q.end-plan[unique-1].end;
+      if(extra>UINT64_MAX-bytes) {free(plan);goto done;}
+      bytes+=extra;plan[unique-1].end=q.end;continue;
+    }
     if(q.end-q.begin>UINT64_MAX-bytes) { free(plan);goto done; }
     bytes+=q.end-q.begin;plan[unique++]=q;
   }
@@ -133,7 +149,18 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
 #ifdef DM_VULKAN_TEST_EMBED
     if(allocated==VK_SUCCESS && pool_reserve_fail_after==0)allocated=VK_ERROR_OUT_OF_DEVICE_MEMORY;
 #endif
-    if(allocated==VK_SUCCESS)allocated=pool_span_try_allocate(q->backing,q->begin,q->end);
+    if(allocated==VK_SUCCESS) {
+#ifdef DM_VULKAN_SHARED_POOLS
+      if(pool_shared_window_policy(q->owner))allocated=shared_span_try_allocate(q->owner,q->backing,q->begin,q->end);
+      else
+#endif
+        allocated=pool_span_try_allocate(q->backing,q->begin,q->end);
+    }
+    // Fresh batch nodes must agree on the immutable pool cache policy too.
+    if(allocated==VK_SUCCESS && pool_shared_window_policy(q->owner))
+      for(size_t j=0;j<k;j++)if(plan[j].owner==q->owner &&
+          plan[j].backing->buffer.properties!=q->backing->buffer.properties)
+        allocated=VK_ERROR_INVALID_EXTERNAL_HANDLE;
     if(allocated!=VK_SUCCESS) {
       result.allocation_error=allocated;
       status=(allocated==VK_ERROR_OUT_OF_HOST_MEMORY || allocated==VK_ERROR_OUT_OF_DEVICE_MEMORY)?
@@ -151,6 +178,10 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
   // old node, handle or physical origin. Existing async readers remain valid.
   for(size_t k=0;k<planned;k++) {
     pool_window_plan *q=&plan[k];pool_backing_span *b=q->backing;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(pool_shared_window_policy(q->owner) && !q->owner->backings)
+      q->owner->shared_properties=b->buffer.properties;
+#endif
     b->generation=++q->owner->backing_generation;
     pool_backing_span **at=&q->owner->backings;
     while(*at && (*at)->begin<b->begin)at=&(*at)->next;

@@ -686,6 +686,7 @@ static void fixed_shared_buffer_test(void) {
   LOG("[fixed shared fixture] actual properties=%#x atom=%llu, host coherent=%u; no shadow; linear NVN-only, packaged image contract remains blocked",properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,!!(properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 }
 #include "native_vulkan_shared_image.inc"
+#include "native_vulkan_shared_import_windows.inc"
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
@@ -792,6 +793,8 @@ int dm_vulkan_test_main(void) {
     int astc_gpu=V.features.textureCompressionASTC_LDR && V.props.deviceType!=VK_PHYSICAL_DEVICE_TYPE_CPU;
     printf("{\"test\":\"legacy-ASTC-copy-encoding\",\"checks\":%u,\"result\":\"%s\",\"actual_ASTC_GPU\":%s,\"CPU_phase_result\":\"passed\",\"game_modules_executed\":false}\n",checks,astc_gpu?"passed":"unsupported",astc_gpu?"true":"false");return 0;
   }
+  if(getenv("DM_SHARED_WINDOW_STARTUP_FALLBACK_FIXTURE")) {shared_window_startup_fallback_test();return 0;}
+  if(getenv("DM_SHARED_IMPORT_WINDOW_FIXTURE")) {shared_import_windows_test();return 0;}
   if(getenv("DM_SHARED_IMAGE_NC_GATE_FIXTURE"))return shared_image_nc_gate_test();
   if(getenv("DM_SHARED_IMAGE_DIRTY_FIXTURE")) {shared_image_dirty_test();return 0;}
   if(getenv("DM_FIXED_SHARED_DEPENDENCY_TEST")) {

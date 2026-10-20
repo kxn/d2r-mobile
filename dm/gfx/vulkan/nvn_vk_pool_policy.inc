@@ -31,6 +31,9 @@ static void pool_operation_unpin(pool_operation_plan *plan) {
 // Unknown legal representations cannot use a partially collected list. The
 // conservative path admits complete registered pools, never truncated ranges.
 static void pool_operation_whole_plan(pool_operation_plan *plan,const char *reason) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_window_bytes)die("Shared imported windows require complete %s: %s",reason,vk_shader_pool_range_error());
+#endif
   pool_operation_fallbacks++;
   atomic_store(&published_window_fallbacks,pool_operation_fallbacks);
   if(pool_operation_fallbacks<=8 || !(pool_operation_fallbacks%1024))
@@ -65,6 +68,7 @@ static void pool_operation_bound_nodes(pool_operation_plan *plan) {
     // Counting duplicate missing windows conservatively can promote earlier;
     // it never creates overlapping nodes or silently truncates a binding.
     if(nodes+missing>256) {
+      if(pool_shared_window_policy(p))die("Shared import span budget exceeded; no hidden whole fallback");
       *r=(vk_pool_requirement){(uintptr_t)p->guest,p->size,0,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,1,0};
       LOG("[vulkan pool windows] whole fallback at bounded span budget identity=%llu existing=%u requests=%u",
           (unsigned long long)p->identity,nodes,missing);
@@ -119,7 +123,13 @@ static void pool_policy_promote(uint64_t base,uint64_t identity,int reopen,
   int whole=present && pool_window_whole(p);
   pthread_mutex_unlock(&V.resources);
   if(present && !whole) {
-    if(pool_migrate_quiescent(base,identity,trigger,V.options.pool_window_bytes))pool_window_promotions++;
+    int replaced;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(shared_window_bytes)replaced=shared_pool_union_quiescent(base,identity,trigger,V.options.pool_window_bytes);
+    else
+#endif
+      replaced=pool_migrate_quiescent(base,identity,trigger,V.options.pool_window_bytes);
+    if(replaced)pool_window_promotions++;
     else {
       // Registry removal may race the isolated copy despite its lifetime pin.
       // The helper never publishes to a replacement logical pool. Recollect

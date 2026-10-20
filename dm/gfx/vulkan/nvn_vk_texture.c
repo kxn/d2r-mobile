@@ -1452,13 +1452,40 @@ static uint64_t copy_pool_footprint(const p_copy_b2t *p,uint64_t row,uint64_t im
   if(tail>UINT64_MAX-n || last>UINT64_MAX-n-tail)die("Vulkan image copy footprint overflow");
   n+=tail+last;return n;
 }
+#include "nvn_vk_image_retile.inc"
+typedef struct {
+  const p_copy_b2t *copy;
+  const tex_t *retile;
+  const p_copy_t2t *astc;
+  uint64_t row,img;
+  int write;
+} copy_pool_plan;
+static int copy_pool_collect(void *context,vk_pool_requirement_sink sink,void *sink_context) {
+  const copy_pool_plan *p=context;
+  if(p->copy) {
+    vk_pool_requirement r={p->copy->src,copy_pool_footprint(p->copy,p->row,p->img),
+      0,VK_PIPELINE_STAGE_TRANSFER_BIT,p->write,0};
+    if(!sink(sink_context,&r))return 0;
+  }
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(image_retile_logical(p->retile)) {
+    vk_pool_requirement r={(uintptr_t)p->retile->mem,p->retile->L.size,
+      V.props.limits.minStorageBufferOffsetAlignment,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,1,0};
+    if(!sink(sink_context,&r))return 0;
+  }
+#endif
+  if(p->astc && image_astc_copy_needs_span(p->astc)) {
+    vk_pool_requirement r={(uintptr_t)p->astc->dst->mem,p->astc->dst->L.size,
+      0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+    if(!sink(sink_context,&r))return 0;
+  }
+  return 1;
+}
 static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int write) {
   if(!V.options.pool_window_bytes)return 0;
-  uint64_t n=copy_pool_footprint(p,row,img);
-  vk_pool_requirement need={p->src,n,0,VK_PIPELINE_STAGE_TRANSFER_BIT,write,0};
-  return vk_pool_operation_begin_ranges(&need,1);
+  copy_pool_plan plan={.copy=p,.retile=write?NULL:p->tex,.row=row,.img=img,.write=write};
+  return vk_pool_operation_begin(copy_pool_collect,&plan);
 }
-#include "nvn_vk_image_retile.inc"
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   vk_texture_cpu_preflight(p->tex);
   if(V.options.pool_defer_publication && p->tex && p->tex->d.format>=0x41 && p->tex->d.format<=0x50)
@@ -1580,8 +1607,19 @@ static uint32_t full_zero_copy(image *s,VkImageSubresourceRange sr,image *d,
 }
 void vk_texture_copy_t2t(const p_copy_t2t *p) {
   vk_texture_cpu_preflight(p->src);vk_texture_cpu_preflight(p->dst);
-  astc_copy_observation astc_observation=image_astc_copy_preflight(p);
-  vk_mip_clear_drain();
+  int operation=0;astc_copy_observation astc_observation;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(vk_pool_shared_active() && V.options.pool_window_bytes) {
+    vk_mip_clear_drain();copy_pool_plan plan={.retile=p->dst,.astc=p};
+    operation=vk_pool_operation_begin(copy_pool_collect,&plan);
+    // Union precedes exact ASTC qualification and every physical borrow.
+    astc_observation=image_astc_copy_preflight(p);
+  } else
+#endif
+  {
+    // Preserve the original whole/legacy callback and observation order.
+    astc_observation=image_astc_copy_preflight(p);vk_mip_clear_drain();
+  }
 #ifdef DM_VULKAN_SHARED_POOLS
   shared_copy_backing canonical=image_retile_prepare(p->dst);
 #endif
@@ -1605,7 +1643,7 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
   // needed; future consumers still synchronize the actual prior clear/copy.
   uint32_t identical_zero=full_zero_copy(s,sr,d,dr,p);
   if(identical_zero && (d->zero_mips&identical_zero)) {
-    atomic_fetch_add(&zero_copy_skips,1);return;
+    atomic_fetch_add(&zero_copy_skips,1);vk_pool_operation_end(operation);return;
   }
   if(s==d) image_general_transfer(s);
   else image_use(s,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -1656,7 +1694,7 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
 #ifdef DM_VULKAN_SHARED_POOLS
     d->shared_writer=3;d->shared_writer_source=s->tex.serial;d->shared_writer_region=p->dr;
 #endif
-    return;
+    vk_pool_operation_end(operation);return;
   }
   VkImageCopy c = {
       .srcSubresource = {s->aspect, sr.baseMipLevel, sr.baseArrayLayer, 1},
@@ -1707,7 +1745,9 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
     image_retile_publish(d,canonical,gather,0,pitch,slice,&publication);
   }
 #endif
+  vk_pool_operation_end(operation);
 }
+
 typedef struct {
   vk_buffer *buffer;
   uint8_t *dst;

@@ -60,6 +60,7 @@ typedef struct pool {
   int cpu_copy_requires_gpu,cpu_authority_tracking;
 #ifdef DM_VULKAN_SHARED_POOLS
   int shared,shared_closing;
+  VkMemoryPropertyFlags shared_properties;
 #endif
   pool_cpu_authority *cpu_authority;
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -78,14 +79,27 @@ static int legacy_astc_copy_fixed,legacy_astc_copy_requested,legacy_astc_copy_en
 enum { LEGACY_ENCODING_GUARD_LIMIT=256 };
 static _Atomic unsigned legacy_encoding_guard_count;
 static _Atomic uint64_t legacy_encoding_low=UINT64_MAX,legacy_encoding_high;
-static uint64_t shared_alignment;
+static uint64_t shared_alignment,shared_window_bytes;
+static int shared_union_visibility_pending;
 #ifdef DM_VULKAN_TEST_EMBED
 static int shared_gpu_gate_force;
 #endif
 static void shared_device_probe(void);
 static void shared_pool_materialize(pool *);
 static void shared_cache(vk_buffer *,uint64_t,uint64_t,int);
+static VkResult shared_span_try_allocate(pool *,pool_backing_span *,uint64_t,uint64_t);
+static void shared_pool_cache_locked(pool *,uint64_t,uint64_t,int,int);
+static void shared_pool_host_barrier(pool *,uint64_t,uint64_t,VkPipelineStageFlags);
+static int shared_pool_union_quiescent(uint64_t,uint64_t,const vk_pool_requirement *,uint64_t);
+
 #endif
+static int pool_shared_window_policy(const pool *p) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  return p && p->shared && shared_window_bytes;
+#else
+  (void)p;return 0;
+#endif
+}
 #include "nvn_vk_cpu_authority.inc"
 #include "nvn_vk_cpu_exposure.inc"
 // 上传按最多 4 KiB 的连续段复制，GPU 使用也按页保守记录；不扫描每次绑定的字节区间链。
@@ -268,6 +282,11 @@ void vk_cpu_copy_stats(uint64_t *snapshots,uint64_t *published,uint64_t *fallbac
   *fallbacks=atomic_load(&cpu_copy_fallbacks);*reference=atomic_load(&cpu_copy_active);
 }
 void vk_pool_sync_reference(int reference) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(reference && shared_window_bytes) {
+    LOG("[shared pool] full-pool sync reference rejected: shared import windows require cold restart with window bytes 0");return;
+  }
+#endif
   if(reference && atomic_load_explicit(&pool_defer_publication_enabled,memory_order_acquire)) {
     LOG("[vulkan] pool sync reference rejected: deferred publication requires cold restart with experiment OFF");return;
   }
@@ -1059,7 +1078,12 @@ static void *completion_thread(void *unused) {
     while(s->resources->shared_publishes) {
       pool_writeback *w=s->resources->shared_publishes;s->resources->shared_publishes=w->next;
       while(w->ranges) {writeback_range *r=w->ranges;w->ranges=r->next;
-        shared_cache(&w->owner->whole.buffer,r->offset,r->end-r->offset,1);free(r);}
+        if(shared_window_bytes) {
+          pthread_mutex_lock(&V.resources);
+          shared_pool_cache_locked(w->owner,r->offset,r->end-r->offset,1,1);
+          pthread_mutex_unlock(&V.resources);
+        } else shared_cache(&w->owner->whole.buffer,r->offset,r->end-r->offset,1);
+        free(r);}
       free(w);
     }
     // Fence and every NC Invalidate precede the gate release. CPU effects
@@ -1582,7 +1606,7 @@ static void init_device(void) {
   LOG("[vulkan] queue family=%u queues=%u dedicated WSI worker=%s present queue=%s",V.queue_family,V.queue_count,V.present_worker?"enabled":"reference/unavailable",V.present_queue==V.queue?"render":"separate");
 #ifdef DM_VULKAN_SHARED_POOLS
   shared_device_probe(); // once, before any NVN registration or worker
-  if(shared_active && (V.options.pool_window_bytes || V.options.pool_mirror_reference || V.options.pool_defer_publication))
+  if(shared_active && (V.options.pool_mirror_reference || V.options.pool_defer_publication))
     die("Fixed shared mode conflicts with legacy window/mirror/defer options");
 #endif
   vk_pipeline_cache_init();
@@ -1697,8 +1721,12 @@ static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, in
   if(p->shared && (!known || (uintptr_t)mem%shared_alignment || size%shared_alignment || nvn_dirty_tracked(mem,size)))
     die("Shared Pool invalid host range: no online legacy fallback");
 #endif
-  p->cpu_authority_tracking=V.options.pool_window_bytes!=0 ||
-      (V.options.pool_defer_publication && known && (flags&7u)==NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS);
+  p->cpu_authority_tracking=
+#ifdef DM_VULKAN_SHARED_POOLS
+      !p->shared &&
+#endif
+      (V.options.pool_window_bytes!=0 ||
+       (V.options.pool_defer_publication && known && (flags&7u)==NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS));
   pthread_mutex_lock(&V.resources);
   for (pool *v = pools; v; v = v->next)
     if ((uintptr_t)mem < (uintptr_t)v->guest + v->size &&
@@ -3109,7 +3137,7 @@ uint64_t vk_test_shared_dependency_observed(void) {
 // GPU users. Preserve asynchronous submission for nonoverlapping ranges.
 // Call only on the translation owner, outside resource and queue locks.
 static uint64_t shared_access_host_phase(pool *p,uint64_t offset,uint64_t bytes,int protect_host_page,int wait) {
-  int cache=p->backings && !(p->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  int cache=p->backings && !(p->shared_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 #ifdef DM_VULKAN_TEST_EMBED
   if(shared_dependency_test_force_cache)cache=1; // tests admission only, not NC Vk cache calls
 #endif
@@ -3291,7 +3319,7 @@ static void shared_arm_prewrite(submit_resources *r) {
   if(!shared_gpu_gate_phase)return;
   size_t count=0;
   for(pool_writeback *w=r->shared_publishes;w;w=w->next) {
-    int needed=!(w->owner->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    int needed=!(w->owner->shared_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 #ifdef DM_VULKAN_TEST_EMBED
     needed|=shared_gpu_gate_force;
 #endif
@@ -3306,7 +3334,7 @@ static void shared_arm_prewrite(submit_resources *r) {
   if(!ranges)die("Shared GPU gate ranges allocation");
   size_t n=0;
   for(pool_writeback *w=r->shared_publishes;w;w=w->next) {
-    int needed=!(w->owner->whole.buffer.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    int needed=!(w->owner->shared_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 #ifdef DM_VULKAN_TEST_EMBED
     needed|=shared_gpu_gate_force;
 #endif
@@ -3327,7 +3355,11 @@ static void sync_used_run(pool *p,uint64_t first,uint64_t end,int tracked) {
   if(p->shared) {uint64_t off=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
     if(limit>p->size)limit=p->size;
     shared_access_host_phase(p,off,limit-off,0,1);
-    shared_cache(&p->whole.buffer,off,limit-off,0);return;}
+    if(shared_window_bytes) {
+      pthread_mutex_lock(&V.resources);shared_pool_cache_locked(p,off,limit-off,0,1);
+      pthread_mutex_unlock(&V.resources);
+    } else shared_cache(&p->whole.buffer,off,limit-off,0);
+    return;}
 #endif
   uint64_t offset=first<<GPU_ACCESS_SHIFT,limit=end<<GPU_ACCESS_SHIFT;
   if(limit>p->size) limit=p->size;
@@ -3515,6 +3547,17 @@ static void begin_submission(int pool_migration) {
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
       .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
   VK_CHECK(vkBeginCommandBuffer(V.cmd, &bi));
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_union_visibility_pending) {
+    // Rare remapping aliases an older import's payload. A named new-buffer
+    // barrier is insufficient; preserve old writes across the handle change.
+    VkMemoryBarrier memory={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,
+      .dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT};
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      0,1,&memory,0,NULL,0,NULL);shared_union_visibility_pending=0;
+  }
+#endif
   submit_resources *r = recording_resources;
   gpu_profile_begin_submit(r);
   r->timing_active = V.timestamp_bits && !external_profile;
@@ -3666,11 +3709,7 @@ void vk_buffer_writebacks_flush(void) {
 #ifdef DM_VULKAN_SHARED_POOLS
     if(w->owner->shared) {
       for(writeback_range *r=w->ranges;r;r=r->next) {
-        VkBufferMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-          .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
-          .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
-          .buffer=w->owner->whole.buffer.handle,.offset=r->offset,.size=r->end-r->offset};
-        vkCmdPipelineBarrier(V.cmd,r->producers,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);
+        shared_pool_host_barrier(w->owner,r->offset,r->end-r->offset,r->producers);
       }
       w->next=recording_resources->shared_publishes;recording_resources->shared_publishes=w;continue;
     }

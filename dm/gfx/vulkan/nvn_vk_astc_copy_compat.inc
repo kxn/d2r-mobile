@@ -60,6 +60,23 @@ static int astc_copy_legacy_envelope(const tex_t *t) {
   return t && t->mem && t->L.size && !((uintptr_t)t->mem&(page-1)) &&
       !(t->L.size&(page-1)) && nvn_dirty_tracked(t->mem,t->L.size);
 }
+// Preserve the old already-imported provenance requirement. In window mode
+// an adjacent/crossing imported region must first become ONE exact span, not
+// be treated as proof that every byte of this observation is already covered.
+static int image_astc_copy_needs_span(const p_copy_t2t *p) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(!vk_pool_shared_active() || !astc_copy_target(p->src) || !astc_copy_target(p->dst) ||
+      !astc_copy_format(p->dst->d.format) || p->dst->has_layout || !p->dst->mem || !p->dst->L.size)return 0;
+  image *s=astc_copy_find(p->src),*d=astc_copy_find(p->dst);
+  VkFormat source=s?s->format:vk_nvn_format(p->src->d.format);
+  if(source!=astc_copy_format(p->dst->d.format) || (d && (d->astc_copy_encoding || d->initialized)))return 0;
+  vk_pool_span_info span;
+  int status=vk_pool_span_query((uintptr_t)p->dst->mem,p->dst->L.size,&span);
+  return status==VK_POOL_SPAN_SINGLE || status==VK_POOL_SPAN_CROSSING;
+#else
+  (void)p;return 0;
+#endif
+}
 static astc_copy_observation image_astc_copy_preflight(const p_copy_t2t *p) {
   astc_copy_observation o={0};
 #ifdef DM_VULKAN_SHARED_POOLS

@@ -72,3 +72,13 @@ endif()
 # Observe completion batch calls in the owned GPU fixture, without production hooks.
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_INVALIDATE_WRAP=1)
 target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_memory_invalidate_batch")
+
+option(DM_VULKAN_SHARED_IMPORT_WINDOWS "Build experimental canonical shared imports (cold nonzero window bytes)" OFF)
+if(DM_VULKAN_SHARED_IMPORT_WINDOWS)
+  if(NOT DM_VULKAN_SHARED_POOLS)
+    message(FATAL_ERROR "DM_VULKAN_SHARED_IMPORT_WINDOWS requires DM_VULKAN_SHARED_POOLS")
+  endif()
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SHARED_IMPORT_WINDOWS=1)
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_CPU_OBSERVE_WRAP=1)
+  target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=nvn_dirty_cpu_observation_enable")
+endif()
