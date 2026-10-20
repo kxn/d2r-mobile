@@ -285,3 +285,11 @@ CPU工具，保持原 six-dir CAS、fresh save2/停止/原包恢复，不加LLDB
 现成 game-state 的 private_image_cache 字段及官方 meminfo 用于区分私有总分配、
 CPU可重建子集及真正预算释放；累计 allocation 释放不等于同量PSS减少。512MiB
 仍是待实际工作集审查的参数，不先认定默认最优、6GB可玩或有净涨帧。
+
+
+### 773d530 guest-only 后继
+
+严格 gate 仅接纳773d530的独立canonical/raw/root review；旧ed/9bbb保持HOLD。
+预算维护只来自HLE原guest入口，内部reopen不淘汰已由实际正负控和root源审闭合。
+仍只做一次原游戏native短验证、原路线及现成官方CPU/Perfetto/meminfo；首轮重点
+读取既有private_image_cache字段，不据短测认定512MiB最佳或6GB通过。
