@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One isolated appUID original NVN borrowed-buffer functional run; not profiling."""
+"""One isolated appUID original fixed shared Buffer functional run; not profiling."""
 import argparse, hashlib, io, json, re, subprocess, time, uuid, zipfile, xml.etree.ElementTree as ET
 from pathlib import Path
 P=argparse.ArgumentParser()

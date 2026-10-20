@@ -14,6 +14,7 @@ from xml.sax.saxutils import escape
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument('--tlsdesc', action='store_true', help='Native dynamic TLS, without wrap.sh; requires elfdesc game rewrites')
+parser.add_argument('--native-jobs', type=int, choices=range(1,65), default=4, help='parallel native build jobs (default4)')
 parser.add_argument('--opt-level', choices=['1', '2', '3'], default='3', help='native host optimization; preserves debug symbols and frame pointers')
 parser.add_argument('--renderdoc-api', action='store_true', help='optional official application-API capture, not custom timing')
 args = parser.parse_args()
@@ -38,7 +39,7 @@ run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-
     '-DDM_ANDROID_RENDERDOC_API=' + ('ON' if args.renderdoc_api else 'OFF'),
     '-DDM_RENDERDOC_INCLUDE_DIR=' + str(ROOT/'.local/tools/Arm_Performance_Studio_2026.5/renderdoc_for_arm_gpus/include'),
     '-DDM_ANDROID_RUNTIME_OPT_LEVEL=' + args.opt_level)
-run('cmake', '--build', ROOT / '.local/build/android-native', '-j4', '--target', 'dmhost_android')
+run('cmake', '--build', ROOT / '.local/build/android-native', '-j'+str(args.native_jobs), '--target', 'dmhost_android')
 rows = {row['键']: row for row in csv.DictReader((ROOT / 'dm/i18n/ui_text.tsv').open(), delimiter='\t')}
 shutil.rmtree(OUT / 'res', ignore_errors=True)
 for resource in sorted((SOURCE/'res').rglob('*')):

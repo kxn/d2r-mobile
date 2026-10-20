@@ -70,9 +70,11 @@ void volkInitializeCustom(PFN_vkGetInstanceProcAddr proc) {
 }
 int main(int argc,char **argv) {
   if(argc!=5) return 2;
+  if(vk_loader_is_initialized())return 85;
   vk_loader_set_driver(strcmp(argv[1],"legacy")?argv[1]:NULL,
       strcmp(argv[2],"-")?argv[2]:NULL,strcmp(argv[3],"-")?argv[3]:NULL);
   vk_loader_initialize();
+  if(!vk_loader_is_initialized())return 86;
   if(getenv("FIXTURE_ASSERT_NO_CACHE") && getenv("MESA_SHADER_CACHE_DIR")) return 83;
   if(!strcmp(argv[4],"surface")) vk_loader_check_instance((VkInstance)1,1);
   if(!strcmp(argv[4],"identity")) vk_loader_check_device((VkPhysicalDevice)1,1);
