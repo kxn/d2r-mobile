@@ -1352,7 +1352,7 @@ vickwv 的脏区定位缓存是两处不同的开销。报告为
 源码及实际依赖独立核验已闭合，七组 Lavapipe/VVL/SYNC 功能检查通过，
 包括真实 RGBA 图像与两次窗口 union 的双向别名读写。Lavapipe 不支持的
 ASTC 用例没有计为通过。此候选尚未完成 Android 真 ASTC 或真实游戏验收，
-不代表已降低 FPS、带宽、内存或温度。记录为
+不代表已改善帧率或降低带宽、内存和温度。记录为
 `native-image-window-bb4ac54-root-source-review.json`。
 
 配套 `ba0b943` 工具已生成一张真实火盆材质的原生资源 overlay，其余
