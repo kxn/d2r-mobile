@@ -1266,7 +1266,12 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
   if(dynamic && s->dynamic_uniform_count[dynamic-1] && !offsets)die("Vulkan missing dynamic Uniform offsets");
   VkDescriptorSetLayout layout=dynamic?s->dynamic_descriptors[dynamic-1]:s->descriptors;
   if(offsets && dynamic)offsets->count=s->dynamic_uniform_count[dynamic-1];
-  memset(current_operation.storage_bias_words[s->stage],0,sizeof current_operation.storage_bias_words[0]);
+  // Graphics push packing reads 16 words from each of VS/FS. Their upper
+  // halves have no consumer; compute and other stages keep the full reset.
+  unsigned bias_stage=s->stage;
+  uint32_t *bias_words=current_operation.storage_bias_words[bias_stage];
+  memset(bias_words,0,16*sizeof *bias_words);
+  if(bias_stage>=2)memset(bias_words+16,0,16*sizeof *bias_words);
   descriptor_value values[128];
   for (uint32_t n = 0; n < s->nb; n++) {
     const vk_binding *b = &s->bindings[n];
