@@ -22,7 +22,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native int nativeSharedImageTests(String directory, int mode);
     private static boolean sharedImageFixtureStarted;
     private boolean sharedImageFixture;
-    private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation);
+    private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean readbackBatch);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
     private static native void nativeThermalLimit(int limit);
@@ -85,7 +85,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeSubmissionBarrierReference(boolean reference);
     private static native void nativeQueryPerDrawReference(boolean reference);
     private android.window.OnBackInvokedCallback backCallback;
-    private static boolean hostStarted;
+    private static boolean hostStarted, readbackBatchFixtureStarted;
     private boolean started, resumed;
     private SurfaceHolder surfaceHolder;
     private TouchControls touchControls;
@@ -137,6 +137,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        if (getIntent().getBooleanExtra("readback_batch_test", false)) {
+            if (saved != null || hostStarted || readbackBatchFixtureStarted || sharedImageFixtureStarted ||
+                    !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                    !getIntent().getBooleanExtra("async_submit", false) ||
+                    !"system".equals(getIntent().getStringExtra("vulkan_provider")) ||
+                    getIntent().getBooleanExtra("shared_guest_heap", false) ||
+                    getIntent().getBooleanExtra("legacy_astc_copy", false) ||
+                    getIntent().getBooleanExtra("legacy_astc_copy_test", false) ||
+                    getIntent().getBooleanExtra("astc_decode_test", false) ||
+                    getIntent().getBooleanExtra("memory_test", false) ||
+                    getIntent().getBooleanExtra("acquire_scope_test", false) ||
+                    !getIntent().hasExtra("validate") || getIntent().getBooleanExtra("validate", true) ||
+                    !getIntent().hasExtra("vulkan_test_validation") || getIntent().getBooleanExtra("vulkan_test_validation", true))
+                throw new IllegalArgumentException("Readback oracle requires one cold system/async tests-only process, no other fixture or validation");
+            readbackBatchFixtureStarted = true;
+        }
         // Isolated functional oracle: choose the same app-local ICD before any
         // game/Surface/device exists; recreation and new Intents cannot rerun it.
         if (getIntent().hasExtra("shared_image_test")) {
@@ -262,7 +279,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             new Thread(() -> nativeTests(root.getAbsolutePath(), getIntent().getBooleanExtra("async_submit", false),
                     getIntent().getBooleanExtra("acquire_scope_test", false),
                     getIntent().getBooleanExtra("memory_test", false),
-                    getIntent().getBooleanExtra("vulkan_test_validation", true)), "native-vulkan-test").start();
+                    getIntent().getBooleanExtra("vulkan_test_validation", true),
+                    getIntent().getBooleanExtra("readback_batch_test", false)), "native-vulkan-test").start();
         }
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);
@@ -333,6 +351,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (readbackBatchFixtureStarted || intent.hasExtra("readback_batch_test")) {
+            android.util.Log.w("D2RVulkan", "Readback oracle is cold-process-only; ignoring new Intent");
+            return;
+        }
         if (sharedImageFixture || intent.hasExtra("shared_image_test")) {
             android.util.Log.w("D2RPool", "Shared image oracle is cold-process-only; ignoring new Intent");
             return;

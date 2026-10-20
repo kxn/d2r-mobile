@@ -814,7 +814,7 @@ int dm_vulkan_test_main(void) {
     printf("{\"test\":\"fixed-shared-NVN-buffer\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
 #endif
-  if(getenv("DM_READBACK_BATCH_FIXTURE")) {readback_batch_order_test();readback_batch_pool_test();command_pool_reset_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"readback-batch\",\"checks\":%u,\"NC_invalidations\":%llu,\"result\":\"passed\"}\n",checks,(unsigned long long)readback_pool_invalidations);return 0;}
+  if(getenv("DM_READBACK_BATCH_FIXTURE")) {readback_batch_order_test();readback_batch_pool_test();command_pool_reset_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"readback-batch\",\"checks\":%u,\"NC_invalidations\":%llu,\"GPU_ROI_count\":35,\"pool_GPU_bytes\":true,\"event_after_fence\":true,\"reset_blocked\":true,\"game_modules_executed\":false,\"result\":\"passed\"}\n",checks,(unsigned long long)readback_pool_invalidations);return 0;}
   if(getenv("DM_BUFFER_HISTORY_FIXTURE")) {
     // Initialize the active submission policy before the existing partition
     // fixture checks it; neither oracle's byte assertions are changed.

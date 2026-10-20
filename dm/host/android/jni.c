@@ -765,8 +765,15 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
 
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
-    jboolean acquire_scope, jboolean memory_only, jboolean validation_enabled) {
+    jboolean acquire_scope, jboolean memory_only, jboolean validation_enabled, jboolean readback_batch) {
   (void)klass;
+  if(readback_batch) {
+    static _Atomic int once;
+    if(atomic_exchange(&once,1) || !async_submit || acquire_scope || memory_only || validation_enabled ||
+        astc_decode_fixture || legacy_astc_startup || legacy_astc_fixture)
+      die("Readback batch fixture requires one cold uncombined async invocation");
+    if(setenv("DM_READBACK_BATCH_FIXTURE","1",1))die("Readback batch fixture selection");
+  }
   if(setenv("DM_VULKAN_ASTC_DECODE_UNORM8",astc_decode_startup?"1":"0",1) ||
       (astc_decode_fixture?setenv("DM_ASTC_DECODE_FIXTURE","1",1):unsetenv("DM_ASTC_DECODE_FIXTURE")))
     die("Android ASTC fixture startup environment");
@@ -794,9 +801,9 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   int output_error=dm_fixture_output_open(file);if(output_error)_exit(output_error);
   printf("{\"native_vulkan_app_configuration\":true,\"uid\":%u,\"pid\":%u,"
          "\"validation_layer\":\"%s\",\"synchronization_validation\":\"%s\","
-         "\"legacy_ASTC_requested\":%s,\"game_modules_executed\":false}\n",
+         "\"legacy_ASTC_requested\":%s,\"readback_batch_requested\":%s,\"game_modules_executed\":false}\n",
          (unsigned)getuid(),(unsigned)getpid(),validation_enabled?"requested":"disabled_explicitly",
-         validation_enabled?"requested":"disabled_explicitly",legacy_astc_fixture?"true":"false");
+         validation_enabled?"requested":"disabled_explicitly",legacy_astc_fixture?"true":"false",readback_batch?"true":"false");
   (*env)->ReleaseStringUTFChars(env, directory, path);
   int dm_vulkan_test_main(void);
   int result=dm_vulkan_test_main();
