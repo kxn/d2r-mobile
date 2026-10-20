@@ -35,7 +35,7 @@ python3 scripts/dev/build-android-shared-window-fixture.py \
 ```
 
 `scripts/dev/run-turnip-shared-window-fixture-v1.py` 默认仅离线验证并打印计划。
-必须提供现有原游戏 APK/ELF、module report 和 shaderchain 精确哈希；只有 `--execute`
+必须提供现有原游戏 APK/ELF、module report（或现有 baseline-readonly.json）和 shaderchain 精确哈希；只有 `--execute`
 才可访问指定设备。独占 lease 仍由 root 分配。控制器复用旧 ordinary-UID fixture
 的 installer/first-PID/cleanup 事务：原游戏必须停止，独立包必须不存在，不重试启动，
 不改全局 layers/settings，不启动游戏。结束仅停止、卸载本包和删除自己的唯一 tmp，

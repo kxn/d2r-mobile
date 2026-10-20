@@ -39,12 +39,26 @@ assert json.loads((a.artifact/'fixture-hashes.json').read_text())==shader_files
 for digest in (a.expected_original_apk,a.expected_original_elf):assert re.fullmatch('[0-9a-f]{64}',digest)
 assert re.fullmatch('[0-9a-f]{12,64}',a.expected_shaderchain)
 expected={};deployment=json.loads(a.module_report.read_text())
-assert deployment['verified_on_device'] and deployment['serial']==a.serial and deployment['package']==original
-assert len(deployment['artifacts']) in (28,29)
-for name,item in deployment['artifacts'].items():
- assert re.fullmatch('[A-Za-z0-9_.-]+',name) and name not in ('.','..')
- assert re.fullmatch('[0-9a-f]{64}',item['sha256'])
- expected['files/runtime/modules/'+name]=item['sha256']
+assert deployment['serial']==a.serial and deployment['package']==original
+if 'artifacts' in deployment:
+ assert deployment['verified_on_device'] and len(deployment['artifacts']) in (28,29)
+ module_items=deployment['artifacts']
+ for name,item in module_items.items():
+  assert re.fullmatch('[A-Za-z0-9_.-]+',name) and name not in ('.','..')
+  assert re.fullmatch('[0-9a-f]{64}',item['sha256'])
+  expected['files/runtime/modules/'+name]=item['sha256']
+else:
+ # Existing root baseline-readonly format, not an invented deployment proof.
+ # Recheck actual original files before and after this independent package.
+ assert deployment['no_device_mutation'] and deployment['game_PID_absent']
+ assert deployment['APK_sha256']==a.expected_original_apk and deployment['chain']==a.expected_shaderchain
+ inventory=deployment['inventories'];module_items=inventory['files/runtime/modules']
+ assert len(module_items) in (28,29)
+ for folder in ('files/runtime/modules','files/runtime/romfs_overlay','files/runtime/vulkan-driver'):
+  for name,digest in inventory[folder].items():
+   assert name.startswith(folder+'/') and re.fullmatch('[A-Za-z0-9_./-]+',name) and '..' not in Path(name).parts
+   assert re.fullmatch('[0-9a-f]{64}',digest)
+   expected[name]=digest
 if a.resource_report:
  resources=json.loads(a.resource_report.read_text())
  assert resources['stage']=='deployed' and resources['phone_hashes_verified'] and resources['expected_hashes']
@@ -55,7 +69,7 @@ plan={'scope':'ONE cold original-NVN shared-window byte oracle; actual memfd SVC
  'serial':a.serial,'package':pkg,'activity':m['activity'],'APK_sha256':m['apk_sha256'],
  'native_libraries':m['native_library_sha256'],'shader_files':shader_files,'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),
  'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,
- 'module_report_sha256':sha(a.module_report),'module_count':len(deployment['artifacts']),
+ 'module_report_sha256':sha(a.module_report),'module_count':len(module_items),
  'resource_report_sha256':sha(a.resource_report) if a.resource_report else None,'expected_shaderchain':a.expected_shaderchain,
  'functional_timeout_seconds':90,'installation_timeout_seconds':70,'launches_allowed':1,
  'writes_only':'new independent package + unique tmp directory, original package read-only','settings_changes':False}
