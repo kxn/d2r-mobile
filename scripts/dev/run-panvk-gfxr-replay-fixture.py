@@ -50,6 +50,7 @@ def verified_rebind_gfx_reference(path,expected):
  assert all(q[k]==v for k,v in expected.items())
  log=(path.parent/'replay.log').read_text();cat=(path.parent/'PID-logcat.txt').read_text();mesa=(path.parent/'mesa.log').read_text()
  assert 'Core Checks'in log and '  - Synchronization'in log and 'identity verified driverID=20'in log
+ assert 'TOOL-ADDED BDA official-rebind'in log and 'captureReplay_added=0 multiDevice_added=0'in log and 'tool-rebind-bda=on'in log
  assert '[replay bridge] configured pid='+str(q['first_PID'])+' 'in log
  assert 'API call at index: 149328 thread: 2 vkQueueSubmit returned error value VK_ERROR_DEVICE_LOST'in cat
  assert 'VK_ERROR_DEVICE_LOST'in log and 'timeout on subqueue'in mesa
@@ -67,7 +68,7 @@ expected=promotion['promoted_module_and_resource_hashes'];assert len(expected)==
 assert sha(a.original_apk)==promotion['canonical_APK_SHA256']
 with zipfile.ZipFile(a.original_apk)as z:assert hashlib.sha256(z.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()==promotion['host_ELF_SHA256']
 for n,h in expected.items():assert not Path(n).is_absolute()and '..'not in Path(n).parts and re.fullmatch('[a-f0-9]{64}',h)
-plan={'scope':'ONE official Arm Android full-prefix GPU replay using common rebind allocator and explicit cold BC route; no guest modules, not FPS or playable-game acceptance','package':pkg,'activity':m['activity'],'APK_SHA256':m['APK']['sha256'],'manifest_SHA256':sha(a.artifact/'candidate.apk.build.json'),'controller_SHA256':sha(__file__),'capture_SHA256':sha(a.capture),'complete_startup_capture_result_SHA256':sha(a.capture_source_result),'recorded_original_submit_count':len(capture_source['recorded_submits']),'driver_SHA256':sha(a.driver),'baseline_promotion_SHA256':sha(a.baseline_promotion),'memory_translation':'rebind','panvk_bc_route':a.bc_route,'debug_property_name':'debug.mesa.panvk.debug','debug_property_requested':'bc_compute'if a.bc_route=='compute'else'0','gfx_reference_SHA256':sha(a.rebind_gfx_reference)if reference else None,'official_sync_queue_submissions':True,'single_changed_replay_option':'bc_compute versus gfx on common official rebind allocator','official_serialize_render_passes':True,'diagnostic_serialization_not_runtime_fix':True,'validation':'official VVL requested + synchronization env requested; actual banner/errors retained, never assume pass','timeout_seconds':90,'launches':1,'production_package_read_only':True}
+plan={'scope':'ONE official Arm Android full-prefix GPU replay using common rebind allocator and explicit cold BC route; no guest modules, not FPS or playable-game acceptance','package':pkg,'activity':m['activity'],'APK_SHA256':m['APK']['sha256'],'manifest_SHA256':sha(a.artifact/'candidate.apk.build.json'),'controller_SHA256':sha(__file__),'capture_SHA256':sha(a.capture),'complete_startup_capture_result_SHA256':sha(a.capture_source_result),'recorded_original_submit_count':len(capture_source['recorded_submits']),'driver_SHA256':sha(a.driver),'baseline_promotion_SHA256':sha(a.baseline_promotion),'memory_translation':'rebind','panvk_bc_route':a.bc_route,'official_rebind_tool_BDA_opt_in':True,'debug_property_name':'debug.mesa.panvk.debug','debug_property_requested':'bc_compute'if a.bc_route=='compute'else'0','gfx_reference_SHA256':sha(a.rebind_gfx_reference)if reference else None,'official_sync_queue_submissions':True,'single_changed_replay_option':'bc_compute versus gfx on common official rebind allocator','official_serialize_render_passes':True,'diagnostic_serialization_not_runtime_fix':True,'validation':'official VVL requested + synchronization env requested; actual banner/errors retained, never assume pass','timeout_seconds':90,'launches':1,'production_package_read_only':True}
 if not a.execute:print(json.dumps(plan,indent=2));raise SystemExit(0)
 a.output.mkdir(exist_ok=False,parents=True);token=uuid.uuid4().hex;tmp='/data/local/tmp/panvk-gfxr-replay-'+token;run='files/run-'+token
 B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',a.serial];result={**plan,'stage':'preflight','token':token,'owned_tmp':tmp,'cleanup_errors':[]};installed=False;install_requested=False;made_tmp=False;first=None;ambiguous=False;before=None;installer=None;launch=None;property_restore_required=False;property_original=None
@@ -167,7 +168,7 @@ try:
  property_original=ad('shell','getprop',plan['debug_property_name']);result['debug_property_original']=property_original;property_restore_required=True;save()
  write_debug_property(plan['debug_property_requested'])
  args='--sync --serialize-render-passes --validate --log-file /data/user/0/'+pkg+'/'+run+'/gfxr.log --memory-translation rebind /data/user/0/'+pkg+'/files/capture.gfxr'
- cmd=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_token',token,'--es','args',shlex.quote(args)]
+ cmd=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_token',token,'--ez','tool_rebind_bda','true','--es','args',shlex.quote(args)]
  result.update(stage='one-cold-replay',launch_command=B+cmd);save()
  with (a.output/'launch.txt').open('w')as f:launch=subprocess.Popen(B+cmd,stdout=f,stderr=subprocess.STDOUT)
  deadline=time.monotonic()+90;log=''
@@ -176,6 +177,9 @@ try:
   if first and not result.get('initial_PANVK_DEBUG_env_absent'):
    result['initial_PANVK_DEBUG_env_absent']=panvk_debug_environment_absent(ad('exec-out','run-as',pkg,'cat','/proc/'+first+'/environ'));save()
   terminal='====== Exiting android_main'in log
+  violations=sorted(set(re.findall(r'(?:VUID|SYNC)-[A-Za-z0-9_-]+',log)))
+  if first and violations:
+   result['first_validation_diagnostics']=violations;save();raise AssertionError('Official validation error: stop this single run without retry')
   if terminal or ambiguous or(first and not current):break
   if time.monotonic()>deadline:raise TimeoutError('Replay bound reached, no retry')
   time.sleep(.2)
@@ -191,6 +195,7 @@ try:
  result['replay_return_marker']=terminal
  assert '[replay bridge] configured pid='+first+' 'in log,'Startup PID must match exact observed process'
  assert 'identity verified driverID=20'in log and 'DRIVER_CUSTOM only, GPU_MAPPING_IMPORT=off'in log,'Private ICD identity/standard loader absent'
+ assert 'TOOL-ADDED BDA official-rebind'in log and 'tool-rebind-bda=on'in log,'Required explicit tool feature contract missing'
  assert terminal,'Official replay did not reach SDK EOF/return'
  assert 'File did not contain any frames'in log,'Expected offscreen no-Present startup capture EOF'
  assert not any(x in log for x in ('Replay failed','fatal error and cannot continue','[replay bridge] FATAL','VK_ERROR_DEVICE_LOST'))

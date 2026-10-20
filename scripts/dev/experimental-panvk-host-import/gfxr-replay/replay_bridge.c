@@ -18,12 +18,14 @@
 #include <fcntl.h>
 static char hook_dir[PATH_MAX],driver_path[PATH_MAX],root_dir[PATH_MAX];
 static _Atomic int configured;
+static int tool_rebind_bda; /* Cold immutable: published by configured release. */
 static pthread_once_t once=PTHREAD_ONCE_INIT;
 static PFN_vkGetInstanceProcAddr real_gipa;
 static void *tools_handle,*loader_handle;
 static _Atomic(PFN_vkEnumeratePhysicalDevices) real_enumerate;
 static _Atomic(PFN_vkCreateDevice) real_create_device;
 static _Atomic(PFN_vkEnumerateDeviceExtensionProperties) real_extensions;
+static _Atomic(PFN_vkGetPhysicalDeviceFeatures2) real_features2;
 __attribute__((visibility("default"))) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance,const char *);
 static void fail(const char *text) {fprintf(stderr,"[replay bridge] FATAL %s\n",text);fflush(stderr);abort();}
 static void path_join(char *out,const char *base,const char *tail) {
@@ -68,6 +70,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL enumerate(VkInstance instance,uint32_t *co
   return result;
 }
 #include "device_dependency.inc"
+#include "device_rebind_bda.inc"
 static VKAPI_ATTR VkResult VKAPI_CALL create_device(VkPhysicalDevice physical,const VkDeviceCreateInfo *info,const VkAllocationCallbacks *allocator,VkDevice *device) {
   PFN_vkCreateDevice fn=atomic_load_explicit(&real_create_device,memory_order_acquire);if(!fn)fail("create-device dispatch");
   VkDeviceCreateInfo corrected;const char **owned;int change=replay_device_dependency(info,&corrected,&owned);if(change<0)fail("device extension dependency input/allocation");
@@ -78,19 +81,39 @@ static VKAPI_ATTR VkResult VKAPI_CALL create_device(VkPhysicalDevice physical,co
     if(ex(physical,NULL,&count,all)!=VK_SUCCESS)fail("extension enumeration");
     int found=0;for(uint32_t n=0;n<count;n++)found|=!strcmp(all[n].extensionName,VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);free(all);
     if(!found)fail("tool depth-resolve dependency unavailable; no capability fallback");
-    fprintf(stderr,"[replay bridge] added GFXR required VK_KHR_create_renderpass2 dependency; captured features/pNext unchanged\n");
+    fprintf(stderr,tool_rebind_bda?"[replay bridge] added GFXR required renderpass dependency; original requested values preserved, separate TOOL-ADDED BDA follows\n":"[replay bridge] added GFXR required VK_KHR_create_renderpass2 dependency; captured features/pNext unchanged\n");
   }
-  VkResult result=fn(physical,change?&corrected:info,allocator,device);free(owned);return result;
+  const VkDeviceCreateInfo *selected=change?&corrected:info;
+  replay_rebind_bda_state bda={0};
+  if(tool_rebind_bda) {
+    PFN_vkEnumerateDeviceExtensionProperties ex=atomic_load_explicit(&real_extensions,memory_order_acquire);
+    PFN_vkGetPhysicalDeviceFeatures2 features=atomic_load_explicit(&real_features2,memory_order_acquire);
+    if(!ex||!features)fail("private BDA support query dispatch absent");
+    uint32_t count=0;if(ex(physical,NULL,&count,NULL)!=VK_SUCCESS||count>4096)fail("BDA extension support query");
+    VkExtensionProperties *all=count?calloc(count,sizeof *all):NULL;if(count&&!all)fail("BDA query allocation");
+    if(count&&ex(physical,NULL,&count,all)!=VK_SUCCESS)fail("BDA extension enumeration");
+    int supported=0;for(uint32_t n=0;n<count;n++)supported|=!strcmp(all[n].extensionName,VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);free(all);
+    if(!supported){free(owned);fail(replay_rebind_bda_error(REPLAY_BDA_UNSUPPORTED_EXTENSION));}
+    VkPhysicalDeviceBufferDeviceAddressFeatures actual={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+    VkPhysicalDeviceFeatures2 query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&actual};features(physical,&query);
+    int b=replay_rebind_bda_prepare(selected,1,supported,actual.bufferDeviceAddress,&bda);
+    if(b<0){free(owned);fail(replay_rebind_bda_error(b));}
+    selected=&bda.create;
+    fprintf(stderr,"[replay bridge] TOOL-ADDED BDA official-rebind extension_added=%u feature_struct_added=%u existing_enabled_preserved=%u captureReplay_added=0 multiDevice_added=0 original_chain_nodes_preserved=1 actual_support=1\n",bda.added_extension,bda.added_feature,bda.existing_enabled);
+  }
+  VkResult result=fn(physical,selected,allocator,device);
+  if(tool_rebind_bda)replay_rebind_bda_finish(&bda);
+  free(owned);return result;
 }
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance,const char *name) {
   pthread_once(&once,load_system);if(!name)return real_gipa(instance,name);
   PFN_vkVoidFunction proc=real_gipa(instance,name);if(!proc)return NULL;
   if(!strcmp(name,"vkGetInstanceProcAddr"))return (PFN_vkVoidFunction)vkGetInstanceProcAddr;
   if(!strcmp(name,"vkEnumeratePhysicalDevices")) {atomic_store_explicit(&real_enumerate,(PFN_vkEnumeratePhysicalDevices)proc,memory_order_release);return (PFN_vkVoidFunction)enumerate;}
-  if(!strcmp(name,"vkCreateDevice")) {atomic_store_explicit(&real_create_device,(PFN_vkCreateDevice)proc,memory_order_release);atomic_store_explicit(&real_extensions,(PFN_vkEnumerateDeviceExtensionProperties)real_gipa(instance,"vkEnumerateDeviceExtensionProperties"),memory_order_release);return (PFN_vkVoidFunction)create_device;}
+  if(!strcmp(name,"vkCreateDevice")) {atomic_store_explicit(&real_create_device,(PFN_vkCreateDevice)proc,memory_order_release);if(tool_rebind_bda)atomic_store_explicit(&real_features2,(PFN_vkGetPhysicalDeviceFeatures2)real_gipa(instance,"vkGetPhysicalDeviceFeatures2"),memory_order_release);atomic_store_explicit(&real_extensions,(PFN_vkEnumerateDeviceExtensionProperties)real_gipa(instance,"vkEnumerateDeviceExtensionProperties"),memory_order_release);return (PFN_vkVoidFunction)create_device;}
   return proc;
 }
-JNIEXPORT void JNICALL Java_com_d2rmobile_panvkgfxrfixture_ReplayActivity_nativeConfigure(JNIEnv *env,jclass clazz,jstring files,jstring libs,jstring token) {
+JNIEXPORT void JNICALL Java_com_d2rmobile_panvkgfxrfixture_ReplayActivity_nativeConfigure(JNIEnv *env,jclass clazz,jstring files,jstring libs,jstring token,jboolean rebind_bda) {
   (void)clazz;
   const char *f=(*env)->GetStringUTFChars(env,files,NULL),*l=(*env)->GetStringUTFChars(env,libs,NULL),*t=(*env)->GetStringUTFChars(env,token,NULL);
   if(!f||!l||!t||strlen(t)!=32||strspn(t,"0123456789abcdef")!=32)fail("cold token");
@@ -98,14 +121,14 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_panvkgfxrfixture_ReplayActivity_native
   if(!realpath(l,hooks)||!realpath(f,parent))fail("private/native directory");
   snprintf(work,sizeof work,"run-%s",t);path_join(wanted,parent,work);
   if(atomic_load_explicit(&configured,memory_order_acquire)) {
-    if(strcmp(wanted,root_dir)||strcmp(hooks,hook_dir))fail("cannot change loaded replay configuration");
+    if(strcmp(wanted,root_dir)||strcmp(hooks,hook_dir)||tool_rebind_bda!=(rebind_bda==JNI_TRUE))fail("cannot change loaded replay configuration");
     (*env)->ReleaseStringUTFChars(env,files,f);(*env)->ReleaseStringUTFChars(env,libs,l);(*env)->ReleaseStringUTFChars(env,token,t);return;
   }
-  strcpy(hook_dir,hooks);strcpy(root_dir,wanted);if(mkdir(root_dir,0700))fail("run directory already exists/missing");
+  tool_rebind_bda=rebind_bda==JNI_TRUE;strcpy(hook_dir,hooks);strcpy(root_dir,wanted);if(mkdir(root_dir,0700))fail("run directory already exists/missing");
   char path[PATH_MAX];path_join(path,root_dir,"replay.log");int fd=open(path,O_WRONLY|O_CREAT|O_EXCL|O_APPEND|O_CLOEXEC,0600);if(fd<0||dup2(fd,1)<0||dup2(fd,2)<0)fail("stdio log");if(fd>2)close(fd);setvbuf(stdout,NULL,_IONBF,0);setvbuf(stderr,NULL,_IONBF,0);
   path_join(driver_path,parent,"driver/libvulkan_panfrost.so");path_join(path,hook_dir,"libpanvk_replay_bridge.so");if(setenv("GFXRECON_VULKAN_LIBRARY_PATH",path,1))fail("replay library env");
   path_join(path,root_dir,"cache");if(mkdir(path,0700)||setenv("MESA_SHADER_CACHE_DIR",path,1))fail("private shader cache");
   path_join(path,root_dir,"mesa.log");if(setenv("MESA_LOG","file,android",1)||setenv("MESA_LOG_FILE",path,1)||setenv("TU_DM_HOST_IMPORT","false",1)||setenv("PANVK_DM_HOST_IMPORT","false",1)||setenv("VK_LAYER_ENABLES","VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT",1))fail("cold env");
-  fprintf(stderr,"[replay bridge] configured pid=%d uid=%d token=%s official-replay-only no-game-modules sync-validation-requested\n",getpid(),getuid(),t);
+  fprintf(stderr,"[replay bridge] configured pid=%d uid=%d token=%s official-replay-only no-game-modules sync-validation-requested tool-rebind-bda=%s\n",getpid(),getuid(),t,tool_rebind_bda?"on":"off");
   (*env)->ReleaseStringUTFChars(env,files,f);(*env)->ReleaseStringUTFChars(env,libs,l);(*env)->ReleaseStringUTFChars(env,token,t);atomic_store_explicit(&configured,1,memory_order_release);
 }

@@ -21,7 +21,7 @@ for value in ['0','bc_compute','','startup,sync',"a b;'c"]:ns['write_debug_prope
 with tempfile.TemporaryDirectory()as td:
  d=Path(td);path=d/'result.json';before={'owned':'original'};base={'panvk_bc_route':'gfx','memory_translation':'rebind','debug_property_requested':'0','production_unchanged':True,'original_before':before,'original_after':before,'cleanup_errors':[],'first_PID':44,'APK_SHA256':'a','driver_SHA256':'b','capture_SHA256':'c','baseline_promotion_SHA256':'d','controller_SHA256':'e'}
  for k in ('fixture_PID_absent','fixture_uninstalled','owned_tmp_absent','owned_clients_stopped','debug_property_restored','initial_PANVK_DEBUG_env_absent'):base[k]=True
- log='[replay bridge] configured pid=44 x\nidentity verified driverID=20\nCore Checks\n  - Synchronization\nVK_ERROR_DEVICE_LOST'
+ log='[replay bridge] configured pid=44 x\nidentity verified driverID=20\nCore Checks\n  - Synchronization\nVK_ERROR_DEVICE_LOST\nTOOL-ADDED BDA official-rebind captureReplay_added=0 multiDevice_added=0 tool-rebind-bda=on'
  cat='API call at index: 149328 thread: 2 vkQueueSubmit returned error value VK_ERROR_DEVICE_LOST'
  (d/'replay.log').write_text(log);(d/'PID-logcat.txt').write_text(cat);(d/'mesa.log').write_text('timeout on subqueue 0')
  ex={k:base[k]for k in ('APK_SHA256','driver_SHA256','capture_SHA256','baseline_promotion_SHA256','controller_SHA256')}
