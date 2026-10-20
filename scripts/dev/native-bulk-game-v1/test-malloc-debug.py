@@ -48,7 +48,7 @@ class MallocToolTests(unittest.TestCase):
             def adb(self,*args):
                 if args==('shell','pidof '+t.PKG+' || true'):
                     return '54321' if failure=='replacement' else '12345'
-                return '' if failure=='receipt' else "Run: 'kill -47 12345' to dump the backtrace."
+                return '' if failure=='receipt' else "malloc debug enabled\nRun: 'kill -47 12345' to dump the backtrace."+("\nunknown option backtrace_full" if failure=='unknownoption' else "")
             def app(self,*args):
                 if args==('cat','/proc/12345/status'):
                     return 'Uid:\t'+('\t'.join(['10312' if failure=='uid' else '10311']*4))+'\nTracerPid:\t'+('7' if failure=='tracer' else '0')+'\nSigCgt:\t'+('0' if failure=='handler' else format(1<<46,'x'))+'\n'
@@ -73,7 +73,7 @@ class MallocToolTests(unittest.TestCase):
         self.assertEqual(result['coverage']['empty_stack_bytes'],200)
 
     def test_missing_shim_handler_receipt_environment_or_owner_never_signalled(self):
-        for failure in ['shim','handler','receipt','environment','uid','tracer','replacement','preexisting']:
+        for failure in ['shim','handler','receipt','environment','uid','tracer','replacement','preexisting','unknownoption']:
             with self.subTest(failure=failure):
                 result,sent=self.collect_case(failure)
                 self.assertFalse(sent);self.assertFalse(result['accepted']);self.assertTrue(result['errors'])

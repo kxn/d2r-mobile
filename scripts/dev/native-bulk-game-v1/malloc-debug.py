@@ -97,6 +97,8 @@ def collect(dev,out,cfg,pid,uid,journal):
         if not caught or not(int(caught[1],16)&(1<<(47-1))):raise RuntimeError('SIG47 handler not caught; no signal')
         logs=dev.adb('shell','logcat','-b','main','-d','--pid='+pid,'-v','threadtime','-s','malloc_debug','libc')
         (out/'official-readiness-logcat.txt').write_text(logs)
+        if re.search(r'unknown option|bad value for option|malloc debug.*(?:disabled|cannot be enabled)',logs,re.I):raise RuntimeError('official option rejection/disabled diagnostic; no signal')
+        if 'malloc debug enabled'not in logs:raise RuntimeError('official malloc_debug enabled receipt absent; no signal')
         if not re.search(r"Run: 'kill -47 "+re.escape(pid)+r"' to dump the backtrace\.",logs):raise RuntimeError('official successful SIG47 registration receipt absent; no signal')
         if exists():raise RuntimeError('preexisting dump is not owned')
         own();dev.app('kill','-47',pid);state['owned_signal47_requested']=True;save()
