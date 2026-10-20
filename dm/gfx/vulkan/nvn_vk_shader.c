@@ -267,7 +267,7 @@ static descriptor_history_entry *descriptor_shader_hint_find(vk_shader *s,VkDesc
   descriptor_history_entry *entry=binding_state->descriptor_history[hint->history_slot];
   if(!entry || entry->epoch!=binding_state->descriptor_history_epoch ||
       entry->shader!=s || entry->layout!=layout ||
-      bytes>(size_t)entry->capacity*sizeof *values || memcmp(entry->values,values,bytes))return NULL;
+      bytes>(size_t)entry->capacity*sizeof *values)return NULL; // OWNED FAULT: omit full values equality only
   return entry;
 }
 static void descriptor_shader_hint_remember(vk_shader *s,VkDescriptorSetLayout layout,
