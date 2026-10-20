@@ -206,8 +206,8 @@ static int init(void) {
 #endif
 #ifdef DM_NATIVE_IMPORTED_IMAGE
   if(native_mode) {
-  printf("{\"native_device_identity\":true,\"driverID\":%u,\"vendorID\":%u,\"deviceID\":%u,\"width\":%u,\"height\":%u,\"mips\":%u,\"layout_UUID\":\"",
-         native_driver.driverID, properties.vendorID, properties.deviceID, FIXTURE_WIDTH, FIXTURE_HEIGHT, LEVELS);
+  printf("{\"native_device_identity\":true,\"driverID\":%u,\"vendorID\":%u,\"deviceID\":%u,\"layout_UUID\":\"",
+         native_driver.driverID, properties.vendorID, properties.deviceID);
   for(unsigned n=0;n<16;n++)printf("%02x",host.optimalTilingLayoutUUID[n]);
   printf("\",\"device_UUID\":\"");for(unsigned n=0;n<16;n++)printf("%02x",ids.deviceUUID[n]);
   printf("\",\"driver_UUID\":\"");for(unsigned n=0;n<16;n++)printf("%02x",ids.driverUUID[n]);
