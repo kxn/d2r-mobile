@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One reversible bounded existing PanVK failure-only TRACE original-BC diagnostic. Offline by default.
+"""DRAFT one reversible bounded existing PanVK BC_TRACE original-BC diagnostic. Offline by default.
 Uses existing directory CAS, ordinary first-PID ownership and original save2 helper.
 Original BC/current-identical upstream UI overlay only; no APK/module changes, old capture, measurement or GPU-import.
 """
@@ -22,7 +22,7 @@ RESOURCE_READY=R/'.local/build/panvk-minegraph-original-bc-control-v5/compositio
 RESOURCE_SHA='41ce2605b2150669081aa1978094d1296168d4c95c88c2bb0b21c7e6ff970e13'
 DUMP_DIR='files/runtime/temp/pandecode'
 DUMP_PREFIX='/data/data/'+PKG+'/files/runtime/temp/pandecode/cs'
-PROPERTIES={'debug.mesa.panvk.debug':'startup,trace,kbase_diag,trace_failure_only,shader_map','debug.mesa.pandecode.dump.file':DUMP_PREFIX}
+PROPERTIES={'debug.mesa.panvk.debug':'startup,bc_trace,kbase_diag','debug.mesa.pandecode.dump.file':''}
 DUMP_SOFT_LIMIT=256*1024*1024
 LAYER_KEYS=['enable_gpu_debug_layers','gpu_debug_app','gpu_debug_layers','gpu_debug_layers_gles','gpu_debug_layer_app']
 # Same existing inventory/CAS checks; preserve real Diablo II paths containing spaces.
@@ -134,24 +134,11 @@ def dump_bytes(dev):
  return sum(int(v)for v in raw.splitlines())
 
 def preserve_dump(dev,path,d,out):
- # No command stream transfer while the original game is running.
+ # TRACE andDUMP are prohibited. The inherited owned empty directory only
+ # proves no accidental command-stream capture was emitted; no tar transfer.
  dev.stopped();values=inventory(dev,DUMP_DIR)
- if values is None:d['dump_absent']=True;journal(path,d);return
- require(values.get(OWNER)==d['owner_sha256']and all(k==OWNER or re.fullmatch(r'cs\.[A-Za-z0-9_.:-]+\.ctx-[0-9]+\.[0-9]+',k)for k in values),'unknown diagnostic dump file')
- d['dump_remote_SHA256']=values;d['dump_file_count']=len(values)-1;journal(path,d)
- archive=out/'native-pandecode.tar'
- with archive.open('wb')as f:subprocess.run(dev.command+['exec-out','run-as',PKG,'tar','cf','-','-C',DUMP_DIR,'.'],stdout=f,stderr=subprocess.PIPE,check=True,timeout=60)
- local={}
- with tarfile.open(archive,'r')as tf:
-  for member in tf.getmembers():
-   if member.isdir():require(member.name in ('.','./'),'unexpected dump tar directory');continue
-   name=member.name.removeprefix('./');require(member.isfile()and name in values and name not in local and '/'not in name,'unsafe/duplicate dump tar entry')
-   h=hashlib.sha256()
-   with tf.extractfile(member)as f:
-    for block in iter(lambda:f.read(1024*1024),b''):h.update(block)
-   local[name]=h.hexdigest()
- require(local==values and inventory(dev,DUMP_DIR)==values,'dump transfer identity mismatch')
- d['dump_archive']=record(archive);d['dump_pulled_only_after_game_stopped']=True;d['dump_transport_hashed_and_verified']=True;journal(path,d)
+ require(values=={OWNER:d['owner_sha256']},'unexpected TRACE/DUMP output; preserve transaction')
+ d['TRACE_DUMP_files_absent']=True;d['dump_absent']=True;journal(path,d)
 
 def native_log_text(dev,*args):
  # Bounded log byte ranges may end/start inside a UTF-8 character. Preserve
@@ -160,9 +147,9 @@ def native_log_text(dev,*args):
  data=subprocess.check_output(dev.command+['shell',shlex.join(['run-as',PKG,*args])],timeout=180)
  return data.decode('utf-8',errors='replace').strip()
 
-def failure_only_banner(native):
+def bc_trace_banner(native):
  matches=re.findall(r'^\[MESA-PANVK\] panvk_debug: ([^\n]+)$',native,re.M)
- return bool(matches) and all(set(v.split('|'))=={'startup','trace','kbase_diag','trace_failure_only','shader_map'}for v in matches)
+ return bool(matches) and all(set(v.split('|'))=={'startup','bc_trace','kbase_diag'}for v in matches)
 
 def activity_stopped(activities,pid):
  # Exact target record only; whitespace never consumes the next line/block.
@@ -203,17 +190,15 @@ def launch_once(dev,path,d,out):
    while client.poll()is None:
     now=observe()
     native=native_log_text(dev,'sh','-c','if test -f files/runtime/native.log; then tail -c 65536 files/runtime/native.log; fi')
-    d['dump_last_observed_bytes']=dump_bytes(dev)
-    if d['dump_last_observed_bytes']>=DUMP_SOFT_LIMIT:d['dump_soft_bound_reached']=True;journal(path,d);break
     if own and not native_identity:
      header=native_log_text(dev,'sh','-c','if test -f files/runtime/native.log; then head -c 4096 files/runtime/native.log; fi')
      native_identity=('Android native start pid='+own+'\n'in header)
      if native_identity:d['native_log_first_PID_verified']=True;journal(path,d)
-    if native_identity and not d.get('failure_only_token_actual'):
+    if native_identity and not d.get('bc_trace_token_actual'):
      config=native_log_text(dev,'head','-c','65536','files/runtime/native.log')
      if '[MESA-PANVK] panvk_debug:'in config:
-      require(failure_only_banner(config),'actual cached failure-only TRACE token absent; stop diagnostic')
-      d['failure_only_token_actual']=True;journal(path,d)
+      require(bc_trace_banner(config),'actual exact BC_TRACE flags absent; stop diagnostic')
+      d['bc_trace_token_actual']=True;journal(path,d)
     if native_identity:
      (out/'native.log').write_text(native)
      if 'FATAL'in native or 'Vulkan PanVK ICD load:'in native:d['native_failure_seen']=True;break
@@ -222,7 +207,6 @@ def launch_once(dev,path,d,out):
    if client.poll()is None:
     client.terminate();client.wait(timeout=10)
   d['launcher_returncode']=client.returncode;journal(path,d)
-  require(not d.get('dump_soft_bound_reached'),'diagnostic soft output bound reached; incomplete capture preserved')
   require(not d.get('native_failure_seen') and client.returncode==0,'original native startup failed, preserve diagnostic')
   require(own and observe()==own,'original game PID absent/replaced')
   native=native_log_text(dev,'cat','files/runtime/native.log');(out/'native.log').write_text(native)
@@ -238,7 +222,7 @@ def launch_once(dev,path,d,out):
   require(state['game_output']==state['surface_output']=={'width':2772,'height':1240}and state['guest_heap']['shared']is False,'output/shared mode mismatch')
   require('[vulkan loader] provider=panvk direct ICD='in native and 'driverID=20'in native and 'FATAL'not in native,'provider/driver identity mismatch')
   require(read(out/'launch.json')['actual_vulkan_provider']=='panvk' and read(out/'launch.json')['requested_legacy_astc_copy']is False,'legacy/resource mode mismatch')
-  require(d.get('failure_only_token_actual'),'actual failure-only configuration never confirmed')
+  require(d.get('bc_trace_token_actual'),'actual BC_TRACE configuration never confirmed')
   d['actual_original_game_HUD_reached']=True;d['real_game_modules_executed']=True;d['namespace_load_succeeded']=True;d['visual_acceptance_pending']=True;journal(path,d)
  except BaseException as e:
   d['primary_launch_error']=repr(e);journal(path,d);raise
@@ -316,7 +300,7 @@ def clean(dev,path,d):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE bounded existing PanVK TRACE_FAILURE_ONLY+kbase_diag+compute shader_map diagnostic original022 originalBC; no DUMP, no resources decode, incomplete conservative earlier prefix only; NOT live PC/GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'root_source_review':record(ROOT_REVIEW),'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'DRAFT ONE bounded existing PanVK startup+bc_trace+kbase_diag original022 originalBC; noTRACE/noDUMP/noSYNC/noSHADER_MAP; BCemulation API-recording evidence only, NOT GPUexecution/livePC/hangfix/performance','diagnostic_properties':PROPERTIES,'DRAFT_enabled':False,'requires_new_root_review_before_device':True,'TRACE':False,'DUMP':False,'SYNC':False,'SHADER_MAP':False,'bc_trace_scope':'Only emulatedBC images/recordeddecode; no nativeBC3 logs expected; no timing/workcompletion/crossPID SPD attribution','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'root_source_review':record(ROOT_REVIEW),'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
