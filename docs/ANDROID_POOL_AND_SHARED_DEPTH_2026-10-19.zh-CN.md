@@ -1766,3 +1766,30 @@ CPU/GPU 等待或帧率瓶颈的判断，不据此修改生产 TLS、allocator �
 真实目标 trace、exact ELF、官方符号化输出和边界说明见
 `.local/logs/malloc-debug-default-v3-anr-stack-audit-v1/result.json`
 （SHA256 `049ec3760f00cfa7af0fdf5290591ca1fdbc9369f4ce04e4f74a494256548314`）。
+
+## 2026-10-21：原生布局体积、有效硬件带宽与驻留候选验收
+
+同一 6,217 项的 f830 原生资源已实际完成 49 批加工和 CASC 组合。
+原 NVN payload 395.73MiB，AA185 原生排布 664.125MiB，f830 的
+256B 行跨度线性排布为 423.039MiB，比 AA185 少 241.086MiB。
+ASTC 压缩块仍为 16B，没有展开为 RGBA；主要变化是行跨度和 mip 填充。
+这不是每帧节省的 DRAM 流量，也还不是游戏净驻留量：旧填充不一定被采样，
+线性排布反而可能降低二维过滤局部性。两条 native 路径原本都禁用 UBWC。
+
+f830 普通纹理 control 的官方 SDP 数据有效，旧捕获失败源于用电脑时间
+检查设备计数器时间，约 0.9 秒偏差导致末端覆盖误判。保留原失败报告；
+按 Perfetto 首次官方时钟快照限定的实际 8.006 秒窗口，九项计数均被覆盖。
+该窗口 GPU 纹理读取约 3.073GB/s、总读约 4.095GB/s、总写约 1.875GB/s，
+Shaders Busy 约 67.25%，Texture Pipes Busy 约 41.50%，时钟约 498.54MHz。
+同一 trace 的游戏 Surface 完整间隔均值约 33.277ms；不能将这些全局计数
+当成独占 Shader 时间、GMEM 流量或新布局的 A/B 收益。native 阶段未执行。
+分析见 `.local/logs/native-astc-linear-6bc0b8a-sdp-game-pair-v1-analysis/control-official-GPU-common-8s-analysis-agent-v1.json`。
+
+dad2c3d 驻留候选的独立 AA185 真机验收通过，原 447/36/40 项保留，
+新增 110 项实际 ASTC 检查覆盖 no-Flush CPU 写入、跨 chunk 使用和同一
+recording 的 Image 写入后通过已有 Buffer 进行完整 payload 的 CS 读取。
+原游戏包未改动，独立包、工具和暂存均已清理；这仍不是游戏性能验收。
+随后原游戏 control 暴露 `Shared image conversion missing ordered CPU preflight`
+崩溃，发生在尚无 native 表的 B2T 路径，候选保持待修，不默认启用。
+另一次 control 的附加 LLDB 握手失败仅为工具故障；后继移除可选调试快照，
+保留官方 CPU、系统内存和真实游戏检查，不用自制测量替代。两次均已恢复原包。
