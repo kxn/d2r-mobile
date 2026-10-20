@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ONE original-fork PanVK + official VVL+GFXR offscreen submit-range failure capture. Default offline.
+"""ONE original-fork PanVK + official VVL+GFXR offscreen untrimmed startup failure capture. Default offline.
 Reuse the frozen resource Device/Hashes/journal and original launcher/save.
 Temporary exact canonical debug APK/raw-NSO modules, BC/UI-only resources; full022d rollback. No system driver, profiler or driver debug override. Official capture can perturb scheduling/resource snapshot work; never FPS comparison.
 """
@@ -23,6 +23,9 @@ GFXR_PACKAGE='com.arm.frameadvisor.replay'
 GFXR_APK=R/'.local/tools/Arm_Performance_Studio_2026.5/frame_advisor/bin/android/replay-release.apk'
 GFXR_APK_SHA='e44a9dea3eb2933051e9d1bafb1c1c6a476d980b910447b75988cca80ed8c127'
 GFXR_INFO=R/'.local/build/gfxreconstruct-host/tools/info/gfxrecon-info'
+GFXR_CONVERT=R/'.local/build/gfxreconstruct-host/tools/convert/gfxrecon-convert'
+SHADERS='files/runtime/shaders'
+MIN_FREE=8<<30;TRACE_STOP_BYTES=2<<30;GAME_BOUND_SECONDS=90
 
 OVERLAY='files/runtime/romfs_overlay';DRIVER_DIR='files/runtime/vulkan-panfrost'
 LOCK='files/runtime/.astc6-full-controller-lock';OWNER='.original-fork-baseline-owner'
@@ -35,7 +38,7 @@ sha=lambda p:common.Hashes().file(p)
 read=lambda p:json.loads(Path(p).read_text())
 
 def proof():
- require(sha(GFXR_APK)==GFXR_APK_SHA and GFXR_INFO.is_file(),'official installed-tool input missing/changed')
+ require(sha(GFXR_APK)==GFXR_APK_SHA and GFXR_INFO.is_file() and GFXR_CONVERT.is_file(),'official installed-tool input missing/changed')
  require(sha(DRIVER_READY)=='222ba1e9db1f57d3d654b4654b13a2d2b25a2e09431a26566609e86b97227d41','driver sourceReady changed')
  require(sha(RESOURCE_PROOF)=='76438192aedb73d5457901f4284581d1db6ff1d9db3aafbc3e80bd429d2ab1e5','UI resource proof changed')
  dr=read(DRIVER_READY);ui=read(RESOURCE_PROOF);pr=read(PROMOTION)
@@ -61,7 +64,7 @@ def proof():
  old_modules=bundle_artifacts(ORIGINAL_SOURCE,ORIGINAL_BUNDLE)
  require({n:v['sha256']for n,v in old_modules.items()}=={n:v['sha256']for n,v in modules.items()},'restore022d raw modules differ from promotion')
  new_modules=bundle_artifacts(SOURCE,CANDIDATE_BUNDLE)
- deps=[Path(__file__),COMMON,GFXR_APK,GFXR_INFO,DRIVER_READY,RESOURCE_PROOF,PROMOTION,DRIVER,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py',TOOL_REVIEW,ORIGINAL_APK,CANDIDATE_APK,CANDIDATE_APK.with_suffix('.apk.build.json'),ORIGINAL_BUNDLE/'rewrite-manifest.json',CANDIDATE_BUNDLE/'rewrite-manifest.json',SOURCE/'scripts/dev/deploy-android-modules.py',ORIGINAL_SOURCE/'scripts/dev/deploy-android-modules.py']
+ deps=[Path(__file__),COMMON,GFXR_APK,GFXR_INFO,GFXR_CONVERT,DRIVER_READY,RESOURCE_PROOF,PROMOTION,DRIVER,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py',TOOL_REVIEW,ORIGINAL_APK,CANDIDATE_APK,CANDIDATE_APK.with_suffix('.apk.build.json'),ORIGINAL_BUNDLE/'rewrite-manifest.json',CANDIDATE_BUNDLE/'rewrite-manifest.json',SOURCE/'scripts/dev/deploy-android-modules.py',ORIGINAL_SOURCE/'scripts/dev/deploy-android-modules.py']
  deps += [CANDIDATE_BUNDLE/n for n in new_modules]+[ORIGINAL_BUNDLE/n for n in old_modules]
  return {'apk':APK,'elf':ELF,'chain':CHAIN,'baseline35':baseline,'baseline':common.BASE,'module_artifacts':modules,'candidate':values,'frozen_inputs':{str(p):sha(p)for p in deps},'driver':SO,'candidate_APK':build['apk_sha256'],'candidate_ELF':build['host_library_sha256'],'candidate_modules':new_modules}
 
@@ -106,7 +109,7 @@ def capture_options(token):
  require(re.fullmatch('[a-f0-9]{32}',token),'unsafe capture transaction token')
  settings={'enable_gpu_debug_layers':'1','gpu_debug_app':PKG,'gpu_debug_layers':'VK_LAYER_LUNARG_gfxreconstruct','gpu_debug_layer_app':GFXR_PACKAGE,'gpu_debug_layers_gles':None}
  stem='g' # fresh transaction-owned driver/cache directory, never production cache
- props={'debug.gfxrecon.capture_process_name':PKG,'debug.gfxrecon.capture_file':'/data/data/'+PKG+'/'+DRIVER_DIR+'/shader-cache/'+stem+'.gfxr','debug.gfxrecon.capture_frames':'','debug.gfxrecon.capture_draw_calls':'','debug.gfxrecon.capture_trigger':'','debug.gfxrecon.capture_trigger_boundary':'queue_submits','debug.gfxrecon.capture_queue_submits':'150-174','debug.gfxrecon.capture_file_timestamp':'false','debug.gfxrecon.capture_file_flush':'true','debug.gfxrecon.capture_android_trigger':'false','debug.gfxrecon.capture_trigger_frames':'','debug.gfxrecon.quit_after_capture_frames':'false'}
+ props={'debug.gfxrecon.capture_process_name':PKG,'debug.gfxrecon.capture_file':'/data/data/'+PKG+'/'+DRIVER_DIR+'/shader-cache/'+stem+'.gfxr','debug.gfxrecon.capture_frames':'','debug.gfxrecon.capture_draw_calls':'','debug.gfxrecon.capture_trigger':'','debug.gfxrecon.capture_trigger_boundary':'','debug.gfxrecon.capture_queue_submits':'','debug.gfxrecon.capture_file_timestamp':'false','debug.gfxrecon.capture_file_flush':'true','debug.gfxrecon.capture_android_trigger':'false','debug.gfxrecon.capture_trigger_frames':'','debug.gfxrecon.quit_after_capture_frames':'false'}
  require(all(len(v.encode())<92 for v in props.values()),'Android property value exceeds91bytes')
  return settings,props,stem
 
@@ -122,6 +125,8 @@ def capture_settings(dev,path,d):
  for k,v in props.items():dev.adb('shell','setprop '+shlex.quote(k)+' '+shlex.quote(v))
  require(all(dev.adb('shell','settings','get','global',k)==('null'if v is None else v)for k,v in settings.items()),'capture layer setting failed')
  require(all(dev.adb('shell','getprop',k)==v for k,v in props.items()),'capture property failed')
+ d['capture_properties_effective']={k:dev.adb('shell','getprop',k)for k in props}
+ require(d['capture_properties_effective']==props,'untrimmed effective options differ')
  d['capture_settings_applied']=True;journal(path,d)
 
 def restore_capture_settings(dev,path,d):
@@ -149,11 +154,12 @@ def collect_trace_stopped(dev,path,d,output):
  dev.stopped();root=DRIVER_DIR+'/shader-cache'
  files=dev.app('find',root,'-maxdepth','1','-type','f').splitlines()
  names=[n for n in files if Path(n).name.startswith(d['trace_stem'])and n.endswith('.gfxr')]
- require(len(names)==1,'exact one actual queue-submit capture required; unsupported/absent is not pass')
+ require(len(names)==1,'exact one actual untrimmed capture required; unsupported/absent is not pass')
  remote=names[0];require(remote.startswith(root+'/')and '..'not in Path(remote).parts,'unsafe capture name')
- require(Path(remote).name==d['trace_stem']+'_queue_submits_150_through_174.gfxr','queue-submit range not actually selected; unsupported is not pass')
+ require(Path(remote).name==d['trace_stem']+'.gfxr','untrimmed not actually selected; any range suffix is rejected')
  size=int(dev.app('stat','-c','%s',remote));require(size>64,'capture too small')
- digest=dev.digest(remote);tmp='/data/local/tmp/panvk-submit-'+d['token']+'.gfxr';local=output/'queue-submits.gfxr'
+ if size>=TRACE_STOP_BYTES:d['capture_safety_limit']='2GiB finalsize exceeded';journal(path,d)
+ digest=dev.digest(remote);tmp='/data/local/tmp/panvk-submit-'+d['token']+'.gfxr';local=output/'startup-prefix.gfxr'
  require(not local.exists(),'local trace already exists')
  space=dev.adb('shell','df','-k','/data/local/tmp').splitlines();fields=space[-1].split()
  require(len(fields)>=6 and fields[3].isdecimal(),'unknown tmp space schema')
@@ -174,14 +180,17 @@ def inventory(dev,path):
  require(not dev.app('find',path,'-type','l'),'directory contains symlink')
  files=dev.app('find',path,'-type','f').splitlines();require(all(n.startswith(path+'/') and '..'not in Path(n).parts for n in files),'unsafe directory inventory')
  if not files:return {}
- lines=[]
- # Keep each ADB shell/run-as request bounded: an existing driver cache can
- # contain hundreds of paths and exceed the shell service command limit.
- for start in range(0,len(files),128):lines.extend(dev.app('sha256sum',*files[start:start+128]).splitlines())
+ # Existing Androidfind + explicit128-file batches, processed ondevice in
+ # oneADB request. Unlike find -exec '+', xargs -n128 bounds execve argv too.
+ lines=dev.app('sh','-c','find "$1" -type f -print0 | xargs -0 -n128 sha256sum','sh',path).splitlines()
  result={n.removeprefix(path+'/'):h for h,n in (line.split()for line in lines)}
- require(len(result)==len(files) and all(re.fullmatch('[a-f0-9]{64}',h)for h in result.values()),'incomplete directory hashes');return result
+ require(set(result)=={n.removeprefix(path+'/')for n in files} and all(re.fullmatch('[a-f0-9]{64}',h)for h in result.values()),'incomplete directory hashes');return result
 
 def valid_new(label,values,d,partial=False):
+ if label=='shaders':
+  if not isinstance(values,dict):return False
+  if partial:return all((k==OWNER and h==d['owner_sha256'])or d['old_shaders'].get(k)==h for k,h in values.items())
+  return values.get(OWNER)==d['owner_sha256'] and values.get('.chain')==d['old_shaders'].get('.chain') and all(k in d['old_shaders']or k==OWNER or re.fullmatch('[a-f0-9]{16}(\\.[A-Za-z0-9_]+)+',k)for k in values)
  if label=='overlay':return isinstance(values,dict) and (all(d['candidate'].get(k)==h for k,h in values.items()) if partial else values==d['candidate'])
  if partial:return isinstance(values,dict) and all((k=='libvulkan_panfrost.so' and h==SO) or (k==OWNER and h==d['owner_sha256']) or k.startswith('shader-cache/') for k,h in values.items())
  return isinstance(values,dict) and values.get('libvulkan_panfrost.so')==SO and values.get(OWNER)==d['owner_sha256'] and all(n in ('libvulkan_panfrost.so',OWNER) or n.startswith('shader-cache/')for n in values)
@@ -194,7 +203,7 @@ def rename_dir(dev,src,dst,expected):
  require(inventory(dev,dst)==expected,'directory rename verification failed')
 
 def publish(dev,path,d):
- for label,target in [('overlay',OVERLAY),('driver',DRIVER_DIR)]:
+ for label,target in [('overlay',OVERLAY),('driver',DRIVER_DIR),('shaders',SHADERS)]:
   before=d['old_'+label];incoming=d['incoming']+'/'+label;backup=d['backup']+'/'+label
   d['intent']='backup-'+label;journal(path,d);rename_dir(dev,target,backup,before)
   d['intent']='publish-'+label;journal(path,d);new=inventory(dev,incoming);require(valid_new(label,new,d),'incoming content changed')
@@ -203,7 +212,7 @@ def publish(dev,path,d):
 
 def restore_dirs(dev,path,d):
  dev.identity(d)
- for label,target in [('driver',DRIVER_DIR),('overlay',OVERLAY)]:
+ for label,target in [('shaders',SHADERS),('driver',DRIVER_DIR),('overlay',OVERLAY)]:
   old=d['old_'+label];backup=d['backup']+'/'+label;current=inventory(dev,target);stored=inventory(dev,backup)
   if stored is None:
    require(current==old,'missing original backup/changed target: '+label);continue
@@ -213,6 +222,7 @@ def restore_dirs(dev,path,d):
    retired=d['stage']+'/after-'+label;d['intent']='retire-'+label;journal(path,d);rename_dir(dev,target,retired,current)
   d['intent']='restore-'+label;journal(path,d);rename_dir(dev,backup,target,old)
  require(inventory(dev,DRIVER_DIR)==d['old_driver'],'original private driver/cache changed')
+ require(inventory(dev,SHADERS)==d['old_shaders'],'original entire shader input/cache changed');d['all_shaders_restored']=True
  require(snapshot(dev,d)==d['baseline35'],'original35 files not restored')
  d['status']='restored';d['all35_restored']=True;journal(path,d)
 
@@ -221,7 +231,20 @@ def snapshot(dev,d):
  lines=dev.app('sha256sum',*d['baseline35']).splitlines();got={n:h for h,n in (line.split()for line in lines)};require(got==d['baseline35'],'35-file baseline changed');return got
 
 def cleanup(dev,path,d):
- dev.stopped();require(d.get('all35_restored'),'must restore before cleanup')
+ dev.stopped();require(d.get('all35_restored') and d.get('all_shaders_restored'),'must restore before cleanup')
+ # Whole directory is transaction-owned and stopped; do not issue90000ADB
+ # commands to unlink45000shadercache files individually. Exact inventory and
+ # OWNER verification precede the same private-directory removal pattern.
+ for root in [d['incoming']+'/shaders',d['stage']+'/after-shaders']:
+  values=inventory(dev,root)
+  if values is not None:
+   require(valid_new('shaders',values,d,partial=root.startswith(d['incoming']+'/')),'owned shadercopy changed')
+   if OWNER not in values:
+    require(root.startswith(d['incoming']+'/') and valid_new('shaders',values,d,partial=True),'unowned shader directory')
+    dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',root+'/'+OWNER,d['token'])
+   cmd='set -eu; test -z "$(pidof "$3" || true)"; test "$(sha256sum "$1/"'+OWNER+' | cut -d" " -f1)" = "$2"; rm -r "$1"'
+   dev.app('sh','-c',cmd,'sh',root,d['owner_sha256'],PKG)
+
  for root,label in [(d['incoming']+'/overlay','overlay'),(d['incoming']+'/driver','driver'),(d['stage']+'/after-overlay','overlay'),(d['stage']+'/after-driver','driver')]:
   values=inventory(dev,root)
   if values is not None:require(valid_new(label,values,d,partial=root.startswith(d['incoming']+'/')),'owned staging changed')
@@ -249,6 +272,20 @@ def claim_pid(d,current,own):
   raise RuntimeError('unowned/multiple/replacement game PID')
  return current
 
+def check_storage(dev,output):
+ fields=dev.adb('shell','df','-k','/data/local/tmp').splitlines()[-1].split()
+ require(len(fields)>=6 and fields[3].isdecimal(),'unknown device free-space format')
+ device=int(fields[3])*1024;host=shutil.disk_usage(output).free
+ require(device>=MIN_FREE and host>=MIN_FREE,'8GiB host+device free required before mutation')
+ return {'device_free_bytes':device,'host_free_bytes':host,'required_each_bytes':MIN_FREE}
+
+def capture_bound(dev,d):
+ trace=DRIVER_DIR+'/shader-cache/'+d['trace_stem']+'.gfxr'
+ raw=dev.app('sh','-c','if test -f "$1"; then stat -c %s "$1"; else echo 0; fi','sh',trace)
+ require(raw.isdecimal(),'unknown owned capture size');d['last_trace_bytes']=int(raw)
+ if int(raw)>=TRACE_STOP_BYTES:
+  d['capture_safety_limit']='2GiB size stop trigger';raise RuntimeError('untrimmed capture size bound reached, no retry')
+
 def wait_game(dev,path,d,output):
  command=launch_command(d['serial'],output);d['launch_command']=command;d['launch_attempted']=True;journal(path,d)
  own=None;ambiguous=False;launcher=None
@@ -268,15 +305,17 @@ def wait_game(dev,path,d,output):
   return current
  try:
   with(output/'launch.log').open('w')as f:
-   launcher=subprocess.Popen(command,stdout=f,stderr=subprocess.STDOUT,cwd=R);deadline=time.monotonic()+120
+   launcher=subprocess.Popen(command,stdout=f,stderr=subprocess.STDOUT,cwd=R);deadline=time.monotonic()+GAME_BOUND_SECONDS
    while launcher.poll()is None:
     observe()
     log=dev.app('cat','files/runtime/native.log')
     current_start=own is not None and ('Android native start pid='+own+'\n')in log
-    if current_start:(output/'native.log').write_text(log)
+    if current_start:
+     (output/'native.log').write_text(log)
     if current_start and 'driverID=20' in log and not d.get('capture_stack_mapped'):capture_stack(dev,path,d,output,own)
     if current_start and ('FATAL' in log or 'native fault signal=' in log):
      d['native_failure_seen']=True;d['known_device_lost']='Vulkan GPU fence wait: -4' in log;journal(path,d);break
+    if current_start:capture_bound(dev,d)
     require(time.monotonic()<deadline,'one launcher deadline');time.sleep(.3)
    if not d.get('native_failure_seen'):observe()
    require(not d.get('native_failure_seen') and launcher.returncode==0,'Original native failure retained; not a game pass')
@@ -341,14 +380,14 @@ def transaction_identity(d,expected,path,serial):
  token=d['token'];require(re.fullmatch('[a-f0-9]{32}',token),'invalid transaction token')
  stage='files/runtime/.original-fork-'+token
  require(d['stage']==stage and d['incoming']==stage+'/incoming' and d['backup']==stage+'/backup' and d['transfer']=='/data/local/tmp/d2r-original-fork-'+token+'.tar' and d['owner_sha256']==hashlib.sha256((token+'\n').encode()).hexdigest() and d['remote_screenshot']=='/data/local/tmp/d2r-original-fork-'+token+'.png','unsafe transaction paths')
- require(d['old_overlay']==expected['baseline'] and d['old_driver'].get('libvulkan_panfrost.so')==expected['baseline35'][DRIVER_DIR+'/libvulkan_panfrost.so'] and OWNER not in d['old_driver'],'journal original directory differs')
+ require(d['old_overlay']==expected['baseline'] and d['old_driver'].get('libvulkan_panfrost.so')==expected['baseline35'][DRIVER_DIR+'/libvulkan_panfrost.so'] and OWNER not in d['old_driver'] and isinstance(d.get('old_shaders'),dict) and OWNER not in d['old_shaders'],'journal original directory differs')
  if 'local_tar'in d:require(Path(d['local_tar'])==path.parent/('owned-'+token+'.tar'),'unsafe local tar')
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--action',choices=['plan','run','restore'],default='plan');p.add_argument('--execute',action='store_true');p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--report',type=Path,required=True);a=p.parse_args()
  expected=proof();d=expected.copy();path=a.report.resolve();require(path.is_relative_to(R/'.local/logs'),'report must be private .local/logs')
  if a.action=='plan':
-  print(json.dumps({'offline_only':True,'driver':SO,'driver_ready':sha(DRIVER_READY),'resources':d['candidate'],'baseline35':d['baseline35'],'launch':launch_command(a.serial,path.parent),'frozen_inputs':d['frozen_inputs'],'scope':'ONE actual original ARM64 OFFSCREEN game+official VVL/sync diagnostic (not playable/presentation acceptance); c5ec/sharedOFF/legacyASTCOFF/originalBC+UI-only. Temporary source-closed debug APK+fresh rawNSO modules, full022d restore. Diagnostic cost NOT FPS comparison.'},indent=2));return
+  print(json.dumps({'offline_only':True,'driver':SO,'driver_ready':sha(DRIVER_READY),'resources':d['candidate'],'baseline35':d['baseline35'],'launch':launch_command(a.serial,path.parent),'frozen_inputs':d['frozen_inputs'],'capture_properties':capture_options('0'*32)[1],'bounds':{'game_seconds':GAME_BOUND_SECONDS,'size_stop_trigger_bytes':TRACE_STOP_BYTES,'free_each_bytes':MIN_FREE},'scope':'ONE actual original ARM64 OFFSCREEN game+official VVL/sync diagnostic (not playable/presentation acceptance); c5ec/sharedOFF/legacyASTCOFF/originalBC+UI-only. Temporary source-closed debug APK+fresh rawNSO modules, full022d restore. Diagnostic cost NOT FPS comparison.'},indent=2));return
  require(a.execute,'run/restore require --execute; no device touched');require(path.parent.is_dir(),'report parent must exist')
  if a.action=='restore':
   d=read(path);transaction_identity(d,expected,path,a.serial)
@@ -366,13 +405,13 @@ def main():
   if a.action=='restore':
    require(dev.app('cat',LOCK+'/owner')==d['token'],'not this resource lock');acquired=True;prepared=True
   else:
-   snapshot(dev,d)
+   snapshot(dev,d);d['storage_preflight']=check_storage(dev,path.parent);journal(path,d)
    require(dev.adb('shell','settings','get','global','enable_gpu_debug_layers') in ('0','null'),'external GPU layer is active')
    props=dev.adb('shell','getprop');require(not any(re.match(r'\[debug\.mesa\.panvk[^]]*\]: \[.+\]',x) for x in props.splitlines()),'nondefault PanVK properties: leave them unchanged')
    for q,h in d['frozen_inputs'].items():require(sha(q)==h,'frozen input changed')
    dev.stopped();dev.app('mkdir',LOCK);acquired=True;dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',LOCK+'/owner',d['token']);journal(path,d)
-   d['old_overlay']=inventory(dev,OVERLAY);d['old_driver']=inventory(dev,DRIVER_DIR)
-   require(d['old_overlay']==d['baseline'] and isinstance(d['old_driver'],dict) and d['old_driver'].get('libvulkan_panfrost.so')==d['baseline35'][DRIVER_DIR+'/libvulkan_panfrost.so'] and OWNER not in d['old_driver'],'original directories differ');journal(path,d)
+   d['old_overlay']=inventory(dev,OVERLAY);d['old_driver']=inventory(dev,DRIVER_DIR);d['old_shaders']=inventory(dev,SHADERS)
+   require(d['old_overlay']==d['baseline'] and isinstance(d['old_driver'],dict) and d['old_driver'].get('libvulkan_panfrost.so')==d['baseline35'][DRIVER_DIR+'/libvulkan_panfrost.so'] and OWNER not in d['old_driver'],'original directories differ');require(isinstance(d['old_shaders'],dict) and OWNER not in d['old_shaders'],'original shader directory ownership conflict');journal(path,d)
    dev.app('sh','-c','test ! -e "$1"','sh',d['stage']);dev.app('mkdir','-p',d['incoming'],d['backup']);prepared=True
    owner=path.parent/('owner-'+d['token']);owner.write_text(d['token']+'\n');local=path.parent/('owned-'+d['token']+'.tar');d['local_tar']=str(local);journal(path,d)
    with tarfile.open(local,'x') as tar:
@@ -380,6 +419,10 @@ def main():
     for n in d['candidate']:tar.add(common.safe(UI,n),arcname='overlay/'+n,recursive=False)
    owner.unlink();d['tar_sha256']=sha(local);journal(path,d)
    dev.adb('push',str(local),d['transfer']);require(dev.digest(d['transfer'])==d['tar_sha256'],'transfer hash differs');dev.stopped();dev.app('tar','xf',d['transfer'],'-C',d['incoming'])
+   dev.app('mkdir',d['incoming']+'/shaders')
+   dev.app('cp','-R',SHADERS+'/.',d['incoming']+'/shaders/')
+   require(inventory(dev,d['incoming']+'/shaders')==d['old_shaders'],'shadercopy incomplete')
+   dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',d['incoming']+'/shaders/'+OWNER,d['token'])
    capture_settings(dev,path,d)
    publish(dev,path,d);deploy_canonical(dev,path,d,path.parent);wait_game(dev,path,d,path.parent);d['actual_game_result']='offscreen-world-diagnostic-passed';journal(path,d)
  except BaseException as e:
@@ -401,10 +444,25 @@ def main():
   with(path.parent/'gfxrecon-info.json').open('w')as out:
    q=subprocess.run([str(GFXR_INFO),'--verbose',d['capture_raw']['local_path']],stdout=out,stderr=subprocess.STDOUT,timeout=180)
   d['official_info_returncode']=q.returncode;d['official_capture_info_valid']=q.returncode==0;journal(path,d)
+  with(path.parent/'convert.log').open('w')as out:
+   q=subprocess.run([str(GFXR_CONVERT),'--format','jsonl','--output',str(path.parent/'capture.jsonl'),d['capture_raw']['local_path']],stdout=out,stderr=subprocess.STDOUT,timeout=180)
+  d['official_convert_returncode']=q.returncode;d['official_capture_convert_valid']=q.returncode==0
+  if q.returncode==0:
+   synthetic=[];submits=[];first=None;functions=0
+   for line in (path.parent/'capture.jsonl').open():
+    row=json.loads(line);meta=row.get('meta',{});fn=row.get('function',{})
+    if meta.get('name')in('BeginResourceInitCommand','EndResourceInitCommand','InitBufferCommand','InitImageCommand'):synthetic.append(meta['name'])
+    if fn:
+     functions+=1
+     if first is None:first=fn['name']
+     if fn['name']in('vkQueueSubmit','vkQueueSubmit2'):submits.append({'file_index':row['index'],'name':fn['name'],'return':fn.get('return')})
+   d['recorded_API_functions']=functions;d['recorded_submits']=submits;d['first_recorded_function']=first;d['trim_reconstruction_commands']=synthetic
+   d['untrimmed_prefix_verified']=first=='vkCreateInstance' and not synthetic and bool(submits)
+  journal(path,d)
  if d.get('capture_raw') and not d['capture_raw'].get('temp_removed'):
   d['cleanup_errors'].append('owned trace temp retained, exact path in capture_raw; no unverified removal');journal(path,d)
  print(json.dumps(d,indent=2))
  if a.action=='restore':require(d.get('cleanup_complete') and d.get('all35_restored') and not d['cleanup_errors'],'recovery incomplete')
- else:require(d.get('capture_stack_mapped') and d.get('capture_collected') and d.get('official_capture_info_valid') and d.get('capture_settings_restored') and d.get('cleanup_complete') and d.get('all35_restored') and not d['cleanup_errors'],'official failure capture incomplete; actual game status retained independently')
+ else:require(d.get('capture_stack_mapped') and d.get('capture_collected') and d.get('official_capture_info_valid') and d.get('official_capture_convert_valid') and d.get('untrimmed_prefix_verified') and not d.get('capture_safety_limit') and d.get('capture_settings_restored') and d.get('cleanup_complete') and d.get('all35_restored') and not d['cleanup_errors'],'official untrimmed capture incomplete/safety-limited; originalfailure preserved, no retry')
 
 if __name__=='__main__':main()
