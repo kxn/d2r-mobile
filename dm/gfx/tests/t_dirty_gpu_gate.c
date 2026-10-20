@@ -55,8 +55,13 @@ static void *complete_after_real_signal_sleep(void *unused) {
     // Functional Linux handshake, not a timing probe. A positive real WAKE
     // return proves this SIGSEGV handler entered the kernel wait. Keep the
     // gate unchanged for this wake so the handler must recheck/spuriously wait.
-    while(!syscall(SYS_futex,(uint32_t *)gate->pages[0].word,
-        FUTEX_WAKE_PRIVATE,1,NULL,NULL,0))sched_yield();
+    long awakened;
+    do {
+      awakened=syscall(SYS_futex,(uint32_t *)gate->pages[0].word,FUTEX_WAKE_PRIVATE,1,NULL,NULL,0);
+      if(awakened<0)die("Owned signal-sleep wake syscall failed");
+      if(!awakened)sched_yield();
+    }while(!awakened);
+    CHECK(awakened==1);
     atomic_store(&signal_kernel_sleep_confirmed,1);
     nvn_dirty_gpu_gate_complete(gate);return NULL;
 }
