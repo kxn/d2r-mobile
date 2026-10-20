@@ -137,4 +137,76 @@ class MallocToolTests(unittest.TestCase):
     def test_active_tracer_prevents_lifecycle_actions(self):self.exercise_phase(tracer=True)
     def test_official_viewer_failure_keeps_cleanup_and_distinct_failure(self):self.exercise_phase(viewer_error=True)
 
+class FailedLaunchLifecycleTests(unittest.TestCase):
+    def exercise(self,proven):
+        events=[]
+        class Dev:
+            pid='12345'
+            def adb(self,*args):
+                if args==('shell','pidof '+t.PKG+' || true'):return self.pid
+                if args==('shell','am','force-stop',t.PKG):events.append('stop');self.pid=''
+                return ''
+            def app(self,*args):
+                if args==('id','-u'):return '10311'
+                if args==('cat','/proc/12345/status'):return 'Uid:\t10311\t10311\t10311\t10311\nTracerPid:\t0\n'
+                return ''
+        class Launcher:
+            returncode=1
+            def __init__(self,*args,**kwargs):pass
+            def poll(self):return 1
+        def pause(dev,out,pid,uid,journal):
+            events.append('pause')
+            if not proven:raise RuntimeError('unknown world remains paused')
+            result={'accepted':True,'never_world_confirmed':True,'no_save_required':True};journal(result);return result
+        dev=Dev()
+        with tempfile.TemporaryDirectory()as directory,patch.object(t.subprocess,'Popen',Launcher),patch.object(h,'pause_failed_cold_start',side_effect=pause):
+            out=Path(directory)/'phase'
+            with self.assertRaises(RuntimeError):t.phase_game(dev,out,{'kind':'control'},{'serial':'10CG570J59001U1','malloc_debug':{'mode':'control-only'}},'owned')
+            report=json.loads((out/'phase.json').read_text())
+        self.assertEqual('stop'in events,proven)
+        if proven:
+            self.assertTrue(report['never_world_paused_then_stopped']);self.assertNotIn('fresh_save_then_stopped',report)
+        else:self.assertEqual(dev.pid,'12345')
+    def test_never_world_cold_failure_stops_without_false_save2(self):self.exercise(True)
+    def test_unknown_world_cold_failure_remains_paused_no_force_stop(self):self.exercise(False)
+
+class ColdCleanupTests(unittest.TestCase):
+    def run_case(self,kind):
+        events=[]
+        class Dev:
+            paused=False;observed=0
+            def adb(self,*args):
+                if args==('shell','pidof '+t.PKG+' || true'):return '54321' if kind=='replacement' and self.paused else '12345'
+                if args==('shell','input','keyevent','HOME'):self.paused=True;events.append('HOME');return ''
+                if args[:3]==('shell','dumpsys','activity'):
+                    pkg='other.package' if kind=='wrongactivity' else t.PKG
+                    return '* Hist #0: ActivityRecord{abc u0 '+pkg+'/.MainActivity t3}\n  state=STOPPED\n'
+                if args[:3]==('shell','am','start'):events.append('foreground');return ''
+                raise AssertionError(args)
+            def app(self,*args):
+                if args==('cat','/proc/12345/status'):return 'Uid:\t10311\t10311\t10311\t10311\nTracerPid:\t0\n'
+                if args==('cat','files/runtime/native.log'):
+                    return 'Android native start pid=12345\n'+('Android background save asked=1 commits=2 froze=1\n' if kind=='savedworld' and self.paused else '')
+                if args==('cat','files/runtime/game-state.jsonl'):
+                    self.observed+=1
+                    return json.dumps({'time_ns':1 if kind=='stale' else self.observed,'valid':kind in ('worldunknown','savedworld')})+'\n'
+                raise AssertionError(args)
+        with tempfile.TemporaryDirectory()as directory,patch.object(h.time,'monotonic',side_effect=[0,6,20,40]),patch.object(h.time,'sleep'):
+            dev=Dev();journal=[]
+            if kind in ('wrongactivity','worldunknown','stale','replacement'):
+                with self.assertRaises(RuntimeError):h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append)
+                self.assertIn('HOME',events)
+            else:
+                result=h.pause_failed_cold_start(dev,Path(directory),'12345',10311,journal.append)
+                self.assertTrue(result['accepted'])
+                self.assertEqual(result.get('never_world_confirmed',False),kind=='menu')
+                self.assertEqual(result.get('save_commits'),2 if kind=='savedworld' else None)
+        return events
+    def test_fresh_original_false_world_and_STOPPED_no_fake_save(self):self.run_case('menu')
+    def test_real_world_requires_original_fresh_save2(self):self.run_case('savedworld')
+    def test_world_without_save_is_paused_not_accepted(self):self.run_case('worldunknown')
+    def test_stale_state_cannot_prove_no_world(self):self.run_case('stale')
+    def test_other_activity_STOPPED_is_not_our_pause(self):self.run_case('wrongactivity')
+    def test_replacement_after_HOME_never_accepted(self):self.run_case('replacement')
+
 if __name__=='__main__':unittest.main()

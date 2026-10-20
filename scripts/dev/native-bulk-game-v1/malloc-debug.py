@@ -167,3 +167,65 @@ def analyze_after_game_stop(out,cfg,state,journal):
         state['accepted']=False;state['errors'].append(repr(error))
         state['stage']='official-malloc-debug-viewer-failed-dump-preserved'
     journal(dict(state));return state
+
+def pause_failed_cold_start(dev,out,pid,uid,journal):
+    """Original HOME/onPause; distinguish a saved world from a proven menu.
+
+    A fresh original state observation, not an inferred lack of save messages,
+    proves the no-world case. Unknown state remains paused and unaccepted.
+    """
+    out=Path(out);state={'PID':int(pid),'accepted':False,'pause_requested':False}
+    def owned():
+        if dev.adb('shell','pidof '+PKG+' || true')!=pid:raise RuntimeError('cold cleanup PID changed')
+        s=dev.app('cat','/proc/'+pid+'/status')
+        ids=re.search(r'^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',s,re.M)
+        tracer=re.search(r'^TracerPid:\s+(\d+)',s,re.M)
+        if not ids or ids.groups()!=(str(uid),)*4 or not tracer or tracer[1]!='0':raise RuntimeError('cold cleanup UID/tracer mismatch')
+    def observations():
+        try:text=dev.app('cat','files/runtime/game-state.jsonl')
+        except Exception:return [],''
+        try:return [json.loads(line)for line in text.splitlines()if line.strip()],text
+        except (ValueError,TypeError):return [],text
+    def stopped(text):
+        # Standard ActivityTaskManager record scope; never accept a different
+        # activity's STOPPED line or merely an unresumed/background process.
+        blocks=re.split(r'(?m)(?=^\s*\* Hist #\d+: ActivityRecord\{)',text)
+        return any(re.match(r'\s*\* Hist #\d+: ActivityRecord\{[^\n]* '+re.escape(PKG)+r'/\.MainActivity(?:\s|\})',b)and re.search(r'\b(?:mState|state)=STOPPED\b',b)for b in blocks)
+    owned();log=dev.app('cat','files/runtime/native.log')
+    if 'Android native start pid='+pid+'\n'not in log:raise RuntimeError('cold cleanup actual native log differs')
+    # Foreground the same existing Activity, as the original save helper does;
+    # no restart and no second game launch is allowed.
+    dev.adb('shell','am','start','-W','-n',PKG+'/.MainActivity');owned()
+    first,_=observations();initial=first[-1].get('time_ns',0)if first else 0
+    deadline=time.monotonic()+5;fresh=[];before=''
+    while True:
+        owned();fresh,before=observations()
+        if fresh and isinstance(fresh[-1].get('time_ns'),int)and fresh[-1]['time_ns']>initial:break
+        if time.monotonic()>=deadline:break
+        time.sleep(.25)
+    (out/'cold-cleanup-before-state.jsonl').write_text(before)
+    offset=len(dev.app('cat','files/runtime/native.log'))
+    owned();dev.adb('shell','input','keyevent','HOME');state['pause_requested']=True;journal(dict(state))
+    deadline=time.monotonic()+12
+    while True:
+        owned();current=dev.app('cat','files/runtime/native.log')
+        if len(current)<offset:raise RuntimeError('cold cleanup native log reset')
+        activity=dev.adb('shell','dumpsys','activity','activities')
+        (out/'cold-cleanup-activity.txt').write_text(activity)
+        (out/'cold-cleanup-native.log').write_text(current)
+        saved=re.search(r'^.*Android background save asked=1 commits=2[^\n]*',current[offset:],re.M)
+        if stopped(activity):
+            after,text=observations();(out/'cold-cleanup-after-state.jsonl').write_text(text)
+            if saved:
+                state.update(accepted=True,fresh_original_lifecycle_save=True,save_commits=2,confirmation=saved.group(0))
+                journal(dict(state));return state
+            # valid is the existing dm_ingame_now/dm_hud_get world snapshot.
+            # Require fresh progress before HOME, never absence/one stale row.
+            fresh_false=(initial>0 and fresh and fresh[-1].get('time_ns',0)>initial and after and after[-1].get('time_ns',0)>=fresh[-1]['time_ns']and all(row.get('valid')is False for row in [*first,*fresh,*after]))
+            if fresh_false and 'PanelManager OpenPanel HUDPanel'not in current and 'Android background save 'not in current[offset:]:
+                state.update(accepted=True,never_world_confirmed=True,original_Activity_STOPPED=True,no_save_required=True)
+                journal(dict(state));return state
+        if time.monotonic()>=deadline:break
+        time.sleep(.25)
+    state['unknown_state_left_paused_no_force_stop']=True;journal(dict(state))
+    raise RuntimeError('cold start pause requested but original world/save state not proven; no force-stop')

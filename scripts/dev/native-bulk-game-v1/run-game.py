@@ -238,6 +238,7 @@ def phase_game(dev, out, phase, p, token):
         launch = read(out / 'launch.json')
         require(own and launch['pid'] == int(own) and launch.get('original_hud') is True,
                 'original game HUD / owned PID mismatch')
+        d['launch_HUD_verified']=True
         uid = dev.app('id', '-u')
         status = dev.app('cat', '/proc/' + own + '/status')
         ids = re.search(r'^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', status, re.M)
@@ -336,16 +337,24 @@ def phase_game(dev, out, phase, p, token):
                     require(tracer and tracer[1] == '0' and pid() == own, 'game tracer/nonowned PID prevents lifecycle cleanup')
                     d['game_cleanup_independent_of_profile_health'] = True
                     save()
-                cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
-                       '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
-                with (out / 'fresh-save.log').open('w') as f:
-                    subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
-                fresh = read(out / 'fresh-save.json')
-                require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
-                        and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
+                if p.get('malloc_debug') and not d.get('launch_HUD_verified'):
+                    uid=dev.app('id','-u')
+                    require(uid.isdecimal() and 10000<=int(uid)<200000,'ordinary cold cleanup UID required')
+                    fresh=malloc.pause_failed_cold_start(dev,out,own,int(uid),lambda value:(d.update(cold_start_cleanup=value),save()))
+                    require(fresh.get('accepted') and pid()==own,'cold lifecycle state not proven')
+                    d['never_world_no_save_required']=fresh.get('never_world_confirmed',False)
+                else:
+                    cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
+                           '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
+                    with (out / 'fresh-save.log').open('w') as f:
+                        subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
+                    fresh = read(out / 'fresh-save.json')
+                    require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
+                            and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
                 dev.adb('shell', 'am', 'force-stop', PKG)
                 require(not pid(), 'owned game process still alive')
-                d['fresh_save_then_stopped'] = True
+                if d.get('never_world_no_save_required'):d['never_world_paused_then_stopped']=True
+                else:d['fresh_save_then_stopped'] = True
             else:
                 d['already_exited_no_save_restart'] = True
             save()
