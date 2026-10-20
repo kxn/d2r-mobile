@@ -156,6 +156,7 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
           'native_resources_compiled':args.native_resources,
+          'native_window_app_fixture_compiled':'DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE:BOOL=ON' in (native_build/'CMakeCache.txt').read_text(),
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,
