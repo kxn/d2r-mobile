@@ -4,6 +4,24 @@ from pathlib import Path
 p=Path(__file__).with_name('run-panvk-minegraph-game.py');s=importlib.util.spec_from_file_location('candidate',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 class Dev:
  def stopped(self):pass
+class FilenameDev:
+ def __init__(self,bad=None):self.bad=bad
+ def app(self,*args):
+  root='files/runtime/temp';names=[root+'/ordinary.bin',root+'/Diablo II/GameLogs/D2261016.txt',root+'/Diablo II/GameLogs/D2261020.txt']
+  if args[0]=='sh':return 'DIR'
+  if args[0]=='find':return '' if args[-1]=='l' else '\n'.join(names)
+  assert args[0]=='sha256sum' and list(args[1:])==names
+  rows=[('c'*64)+'  '+n for n in names]
+  if self.bad=='digest':rows[1]='not-a-hash  '+names[1]
+  if self.bad=='duplicate':rows[1]=rows[0]
+  return '\n'.join(rows)
+# Actual inventory receives same-shaped real source filenames, not a stand-in parser.
+parsed=m.inventory(FilenameDev(),'files/runtime/temp')
+assert parsed=={'ordinary.bin':'c'*64,'Diablo II/GameLogs/D2261016.txt':'c'*64,'Diablo II/GameLogs/D2261020.txt':'c'*64}
+for bad in ['digest','duplicate']:
+ try:m.inventory(FilenameDev(bad),'files/runtime/temp')
+ except RuntimeError:pass
+ else:raise AssertionError('malformed SHA inventory accepted: '+bad)
 n=0
 with tempfile.TemporaryDirectory()as tmp:
  for presence in itertools.product([False,True],repeat=3):
@@ -45,4 +63,4 @@ with tempfile.TemporaryDirectory()as tmp:
  except RuntimeError:pass
  else:raise AssertionError('corrupt driver receipt accepted')
  m.READY_SHA=good;n+=1
-print(json.dumps({'passed':True,'restore_and_idempotence_cases':32,'tamper_rejections':3,'driver_receipt_negative_control':True,'cases':n,'device_access':False}))
+print(json.dumps({'passed':True,'restore_and_idempotence_cases':32,'tamper_rejections':3,'driver_receipt_negative_control':True,'cases':n+3,'actual_inventory_regression_cases':3,'actual_filename_inventory_regression':True,'malformed_digest_and_duplicate_rejected':True,'device_access':False}))

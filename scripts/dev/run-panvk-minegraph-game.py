@@ -17,6 +17,21 @@ APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4
 LOCK='files/runtime/.astc6-full-controller-lock'
 CHAIN='cbd8d2da0b0f';OWNER='.minegraph-game-owner';DIRS={'driver':'files/runtime/vulkan-panfrost','temp':'files/runtime/temp','cache':'cache'}
 LAYER_KEYS=['enable_gpu_debug_layers','gpu_debug_app','gpu_debug_layers','gpu_debug_layers_gles','gpu_debug_layer_app']
+# Same existing inventory/CAS checks; preserve real Diablo II paths containing spaces.
+def inventory(dev,path):
+ require(dev.app('sh','-c','if test -L "$1"; then exit 5; fi; if test -d "$1"; then echo DIR; elif test -e "$1"; then exit 6; fi','sh',path) in ('','DIR'),'unknown directory kind')
+ kind=dev.app('sh','-c','if test -d "$1"; then echo DIR; fi','sh',path)
+ if not kind:return None
+ require(not dev.app('find',path,'-type','l'),'directory contains symlink')
+ files=dev.app('find',path,'-type','f').splitlines();require(all(n.startswith(path+'/') and '..'not in Path(n).parts for n in files),'unsafe directory inventory')
+ if not files:return {}
+ lines=[]
+ # Keep each ADB shell/run-as request bounded: an existing driver cache can
+ # contain hundreds of paths and exceed the shell service command limit.
+ for start in range(0,len(files),128):lines.extend(dev.app('sha256sum',*files[start:start+128]).splitlines())
+ result={n.removeprefix(path+'/'):h for h,n in (line.split(None,1)for line in lines)}
+ require(len(result)==len(files) and all(re.fullmatch('[a-f0-9]{64}',h)for h in result.values()),'incomplete directory hashes');return result
+
 def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':p.stat().st_size}
 def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)

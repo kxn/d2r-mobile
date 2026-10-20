@@ -11,3 +11,5 @@
 既有 direct ICD 不组成 loader validation layers，因此这里没有 VVL 通过声明。原层设置不改，截图待人工验收；HUD 到达也不是整个游戏或性能通过。
 
 `test_panvk_minegraph_game.py` 对实际 restore 函数检查目录存在/缺失、部分发布后恢复及幂等32组、篡改拒绝3组、错误驱动凭据拒绝1组；不执行 ADB。
+
+初次 v1 在发布/启动前发现实际游戏 `temp/Diablo II/GameLogs/...` 文件名包含空格；继承 inventory 的 SHA 行解析无 maxsplit 会异常。后继只将 hash 与完整路径按第一个空白处分开，路径数量、SHA、CAS 与 owner 检查均保留；另有同形真实路径及坏 SHA/重复路径负控，v1 失败记录不改。
