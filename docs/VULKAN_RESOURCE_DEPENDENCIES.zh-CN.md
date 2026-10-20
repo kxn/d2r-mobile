@@ -1834,3 +1834,13 @@ B2T 本来就必须结束 render pass；现在先结束已有 pass、完成窗�
 last/history、dynamic UBO、texture recipe/snapshot、retained Pool地址与page
 bitmap证明均保留，不以descriptor命中跳过真实资源工作。实际CPU/热/FPS
 收益待原官方同条件对照；native GENERAL策略与实验默认开关不变。
+
+### Submission 内已持有的物理 span 几何复用
+
+真实 6f/f830 99Hz 样本的 590 个 NvN 样本中，`pool_span_resolve` 自叶 37 个：18 来自实际 Buffer lookup 的 retained fallback，17 来自 operation admission，2 来自 compute history；33 个 PC 位于链节点 begin/end 读取及比较。它们只定位重复查找，不能当作全部可省的时间或调用次数。26b 保留的单槽仍先试；新 8 项 `(owner,span)` 集合仅在它失配时查询，不能把父 inclusive 比例相加。
+
+集合只由本 submission 的真实 Buffer lookup 在取得 `pool_gpu_access` 引用、执行初始化和原使用登记后填入；admission 只借用几何证明，绝不预先登记未来使用。原 single-slot hit 不查询或维护新集合，set hit 不再扫描维护；原链查找成功及 slow 实际使用才去重插入。`pool_address` 复用原已检查 epoch；admission 在 resources 锁内首次单槽失配才检查一次，本次 plan 的后续查询复用它。新增 136 B/submit_resources（128 B 指针对 + 8 B count/next），复用原 epoch，无 per-pool/node 数据、新锁或堆分配。
+
+成功只证明一个 immutable VkBuffer span 完整包含逻辑范围，仍验证 handle、generation、pool/physical bounds；初始化、dirty/authority、使用页/stage 和 hazard 全照旧。epoch 变化先清槽，submission reclaim/reuse/reset 也清槽；引用寿命继续按真实完成和原回收保护。0 长度、whole/reference、hole、跨 span、未知或 overflow 都回原路径；不能拼接相邻 Buffer，不能把 native image-only 当成 Buffer 已物化。未 retained 的首次 admission 不填跨操作悬指针。
+
+set hit 的收益条件是重复范围仍落在本 submission 已实际消费的最近 8 个 span；miss 新增最多 8 项比较，插入另有有界去重，稀疏/超过容量的场景可能无收益。已有源码/Host oracle 不等于候选已实测省 CPU/FPS/热量；使用原官方工具作必要真机对照后才可量化。
