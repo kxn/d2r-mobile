@@ -19,6 +19,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeOperationMode(int mode);
     private static native void nativeOpusMode(int mode);
     private static native void nativeWatch(int type, int unitClass);
+    private static native int nativeSharedImageTests(String directory, int mode);
+    private static boolean sharedImageFixtureStarted;
+    private boolean sharedImageFixture;
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
@@ -133,6 +136,27 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        // Isolated functional oracle: choose the same app-local ICD before any
+        // game/Surface/device exists; recreation and new Intents cannot rerun it.
+        if (getIntent().hasExtra("shared_image_test")) {
+            String kind = getIntent().getStringExtra("shared_image_test");
+            int mode = "nc-gate".equals(kind) ? 0 : "retile".equals(kind) ? 1 : -1;
+            if (mode < 0 || hostStarted || sharedImageFixtureStarted ||
+                    !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().hasExtra("run_vulkan_tests") || getIntent().getBooleanExtra("run_vulkan_tests", true) ||
+                    !getIntent().getBooleanExtra("async_submit", false) ||
+                    !"panvk".equals(getIntent().getStringExtra("vulkan_provider")) ||
+                    !getIntent().hasExtra("validate") || getIntent().getBooleanExtra("validate", true) ||
+                    !getIntent().hasExtra("vulkan_test_validation") || getIntent().getBooleanExtra("vulkan_test_validation", true))
+                throw new IllegalArgumentException("Shared image oracle requires one cold explicit nc-gate/retile, PanVK, async, game/tests/validation=false");
+            sharedImageFixtureStarted = sharedImageFixture = true;
+            File fixtureRoot = new File(getFilesDir(), "runtime");
+            if (!fixtureRoot.isDirectory() && !fixtureRoot.mkdirs()) throw new IllegalStateException("runtime directory");
+            nativeProbe(fixtureRoot.getAbsolutePath());
+            nativeVulkanDriver("panvk", new File(fixtureRoot, "vulkan-panfrost").getAbsolutePath(), null);
+            new Thread(() -> nativeSharedImageTests(fixtureRoot.getAbsolutePath(), mode), "shared-image-test").start();
+            return;
+        }
         // Select the codec before construction and retain it for each decoder's
         // lifetime. Explicit SDK/shadow references remain available; Activity
         // recreation cannot switch an already advanced decoder's backend.
@@ -293,6 +317,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         input.requestFocus();
     }
     @Override protected void onDestroy() {
+        if (sharedImageFixture) { super.onDestroy(); return; }
         if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null)
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
         keyboardHandler.removeCallbacks(keyboardPoll);
@@ -303,6 +328,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (sharedImageFixture || intent.hasExtra("shared_image_test")) {
+            android.util.Log.w("D2RPool", "Shared image oracle is cold-process-only; ignoring new Intent");
+            return;
+        }
         if (intent.hasExtra("shared_guest_heap")) {
             android.util.Log.w("D2RPool", "shared_guest_heap is startup-only; cold restart required");
             intent.removeExtra("shared_guest_heap");
@@ -483,6 +512,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onResume() {
         super.onResume();
+        if (sharedImageFixture) return;
         resumed = true;
         lastThermalStatus = -1;
         thermalPolicy.setActive(started);
@@ -505,13 +535,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onTrimMemory(int level) {
         super.onTrimMemory(level);
+        if (sharedImageFixture) return;
         nativeTrimMemory();
     }
     @Override public void onLowMemory() {
         super.onLowMemory();
+        if (sharedImageFixture) return;
         nativeTrimMemory();
     }
     @Override protected void onPause() {
+        if (sharedImageFixture) { super.onPause(); return; }
         resumed = false;
         thermalPolicy.setActive(false);
         if (textDialog != null) textDialog.dismiss();

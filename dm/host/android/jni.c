@@ -13,6 +13,8 @@
 #include "dm_custom.h"
 #include <android/native_window_jni.h>
 #include <jni.h>
+#include <stdatomic.h>
+#include "fixture_output.h"
 #include <sys/stat.h>
 #include <unistd.h>
 #include <math.h>
@@ -774,4 +776,43 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
   (*env)->ReleaseStringUTFChars(env, directory, path);
   int dm_vulkan_test_main(void);
   dm_vulkan_test_main();
+}
+
+// Separate owned test selector; never freezes game startup policy or touches
+// an already initialized Vulkan device. The normal nativeTests path is unchanged.
+JNIEXPORT jint JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedImageTests(
+    JNIEnv *env,jclass klass,jstring directory,jint mode) {
+  (void)klass;
+#ifdef DM_VULKAN_SHARED_POOLS
+  static _Atomic int selected;
+  extern int vk_loader_is_initialized(void);
+  if(mode<0 || mode>1 || vk_loader_is_initialized() || atomic_exchange(&selected,1))
+    return 78;
+  const char *path=(*env)->GetStringUTFChars(env,directory,NULL);
+  if(!path) return 79;
+  char file[4096];
+  int count=snprintf(file,sizeof file,"%s/shared-image-test.log",path);
+  if(count<0 || (size_t)count>=sizeof file) _exit(89);
+  int output_error=dm_fixture_output_open(file);if(output_error) _exit(output_error);
+  printf("{\"shared_image_app_configuration\":true,\"uid\":%u,\"mode\":\"%s\","
+         "\"validation_layer\":\"disabled_explicitly\",\"synchronization_validation\":\"disabled_explicitly\","
+         "\"game_modules_executed\":false}\n",(unsigned)getuid(),mode?"retile":"nc-gate");
+  vk_pool_window_bytes(0);vk_pool_mirror_reference(0);mtl_pool_defer_publication(0);
+  if(setenv("PANVK_DM_HOST_IMPORT","true",1) || setenv("DM_VULKAN_SHARED_POOLS","1",1) ||
+     setenv("DM_VULKAN_ASYNC","1",1) ||
+     setenv(mode?"DM_SHARED_IMAGE_DIRTY_FIXTURE":"DM_SHARED_IMAGE_NC_GATE_FIXTURE","1",1) ||
+     (mode && setenv("DM_SHARED_IMAGE_COPY_TEST","1",1)) ||
+     unsetenv("DM_VULKAN_VALIDATE") || unsetenv("DM_VULKAN_SYNC_VALIDATE"))
+    die("Shared image fixture cold environment");
+  count=snprintf(file,sizeof file,"%s/vulkan-fixture",path);
+  if(count<0 || (size_t)count>=sizeof file) _exit(89);
+  if(setenv("DM_VULKAN_SHADERS",file,1) || setenv("DM_CAPTURE_TEST_DIR",path,1))
+    die("Shared image fixture paths");
+  (*env)->ReleaseStringUTFChars(env,directory,path);
+  int dm_vulkan_test_main(void);int rc=dm_vulkan_test_main();
+  printf("{\"shared_image_app_terminal\":true,\"mode\":\"%s\",\"rc\":%d,\"game_modules_executed\":false}\n",mode?"retile":"nc-gate",rc);
+  return rc;
+#else
+  (void)env;(void)directory;(void)mode;return 77;
+#endif
 }
