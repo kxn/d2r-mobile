@@ -20,3 +20,6 @@ void vk_loader_check_device(VkPhysicalDevice physical,int driver_properties);
 
 // Debug-only fixture result; never initializes a device or changes selection.
 int vk_loader_debug_identity_verified(void);
+
+// Cached provider decision, used only for official validation startup output.
+int vk_loader_debug_layers_active(void);

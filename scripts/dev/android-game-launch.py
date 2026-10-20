@@ -30,7 +30,7 @@ parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
-parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk'],help='cold explicit system/Adreno-tools/PanVK direct ICD; requires separately verified private driver')
+parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk','panvk-layered-debug'],help='cold explicit system/Adreno-tools/PanVK direct ICD; requires separately verified private driver')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
@@ -119,6 +119,8 @@ if args.attach and (args.shared_guest_heap is not None or args.vulkan_provider i
     parser.error('--shared-guest-heap/--vulkan-provider/custom-driver are startup-only and cannot be used with --attach')
 if args.custom_vulkan_driver and args.vulkan_provider not in (None,'adreno'):
     parser.error('--custom-vulkan-driver conflicts with --vulkan-provider other than adreno')
+if args.vulkan_provider=='panvk-layered-debug' and (not args.validate or args.shared_guest_heap or args.legacy_astc_copy):
+    parser.error('Layered PanVK is diagnosis only: --validate, private heap, original encoding required')
 if args.vulkan_provider=='panvk' and args.validate:
     parser.error('PanVK direct ICD does not compose loader validation')
 if args.attach and args.legacy_astc_copy is not None:
@@ -343,7 +345,7 @@ while time.monotonic() < deadline:
                     if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
                         raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
                     if args.vulkan_provider is not None:
-                        marker={'system':'[vulkan loader] system','adreno':'[vulkan loader] custom=','panvk':'[vulkan loader] provider=panvk direct ICD='}[args.vulkan_provider]
+                        marker={'system':'[vulkan loader] system','adreno':'[vulkan loader] custom=','panvk':'[vulkan loader] provider=panvk direct ICD=','panvk-layered-debug':'PanVK layered private ICD mapping verified'}[args.vulkan_provider]
                         if marker not in log:raise RuntimeError('Actual Vulkan provider did not match explicit request')
                     if not args.attach and args.shared_guest_heap is False and state.get('guest_heap',{}).get('shared') is not False:
                         raise RuntimeError('Actual guest heap does not match explicit private request')
@@ -384,7 +386,7 @@ while time.monotonic() < deadline:
                               'requested_legacy_astc_copy':args.legacy_astc_copy,
                               'actual_guest_heap':state.get('guest_heap'),
                               'requested_vulkan_provider':args.vulkan_provider or ('adreno' if args.custom_vulkan_driver else 'system'),
-                              'actual_vulkan_provider':('panvk' if '[vulkan loader] provider=panvk direct ICD=' in log else 'adreno' if '[vulkan loader] custom=' in log else 'system' if '[vulkan loader] system' in log else 'unknown'),
+                              'actual_vulkan_provider':('panvk-layered-debug' if 'PanVK layered private ICD mapping verified' in log else 'panvk' if '[vulkan loader] provider=panvk direct ICD=' in log else 'adreno' if '[vulkan loader] custom=' in log else 'system' if '[vulkan loader] system' in log else 'unknown'),
                               'requested_pool_window_bytes':args.pool_window_bytes,
                               'requested_defer_pool_publication':args.defer_pool_publication,
                               'actual_defer_pool_publication':state.get('pool_publication',{}).get('deferred',False),

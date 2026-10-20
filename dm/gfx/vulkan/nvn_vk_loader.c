@@ -22,6 +22,7 @@ static void *driver_tools,*custom_loader;
 static char layered_debug_library[PATH_MAX];
 static int layered_debug_identity_verified;
 int vk_loader_debug_identity_verified(void) { return layered_debug_identity_verified; }
+int vk_loader_debug_layers_active(void) { return provider==DRIVER_PANVK_LAYERED_DEBUG; }
 
 static void directory_copy(char *dst,const char *src) {
   if(!src || !*src) { dst[0]=0;return; }
@@ -118,8 +119,8 @@ void vk_loader_initialize(void) {
       const char *driver_name=provider==DRIVER_PANVK_LAYERED_DEBUG?"libvulkan_panfrost.so":"libvulkan_freedreno.so";
       library_path(driver_path,driver_directory,driver_name);
       if(provider==DRIVER_PANVK_LAYERED_DEBUG) {
-        if(!getenv("DM_VULKAN_LAYER_PROBE") || !getenv("DM_VULKAN_VALIDATE"))
-          die("Layered PanVK is a cold validation-tool fixture only");
+        if(!getenv("DM_VULKAN_VALIDATE"))
+          die("Layered PanVK requires explicit cold validation mode");
         panvk_shader_cache(driver_path);
         strcpy(layered_debug_library,driver_path);
       }

@@ -23,7 +23,7 @@ fi
 cmake -S "$source_dir" -B "$source_dir/build" -DZLIB_COMPAT=ON \
   -DZLIB_ENABLE_TESTS=OFF -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release \
   > .local/logs/native-art-zlibng-build.log 2>&1
-cmake --build "$source_dir/build" -j4 >> .local/logs/native-art-zlibng-build.log 2>&1
+cmake --build "$source_dir/build" -j2 >> .local/logs/native-art-zlibng-build.log 2>&1
 export LD_LIBRARY_PATH="$source_dir/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 romfs="${DM_ROMFS_SRC:-$DM_ROOT/data/switch/3.3.94012/Update/RomFS}"
 python3 dm/ios/tools/gen_assets.py "$romfs"

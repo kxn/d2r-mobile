@@ -1335,6 +1335,9 @@ static void init_device(void) {
                      VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                      VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
       .pfnUserCallback = validation_message};
+  // Official active-features banner is INFO. Only the explicit private-driver
+  // validation route subscribes it; ordinary/provider defaults are unchanged.
+  if(vk_loader_debug_layers_active()) debug.messageSeverity|=VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
   VkValidationFeatureEnableEXT sync_feature =
       VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
   VkValidationFeaturesEXT validation = {

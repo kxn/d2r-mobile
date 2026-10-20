@@ -276,12 +276,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!hostStarted) {
             String provider = getIntent().getStringExtra("vulkan_provider");
             if (provider == null) provider = getIntent().getBooleanExtra("custom_vulkan_driver", false) ? "adreno" : "system";
-            if (!"system".equals(provider) && !"adreno".equals(provider) && !"panvk".equals(provider))
-                throw new IllegalArgumentException("vulkan_provider must be system, adreno or panvk");
+            if (!"system".equals(provider) && !"adreno".equals(provider) && !"panvk".equals(provider) && !"panvk-layered-debug".equals(provider))
+                throw new IllegalArgumentException("unknown vulkan_provider");
             if ("panvk".equals(provider) && getIntent().getBooleanExtra("validate", false))
                 throw new IllegalArgumentException("PanVK direct ICD does not compose loader validation");
+            if ("panvk-layered-debug".equals(provider) && (!getIntent().getBooleanExtra("validate", false) ||
+                    getIntent().getBooleanExtra("shared_guest_heap", false) ||
+                    getIntent().getBooleanExtra("legacy_astc_copy", false)))
+                throw new IllegalArgumentException("Layered PanVK game diagnostic requires validation, private heap and original resource encoding");
             nativeVulkanDriver(provider, "system".equals(provider) ? null :
-                    new File(root, "panvk".equals(provider) ? "vulkan-panfrost" : "vulkan-driver").getAbsolutePath(),
+                    new File(root, ("panvk".equals(provider) || "panvk-layered-debug".equals(provider)) ? "vulkan-panfrost" : "vulkan-driver").getAbsolutePath(),
                     getApplicationInfo().nativeLibraryDir);
         }
         nativeStreamSubmitReference(getIntent().getBooleanExtra("stream_submit_reference", false));
