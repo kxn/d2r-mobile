@@ -1031,7 +1031,7 @@ present_worker 均 reference=true／active=false，与 GPU 完成线程是不同
 后续使用精确 BuildID 的离线符号分析定位翻译 CPU 热点，不额外让手机空跑。
 
 
-## 修改版 Turnip：共享启动已通过，尚未到营地
+## 修改版 Turnip：共享启动与早期选角失败
 
 高通用于激进共享内存实验，保留原 BC／四项 UI 资源及 `9507875007c6`
 shader 链，输出 2750×1260、固定 0.75；不为此搬运 Mali 的整套资源。
@@ -1108,7 +1108,7 @@ PID23854 已进入营地；截图中的地面、人物及 UI 未见明显异常�
 分类及实际驻留成本。此次 fresh save2 后停止并完整恢复原包、模块、资源、
 私有驱动和缓存，清理无错误。证据：`turnip-retired-game-2f0d37d-v3/result.json`。
 
-## PanVK：比较采样修复候选，尚未证明设备丢失已解决
+## PanVK：比较采样错误已修复，设备丢失仍复现
 
 `c613662` 按 shader 反射中的 Shadow 类型处理比较采样。对于实际遇到的
 R16_UNORM 颜色源，使用 GPU 缓冲中转，把相同 UNORM16 位值复制到 D16
@@ -1118,5 +1118,16 @@ R16_UNORM 颜色源，使用 GPU 缓冲中转，把相同 UNORM16 位值复制�
 官方 VVL／同步验证下，原 NVN 调用的专项 GPU 检查通过 1574 项，包括
 cube 六层、源位值保留、GPU 改写刷新和原生 D16；默认回归通过。负控强制
 回到原颜色视图时，实际重现同一个 06479 并使检查失败。这证明修复命中了
-该 API 错误，尚不能证明后续 kbase timeout 已解决；仍需冻结包的真实游戏
-复测。候选保存在独立分支，尚未替换 Mali 生产默认包。
+该 API 错误。
+
+冻结包随后已在同一原版 PanVK fork、原 BC、共享关闭的真实 ARM64 游戏中
+复测。实际源为 128×128、六层、单 mip 的 R16 cube（serial44、descriptor754），
+不能凭 packaged=0 认定是替代纹理。官方 Core／Synchronization 均开启，
+06479 不再出现、VUID 列表为空，但仍出现原 subqueue1 timeout／fence -4。
+因此比较采样修复成立，崩溃并未解决。原 `022d625`、35 项文件与完整旧
+缓存已恢复，进程已退出；没有重启游戏存档，也未替换生产默认包。
+证据为 `color-depth-comparison-c613662-mali-v1/result.json`。
+
+后续先解读既有 Mesa 命令流转储。故障报告的 last job 不是挂起程序计数器，
+应追踪实际 extract 到 insert 的待执行区间及 CALL 链；不能据此直接修改
+提交同步，或把没有 VUID 当作 GPU 编译及驱动完全正确的证明。
