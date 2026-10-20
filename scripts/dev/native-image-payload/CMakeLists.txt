@@ -25,7 +25,7 @@ target_link_libraries(native_image_payload PRIVATE ${CMAKE_DL_LIBS} m)
 
 # Record source identity inside native resource metadata; compiler/tool/ELF
 # fingerprints remain in the outer build record, not inferred from this string.
-set(DM_NATIVE_PRODUCER_INPUTS CMakeLists.txt fixture.c native_import.inc resource_bake.inc resource_format.h sample.comp)
+set(DM_NATIVE_PRODUCER_INPUTS CMakeLists.txt fixture.c native_import.inc resource_bake.inc resource_import.inc resource_format.h sample.comp)
 set(DM_NATIVE_PRODUCER_CONTENT "")
 foreach(input IN LISTS DM_NATIVE_PRODUCER_INPUTS)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${input}")

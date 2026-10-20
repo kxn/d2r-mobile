@@ -843,6 +843,7 @@ static void restore(const char *directory, VkFormat format) {
 #ifdef DM_NATIVE_IMPORTED_IMAGE
 #include "native_import.inc"
 #include "resource_bake.inc"
+#include "resource_import.inc"
 #endif
 static int fixture_main(int argc, char **argv) {
   uint16_t endian = 1;
@@ -853,13 +854,17 @@ static int fixture_main(int argc, char **argv) {
          || !strcmp(argv[1], "--native-bake") ||
          !strcmp(argv[1], "--native-import") ||
          !strcmp(argv[1], "--resource-bake") ||
+         !strcmp(argv[1], "--resources-bake") ||
+         !strcmp(argv[1], "--resources-import") ||
          !strcmp(argv[1], "--verify-resource-input")
 #endif
              ));
 #ifdef DM_NATIVE_IMPORTED_IMAGE
   native_mode = !strcmp(argv[1], "--native-bake") ||
                 !strcmp(argv[1], "--native-import") ||
-                !strcmp(argv[1], "--resource-bake");
+                !strcmp(argv[1], "--resource-bake") ||
+                !strcmp(argv[1], "--resources-bake") ||
+                !strcmp(argv[1], "--resources-import");
   if (!strcmp(argv[1], "--verify-resource-input")) {
     resource_input r = resource_open(argv[2]);
     resource_close(&r);
@@ -888,7 +893,11 @@ static int fixture_main(int argc, char **argv) {
   };
   unsigned used = 0;
 #ifdef DM_NATIVE_IMPORTED_IMAGE
-  if (!strcmp(argv[1], "--resource-bake")) {
+  if (!strcmp(argv[1], "--resources-bake") ||
+      !strcmp(argv[1], "--resources-import")) {
+    resource_pair(argv[2], !strcmp(argv[1], "--resources-bake"));
+    used = 2;
+  } else if (!strcmp(argv[1], "--resource-bake")) {
     resource_bake(argv[2]);
     used = 1;
   } else

@@ -131,6 +131,58 @@ static void resource_write(const char *directory, const char *name,
   CHECK(!fsync(fd));
   CHECK(!close(fd));
 }
+static void resource_source_digest(uint8_t out[32]) {
+  const char *hex = DM_NATIVE_RESOURCE_PRODUCER_SHA;
+  CHECK(strlen(hex) == 64);
+  for (unsigned n = 0; n < 32; n++) {
+    unsigned value;
+    CHECK(sscanf(hex + n * 2, "%2x", &value) == 1);
+    out[n] = value;
+  }
+}
+static void resource_native_header(dm_resource_native *o,
+                                   const resource_input *r, const image *i,
+                                   const native_slice *slices,
+                                   const uint8_t payload_sha[32]) {
+  memset(o, 0, sizeof *o);
+  memcpy(o->magic, "DMNRES1", 8);
+  o->version = 1;
+  o->header_bytes = sizeof *o;
+  const dm_resource_input *h = r->header;
+  o->image_size = i->requirements.size;
+  o->image_alignment = i->requirements.alignment;
+  o->format = h->vk_format;
+  o->width = h->width;
+  o->height = h->height;
+  o->depth = 1;
+  o->levels = h->levels;
+  o->layers = 1;
+  o->image_type = VK_IMAGE_TYPE_2D;
+  o->samples = VK_SAMPLE_COUNT_1_BIT;
+  o->tiling = VK_IMAGE_TILING_OPTIMAL;
+  o->usage = usage;
+  o->sharing = VK_SHARING_MODE_EXCLUSIVE;
+  o->initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+  o->external_handle = native_external.handleTypes;
+  o->producer_layout = VK_IMAGE_LAYOUT_GENERAL;
+  o->producer_family = VK_QUEUE_FAMILY_FOREIGN_EXT;
+  o->vendor = properties.vendorID;
+  o->device_id = properties.deviceID;
+  o->driver_version = properties.driverVersion;
+  o->driver_id = native_driver.driverID;
+  memcpy(o->layout_uuid, host.optimalTilingLayoutUUID, 16);
+  memcpy(o->device_uuid, ids.deviceUUID, 16);
+  memcpy(o->driver_uuid, ids.driverUUID, 16);
+  native_sha(r->data, r->bytes, o->input_sha256);
+  memcpy(o->payload_sha256, payload_sha, 32);
+  memcpy(o->declaration_sha256, h->declaration_sha256, 32);
+  resource_source_digest(o->producer_source_sha256);
+  for (unsigned n = 0; n < h->levels; n++) {
+    o->mips[n] = (dm_resource_native_mip){
+        slices[n].offset, slices[n].size, slices[n].row_pitch,
+        slices[n].array_pitch, slices[n].depth_pitch};
+  }
+}
 static void resource_bake(const char *directory) {
   resource_input r = resource_open(directory);
   const dm_resource_input *h = r.header;
@@ -316,6 +368,15 @@ static void resource_bake(const char *directory) {
   CHECK(!fflush(f));
   CHECK(!fsync(fd));
   CHECK(!fclose(f));
+  dm_resource_native wire;
+  resource_native_header(&wire, &r, &i, slices, payload_sha);
+  size_t metadata_bytes;
+  uint8_t *metadata =
+      resource_read(directory, "native-resource.json", &metadata_bytes);
+  native_sha(metadata, metadata_bytes, wire.metadata_sha256);
+  free(metadata);
+  native_sha(&wire, sizeof wire, wire.digest);
+  resource_write(directory, "native-resource-layout.bin", &wire, sizeof wire);
   printf("{\"native_resource_bake_complete\":true,\"format\":%u,\"width\":%u,"
          "\"height\":%u,\"levels\":%u,\"physical_image_bytes\":%llu,\"GPU_"
          "sampling_executed\":false,\"game_readonly_authority\":false}\n",

@@ -151,3 +151,41 @@ protocol that changes both sides without changing the NVN API meaning. Full
 streaming, arbitrary CPU/GPU linear aliases, ReadTexels, WriteTexels, GPU writers,
 partial mip updates, pool resize/destroy/ABA and asynchronous in-flight versions
 all need their original semantics preserved before a real game pack is enabled.
+
+## Paired real-resource ordinary UID verification
+
+The separate `native-image-resource-app-v1` candidate enables the existing cold
+entry for `--resources-bake` and `--resources-import`. Both process modes visit
+exactly `resource4` and `resource6`: the frozen 86381c7 declarations for the same
+real 256x256 / nine-mip campfire ALB, in ASTC4 sRGB and ASTC6 sRGB. No wider game
+resource policy is enabled. Driver 6b15 and the earlier 3446 synthetic helper and
+shader remain unchanged.
+
+Baking additionally emits `native-resource-layout.bin`: a fixed 992-byte,
+zero-reserved record binding all image parameters/UUIDs/physical mip layouts and
+SHA-256 of the raw payload, original source input/declaration and JSON metadata.
+The import consumer checks these against the selected driver and newly queried
+identical image before importing a finite shared allocation at a nonzero offset.
+It takes GENERAL/FOREIGN ownership, with actual NC Flush, using the original
+platform producer contract. It never transitions imported pixels from UNDEFINED.
+
+For correctness the consumer creates a separate **test-only** reference image.
+The exact original compact ASTC source bytes are uploaded through standard
+`vkCmdCopyBufferToImage`; they do not go through native-export restore. Both
+images are sampled over every texel in all nine mips with the existing
+`sample.comp`. Complete GPU RGBA outputs must match, and the reference must be
+varied. No new ASTC decoder, shader, CPU sRGB transform or error guess is used.
+Reference/staging/output allocations are oracle overhead and must never be
+reported as production memory savings. Native payload immutability, neighbors,
+release/fence completion and original mapping survival after Free are checked.
+
+The independent package is `com.d2rmobile.nativeresourcefixture`. The existing
+Java/JNI class stays unchanged. The signed package and its six libraries, actual
+producer/includes/generated shader inputs and the four private real input files
+are fingerprinted. The controller executes only the fixed two fresh processes;
+it inherits strict first-PID/crash ownership and full original package/resource
+baseline cleanup from bcac/948. Direct ICD validation remains explicitly
+unavailable. No device result is implied by source, host helper tests or APK
+compilation. A small host test calls the same standard reference-upload/sampling
+helpers with the original owned RGBA vectors under LVP/VVL/sync; it validates
+that standard path only, not Mali ASTC or native import.
