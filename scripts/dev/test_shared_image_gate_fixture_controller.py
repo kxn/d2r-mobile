@@ -103,6 +103,30 @@ for sig in (2,15):
  try:g['interrupted'](sig,None);raise RuntimeError('signal did not raise')
  except KeyboardInterrupt:pass
 cases.append('SIGINT-SIGTERM-raise-through-outer-finally')
+# Execute the exact production admission helper on producer-shaped JSON rows.
+# An old retile total, unsupported hardware, partial flags or duplicates cannot
+# be mistaken for exercising the newly added real compressed format path.
+astc=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='require_astc_encoding_oracle')
+namespace={};exec(compile(ast.Module(body=[astc],type_ignores=[]),str(source),'exec'),namespace)
+require=namespace['require_astc_encoding_oracle']
+proof=json.loads('{"test_details":"ASTC4-copy-physical-encoding","actual_ASTC_GPU":true,"fresh_BC3_array_became_ASTC4":true,"logical_BC3_unchanged":true,"mip_layer_ROI_preserved":true,"default_and_BC3_srgb_views":true,"CPU_version_observer":true,"canonical_pool_bytes_unchanged":true,"result":"passed"}')
+assert require([proof]) is proof
+reject=[[],[{'test':'shared-image-only-dirty','result':'passed','checks':11069}],
+        [{'test_details':'ASTC4-copy-physical-encoding','actual_ASTC_GPU':False,'result':'unsupported'}],
+        [proof,dict(proof)]]
+for field in [k for k in proof if k not in ('test_details','result')]:
+ for replacement in (False,1,'true',None):
+  bad=dict(proof)
+  if replacement is None:bad.pop(field)
+  else:bad[field]=replacement
+  reject.append([bad])
+for rows in reject:
+ try:require(rows);raise RuntimeError('incomplete or unsupported format oracle accepted')
+ except AssertionError:pass
+cases.append('real-format-row-required/old-retile-only-unsupported-partial-duplicate-rejected')
+call=next(n for n in ast.walk(mode_loop) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='require_astc_encoding_oracle')
+assert ast.unparse(call)=='require_astc_encoding_oracle(rows)'
+cases.append('actual-retile-acceptance-wired-to-format-proof')
 result={'status':'passed','source':str(source),'cases':cases,'reused_controller_source':'shared-anon-controller-ownership-v3 / 5c185ca','scope':'Exact parsed production-controller helpers/poll loop under local mocks; no ADB/device or performance measurements. Failures preserved, no PID adoption or unknown force-stop.'}
 if opts.report:opts.report.write_text(json.dumps(result,indent=2)+'\n')
 print(json.dumps(result,indent=2))

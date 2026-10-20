@@ -63,7 +63,7 @@ plan={'scope':'ONE installation, ONE cold NC shared-image byte oracle; game=fals
  'fixture_hashes_sha256':m['fixture_hashes_sha256'],'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),
  'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,'module_report_sha256':sha(a.module_report) if a.module_report else None,'module_count':28 if a.module_report else 0,'resource_count':6 if a.resource_report else 0,'resource_report_sha256':sha(a.resource_report) if a.resource_report else None,
  'baseline_bound':baseline_bound,'expected_shaderchain':a.expected_shaderchain,
- 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':1,'modes_once':[a.mode],'GUP_unprotect_retry':False,
+ 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':1,'modes_once':[a.mode],'required_format_oracle':'ASTC4-copy-physical-encoding' if a.mode=='retile' else None,'GUP_unprotect_retry':False,
  'writes_only':'new independent package + unique /data/local/tmp directory; cleanup exact package only'}
 if not a.execute:
  print(json.dumps(plan,indent=2));raise SystemExit(0)
@@ -124,6 +124,17 @@ def parse_oracle_log(log):
   if final.get('result')!='passed' or any(r.get('shared_image_app_terminal') is True for r in rows):
    return rows,'oracle-'+final.get('result','unknown'),final
  return rows,None,None
+
+def require_astc_encoding_oracle(rows):
+ proofs=[r for r in rows if r.get('test_details')=='ASTC4-copy-physical-encoding']
+ assert len(proofs)==1,'Require one actual ASTC4 physical-encoding oracle, not the old retile final'
+ proof=proofs[0]
+ assert proof.get('result')=='passed','Unsupported ASTC GPU is not format-path acceptance'
+ for field in ('actual_ASTC_GPU','fresh_BC3_array_became_ASTC4','logical_BC3_unchanged',
+               'mip_layer_ROI_preserved','default_and_BC3_srgb_views','CPU_version_observer',
+               'canonical_pool_bytes_unchanged'):
+  assert proof.get(field) is True,'Missing/false ASTC encoding proof: '+field
+ return proof
 
 def observe_pid(phase,allow_claim=True):
  global first_pid
@@ -291,6 +302,7 @@ try:
    assert final['GPU_word']==0x27272727 and final['CPU_word']==0x12985643
   else:
    assert final['actual_memory_flags']==11
+   run['ASTC4_encoding_oracle']=require_astc_encoding_oracle(rows)
   run.update(actual_configuration=configuration,result='passed');save()
   stop_owned(run)
   assert not process(pkg),'Owned process must stop between cold modes'
