@@ -12,6 +12,7 @@
 #include "nvn_vk_freeze.h"
 #include "nvn_vk_system_trace.h"
 #include "nvn_vk_pool_copy_stats.h"
+#include "nvn_vk_bitmap.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
@@ -2876,10 +2877,16 @@ static void sync_used_pools(void) {
       uint64_t bits=use->upload_pages[word];
       skipped+=__builtin_popcountll(use->pages[word]&~bits);
       while(bits) {
-        uint64_t page=word*64+__builtin_ctzll(bits);bits&=bits-1;
+        // The immutable local bitmap can be consumed by consecutive runs,
+        // rather than repeating the same merge decision for every page.
+        // Preserve exactly the original ordered sync_used_run intervals,
+        // including runs crossing a word and holes in GPU-owned pages.
+        unsigned low;
+        unsigned length=vk_bitmap_take_run(&bits,&low);
+        uint64_t page=word*64+low;
         if(end&&page!=end) { sync_used_run(p,first,end,tracked);end=0; }
         if(!end) first=page;
-        end=page+1;
+        end=page+length;
       }
     }
     if(end) sync_used_run(p,first,end,tracked);
