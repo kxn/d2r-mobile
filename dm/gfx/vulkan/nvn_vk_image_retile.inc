@@ -59,7 +59,22 @@ static int image_retile_eligible(image *i,shared_copy_backing p,const VkBufferIm
       (uint64_t)c->imageOffset.y+c->imageExtent.height>mip(i->extent.height,level) ||
       !c->imageSubresource.layerCount || c->imageSubresource.baseArrayLayer>=i->layers ||
       c->imageSubresource.layerCount>i->layers-c->imageSubresource.baseArrayLayer)return 0;
+  uint64_t pitch=((uint64_t)(c->bufferRowLength?c->bufferRowLength:c->imageExtent.width)+bw-1)/bw*bpb;
+  uint64_t rows=((uint64_t)c->imageExtent.height+bh-1)/bh;
+  uint64_t image_rows=((uint64_t)(c->bufferImageHeight?c->bufferImageHeight:c->imageExtent.height)+bh-1)/bh;
+  uint64_t cap=V.props.limits.maxStorageBufferRange,align=V.props.limits.minStorageBufferOffsetAlignment;
+  if(!pitch || !align || align>cap || pitch>cap || image_rows>cap/pitch)return 0;
+  uint64_t slice=pitch*image_rows;
+  if(c->imageSubresource.layerCount>cap/slice)return 0;
+  uint64_t footprint=(c->imageSubresource.layerCount-1)*slice+(rows-1)*pitch+
+      ((uint64_t)c->imageExtent.width+bw-1)/bw*bpb;
+  if(footprint>cap-(align-1))return 0;
   return 1;
+}
+static void image_retile_written(uint64_t address,uint64_t bytes,nvn_dirty_scope_publish *token) {
+  nvn_dirty_scope_gpu_write_counted((void *)(uintptr_t)address,bytes,token);
+  vk_buffer_shader_written_pretracked(address,bytes,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+  vk_buffer_writeback_stage(address,bytes,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 }
 // Caller retains the original image copy. Source contains its exact GPU blocks
 // at that command position, including GPU-produced sources. A private gather
@@ -84,6 +99,10 @@ static void image_retile_publish(image *i,shared_copy_backing target,vk_buffer *
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
       0,0,NULL,1,&prior_read,0,NULL);
   image_retile_create();
+  nvn_dirty_scope_publish publication;
+  // No render/alias callback remains. Retain the old stamp: begin rejects any
+  // CPU change, NONE/BUSY page or lifecycle change before our own markers.
+  nvn_dirty_scope_publish_begin(i->shared_dirty_scope,t->mem,t->L.size,i->stamp,&publication);
   for(uint32_t z=0;z<c->imageSubresource.layerCount;z++) {
     uint32_t rb,rs,slices,block;uint64_t origin;unsigned th,td;
     if(nvn_deswizzle_geom(&t->d,c->imageSubresource.mipLevel,c->imageSubresource.baseArrayLayer+z,
@@ -109,18 +128,38 @@ static void image_retile_publish(image *i,shared_copy_backing target,vk_buffer *
     // discard a legitimate CPU edit in an untouched mip/ROI. The original
     // cache API rounds these exact intervals only to nonCoherentAtomSize.
     uint32_t x0=(uint32_t)c->imageOffset.x/bw*bpb,y0=(uint32_t)c->imageOffset.y/bh;
-    for(uint32_t y=0;y<rows;y++)for(uint32_t x=0;x<words*4;) {
-      uint32_t n=16-((x0+x)&15);if(n>words*4-x)n=words*4-x;
-      uint64_t at=origin+nvn_bl_offset(x0+x,y0+y,0,rb,rs,th,td);
-      if(at>t->L.size || n>t->L.size-at)die("Shared image retile write bounds");
-      vk_buffer_shader_written((uintptr_t)t->mem+at,n,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
-      vk_buffer_writeback_stage((uintptr_t)t->mem+at,n,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
-      x+=n;
-    }
+    uint32_t xend=x0+words*4,yend=y0+rows,bh_rows=8u<<th;
+    uint64_t run_begin=0,run_end=0;
+    // Visit GOBs/16B lanes in physical order. Coalesce only contiguous ACTUAL
+    // words; unlike a whole mip envelope this never invalidates a hole/other
+    // mip. No temporary interval array, sorting or persistent cache is needed.
+    for(uint32_t by=y0/bh_rows;by<=(yend-1)/bh_rows;by++)
+      for(uint32_t bx=x0/64;bx<=(xend-1)/64;bx++)
+        for(uint32_t gy=0;gy<(1u<<th);gy++) {
+          uint32_t gob_y=by*bh_rows+gy*8;
+          if(gob_y>=yend || gob_y+8<=y0)continue;
+          for(uint32_t tid=0;tid<32;tid++) {
+            uint32_t y=gob_y+((tid>>2)&3)*2+(tid&1);
+            uint32_t x=bx*64+(((tid>>4)<<1)|((tid>>1)&1))*16;
+            if(y<y0 || y>=yend || x>=xend || x+16<=x0)continue;
+            uint32_t lo=x<x0?x0:x,hi=x+16>xend?xend:x+16;
+            uint64_t at=origin+nvn_bl_offset(lo,y,0,rb,rs,th,td),n=hi-lo;
+            if(at>t->L.size || n>t->L.size-at)die("Shared image retile write bounds");
+            if(run_end && at!=run_end) {
+              image_retile_written((uintptr_t)t->mem+run_begin,run_end-run_begin,&publication);run_end=0;
+            }
+            if(!run_end)run_begin=at;
+            run_end=at+n;
+          }
+        }
+    if(run_end)image_retile_written((uintptr_t)t->mem+run_begin,run_end-run_begin,&publication);
   }
   // Keep the original ordered dirty publication, CPU fence/Invalidate, and
-  // later raw GPU dependencies. Do not acknowledge/raise the image stamp: a
-  // subsequent CPU conversion waits for this publication and may reupload.
+  // later raw GPU dependencies. Only a token containing exclusively our own
+  // publications may acknowledge its captured generation. Any CPU/alias write
+  // keeps the old stamp, so original preflight waits/publication/reupload run.
+  uint64_t own_stamp;
+  if(nvn_dirty_scope_publish_finish(&publication,&own_stamp))i->stamp=own_stamp;
   i->cpu_rebuildable=1;image_shared_alias_remove(i);
 }
 #endif

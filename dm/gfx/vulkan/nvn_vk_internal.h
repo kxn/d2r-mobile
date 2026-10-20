@@ -203,6 +203,11 @@ void vk_compute_buffer_dependencies(const vk_buffer_use *uses,unsigned count,int
 void vk_transfer_buffer_dependencies(const vk_buffer_use *uses,unsigned count);
 void vk_buffer_copyback_dependencies(uint64_t address,uint64_t size);
 void vk_buffer_shader_written(uint64_t address,uint64_t size,VkPipelineStageFlags stages);
+#ifdef DM_VULKAN_SHARED_POOLS
+// Caller already published the exact dirty event through the counted scope
+// API. Preserve ordinary GPU writer/authority dependencies without marking twice.
+void vk_buffer_shader_written_pretracked(uint64_t address,uint64_t size,VkPipelineStageFlags stages);
+#endif
 void vk_buffer_producers_visible(VkPipelineStageFlags producers,VkPipelineStageFlags consumers);
 int vk_graphics_resource_dependencies(int writable);
 void vk_compute_barrier(void);

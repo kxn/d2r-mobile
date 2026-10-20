@@ -16,7 +16,40 @@ static void shared_image_pixels(NVNtexture *t,const uint8_t rgba[4]) {
   vk_internal_wait(vk_internal_commit());
   for(unsigned n=0;n<256;n++)CHECK(!memcmp(result->map+4*n,rgba,4));
 }
+// Fault placement uses the owned Volk call boundary, not a production timer or
+// callback hook. A real CPU store occurs after token begin but before own marks.
+static PFN_vkCmdDispatch shared_copy_dispatch_original;
+static uint8_t *shared_copy_interleaved_byte;
+static void VKAPI_PTR shared_copy_dispatch_interleave(VkCommandBuffer command,uint32_t x,uint32_t y,uint32_t z) {
+  shared_copy_dispatch_original(command,x,y,z);
+  if(shared_copy_interleaved_byte) {
+    uint8_t *at=shared_copy_interleaved_byte;shared_copy_interleaved_byte=NULL;
+    dm_guest_write_prepare(at,1);*at=0x5c;
+  }
+}
 static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
+  // Keep the actual GPU command's recording copy. Shared writeback never
+  // consumes legacy r->known, so it must not allocate another CPU snapshot.
+  uint32_t update[16],expected[16];for(unsigned n=0;n<16;n++)update[n]=expected[n]=0x71230900u+n;
+  mtl_sub_begin();vk_buffer *updated;uint64_t update_offset;
+  CHECK(vk_pool_address_overwrite((uintptr_t)data+655360,sizeof update,(void **)&updated,&update_offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  uint64_t before_snapshots,published,fallbacks,after_snapshots;int reference;
+  vk_cpu_copy_stats(&before_snapshots,&published,&fallbacks,&reference);
+  vkCmdUpdateBuffer(V.cmd,updated->handle,update_offset,sizeof update,update);
+  vk_buffer_transfer_written_range((uintptr_t)data+655360,sizeof update);
+  vk_buffer_writeback_known((uintptr_t)data+655360,sizeof update,update);
+  vk_cpu_copy_stats(&after_snapshots,&published,&fallbacks,&reference);
+  CHECK(after_snapshots==before_snapshots);memset(update,0,sizeof update);
+  vk_buffer *update_gpu=vk_temp_buffer(sizeof update);
+  VkBufferMemoryBarrier update_ready={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+    .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT,
+    .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+    .buffer=updated->handle,.offset=update_offset,.size=sizeof update};
+  vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,1,&update_ready,0,NULL);
+  VkBufferCopy update_copy={update_offset,0,sizeof update};
+  vkCmdCopyBuffer(V.cmd,updated->handle,update_gpu->handle,1,&update_copy);
+  vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(update_gpu->map,expected,sizeof expected));CHECK(!memcmp(data+655360,expected,sizeof expected));
   const int formats[]={NVN_FORMAT_RGBA8,NVN_FORMAT_RGBA_DXT5,NVN_FORMAT_RGBA_ASTC_4x4};
   unsigned format_count=V.features.textureCompressionASTC_LDR?3:2;
   for(unsigned f=0;f<format_count;f++) {
@@ -56,15 +89,20 @@ static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
     vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&dependency,0,NULL,0,NULL);
     VkBufferImageCopy read={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,1,1,1},.imageExtent={8,8,1}};
     vkCmdCopyImageToBuffer(V.cmd,physical[0],VK_IMAGE_LAYOUT_GENERAL,gpu->handle,1,&read);
+    uint64_t replay_serial=vk_recording_serial(),u0,r0,u1,r1;mtl_pkg_stats(&u0,&r0);
+    p_copy_t2t pair={.src=a,.dst=d,.has_sv=1,.has_dv=1,
+      .sv=copy.view,.dv=copy.view,.sr={.width=8,.height=8,.depth=1},.dr={.width=8,.height=8,.depth=1}};
+    vk_texture_copy_t2t(&pair); // own GPU publication is still pending
+    CHECK(vk_recording_serial()==replay_serial);mtl_pkg_stats(&u1,&r1);CHECK(u1==u0 && r1==r0);
+    uint32_t untouched=0x12345678;CHECK(vk_pool_try_read((uintptr_t)d->mem+d->L.layer_size+nvn_tex_level_offset(&d->d,1),4,&untouched)==0);
+    CHECK(untouched==0x12345678); // CPU proof still rejects pending canonical bytes
     vk_internal_wait(vk_internal_commit());
     uint8_t raw[1024];CHECK(nbytes<=sizeof raw);CHECK(!nvn_deswizzle(&a->d,1,1,a->mem,raw,pitch));
     for(size_t n=0;n<nbytes;n++){CHECK(gpu->map[n]==0x27);CHECK(raw[n]==0x27);}
     CHECK(vk_test_texture_rebuildable(a->serial)==1);
     // The next operation reads this formerly GPU-owned texture as its source,
     // exactly the failed game call chain. Other mips/layers remain canonical.
-    mtl_sub_begin();p_copy_t2t pair={.src=a,.dst=d,.has_sv=1,.has_dv=1,
-      .sv=copy.view,.dv=copy.view,.sr={.width=8,.height=8,.depth=1},.dr={.width=8,.height=8,.depth=1}};
-    vk_texture_copy_t2t(&pair);
+    mtl_sub_begin();vk_texture_copy_t2t(&pair);
     gpu=vk_temp_buffer(nbytes);
     vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&dependency,0,NULL,0,NULL);
     vkCmdCopyImageToBuffer(V.cmd,physical[1],VK_IMAGE_LAYOUT_GENERAL,gpu->handle,1,&read);
@@ -72,6 +110,22 @@ static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
     CHECK(!nvn_deswizzle(&d->d,1,1,d->mem,raw,pitch));
     for(size_t n=0;n<nbytes;n++){CHECK(gpu->map[n]==0x27);CHECK(raw[n]==0x27);}
     CHECK(vk_test_texture_rebuildable(d->serial)==1);
+    if(!f) {
+      // Concurrent publication in a DIFFERENT mip must prevent own-ack; the
+      // subsequent CPU conversion must see it, rather than trust global now.
+      mtl_sub_begin();uint64_t old_serial=vk_recording_serial();
+      shared_copy_interleaved_byte=d->mem+nvn_tex_level_offset(&d->d,2);
+      shared_copy_dispatch_original=vkCmdDispatch;vkCmdDispatch=shared_copy_dispatch_interleave;
+      vk_texture_copy_t2t(&pair);
+      vkCmdDispatch=shared_copy_dispatch_original;CHECK(!shared_copy_interleaved_byte);
+      VkImageLayout layout;VkImage observed=vk_texture_present_source(d,&layout);
+      CHECK(vk_recording_serial()!=old_serial); // genuine visibility wait, not clean GPU path
+      vk_buffer *last_mip=vk_temp_buffer(64);
+      VkBufferImageCopy mip2={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,2,0,1},.imageExtent={4,4,1}};
+      vkCmdCopyImageToBuffer(V.cmd,observed,layout,last_mip->handle,1,&mip2);
+      vk_internal_wait(vk_internal_commit());CHECK(last_mip->map[0]==0x5c);
+      for(unsigned n=1;n<64;n++)CHECK(last_mip->map[n]==0);
+    }
     // Nonzero compressed-block offsets into a different mip: preserve every
     // untouched block, and a CPU edit in another mip while this GPU ROI runs.
     mtl_sub_begin();pair.sr=(NVNcopyRegion){.xoffset=4,.yoffset=4,.width=4,.height=4,.depth=1};

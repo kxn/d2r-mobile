@@ -2312,6 +2312,11 @@ void vk_buffer_shader_written(uint64_t address,uint64_t size,VkPipelineStageFlag
 #endif
   vertex_buffer_produced(address,size,stages);
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+void vk_buffer_shader_written_pretracked(uint64_t address,uint64_t size,VkPipelineStageFlags stages) {
+  vertex_buffer_produced(address,size,stages);
+}
+#endif
 static void buffer_access_dependencies(const vk_buffer_use *uses,unsigned count,int conservative,
     VkPipelineStageFlags destination,VkAccessFlags access,VkPipelineStageFlags extra_sources,VkAccessFlags extra_writes) {
   // All dispatch inputs/outputs have been collected. Completing the prior
@@ -3356,7 +3361,11 @@ static uint8_t *cpu_copy_allocate(uint64_t size) {
 }
 void vk_buffer_writeback_known(uint64_t dst,uint64_t size,const void *bytes) {
   const uint8_t *known=NULL;
-  if(size&&!recording_resources->cpu_copy_reference) {
+  if(size&&!recording_resources->cpu_copy_reference
+#ifdef DM_VULKAN_SHARED_POOLS
+      && !shared_active // shared WB publishes the real GPU allocation, not known CPU bytes
+#endif
+      ) {
     uint8_t *snapshot=cpu_copy_allocate(size);memcpy(snapshot,bytes,size);known=snapshot;
     POOL_COPY_ADD(known_snapshot_bytes,size);
   }
