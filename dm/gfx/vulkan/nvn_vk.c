@@ -2346,9 +2346,51 @@ static void buffer_cpu_written(pool *owner,uint64_t address,uint64_t size) {
     }
   }
 }
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+// Named VkBuffer barriers do not prove visibility through an aliased VkImage.
+// An actual writer-generation is only a negative-test key: no new data or CPU
+// publication is inferred. Saturation disables reuse permanently.
+static uint64_t native_writer_generation=1;
+static void native_writer_changed(void) {if(native_writer_generation && !++native_writer_generation)native_writer_generation=0;}
+uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages,uint64_t previous) {
+  if(native_writer_generation && previous==native_writer_generation)return previous;
+  VkCommandBuffer command=VK_NULL_HANDLE;
+  VkPipelineStageFlags producers=0,known=VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+  int conservative=vertex_buffer_write_overflow || recording_resources->submission_barrier_reference;
+  if(!conservative) {
+    // Deliberately ignore buffer-only `visible` bits: those may come from a
+    // VkBufferMemoryBarrier which says nothing about this image access.
+    for(unsigned n=buffer_write_start(address);n<vertex_buffer_write_count;n++) {
+      uint64_t a=vertex_buffer_writes[n].address;if(a>=address && a-address>=size)break;
+      producers|=vertex_buffer_writes[n].producers;
+    }
+    if(!producers)return native_writer_generation;
+    if(stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT && !(producers&~known))command=vk_render_pending_primary();
+  }
+  if(!command) {
+    vk_render_end();producers=0;conservative=vertex_buffer_write_overflow || recording_resources->submission_barrier_reference;
+    if(conservative) {vk_barrier();return native_writer_generation;}
+    for(unsigned n=buffer_write_start(address);n<vertex_buffer_write_count;n++) {
+      uint64_t a=vertex_buffer_writes[n].address;if(a>=address && a-address>=size)break;
+      producers|=vertex_buffer_writes[n].producers;
+    }
+    command=V.cmd;
+  }
+  if(producers) {
+    VkMemoryBarrier barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,
+      .dstAccessMask=(stages&VK_PIPELINE_STAGE_TRANSFER_BIT)?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_SHADER_READ_BIT};
+    vkCmdPipelineBarrier(command,producers,stages,0,1,&barrier,0,NULL,0,NULL);
+    vk_buffer_producers_visible(producers,stages);
+  }
+  return native_writer_generation;
+}
+#endif
 static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStageFlags producers) {
   if(!address||!size) return;
   if(size>UINT64_MAX-address) die("Vulkan buffer producer range overflow");
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  native_writer_changed();
+#endif
   // Invalidate before the first possible merge/removal/insertion, including
   // the bounded-table overflow return. Visibility-only updates need no reset.
   buffer_write_partition.valid=0;
@@ -2407,6 +2449,9 @@ void vk_buffer_transfer_written_range(uint64_t address,uint64_t size) {
   if(shared_active || legacy_astc_copy_enabled)vk_texture_shared_source_written(address,size);
 #endif
   if(recording_resources->submission_barrier_reference) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    native_writer_changed();
+#endif
     pool *owner=buffer_recording_owner(address,size);
     buffer_cpu_written(owner,address,size);
     buffer_transfer_pending=1;
@@ -2564,6 +2609,9 @@ void vk_barrier_at(const char *file,unsigned line) {
   // render_end above can replay nested work and repopulate the partition;
   // invalidate only after it returns, at the actual geometry clear.
   buffer_write_partition.valid=0;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  native_writer_changed();
+#endif
   vertex_buffer_write_count=0;vertex_buffer_write_overflow=0;
   buffer_common_visible=~(VkPipelineStageFlags)0;
   VkMemoryBarrier b = {
