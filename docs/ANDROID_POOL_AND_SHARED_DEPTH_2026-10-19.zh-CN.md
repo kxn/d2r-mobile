@@ -1355,6 +1355,15 @@ ASTC 用例没有计为通过。此候选尚未完成 Android 真 ASTC 或真实
 不代表已改善帧率或降低带宽、内存和温度。记录为
 `native-image-window-bb4ac54-root-source-review.json`。
 
+随后使用独立普通 UID 包 `8eee0ad` 执行未改动的原 NVN 用例，在真实
+Adreno735/AA185 上通过一次完整验证：ASTC4 sRGB 的九级 mip、五级 tail、
+双向别名读写、两次窗口 union 保持绑定及最后释放均正确。实际独立 import
+为 135,168B，token 元数据 120B，未增加另一份纹理 payload。
+原生产包和文件不变，独立包、进程及临时文件已清理。原始结果和 live maps
+再次独立核验，记录为 `native-image-window-app-v1-q-root-actual-review.json`。
+这次内存类型为 coherent 的 `0xf`，不能据此宣称实证了 NC 硬件维护路径；
+私有 ICD 下 VVL/SYNC 明确未开启，也未运行真实游戏或采集性能。
+
 配套 `ba0b943` 工具已生成一张真实火盆材质的原生资源 overlay，其余
 原 BC 资源和上游 UI 保留。使用原 CASC 工具验证整个 VFS，仅该材质与
 总贴图缓存两个条目变化；其余 31,071 个缓存条目和 133,198 个 VFS
