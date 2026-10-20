@@ -11,6 +11,8 @@ spec=importlib.util.spec_from_file_location('existing_original_game_transaction'
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
 READY=R/'.local/logs/panvk-compute-shader-map-v1-source-ready-agent.json'
 READY_SHA='c918c3cfdd02b2796013330d77dbeccb072a781121f88cbf26da5db6635592c5'
+ROOT_REVIEW=R/'.local/logs/panvk-compute-shader-map-ac88c7c-root-source-review.json'
+ROOT_REVIEW_SHA='84e07c478d50423277cb5846edf9e37f77cf390326a965742aa005d92092945a'
 DRIVER_SHA='4e7b29e71cb4b205b55929f58c88e3d6521b19c02e0c0a2372b0672d5648a9e0'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
@@ -48,6 +50,8 @@ def rename_dir(dev,src,dst,expected):
 
 def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':p.stat().st_size}
 def proof():
+ require(sha(ROOT_REVIEW)==ROOT_REVIEW_SHA,'root source review changed');review=read(ROOT_REVIEW)
+ require(review['ready']['sha256']==READY_SHA and review['not_a_hang_fix']is True,'root review target mismatch')
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
  require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
  require(d['diagnostic_only'] and d['only_delta_from_parent_d149_source']==['src/panfrost/vulkan/panvk_instance.c','src/panfrost/vulkan/panvk_instance.h','src/panfrost/vulkan/panvk_vX_shader.c'],'not exact compute shader identity metadata successor')
@@ -312,7 +316,7 @@ def clean(dev,path,d):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE bounded existing PanVK TRACE_FAILURE_ONLY+kbase_diag+compute shader_map diagnostic original022 originalBC; no DUMP, no resources decode, incomplete conservative earlier prefix only; NOT live PC/GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'ONE bounded existing PanVK TRACE_FAILURE_ONLY+kbase_diag+compute shader_map diagnostic original022 originalBC; no DUMP, no resources decode, incomplete conservative earlier prefix only; NOT live PC/GPU fix/performance/stability/sharing acceptance','diagnostic_properties':PROPERTIES,'dump_soft_limit_bytes':DUMP_SOFT_LIMIT,'dump_output_bound_is_soft':True,'dump_transfer_only_after_stop':True,'driver':driver['driver'],'driver_ready_sha256':READY_SHA,'root_source_review':record(ROOT_REVIEW),'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
