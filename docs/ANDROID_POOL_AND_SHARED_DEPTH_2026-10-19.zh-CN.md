@@ -645,3 +645,18 @@ Bind 又误用这些内部扩展值验证原应用声明的严格合同。修复
 此失败不算整游戏运行或性能结果。独立应用已卸载，原游戏与资源保持不变，
 游戏进程停止。记录为本机 `native-image-resource-copy-4093920-mali-v1-root-review.json`；
 驱动修复与非一致性内存 CPU 写入保护仍在独立分支推进。
+
+后继驱动 `01efc12` 已通过同一 `4093920` APK 的真实复测：两次冷进程分别
+烘焙、导入，ASTC4/ASTC6 均完成初始九级 mip 对照、非零 block ROI 的
+Buffer→Image 更新、Image→Image 局部更新，以及导入图像作为源的全 mip
+复制；每步采样与标准 GPU 上传参考一致，实际修改像素且未改动其余区域。
+真实内存属性为 `0xb`、atom 64，未分配第二份导入图像存储。CPU 没有在
+GPU 运行期间修改导入存储，因此不能用此证明并发写入保护已经完成。
+
+新 transfer recipe 的基础 rowPitch 为 ASTC4 1024B、ASTC6 704B，旧采样
+recipe 为 4096B、2816B；总图像分配仍为 90,112B、45,056B。实际排布变化
+进一步说明旧原生 payload 不能直接复用，也不能从这个功能结果推导带宽
+或散热收益。原游戏包、模块、资源和旧驱动未改，独立应用已卸载。
+本机验收为 `native-image-resource-copy-4093920-binding-v2-mali-root-review.json`；
+可复现 controller 在 `codex/native-image-resource-copy-app-v1` 的 `36c0896`。
+真正的游戏 NVN 资源表、缩略 mip 和流式更新集成尚未验收。
