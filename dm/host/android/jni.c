@@ -357,6 +357,19 @@ static pthread_mutex_t operation_mode_mutex=PTHREAD_MUTEX_INITIALIZER;
 static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int shared_guest_heap_startup;
+static int panvk_offscreen_diagnostic;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePanvkOffscreenDiagnostic(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"offscreen diagnostic is cold-only");
+    return;
+  }
+  panvk_offscreen_diagnostic=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedGuestHeap(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;
@@ -674,7 +687,12 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   LOG("Android game output %ux%u; 3D scale=%s dynamic=%s",
       (unsigned)output, (unsigned)(output >> 32), scale_3d == -1 ? "mobile default" : getenv("DM_3D_SCALE"),
       fixed_3d ? "off" : "original policy");
-  vk_android_window(window, refresh);
+  if(panvk_offscreen_diagnostic) {
+    if(!validate_game)die("Offscreen game diagnosis requires official validation");
+    LOG("Android Vulkan offscreen diagnostic source window %dx%d; no Surface attach, not playable acceptance",
+        ANativeWindow_getWidth(window),ANativeWindow_getHeight(window));
+  }
+  vk_android_window(panvk_offscreen_diagnostic?NULL:window, refresh);
   pthread_t thread;
   if (pthread_create(&thread, NULL, game_thread, NULL))
     die("APK game thread");
@@ -760,7 +778,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSurface(
   extern void dm_gfx_suspend(int);
   dm_gfx_suspend(1);
   window = surface ? ANativeWindow_fromSurface(env, surface) : NULL;
-  vk_android_window(window, refresh);
+  vk_android_window(panvk_offscreen_diagnostic?NULL:window, refresh);
 }
 
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(

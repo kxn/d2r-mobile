@@ -30,6 +30,7 @@ parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
+parser.add_argument('--panvk-offscreen-diagnostic',action='store_true',help='cold official-VVL diagnostic only: original GPU offscreen route, no playable/presentation claim')
 parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk','panvk-layered-debug'],help='cold explicit system/Adreno-tools/PanVK direct ICD; requires separately verified private driver')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
@@ -119,6 +120,8 @@ if args.attach and (args.shared_guest_heap is not None or args.vulkan_provider i
     parser.error('--shared-guest-heap/--vulkan-provider/custom-driver are startup-only and cannot be used with --attach')
 if args.custom_vulkan_driver and args.vulkan_provider not in (None,'adreno'):
     parser.error('--custom-vulkan-driver conflicts with --vulkan-provider other than adreno')
+if args.panvk_offscreen_diagnostic and (args.attach or args.vulkan_provider!='panvk-layered-debug' or not args.validate):
+    parser.error('Offscreen diagnosis is cold-only and requires layered PanVK plus official validation')
 if args.vulkan_provider=='panvk-layered-debug' and (not args.validate or args.shared_guest_heap or args.legacy_astc_copy):
     parser.error('Layered PanVK is diagnosis only: --validate, private heap, original encoding required')
 if args.vulkan_provider=='panvk' and args.validate:
@@ -270,6 +273,7 @@ if not args.attach:
     launch += ['--ez','uniform_specialization',str(args.uniform_specialization).lower()]
     launch += ['--ez','uniform_predicate',str(args.uniform_predicate).lower()]
     launch += ['--ez','deferred_mip_clears',str(args.deferred_mip_clears).lower()]
+    launch += ['--ez','panvk_offscreen_diagnostic',str(args.panvk_offscreen_diagnostic).lower()]
     launch += ['--ez', 'custom_vulkan_driver', str(args.custom_vulkan_driver).lower()]
     launch += ['--ez', 'pool_mirror_reference', str(args.eager_pool_mirrors_reference).lower()]
     launch += ['--ez', 'stream_submit_reference', str(not args.stream_submits).lower()]
@@ -299,6 +303,20 @@ while time.monotonic() < deadline:
         if not pid or f'Android native start pid={pid}\n' not in log:
             time.sleep(.25)
             continue
+        if args.panvk_offscreen_diagnostic and 'PanelManager OpenPanel HUDPanel' in log:
+            rows = read('game-state.jsonl').splitlines()
+            if rows:
+                state = json.loads(rows[-1])
+                if state.get('valid') and state.get('world_input_ready') and state.get('native_bindings',{}).get('ready'):
+                    if 'Android Vulkan offscreen diagnostic source window' not in log or 'PanVK layered private ICD mapping verified' not in log:
+                        raise SystemExit('Actual offscreen/private driver selection not proved')
+                    report={'pid':int(pid),'offscreen_diagnostic':True,'actual_guest_heap':state.get('guest_heap'),
+                        'actual_vulkan_provider':'panvk-layered-debug','requested_legacy_astc_copy':args.legacy_astc_copy,
+                        'actual_defer_pool_publication':state.get('pool_publication',{}).get('deferred',False),
+                        'requested_astc_decode_unorm8':args.astc_decode_unorm8,'game_state':state,
+                        'playable_or_presentation_acceptance':False}
+                    if args.report:args.report.write_text(json.dumps(report,indent=2)+'\n')
+                    print(json.dumps(report));break
         if 'PanelManager OpenPanel HUDPanel' in log:
             lines = read('game-state.jsonl').splitlines()
             if lines:
@@ -427,7 +445,7 @@ while time.monotonic() < deadline:
                 # size can prove fullscreen dimensions without blocking on the
                 # system screenshot service. Keep the old screenshot fallback
                 # for letterboxed/unknown surfaces; never guess tap coordinates.
-                surfaces = re.findall(r'\[vulkan\] Android Surface (\d+)x(\d+) images=', log)
+                surfaces = re.findall(r'Android Vulkan offscreen diagnostic source window (\d+)x(\d+)' if args.panvk_offscreen_diagnostic else r'\[vulkan\] Android Surface (\d+)x(\d+) images=', log)
                 display = re.findall(r'(?:Physical|Override) size: (\d+)x(\d+)',
                                      adb('shell', 'wm', 'size')) if surfaces else []
                 if (surfaces and display and int(surfaces[-1][0]) > int(surfaces[-1][1]) and

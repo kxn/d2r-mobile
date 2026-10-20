@@ -128,6 +128,10 @@ void vk_loader_initialize(void) {
         if(snprintf(cache,sizeof cache,"%s/shader-cache",driver_directory)>=(int)sizeof cache ||
            setenv("DM_VULKAN_PIPELINE_CACHE_DIR",cache,1))
           die("Layered PanVK diagnostic PSO cache path");
+        char log_path[PATH_MAX];
+        if(snprintf(log_path,sizeof log_path,"%s/mesa.log",cache)>=(int)sizeof log_path ||
+           setenv("MESA_LOG","file,android",1) || setenv("MESA_LOG_FILE",log_path,1))
+          die("Layered PanVK diagnostic Mesa log path");
         strcpy(layered_debug_library,driver_path);
       }
       driver_tools=dlopen(library,RTLD_NOW|RTLD_LOCAL);

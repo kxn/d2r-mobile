@@ -79,6 +79,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeMailboxPresent(boolean enabled);
     private static native void nativePresentWorkerReference(boolean reference, boolean sharedQueue);
     private static native void nativeBloomQuarterEnabled(boolean enabled);
+    private static native void nativePanvkOffscreenDiagnostic(boolean enabled);
     private static native void nativeVulkanDriver(String provider, String directory, String hooks);
     private static native void nativeStreamSubmitReference(boolean reference);
     private static native void nativeStoreDescriptorReference(boolean reference);
@@ -284,6 +285,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     getIntent().getBooleanExtra("shared_guest_heap", false) ||
                     getIntent().getBooleanExtra("legacy_astc_copy", false)))
                 throw new IllegalArgumentException("Layered PanVK game diagnostic requires validation, private heap and original resource encoding");
+            boolean offscreenDiagnostic = getIntent().getBooleanExtra("panvk_offscreen_diagnostic", false);
+            if (offscreenDiagnostic && !"panvk-layered-debug".equals(provider))
+                throw new IllegalArgumentException("Offscreen diagnosis requires explicit layered PanVK");
+            nativePanvkOffscreenDiagnostic(offscreenDiagnostic);
             nativeVulkanDriver(provider, "system".equals(provider) ? null :
                     new File(root, ("panvk".equals(provider) || "panvk-layered-debug".equals(provider)) ? "vulkan-panfrost" : "vulkan-driver").getAbsolutePath(),
                     getApplicationInfo().nativeLibraryDir);
