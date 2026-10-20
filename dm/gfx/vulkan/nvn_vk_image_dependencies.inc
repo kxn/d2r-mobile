@@ -127,7 +127,7 @@ static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelin
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(i->native_entry)native_image_record(i,r,stages,access);
 #endif
-  if(writing) {i->cpu_rebuildable=0;image_astc_proof(i,0);
+  if(writing) {image_rebuildable_set(i,0);image_astc_proof(i,0);
 #ifdef DM_VULKAN_SHARED_POOLS
     i->shared_writer=1;i->shared_writer_source=0;i->shared_writer_region=(NVNcopyRegion){0};
     image_shared_alias_write(i);

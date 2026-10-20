@@ -78,6 +78,12 @@ VkResult vk_memory_image(VkImage image, VkDeviceMemory *memory, void **allocatio
 void vk_memory_free(void *allocation) {
   if (allocation) vmaFreeMemory(allocator, static_cast<VmaAllocation>(allocation));
 }
+uint64_t vk_memory_allocation_bytes(void *allocation) {
+  if (!allocation) return 0;
+  VmaAllocationInfo info;
+  vmaGetAllocationInfo(allocator, static_cast<VmaAllocation>(allocation), &info);
+  return info.size;
+}
 void vk_memory_stats(uint32_t *blocks, uint32_t *allocations, uint64_t *bytes) {
   VmaTotalStatistics stats;
   vmaCalculateStatistics(allocator, &stats);

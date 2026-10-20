@@ -388,6 +388,12 @@ static void observe_tick(const uint64_t *registers) {
       (unsigned long long)driver_arena_slots,(unsigned long long)driver_arena_zeroes,
       (unsigned long long)driver_arena_chunks,(unsigned long long)driver_arena_live,
       (unsigned long long)driver_arena_reuses);
+    void vk_texture_cache_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+    uint64_t image_private,image_rebuildable,image_budget,image_released;
+    vk_texture_cache_stats(&image_private,&image_rebuildable,&image_budget,&image_released);
+    fprintf(state_log, ",\"private_image_cache\":{\"allocation_bytes\":%llu,\"cpu_rebuildable_bytes\":%llu,\"budget_bytes\":%llu,\"released_allocation_bytes\":%llu}",
+      (unsigned long long)image_private,(unsigned long long)image_rebuildable,
+      (unsigned long long)image_budget,(unsigned long long)image_released);
     uint64_t descriptor_content_hits,descriptor_content_misses;
     vk_descriptor_content_stats(&descriptor_content_hits,&descriptor_content_misses);
     fprintf(state_log, ",\"descriptor_contents\":{\"hits\":%llu,\"misses\":%llu}",

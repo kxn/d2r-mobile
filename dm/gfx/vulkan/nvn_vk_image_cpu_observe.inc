@@ -72,7 +72,7 @@ static void image_upload_observed_contents(image *i) {
   }
   free(pieces);
   if(i->initialized)reuploads++;else uploads++;
-  i->stamp=stamp;i->initialized=1;i->cpu_rebuildable=!i->external_access;
+  i->stamp=stamp;i->initialized=1;image_rebuildable_set(i,!i->external_access);
   if(i->cpu_rebuildable)image_shared_alias_remove(i);
   image_astc_proof(i,ldr);
 }

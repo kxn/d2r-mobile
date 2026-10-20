@@ -164,6 +164,6 @@ static void image_retile_publish(image *i,shared_copy_backing target,vk_buffer *
   // keeps the old stamp, so original preflight waits/publication/reupload run.
   uint64_t own_stamp;
   if(nvn_dirty_scope_publish_finish(&publication,&own_stamp))i->stamp=own_stamp;
-  i->cpu_rebuildable=1;image_shared_alias_remove(i);
+  image_rebuildable_set(i,1);image_shared_alias_remove(i);
 }
 #endif
