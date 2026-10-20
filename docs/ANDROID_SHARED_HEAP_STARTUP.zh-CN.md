@@ -89,6 +89,10 @@ image 正例明确 finite_test_certificate=false，不以测试证书替代生�
 Root 实际 matrix2 只证明 owned 8 KiB：shared plain57823/shared dirty57847（12 cycles 全部对应），
 private plain57823/private dirty CPU7/GPU227 不等而 FATAL；控制器整体失败、清理成功。
 此前 matrix1 的 CPU7/GPU0 不应抄成 matrix2 的数值。没有 PFN 观测，COW 仍是源证支持的假设。
-最新实际 PanVK bdd9 独立APP被 query timestamp capability gate 拒绝；不能绕过此 guard 强开。
+最新实际 PanVK bdd9 独立 APP 70848 记录 timestampPeriod=76.9230804 ns（float bits=1117378718）、
+timestampValidBits=64、timestampComputeAndGraphics=true；拒绝原因明确为
+`scaled-valid-input-domain-exceeds-u64`，即旧完整 64 位输入域换算 gate 过保守，**不是驱动缺少时钟**。
+此查询没有执行 GPU timestamp 命令。PanVK owner 正独立验证与 Android 原 CPU uint64 转换一致的饱和策略；
+当前组合仍保留原 guard，修正必须另行合入、构建并冻结后才能尝试真实 shared game。
 因此当前设备共享 game 路径仍有阻断，正确行为是 probe0 + 原 private/legacy 配置；
 无整游戏共享验收、实际 RAM/DRAM/FPS/散热收益声明。
