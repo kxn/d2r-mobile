@@ -78,7 +78,7 @@ def snapshot():
  assert hashlib.sha256(raw_apk).hexdigest()==digest,'Original APK read/hash mismatch'
  with zipfile.ZipFile(io.BytesIO(raw_apk)) as archive:
   elf=hashlib.sha256(archive.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()
- assert elf==a.expected_original_elf,'Original native ELF changed since lease' 
+ assert elf==a.expected_original_elf,'Original native ELF changed since lease'
  raw=ad('exec-out','run-as',original,'sha256sum',*expected)
  got={line.split(None,1)[1].strip():line.split(None,1)[0] for line in raw.splitlines()}
  assert got==expected,'Original module baseline mismatch'
