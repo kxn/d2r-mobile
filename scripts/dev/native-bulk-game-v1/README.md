@@ -88,3 +88,13 @@ resource recipes or NSO rewriting. Smaller imports can avoid pinning unrelated
 pages but may increase driver objects, unions and descriptor changes. Compare
 actual Buffer backing, original-game CPU and memory; do not infer resident RAM
 or FPS savings from the chosen window size alone.
+
+The f830 successor preserves the AA path and all existing lifecycle, 1MiB/16MiB,
+official tool, PSO readiness and restoration logic. A f830 input must additionally
+pin the exact root-reviewed original NVN positive/old-AA table refusal and
+fractional-filter receipts. Native composition/table must agree on complete
+DMNTBL2 extent/count/checksum/pack/producer and every DMNRES1 checksum plus all
+three queried UUIDs for the fixed Q735 device. Old AA bytes cannot be relabeled.
+Actual f830 bulk composition is still required before creating executable pair
+inputs; passing source checks or finite fixtures does not imply real-game/bulk
+visual or performance acceptance. Never reuse an AA native phase with f830.

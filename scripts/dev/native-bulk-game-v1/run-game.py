@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import struct
 import subprocess
 import sys
 import tarfile
@@ -44,6 +45,77 @@ def pinned(row):
     return path
 
 
+AA_DRIVER = 'aa185374ef6c1135ddcbff08506aa4dc720e29b82e45a9ae9f5ce767f54564db'
+LINEAR_DRIVER = 'f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
+DRIVER_LAYOUTS = {AA_DRIVER: '4529bbb870cdbdd02db214742b3e4170',
+                  LINEAR_DRIVER: 'ab91c540847448360a44496b50045159'}
+DRIVER_IDENTITIES = {
+    AA_DRIVER: DRIVER_LAYOUTS[AA_DRIVER] + '1e63ed8a4bbaa1bb6e51b8904fb7eb2f98db069284bbaa392518bad6a2c5d644',
+    LINEAR_DRIVER: DRIVER_LAYOUTS[LINEAR_DRIVER] + '1e63ed8a4bbaa1bb6e51b8904fb7eb2f3baa219f622918ab3ddda14a19a7cba6'}
+
+
+def provider_gate(driver_sha, acceptance, filter_acceptance=None):
+    require(driver_sha in DRIVER_LAYOUTS, 'exact reviewed native-image provider required')
+    if driver_sha == AA_DRIVER:
+        return
+    require(acceptance is not None and acceptance['sha256'] ==
+            '9089fbe5d64b3842e8ae387506e6a22c9cc2034881a76e2711a675407f05af0f',
+            'f830 original-NVN positive and old-AA refusal root review required')
+    review = read(pinned(acceptance))
+    require(review['status'] == 'ROOT_REVIEWED_F830_ACTUAL_ORIGINAL_NVN_PASS_AND_OLD_AA_TABLE_REFUSAL'
+            and review['ordinary_UID_only'] and review['original_game_unchanged']
+            and review['cleanup_complete'], 'incomplete f830 original-NVN review')
+    for key, stage in [('positive', 'actual-original-NVN-native-window-family-owned-passed'),
+                       ('negative', 'actual-old-AA-native-table-refused-by-original-runtime')]:
+        actual = read(pinned(review[key]))
+        require(actual['stage'] == stage and not actual['cleanup_errors']
+                and actual['original_unchanged'] and actual['fixture_PID_absent']
+                and actual['fixture_uninstalled'] and actual['fixture_tmp_absent']
+                and actual['driver_sha256'] == driver_sha, 'actual f830 fixture not closed')
+    require(filter_acceptance is not None and filter_acceptance['sha256'] ==
+            '02eff2027890cf9aff0ad479def9ae780e0fa966ec9f3a6a474824855c4f6261',
+            'actual f830 fractional filter root review required')
+    filtered = read(pinned(filter_acceptance))
+    require(filtered['status'] == 'ROOT_REVIEWED_F830_NATIVE_BILINEAR_TRILINEAR_GPU_REFERENCE_PASS'
+            and filtered['cleanup_complete'] and filtered['original_unchanged']
+            and filtered['proof']['linear_trilinear_GPU_reference_floatbits_proven'],
+            'incomplete fractional filter acceptance')
+    actual = read(pinned(filtered['actual_result']))
+    require(actual['stage'] == 'actual-native-ASTC-fully-linear-filter-reference-passed-not-game'
+            and not actual['cleanup_errors'] and actual['original_unchanged']
+            and actual['driver_sha256'] == driver_sha, 'filter actual result not closed')
+
+
+def native_table_gate(data, composition, driver_sha):
+    require(driver_sha in DRIVER_LAYOUTS, 'unknown native image layout provider')
+    require(len(data) >= 160, 'truncated native table')
+    magic, version, header, count, stride, size = struct.unpack_from('<8s4IQ', data)
+    require((magic, version, header, stride, size) ==
+            (b'DMNTBL2\0', 2, 160, 1040, len(data)) and
+            1 <= count <= 65536 and count == composition['entry_count']
+            and len(data) == 160 + count * 1056,
+            'family-v2 native table extent differs')
+    check = bytearray(data);check[128:160] = bytes(32)
+    require(hashlib.sha256(check).digest() == data[128:160], 'native table checksum differs')
+    identity = composition['driver_identity']
+    require(isinstance(identity, str) and re.fullmatch('[0-9a-f]{96}', identity)
+            and identity == DRIVER_IDENTITIES[driver_sha], 'opaque three UUIDs differ')
+    require(data[32:64].hex() == composition['native_pack_content_sha256']
+            and data[64:96].hex() == driver_sha == composition['driver_sha256']
+            and data[96:128].hex() == composition['producer_source_sha256'],
+            'native table pack/driver/producer differs')
+    for number in range(count):
+        entry = data[160 + number * 1040:160 + (number + 1) * 1040]
+        wire = entry[48:]
+        require(struct.unpack_from('<I', entry)[0] == number + 1
+                and wire[:8] == b'DMNRES1\0' and len(wire) == 992
+                and hashlib.sha256(wire[:960] + bytes(32)).digest() == wire[960:]
+                and wire[112:160].hex() == identity
+                and wire[288:320].hex() == composition['producer_source_sha256'],
+                'native table entry recipe/three UUIDs/producer differs')
+    return count
+
+
 def proof(path, digest):
     require(re.fullmatch('[a-f0-9]{64}', digest or '') is not None,
             'explicit input SHA256 required')
@@ -65,9 +137,8 @@ def proof(path, digest):
     p['new_elf'] = ready['canonical_native_library_sha256']['libdmhost_android.so']
     p['old_apk'] = str(pinned(p['original_apk']))
     p['driver_path'] = str(pinned(p['driver']))
-    require(p['driver']['sha256'] ==
-            'aa185374ef6c1135ddcbff08506aa4dc720e29b82e45a9ae9f5ce767f54564db',
-            'exact AA native-image provider required')
+    provider_gate(p['driver']['sha256'], p.get('native_provider_acceptance'),
+                  p.get('native_filter_acceptance'))
     with zipfile.ZipFile(p['apk']) as apk:
         for name, h in ready['canonical_native_library_sha256'].items():
             require(hashlib.sha256(apk.read('lib/arm64-v8a/' + name)).hexdigest() == h,
@@ -141,6 +212,7 @@ def proof(path, digest):
             table = pinned(phase['native_table'])
             require(sha(table) == composition['native_table_sha256'], 'table mismatch')
             require(composition['driver_sha256'] == p['driver']['sha256'], 'native provider mismatch')
+            native_table_gate(table.read_bytes(), composition, p['driver']['sha256'])
             phase['pack_sha'] = composition['native_pack_content_sha256']
             phase['producer_sha'] = composition['producer_source_sha256']
         else:
