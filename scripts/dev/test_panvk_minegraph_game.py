@@ -15,6 +15,22 @@ class FilenameDev:
   if self.bad=='digest':rows[1]='not-a-hash  '+names[1]
   if self.bad=='duplicate':rows[1]=rows[0]
   return '\n'.join(rows)
+class CASDev:
+ def __init__(self):self.dirs={'files/runtime/temp':{'Diablo II/GameLogs/D2261020.txt':'c'*64}};self.stops=0
+ def stopped(self):self.stops+=1
+ def app(self,*args):
+  if args[0]=='sh':
+   if 'mv "$1" "$2"' in args[2]:
+    src,dst,pkg=args[-3:];assert pkg==m.PKG and src in self.dirs and dst not in self.dirs;self.dirs[dst]=self.dirs.pop(src);return ''
+   path=args[-1];return 'DIR' if path in self.dirs else ''
+  if args[0]=='find':
+   path=args[1];return '' if args[-1]=='l' else '\n'.join(path+'/'+n for n in self.dirs[path])
+  assert args[0]=='sha256sum'
+  return '\n'.join(self.dirs[str(Path(n).parent.parent.parent)]['Diablo II/GameLogs/D2261020.txt']+'  '+n for n in args[1:])
+cas=CASDev();before=m.inventory(cas,'files/runtime/temp')
+m.rename_dir(cas,'files/runtime/temp','files/runtime/backup-temp',before)
+m.rename_dir(cas,'files/runtime/backup-temp','files/runtime/temp',before)
+assert m.inventory(cas,'files/runtime/temp')==before and cas.stops==2
 # Actual inventory receives same-shaped real source filenames, not a stand-in parser.
 parsed=m.inventory(FilenameDev(),'files/runtime/temp')
 assert parsed=={'ordinary.bin':'c'*64,'Diablo II/GameLogs/D2261016.txt':'c'*64,'Diablo II/GameLogs/D2261020.txt':'c'*64}
@@ -63,4 +79,4 @@ with tempfile.TemporaryDirectory()as tmp:
  except RuntimeError:pass
  else:raise AssertionError('corrupt driver receipt accepted')
  m.READY_SHA=good;n+=1
-print(json.dumps({'passed':True,'restore_and_idempotence_cases':32,'tamper_rejections':3,'driver_receipt_negative_control':True,'cases':n+3,'actual_inventory_regression_cases':3,'actual_filename_inventory_regression':True,'malformed_digest_and_duplicate_rejected':True,'device_access':False}))
+print(json.dumps({'passed':True,'restore_and_idempotence_cases':32,'tamper_rejections':3,'driver_receipt_negative_control':True,'cases':n+4,'actual_inventory_regression_cases':3,'actual_inventory_and_CAS_roundtrip':True,'actual_filename_inventory_regression':True,'malformed_digest_and_duplicate_rejected':True,'device_access':False}))

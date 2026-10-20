@@ -8,7 +8,7 @@ import argparse,hashlib,importlib.util,json,re,shlex,signal,subprocess,sys,time,
 R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
-require=old.require;sha=old.sha;read=old.read;journal=old.journal;inventory=old.inventory;rename_dir=old.rename_dir
+require=old.require;sha=old.sha;read=old.read;journal=old.journal
 READY=R/'.local/logs/panvk-minegraph-703db0e-full-driver-source-ready-agent.json'
 READY_SHA='defcf3634fe46c0733ab40319251082d0a8eca5b28eb4120b70aca5c0921e1d2'
 DRIVER_SHA='6acfacb8ffe69081f84ee95a8964144760a394d9ebd694f0c082e65677d643c9'
@@ -31,6 +31,14 @@ def inventory(dev,path):
  for start in range(0,len(files),128):lines.extend(dev.app('sha256sum',*files[start:start+128]).splitlines())
  result={n.removeprefix(path+'/'):h for h,n in (line.split(None,1)for line in lines)}
  require(len(result)==len(files) and all(re.fullmatch('[a-f0-9]{64}',h)for h in result.values()),'incomplete directory hashes');return result
+
+# Original CAS function body resolves the corrected local inventory.
+def rename_dir(dev,src,dst,expected):
+ dev.stopped();require(inventory(dev,src)==expected and inventory(dev,dst)is None,'directory rename conflict')
+ # Existing private-driver atomic directory publication: old files are never
+ # copied or rewritten. A stopped PID is checked again inside run-as.
+ dev.app('sh','-c','set -eu; test -z "$(pidof "$3" || true)"; test -d "$1"; test ! -e "$2"; mv "$1" "$2"','sh',src,dst,PKG)
+ require(inventory(dev,dst)==expected,'directory rename verification failed')
 
 def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':p.stat().st_size}
 def proof():

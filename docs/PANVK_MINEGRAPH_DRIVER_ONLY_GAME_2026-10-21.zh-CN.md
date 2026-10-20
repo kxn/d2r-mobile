@@ -13,3 +13,5 @@
 `test_panvk_minegraph_game.py` 对实际 restore 函数检查目录存在/缺失、部分发布后恢复及幂等32组、篡改拒绝3组、错误驱动凭据拒绝1组；不执行 ADB。
 
 初次 v1 在发布/启动前发现实际游戏 `temp/Diablo II/GameLogs/...` 文件名包含空格；继承 inventory 的 SHA 行解析无 maxsplit 会异常。后继只将 hash 与完整路径按第一个空白处分开，路径数量、SHA、CAS 与 owner 检查均保留；另有同形真实路径及坏 SHA/重复路径负控，v1 失败记录不改。
+
+v2 揭示旧 rename_dir 的模块作用域仍会调用旧 inventory。v3 局部原样复用 rename_dir 函数体并删除旧别名，仅令其解析已修正的 inventory；旧冻结工具不改。除原有40项检查外，独立联合回归直接执行实际 inventory、rename_dir、restore、clean，覆盖三个目录存在/缺失的8种组合及带空格的新旧文件名，完成 backup→publish→模拟新增缓存→restore→cleanup 全路径。其余继承函数 Device、Hashes、journal、require、claim_pid 不依赖 inventory。未启动的 v1/v2 失败记录保留。
