@@ -1,0 +1,14 @@
+--- native_heapdump_viewer.upstream.py
++++ native_heapdump_viewer.compat.py
+@@ -154 +154 @@
+-      if len(parts) > 7 and parts[0] == "z" and parts[2] == "sz":
++      if len(parts) >= 7 and parts[0] == "z" and parts[2] == "sz":
+@@ -230 +230 @@
+-      if len(parts) > 7 and parts[0] == "z" and parts[2] == "sz":
++      if len(parts) >= 7 and parts[0] == "z" and parts[2] == "sz":
+@@ -314 +314 @@
+-      result = subprocess.check_output(["objdump", "-w", "-j", ".text", "-h", sofile])
++      result = subprocess.check_output(["objdump", "-w", "-j", ".text", "-h", sofile], text=True)
+@@ -325 +325 @@
+-      p = subprocess.Popen(["addr2line", "-C", "-j", ".text", "-e", sofile, "-f"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
++      p = subprocess.Popen(["addr2line", "-C", "-j", ".text", "-e", sofile, "-f"], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)

@@ -28,6 +28,7 @@ def module(name, path):
 
 
 heap = module('official_heap_capture', HERE / 'heap-capture.py')
+malloc = module('official_malloc_debug', HERE / 'malloc-debug.py')
 m = module('accepted_native_game_transaction', OLD / 'transaction.py')
 installer = module('accepted_native_game_installer', OLD / 'installer.py')
 sha, read, require, PKG = m.sha, m.read, m.require, m.PKG
@@ -145,6 +146,8 @@ def proof(path, digest):
                                 R / 'scripts/dev/android-game-walk-to.py']}
     if 'heap_profile' in p:
         p['controller_sources'].update(heap.proof(p, pinned, read, require))
+    if 'malloc_debug' in p:
+        p['controller_sources'].update(malloc.proof(p, pinned, read, require))
     return p
 
 
@@ -249,6 +252,9 @@ def phase_game(dev, out, phase, p, token):
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
         m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
+        if p.get('malloc_debug'):
+            d['malloc_debug']=malloc.collect(dev,out/'official-malloc-debug',p['malloc_debug'],own,d['ordinary_UID'],lambda value:(d.update(malloc_debug=value),save()))
+            save()
         if capture:
             require(pid() == own, 'PID changed before official profile endpoint')
             capture.finish(own)
@@ -324,7 +330,7 @@ def phase_game(dev, out, phase, p, token):
             now = pid()
             if now:
                 require(not ambiguous and own and now == own, 'unknown/replacement PID; preserve transaction')
-                if capture:
+                if capture or p.get('malloc_debug'):
                     status = dev.app('cat', '/proc/' + own + '/status')
                     tracer = re.search(r'^TracerPid:\s+(\d+)\s*$', status, re.M)
                     require(tracer and tracer[1] == '0' and pid() == own, 'game tracer/nonowned PID prevents lifecycle cleanup')
@@ -346,6 +352,9 @@ def phase_game(dev, out, phase, p, token):
         finally:
             if capture and not capture.state['cleanup_confirmed']:
                 capture.finish(own)  # Late receipt cleanup after independently stopping the game.
+            if p.get('malloc_debug') and d.get('malloc_debug',{}).get('dump_complete') and (d.get('fresh_save_then_stopped') or d.get('already_exited_no_save_restart')):
+                d['malloc_debug']['shim_process_exited']=True
+                malloc.analyze_after_game_stop(out/'official-malloc-debug',p['malloc_debug'],d['malloc_debug'],lambda value:(d.update(malloc_debug=value),save()))
             save()
     return d
 
@@ -369,7 +378,7 @@ def main():
     plan = {'offline': True, 'controller_sources': p['controller_sources'],
             'inputs_sha256': args.inputs_sha256, 'runtime': p['runtime_commit'],
             'phases': ['standard-ASTC4', 'native-ASTC4'], 'scale_3d': .60,
-            'output': '2750x1260', 'profiling': bool(p.get('heap_profile')), 'recursive_RomFS_copy': False,
+            'output': '2750x1260', 'profiling': bool(p.get('heap_profile') or p.get('malloc_debug')), 'recursive_RomFS_copy': False,
             'scope': 'Functional and system residency only, not sustained thermal/FPS proof'}
     if p.get('heap_profile'):
         plan.update(heap_profile_mode=p['heap_profile']['mode'],
@@ -377,6 +386,10 @@ def main():
                     heap_profile_command_template=heap.capture_command(p['heap_profile'], 'UNIQUE_PHASE_EMPTY_OUTPUT'),
                     no_profiled_FPS_claim=True,
                     effective_phase_kinds=['control'] if p['heap_profile']['mode'] == 'control-only' else ['control', 'native'])
+    if p.get('malloc_debug'):
+        plan.update(malloc_debug=True,malloc_debug_mode='control-only',effective_phase_kinds=['control'],
+                    malloc_debug_intrusive=True,no_profiled_FPS_or_PSS_claim=True,
+                    malloc_debug_options=p['malloc_debug']['malloc_options'])
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -418,7 +431,7 @@ def main():
         created = True
         owner = out / 'owner'
         owner.write_text(token + '\n')
-        phase_plan = p['phases'][:1] if p.get('heap_profile', {}).get('mode') == 'control-only' else p['phases']
+        phase_plan = p['phases'][:1] if p.get('malloc_debug') or p.get('heap_profile', {}).get('mode') == 'control-only' else p['phases']
         for phase in phase_plan:
             active = phase
             name = phase['kind']
@@ -483,6 +496,9 @@ def main():
             phase_result = phase_game(dev, out / name, phase, p, token)
             d['phases'].append(phase_result)
             write()
+            if p.get('malloc_debug') and not phase_result.get('malloc_debug',{}).get('accepted'):
+                d['profile_outcome']='malloc-debug-invalid-no-next-phase';d['stage']='malloc-debug-invalid-original-game-cleaned'
+                write();break
             if p.get('heap_profile') and not phase_result.get('heap_profile', {}).get('accepted'):
                 d['profile_outcome'] = 'invalid-or-partial-no-next-phase'
                 d['stage'] = 'official-heap-profile-invalid-original-game-cleaned'
@@ -491,7 +507,11 @@ def main():
             require(phase_result.get('original_HUD_reached') and phase_result.get('fresh_save_then_stopped'),
                     'phase did not reach HUD / fresh save2')
         owner.unlink()
-        if p.get('heap_profile'):
+        if p.get('malloc_debug'):
+            if d.get('profile_outcome') is None:
+                d['profile_outcome']='malloc-debug-control-only-valid';d['stage']='official-malloc-debug-control-only-valid'
+            d['not_original_unprofiled_pair_acceptance']=True
+        elif p.get('heap_profile'):
             if d.get('profile_outcome') is None:
                 d['profile_outcome'] = 'control-only-valid' if p['heap_profile']['mode'] == 'control-only' else 'pair-valid'
                 d['stage'] = 'official-heap-profile-' + d['profile_outcome']
@@ -577,7 +597,7 @@ def main():
     print(json.dumps({k: d.get(k) for k in ['stage', 'error', 'profile_outcome', 'cleanup_errors', 'original_restored']}, indent=2))
     require(not d.get('error') and not d['cleanup_errors'] and d.get('cleanup_complete'),
             'original-game pair incomplete; preserve journal')
-    if d.get('profile_outcome') == 'invalid-or-partial-no-next-phase':
+    if d.get('profile_outcome') in ('invalid-or-partial-no-next-phase','malloc-debug-invalid-no-next-phase'):
         raise SystemExit(2)  # Distinct tool-invalid result; not a runtime failure.
 
 

@@ -1,0 +1,8 @@
+{
+  "upstream_url": "https://android.googlesource.com/platform/development/+/265cbbc66/scripts/native_heapdump_viewer.py",
+  "upstream_revision": "265cbbc66",
+  "original_sha256": "7c1cdf918bf6fdfd756b6f7e224cf12cb6bd71c5b1dbad6ef98fc62d479a8355",
+  "compat_sha256": "107978ffa3fe341b522548f32be1b749b65ee889992371f22f358a543be62dd7",
+  "patch_sha256": "2238cf7cca52e56eeb280443752056a2b787632859cd2d41189267ed92551398",
+  "change": "Only preserve official zero-frame records and Python3 subprocess text transport; reuse official parser/map/symbolizer/tree; no new allocation capture/parser."
+}
