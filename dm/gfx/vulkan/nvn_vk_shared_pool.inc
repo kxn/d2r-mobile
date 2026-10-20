@@ -1,3 +1,4 @@
+#include <sys/mman.h>
 // Fixed startup mode, whole-pool lazy import. No borrowed-window admission,
 // mirror demotion or legacy content proof is used by a shared Pool.
 static VkResult shared_buffer_create(void *host_pointer,uint64_t bytes,vk_buffer *fresh) {
