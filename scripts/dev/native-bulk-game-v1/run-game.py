@@ -193,6 +193,15 @@ def proof(path, digest):
         require(helper == HERE / 'capture-official-cpu.py', 'exact reviewed local helper required')
         require(pinned(tools['scheduler_helper']) == R / 'scripts/dev/capture-android-scheduler.py',
                 'existing official scheduler orchestration required')
+    if 'official_gpu_tools' in p:
+        gpu = p['official_gpu_tools']
+        require(set(gpu) == {'helper', 'config', 'scheduler_helper'} and p.get('performance_tools'),
+                'optional official GPU tools require completed original CPU tools')
+        require(pinned(gpu['helper']) == HERE / 'sdp_realtime.py', 'exact local SDP helper required')
+        require(pinned(gpu['scheduler_helper']) == R / 'scripts/dev/capture-android-scheduler.py',
+                'existing official scheduler helper required')
+        tool = module('source_pinned_official_sdp', gpu['helper']['path'])
+        p['official_gpu_config'] = tool.config(gpu['config'])
     require([v['kind'] for v in p['phases']] == ['control', 'native'], 'matched pair order')
     for phase in p['phases']:
         composition = read(pinned(phase['composition']))
@@ -317,6 +326,10 @@ def phase_game(dev, out, phase, p, token):
         m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
         if p.get('performance_tools'):
+            if p.get('official_gpu_tools'):
+                tool = module('source_pinned_official_sdp_pause', p['official_gpu_tools']['helper']['path'])
+                d['SDP_paused_before_CPU'] = tool.paused(p['official_gpu_config'])
+                save()
             require(pid() == own, 'PID changed before independent performance windows')
             performance_out = out / 'official-performance'
             performance_out.mkdir()
@@ -336,6 +349,14 @@ def phase_game(dev, out, phase, p, token):
             # All Simpleperf/Perfetto windows and owned cleanup finish before
             # the optional all-stop LLDB snapshot below. Never mix their scopes.
             read_state(dev, out, 'after-tools')
+        if p.get('official_gpu_tools'):
+            require(pid() == own, 'PID changed before official GPU window')
+            tool = module('source_pinned_official_sdp_capture', p['official_gpu_tools']['helper']['path'])
+            d['official_gpu'] = tool.capture(p['official_gpu_config'], own, out / 'official-gpu',
+                p['pool_window_bytes'], p['driver']['sha256'],
+                pinned(p['official_gpu_tools']['scheduler_helper']))
+            d['official_gpu_complete'] = d['official_gpu']['complete']
+            save()
         if p.get('counter_snapshot'):
             require(pid() == own, 'PID changed before once-only counter snapshot')
             counter = p['counter_snapshot']
@@ -448,6 +469,12 @@ def main():
             'same_window_CPU_and_Surface_events': 'Perfetto only; stat/record are separate windows',
             'game_Surface_actual_frame_timeline_may_be_absent': True}
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
+    if p.get('official_gpu_tools'):
+        plan['official_gpu'] = {'optional': True, 'tool': 'SDP2026.9 Realtime GUI',
+            'official_seconds': 12, 'Perfetto_subset_seconds': 8, 'before_LLDB': True,
+            'default': 'OFF unless source-pinned official_gpu_tools is supplied',
+            'scope': 'Global hardware metrics, no exclusive draw/pass attribution'}
+        plan['controller_sources'].update({v['path']: v['sha256'] for v in p['official_gpu_tools'].values()})
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -562,6 +589,14 @@ def main():
         d['error'] = repr(e)
         write()
     finally:
+        if p.get('official_gpu_tools'):
+            try:
+                tool = module('source_pinned_official_sdp_close', p['official_gpu_tools']['helper']['path'])
+                d['cleanup_errors'].extend(tool.close(p['official_gpu_config']))
+                d['official_gpu_tools_cleanup_complete'] = not d['cleanup_errors']
+            except BaseException as e:
+                d['cleanup_errors'].append('official SDP tools: ' + repr(e))
+            write()
         try:
             require(not installer.UNRESOLVED, 'installer unresolved; preserve backups, do not restore')
             dev.stopped()

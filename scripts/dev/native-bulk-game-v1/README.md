@@ -98,3 +98,48 @@ three queried UUIDs for the fixed Q735 device. Old AA bytes cannot be relabeled.
 Actual f830 bulk composition is still required before creating executable pair
 inputs; passing source checks or finite fixtures does not imply real-game/bulk
 visual or performance acceptance. Never reuse an AA native phase with f830.
+
+## Optional official SDP Realtime window (default OFF)
+
+An `official_gpu_tools` input adds only `helper`, `config`, and
+`scheduler_helper` `{path, sha256}` pins. The helper must be this tree's
+`sdp_realtime.py`; the scheduler remains the existing official Perfetto runner.
+The original CPU/stat/record/scheduler windows finish first, then one 12s SDP
+Realtime window contains an independent 8s Perfetto Surface/sched capture, all
+before LLDB. Omission retains the original flow. No GPU timer or counter reader
+is implemented here: the installed Qualcomm2026.9 GUI/service does collection.
+
+Preparation must own one new GUI/Xvfb and every new official remote collector
+while the game is stopped; record PID/starttime/executable SHA/UID. Configure the
+nine actual Q system metrics, verify the official session's unit descriptions,
+and Pause. The prepared retained GUI's actual window PID/geometry and observed
+Pause control are checked; do not use this config on a replacement GUI/layout.
+The verified keyboard File Save path is `Alt+F`, `S`, selected Name absolute path,
+`Return` (Ctrl+S is not a valid shortcut). Each phase saves to a **new** unique
+`official-session.sdp`, checks the two original zip members and exact newly
+covered timestamps, and retains original `.sdp`, `sdp.db`, version and raw rows.
+Before CPU windows and after each GPU window, two count/maxstamp reads of the
+owned official DB must remain fixed. These are tool-state guards, not sampling.
+
+Read/Write/TextureBW/Clocks/L1/L2/TP are mandatory with known original definitions,
+finite values, no gaps over500ms, and real active rate/TP samples. Missing or
+all-idle mandatory rates fail as a tool applicability gap; zero L2 misses remains
+valid. Both phases use the same f830 driver/runtime/render options: ordinary
+private TILED control versus authenticated native LINEAR. This is not an AA
+native-vs-f830 native comparison and no new ordinary-AA baseline is requested.
+
+All raw data includes global compositor/other GPU activity. The 12s counter
+bracket is **not** the8s trace. Analysis must crop counter rows to the official
+Perfetto clock-snapshot/trace-bounds interval before using that trace's actual
+game SurfaceView fence-completion count. Never divide12s bytes by8s frames;
+never treat CPU markers as GPU pass time or sum TBDR draw durations. No current
+GMEM/per-pass conclusion is supplied. Existing vendor max-frequency fallback
+warnings remain. No temperature/sysfs polling, layer injection or shader edit.
+
+Outer `finally` closes only the exact adopted GUI/Xvfb/collector identities,
+including failure, independently of original save2/stop/CAS restoration. A
+replacement/unknown process is preserved and cleanup failure is explicit. The
+existing scheduler helper's failure-cleanup limits remain: a helper still live
+after its bound is reported, not silently called terminated. Source-only plan
+never starts tools or ADB. Source-pinned current prepared-session metadata is a
+single-use handoff, not permission to adopt arbitrary pre-existing tools.
