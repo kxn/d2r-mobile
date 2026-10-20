@@ -21,6 +21,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeWatch(int type, int unitClass);
     private static native int nativeSharedImageTests(String directory, int mode);
     private static boolean sharedImageFixtureStarted;
+    private static boolean nativeResourceFixtureStarted;
     private boolean sharedImageFixture;
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean readbackBatch);
     private static native void nativeSuspend(boolean paused);
@@ -46,7 +47,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativeSharedGuestHeap(boolean enabled);
     private static native void nativeLegacyAstcCopy(boolean enabled, boolean fixture);
-    private static native void nativeNativeResources(String table, String packSha256, String producerSha256, String fixtureDirectory);
+    private static native void nativeNativeResources(String table, String packSha256, String producerSha256, String fixtureDirectory, boolean validation);
     private static native void nativePoolDeferPublication(boolean enabled);
     private static native void nativePixelLocal(boolean enabled);
     private static native void nativePixelLocalSharedDs(boolean enabled);
@@ -157,6 +158,30 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
         // Isolated functional oracle: choose the same app-local ICD before any
         // game/Surface/device exists; recreation and new Intents cannot rerun it.
+        if (getIntent().hasExtra("native_resource_fixture_dir")) {
+            if (hostStarted || nativeResourceFixtureStarted || getIntent().hasExtra("shared_image_test") ||
+                    !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                    !getIntent().getBooleanExtra("async_submit", false) ||
+                    !getIntent().getBooleanExtra("shared_guest_heap", false) ||
+                    getIntent().getBooleanExtra("memory_test", false) || getIntent().getBooleanExtra("acquire_scope_test", false) ||
+                    !"panvk".equals(getIntent().getStringExtra("vulkan_provider")) ||
+                    getIntent().getBooleanExtra("validate", false))
+                throw new IllegalArgumentException("Native resource oracle requires one cold explicit PanVK shared async test without game/other tests");
+            nativeResourceFixtureStarted = sharedImageFixture = true;
+            File fixtureRoot = new File(getFilesDir(), "runtime");
+            if (!fixtureRoot.isDirectory() && !fixtureRoot.mkdirs()) throw new IllegalStateException("runtime directory");
+            nativeProbe(fixtureRoot.getAbsolutePath());
+            nativeSharedGuestHeap(true);
+            nativeNativeResources(getIntent().getStringExtra("native_resource_table"),
+                    getIntent().getStringExtra("native_resource_pack_sha256"),
+                    getIntent().getStringExtra("native_resource_producer_sha256"),
+                    getIntent().getStringExtra("native_resource_fixture_dir"),
+                    getIntent().getBooleanExtra("vulkan_test_validation", true));
+            nativeVulkanDriver("panvk", new File(fixtureRoot, "vulkan-panfrost").getAbsolutePath(), null);
+            new Thread(() -> nativeTests(fixtureRoot.getAbsolutePath(), true, false, false, getIntent().getBooleanExtra("vulkan_test_validation", true), false), "native-resource-test").start();
+            return;
+        }
         if (getIntent().hasExtra("shared_image_test")) {
             String kind = getIntent().getStringExtra("shared_image_test");
             int mode = "nc-gate".equals(kind) ? 0 : "retile".equals(kind) ? 1 : -1;
@@ -187,7 +212,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeNativeResources(getIntent().getStringExtra("native_resource_table"),
                     getIntent().getStringExtra("native_resource_pack_sha256"),
                     getIntent().getStringExtra("native_resource_producer_sha256"),
-                    getIntent().getBooleanExtra("run_vulkan_tests", false) ? getIntent().getStringExtra("native_resource_fixture_dir") : null);
+                    getIntent().getBooleanExtra("run_vulkan_tests", false) ? getIntent().getStringExtra("native_resource_fixture_dir") : null, true);
             // Source-proved subpasses fall back when recipes, resources or
             // dependencies do not qualify. Shared-depth remains opt-in.
             nativePixelLocal(getIntent().getBooleanExtra("pixel_local", true));
