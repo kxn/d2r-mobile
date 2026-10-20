@@ -25,7 +25,10 @@ static void native_pending_acquire_gpu_cases(VkImage image,void *binding,uint64_
   // First case is an independent pending pass. Real uniform reads of the
   // native bytes, an explicit order boundary, and a real aliased attachment
   // writer must each retain the old split. No history is injected by a stub.
-  for(unsigned test=0;test<4;test++) {
+  // The fifth pass also rejects the prior chunk's retained private optimal
+  // writer. Its contents live in another VkImage, unlike native shared bytes;
+  // completion or an older pass cannot manufacture canonical payload authority.
+  for(unsigned test=0;test<5;test++) {
     S.targets=(p_set_rt){.n=1,.color={(const tex_t *)&targets[test==3]}};
     S.ubo[1][0]=(p_bind_buf){.addr=test==1?address:(uintptr_t)color,.size=16};
     vk_pipeline_state_changed();mtl_sub_begin();vk_buffer *out=vk_temp_buffer(4096);

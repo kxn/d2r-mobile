@@ -119,7 +119,8 @@ static int native_pool_operation(const tex_t *t,VkPipelineStageFlags stages,int 
 static int native_acquire_alias_writer(const alias_range_node *node,int unused) {
   (void)node;(void)unused;return 1;
 }
-static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFlags stages,VkAccessFlags access) {
+static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFlags stages,VkAccessFlags access,
+                                                     uint64_t *alias_generation) {
   VkCommandBuffer command=vk_render_pending_primary();
   if(!command || stages!=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT || access!=VK_ACCESS_SHADER_READ_BIT ||
       i->use_clock>image_pass_begin_clock || vk_mip_clear_pending())return VK_NULL_HANDLE;
@@ -140,16 +141,24 @@ static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFl
     if(range->end>address && range->owner!=i && range->owner->use_clock>image_pass_begin_clock)
       return VK_NULL_HANDLE;
   }
-  // Only independent first use moves. Earlier Buffer alias accesses, CPU
+  // Only independent first use moves. Current-recording Buffer alias accesses, CPU
   // publication, unknown/order barriers or image writers keep the original
   // end-pass path. Ownership still returns to FOREIGN at every chunk end;
   // this is not a new immutable-resource or CPU-writing contract.
+  // Known retained writers come only from older chunks: the complete current
+  // recording page ledger was negative above. A VkBuffer visibility bit does
+  // not order this different object. Reuse the existing global alias-memory
+  // dependency NOW, on the same pending primary, before FOREIGN acquire and
+  // before execution of any secondary draw. Do not defer it to post-Draw
+  // history recording and do not clear or manufacture producer history.
+  *alias_generation=vk_buffer_native_image_read(address,end-address,stages,0);
   return command;
 }
 static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAccessFlags access) {
   if(!i->native_entry)return;
   if(!i->native_acquired) {
-    VkCommandBuffer command=native_acquire_pending_primary(i,stages,access);
+    uint64_t alias_generation=0;
+    VkCommandBuffer command=native_acquire_pending_primary(i,stages,access,&alias_generation);
     if(!command) {
       vk_render_end();command=V.cmd;
       // A failed negative proof can include another stage's Buffer alias in
@@ -184,7 +193,8 @@ static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAcc
       // source, not a claim that any other consumer is already visible.
       cell->mip_scope=stages;
     }
-    i->native_alias_generation=0;i->native_alias_visible_stages=0;
+    i->native_alias_generation=alias_generation;
+    i->native_alias_visible_stages=alias_generation?stages:0;
     i->native_acquired=1;i->native_next=native_acquired_images;native_acquired_images=i;
   }
 

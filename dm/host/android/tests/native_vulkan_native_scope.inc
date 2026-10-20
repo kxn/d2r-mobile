@@ -49,13 +49,15 @@ static void native_acquire_scope_gpu_test(void) {
   // dependency oracle. No physical mip layout, codec or opaque payload is baked.
   for(unsigned n=0;n<3;n++)entry.recipe.mips[n].size=needs.size;
   vk_test_native_rgba_adopt((const tex_t *)&source,raw,memory,allocation,&create,&entry);
-  uint8_t controls[5][0x880];const unsigned markers[]={3,4,23,0,1};NVNprogram graphics,compute,primer;
-  for(unsigned n=0;n<5;n++)memset(controls[n],markers[n],sizeof controls[n]);
+  uint8_t controls[6][0x880];const unsigned markers[]={3,4,23,0,1,26};NVNprogram graphics,compute,primer,copy_compute;
+  for(unsigned n=0;n<6;n++)memset(controls[n],markers[n],sizeof controls[n]);
   NVNshaderData stages[]={{.control=controls[0]},{.control=controls[1]}};
   CHECK(CALL(nvnProgramInitialize,&graphics,&device));CHECK(CALL(nvnProgramSetShaders,&graphics,2,stages));
   stages[0].control=controls[2];CHECK(CALL(nvnProgramInitialize,&compute,&device));CHECK(CALL(nvnProgramSetShaders,&compute,1,stages));
   stages[0].control=controls[3];stages[1].control=controls[4];
   CHECK(CALL(nvnProgramInitialize,&primer,&device));CHECK(CALL(nvnProgramSetShaders,&primer,2,stages));
+  stages[0].control=controls[5];CHECK(CALL(nvnProgramInitialize,&copy_compute,&device));
+  CHECK(CALL(nvnProgramSetShaders,&copy_compute,1,stages));
   NVNsamplerBuilder sb;NVNsampler sampler;CALL(nvnSamplerBuilderSetDefaults,&sb);CALL(nvnSamplerBuilderSetDevice,&sb,&device);
   CALL(nvnSamplerBuilderSetMinMagFilter,&sb,NVN_MIN_FILTER_NEAREST,NVN_MAG_FILTER_NEAREST);
   CHECK(CALL(nvnSamplerInitialize,&sampler,&sb));mtl_set_tex_pool_n(256);mtl_reg_samp(72,&((const samp_t *)&sampler)->p);
@@ -78,13 +80,58 @@ static void native_acquire_scope_gpu_test(void) {
   primer_color[0]=primer_color[1]=primer_color[2]=0;primer_color[3]=1;
   CALL(nvnMemoryPoolFlushMappedRange,&pool,(3u<<20)+32768,16);
   uint32_t *computed=(void *)(bytes+(3u<<20)+65536);uint8_t *transferred=bytes+(3u<<20)+131072;
-  for(unsigned order=0;order<3;order++) {
+  int previous_writer=getenv("DM_NATIVE_PREVIOUS_WRITER_FIXTURE")!=NULL;
+  extern VkPipelineStageFlags vk_test_native_writer_stages(uint64_t,uint64_t);
+  // The first three orders retain the complete original multi-mip oracle.
+  // Three additional real producer chunks test older TRANSFER and COMPUTE
+  // writers; the sampler must not silently succeed by a broad history clear.
+  for(unsigned order=0;order<(previous_writer?6u:3u);order++) {
+    unsigned producer=order>=3?order-3:0;
+    VkPipelineStageFlags producer_stage=producer?VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT:VK_PIPELINE_STAGE_TRANSFER_BIT;
+    if(order>=3) {
+      mtl_sub_begin();
+      // Original ReadTexels above deliberately records an unbounded staging
+      // transfer. Retire that unrelated unknown state BEFORE the new real
+      // producer, so these cases isolate known older writes without weakening
+      // the production unknown-state rejection or clearing the tested writer.
+      vk_barrier();
+      if(!producer) {
+        uint8_t *linear=bytes+(3u<<20)+262144;
+        for(unsigned n=0;n<4096;n+=4){linear[n]=linear[n+3]=255;linear[n+1]=linear[n+2]=0;}
+        CALL(nvnMemoryPoolFlushMappedRange,&pool,(3u<<20)+262144,4096);
+        NVNtextureView v=nr_view(0);p_copy_b2t copy={.tex=(const tex_t *)&source,
+          .src=(uintptr_t)linear,.view=*(const view_t *)&v,.has_view=1,.r={0,0,0,32,32,1}};
+        vk_texture_copy_b2t(&copy,0,0);
+      } else {
+        // One original compute-copy invocation reads/writes the SAME finite
+        // native backing bytes. No opaque layout/codec is guessed or copied
+        // to a second payload: its actual image contents remain unchanged.
+        S=(vk_state){.program=(const prog_t *)&copy_compute};
+        S.ssbo[5][0]=(p_bind_buf){.addr=address,.size=needs.size};
+        S.ssbo[5][1]=(p_bind_buf){.addr=address,.size=needs.size};
+        vk_pipeline_state_changed();vk_dispatch(&(p_dispatch){1,1,1});
+        // Conservative unknown-stage metadata for this REAL GPU write must
+        // retain the split. ALL is a superset of its actual compute stage;
+        // no fictitious payload write or relaxed data assertion is added.
+        if(producer==2)vk_buffer_shader_written(address,needs.size,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+      }
+      // The very same recording has a real producer page, so moving an
+      // acquire before it must still be rejected. This check has GPU work,
+      // and the subsequent cross-chunk sample verifies the actual pixels.
+      CHECK(!vk_pool_native_acquire_independent(address,needs.size));
+      vk_internal_wait(vk_internal_commit());
+      CHECK(vk_test_native_writer_stages(address,needs.size)&producer_stage);
+    }
     mtl_sub_begin();
-    if(!order) {
+    if(!order || order>=3) {
       S=graphics_state;S.program=(const prog_t *)&primer;
       S.ubo[1][0]=(p_bind_buf){.addr=(uintptr_t)primer_color,.size=16};
       vk_pipeline_state_changed();vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
       CHECK(vk_render_active());
+      if(order>=3) {
+        CHECK(vk_test_native_writer_stages(address,needs.size)&producer_stage);
+        CHECK(vk_pool_native_acquire_independent(address,needs.size)==(producer!=2));
+      }
     }
     if(order==1) {
       NVNtextureView v=nr_view(1);mtl_reg_tex(71,(const tex_t *)&source,(const view_t *)&v);
@@ -97,12 +144,13 @@ static void native_acquire_scope_gpu_test(void) {
     }
     NVNtextureView first=nr_view(0);mtl_reg_tex(71,(const tex_t *)&source,(const view_t *)&first);
     S=graphics_state;vk_pipeline_state_changed();vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
-    if(!order) {
+    if(!order || order>=3) {
       extern VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t,unsigned);
       // Unvisited mip1 must retain the acquire's real directed source. This
       // semantic invariant catches the old memset-to-TOP gap independently of
       // whether a serial software GPU happens to return the right pixel values.
-      CHECK(vk_test_native_unused_mip_source(((tex_t *)&source)->serial,1)==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+      CHECK(vk_test_native_unused_mip_source(((tex_t *)&source)->serial,1)==
+        (order==5?VK_PIPELINE_STAGE_ALL_COMMANDS_BIT:VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT));
       NVNtextureView v=nr_view(1);mtl_reg_tex(71,(const tex_t *)&source,(const view_t *)&v);
       S=(vk_state){.program=(const prog_t *)&compute};S.tex[5][0]=71;S.samp[5][0]=(uint64_t)72<<20;
       S.ssbo[5][0]=(p_bind_buf){.addr=(uintptr_t)computed,.size=256};vk_pipeline_state_changed();vk_dispatch(&(p_dispatch){1,1,1});
@@ -116,7 +164,8 @@ static void native_acquire_scope_gpu_test(void) {
     for(unsigned n=0;n<sizeof rendered;n+=4)CHECK(rendered[n]==255 && !rendered[n+1] && !rendered[n+2] && rendered[n+3]==255);
   }
   CALL(nvnTextureFinalize,&source);CALL(nvnTextureFinalize,&output);
-  CALL(nvnProgramFinalize,&graphics);CALL(nvnProgramFinalize,&compute);CALL(nvnProgramFinalize,&primer);CALL(nvnSamplerFinalize,&sampler);
+  CALL(nvnProgramFinalize,&graphics);CALL(nvnProgramFinalize,&compute);CALL(nvnProgramFinalize,&primer);
+  CALL(nvnProgramFinalize,&copy_compute);CALL(nvnSamplerFinalize,&sampler);
   CALL(nvnMemoryPoolFinalize,&pool);CHECK(!vk_validation_error_count());
-  printf("{\"test\":\"native-acquire-cross-mip-directed-scopes\",\"checks\":%u,\"result\":\"passed\",\"FS0_then_CS1_and_TRANSFER2\":true,\"CS1_then_FS0\":true,\"TRANSFER2_then_FS0\":true,\"actual_imported_RGBA\":true,\"ASTC_executed\":false}\n",checks);
+  printf("{\"test\":\"native-acquire-cross-mip-directed-scopes\",\"checks\":%u,\"result\":\"passed\",\"FS0_then_CS1_and_TRANSFER2\":true,\"CS1_then_FS0\":true,\"TRANSFER2_then_FS0\":true,\"previous_TRANSFER_COMPUTE_pixels_and_unknown_negative\":%s,\"actual_imported_RGBA\":true,\"ASTC_executed\":false}\n",checks,previous_writer?"true":"false");
 }

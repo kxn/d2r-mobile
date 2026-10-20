@@ -2420,9 +2420,18 @@ int vk_pool_native_acquire_independent(uint64_t address,uint64_t size) {
   // Availability/publication must not be moved across a real CPU effect or
   // writeback. This is a query, never a submission, wait or cache operation.
   if(recording_cpu_write(address,size) || pending_cpu_write(address,size))return 0;
-  // Do not use Buffer-only visibility bits to dismiss an aliased producer.
-  unsigned first=buffer_write_start(address);
-  if(first<vertex_buffer_write_count && vertex_buffer_writes[first].address<address+size)return 0;
+  // Retained writers can belong to earlier command chunks. The current-use
+  // page ledger below still rejects EVERY access from this recording, even a
+  // read or an earlier pass. Only known older producers may move with an
+  // explicit global alias-memory dependency before the acquire. Buffer-only
+  // visibility bits are deliberately not a proof for an aliased VkImage.
+  VkPipelineStageFlags known=VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+  for(unsigned n=buffer_write_start(address);n<vertex_buffer_write_count;n++) {
+    if(vertex_buffer_writes[n].address>=address+size)break;
+    VkPipelineStageFlags producers=vertex_buffer_writes[n].producers;
+    if(!producers || (producers&~known) || !vertex_buffer_writes[n].pool_identity ||
+        !vertex_buffer_writes[n].buffer || !vertex_buffer_writes[n].backing_generation)return 0;
+  }
   for(pool_gpu_access *use=recording_resources->gpu_accesses;use;use=use->next) {
     uint64_t base=(uintptr_t)use->owner->guest,limit=base+use->owner->size;
     uint64_t lo=address>base?address:base,hi=end<limit?end:limit;
@@ -2435,6 +2444,17 @@ int vk_pool_native_acquire_independent(uint64_t address,uint64_t size) {
 // publication is inferred. Saturation disables reuse permanently.
 static uint64_t native_writer_generation=1;
 static void native_writer_changed(void) {if(native_writer_generation && !++native_writer_generation)native_writer_generation=0;}
+#ifdef DM_VULKAN_TEST_EMBED
+VkPipelineStageFlags vk_test_native_writer_stages(uint64_t address,uint64_t size) {
+  if(!size || size>UINT64_MAX-address || vertex_buffer_write_overflow)return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  VkPipelineStageFlags stages=0;
+  for(unsigned n=buffer_write_start(address);n<vertex_buffer_write_count;n++) {
+    if(vertex_buffer_writes[n].address>=address+size)break;
+    stages|=vertex_buffer_writes[n].producers;
+  }
+  return stages;
+}
+#endif
 uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages,uint64_t previous) {
   if(native_writer_generation && previous==native_writer_generation)return previous;
   VkCommandBuffer command=VK_NULL_HANDLE;
