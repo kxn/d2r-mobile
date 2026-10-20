@@ -1,0 +1,793 @@
+diff --git a/src/freedreno/vulkan/tu_buffer.cc b/src/freedreno/vulkan/tu_buffer.cc
+index e7f6a54..5420dbe 100644
+--- a/src/freedreno/vulkan/tu_buffer.cc
++++ b/src/freedreno/vulkan/tu_buffer.cc
+@@ -23,11 +23,29 @@ tu_CreateBuffer(VkDevice _device,
+ {
+    VK_FROM_HANDLE(tu_device, device, _device);
+    struct tu_buffer *buffer;
++   const VkExternalMemoryBufferCreateInfo *external =
++      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_BUFFER_CREATE_INFO);
++   const VkExternalMemoryHandleTypeFlags host_mask =
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT |
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT;
++   const bool host_external = external && (external->handleTypes & host_mask);
++   const VkBufferOpaqueCaptureAddressCreateInfo *replay =
++      vk_find_struct_const(pCreateInfo->pNext, BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO);
++   const VkOpaqueCaptureDescriptorDataCreateInfoEXT *descriptor_replay =
++      vk_find_struct_const(pCreateInfo->pNext, OPAQUE_CAPTURE_DESCRIPTOR_DATA_CREATE_INFO_EXT);
++   if (host_external &&
++       (!device->vk.enabled_extensions.EXT_external_memory_host ||
++        !device->physical_device->has_host_ptr_import ||
++        external->handleTypes != VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++        pCreateInfo->flags || (replay && replay->opaqueCaptureAddress) ||
++        (descriptor_replay && descriptor_replay->opaqueCaptureDescriptorData)))
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+ 
+    buffer = (struct tu_buffer *) vk_buffer_create(
+       &device->vk, pCreateInfo, pAllocator, sizeof(*buffer));
+    if (buffer == NULL)
+       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
++   buffer->host_external = host_external;
+ 
+    if (pCreateInfo->flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) {
+       struct tu_instance *instance = device->physical_device->instance;
+@@ -166,10 +184,14 @@ tu_GetPhysicalDeviceExternalBufferProperties(
+          VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
+          VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+       break;
+-   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:
+-      flags = VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+-      compat_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
++   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT: {
++      VK_FROM_HANDLE(tu_physical_device, pdevice, physicalDevice);
++      if (pdevice->has_host_ptr_import && !pExternalBufferInfo->flags) {
++         flags = VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
++         compat_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
++      }
+       break;
++   }
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID:
+       vk_android_get_ahb_buffer_properties(
+          physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
+@@ -193,6 +215,22 @@ tu_BindBufferMemory2(VkDevice device,
+    VK_FROM_HANDLE(tu_device, dev, device);
+    struct tu_instance *instance = dev->physical_device->instance;
+ 
++   for (uint32_t i = 0; i < bindInfoCount; ++i) {
++      VK_FROM_HANDLE(tu_device_memory, mem, pBindInfos[i].memory);
++      VK_FROM_HANDLE(tu_buffer, buffer, pBindInfos[i].buffer);
++      if (mem && mem->bo && mem->bo->imported_host_ptr &&
++          (!buffer->host_external || buffer->vk.create_flags ||
++           pBindInfos[i].memoryOffset % 64 ||
++           pBindInfos[i].memoryOffset > mem->size ||
++           buffer->vk.size > mem->size - pBindInfos[i].memoryOffset)) {
++         const VkBindMemoryStatusKHR *status =
++            vk_find_struct_const(pBindInfos[i].pNext, BIND_MEMORY_STATUS_KHR);
++         if (status)
++            *status->pResult = VK_ERROR_INVALID_EXTERNAL_HANDLE;
++         return vk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++      }
++   }
++
+    for (uint32_t i = 0; i < bindInfoCount; ++i) {
+       VK_FROM_HANDLE(tu_device_memory, mem, pBindInfos[i].memory);
+       VK_FROM_HANDLE(tu_buffer, buffer, pBindInfos[i].buffer);
+diff --git a/src/freedreno/vulkan/tu_buffer.h b/src/freedreno/vulkan/tu_buffer.h
+index 84efaed..03e9a42 100644
+--- a/src/freedreno/vulkan/tu_buffer.h
++++ b/src/freedreno/vulkan/tu_buffer.h
+@@ -21,6 +21,7 @@
+ struct tu_buffer
+ {
+    struct vk_buffer vk;
++   bool host_external;
+ 
+    union {
+       struct {
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index e8ef940..a5c03b4 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -39,6 +39,7 @@
+ #include "tu_descriptor_set.h"
+ #include "tu_dynamic_rendering.h"
+ #include "tu_image.h"
++#include "tu_buffer.h"
+ #include "tu_pass.h"
+ #include "tu_query_pool.h"
+ #include "tu_queue.h"
+@@ -311,6 +312,7 @@ get_device_extensions(const struct tu_physical_device *device,
+       .EXT_custom_border_color = true,
+       .EXT_custom_resolve = true,
+       .EXT_debug_marker = true,
++      .EXT_external_memory_host = device->has_host_ptr_import,
+       .EXT_depth_clamp_control = true,
+       .EXT_depth_clamp_zero_one = true,
+       .EXT_depth_clip_control = true,
+@@ -1159,6 +1161,9 @@ static void
+ tu_get_properties(struct tu_physical_device *pdevice,
+                   struct vk_properties *props)
+ {
++   props->minImportedHostPointerAlignment =
++      pdevice->host_ptr_alignment;
++
+    /* Limits */
+    props->maxImageDimension1D = (1 << 14);
+    props->maxImageDimension2D = (1 << 14);
+@@ -3652,6 +3657,129 @@ tu_memory_emit_report(struct tu_device *device,
+                                 (uintptr_t)(mem), /* heap_index */ 0);
+ }
+ 
++uint32_t
++tu_host_ptr_memory_types(const struct tu_physical_device *pdevice)
++{
++   if (!pdevice->has_host_ptr_import)
++      return 0;
++   const VkMemoryPropertyFlags required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++      VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++   const VkMemoryPropertyFlags allowed = required | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
++   uint32_t types = 0;
++   for (uint32_t i = 0; i < pdevice->memory.non_lazy_type_count; i++) {
++      const VkMemoryPropertyFlags props = pdevice->memory.types[i];
++      if ((props & required) == required && !(props & ~allowed))
++         types |= 1u << i;
++   }
++   return types;
++}
++
++VKAPI_ATTR VkResult VKAPI_CALL
++tu_GetMemoryHostPointerPropertiesEXT(VkDevice _device,
++                                       VkExternalMemoryHandleTypeFlagBits handle_type,
++                                       const void *host_ptr,
++                                       VkMemoryHostPointerPropertiesEXT *properties)
++{
++   VK_FROM_HANDLE(tu_device, device, _device);
++   properties->memoryTypeBits = 0;
++   if (!device->vk.enabled_extensions.EXT_external_memory_host ||
++       handle_type != VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++       !host_ptr || !device->physical_device->host_ptr_alignment ||
++       (uintptr_t)host_ptr % device->physical_device->host_ptr_alignment)
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   properties->memoryTypeBits = tu_host_ptr_memory_types(device->physical_device);
++   return properties->memoryTypeBits ? VK_SUCCESS :
++      vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++}
++
++static VkResult
++tu_import_host_memory(struct tu_device *device,
++                       const VkMemoryAllocateInfo *info,
++                       const VkImportMemoryHostPointerInfoEXT *host_info,
++                       const VkAllocationCallbacks *allocator,
++                       VkDeviceMemory *out_memory)
++{
++   *out_memory = VK_NULL_HANDLE;
++   if (!device->vk.enabled_extensions.EXT_external_memory_host ||
++       host_info->handleType != VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++       !info->allocationSize || info->memoryTypeIndex >= VK_MAX_MEMORY_TYPES ||
++       !(tu_host_ptr_memory_types(device->physical_device) & (1u << info->memoryTypeIndex)))
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++
++   const VkExportMemoryAllocateInfo *export_info =
++      vk_find_struct_const(info->pNext, EXPORT_MEMORY_ALLOCATE_INFO);
++   const VkImportMemoryFdInfoKHR *fd_info =
++      vk_find_struct_const(info->pNext, IMPORT_MEMORY_FD_INFO_KHR);
++   const VkMemoryAllocateFlagsInfo *flags_info =
++      vk_find_struct_const(info->pNext, MEMORY_ALLOCATE_FLAGS_INFO);
++   const VkMemoryOpaqueCaptureAddressAllocateInfo *replay_info =
++      vk_find_struct_const(info->pNext, MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO);
++   const VkMemoryDedicatedAllocateInfo *dedicated =
++      vk_find_struct_const(info->pNext, MEMORY_DEDICATED_ALLOCATE_INFO);
++   if ((export_info && export_info->handleTypes) ||
++       (fd_info && fd_info->handleType) ||
++       vk_find_struct_const(info->pNext, IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID) ||
++       (flags_info && (flags_info->flags & ~VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT)) ||
++       (replay_info && replay_info->opaqueCaptureAddress))
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++
++   if (dedicated && dedicated->image) {
++      VK_FROM_HANDLE(tu_image, image, dedicated->image);
++      if (dedicated->buffer ||
++          image->vk.external_handle_types != VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++          !tu_host_image_format_supported(device->physical_device, image->vk.format,
++             image->vk.image_type, image->vk.tiling, image->vk.usage, image->vk.create_flags) ||
++          info->allocationSize < image->total_size)
++         return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   }
++
++   if (dedicated && dedicated->buffer) {
++      VK_FROM_HANDLE(tu_buffer, buffer, dedicated->buffer);
++      if (!buffer->host_external || buffer->vk.create_flags)
++         return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   }
++
++   const uint64_t used = p_atomic_read(&device->physical_device->heap.used);
++   const uint64_t capacity = device->physical_device->heap.size;
++   if (used > capacity || info->allocationSize > capacity - used) {
++      tu_memory_emit_report(device, NULL, info, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++   }
++
++   struct tu_device_memory *mem = (struct tu_device_memory *)
++      vk_device_memory_create(&device->vk, info, allocator, sizeof(*mem));
++   if (!mem) {
++      tu_memory_emit_report(device, NULL, info, VK_ERROR_OUT_OF_HOST_MEMORY);
++      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
++   }
++   mem->size = info->allocationSize;
++   mem->refcnt = 1;
++   mem->image = dedicated ? tu_image_from_handle(dedicated->image) : NULL;
++   VkResult result = tu_bo_init_host_ptr(device, &mem->vk.base, &mem->bo,
++      host_info->pHostPointer, info->allocationSize,
++      device->physical_device->memory.types[info->memoryTypeIndex]);
++   if (result == VK_SUCCESS) {
++      /* tu_add_to_heap releases the BO on failure. Never publish or dereference
++       * that released BO, and never subtract heap bytes that were not added.
++       */
++      result = tu_add_to_heap(device, mem->bo);
++      if (result == VK_SUCCESS)
++         mem->iova = mem->bo->iova;
++      else
++         mem->bo = NULL;
++   }
++   if (result != VK_SUCCESS) {
++      vk_device_memory_destroy(&device->vk, allocator, &mem->vk);
++      tu_memory_emit_report(device, NULL, info, result);
++      return result;
++   }
++
++   TU_RMV(heap_create, device, info, mem);
++   tu_memory_emit_report(device, mem, info, VK_SUCCESS);
++   *out_memory = tu_device_memory_to_handle(mem);
++   return VK_SUCCESS;
++}
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ tu_AllocateMemory(VkDevice _device,
+                   const VkMemoryAllocateInfo *pAllocateInfo,
+@@ -3664,6 +3792,11 @@ tu_AllocateMemory(VkDevice _device,
+ 
+    assert(pAllocateInfo->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+ 
++   const VkImportMemoryHostPointerInfoEXT *host_info =
++      vk_find_struct_const(pAllocateInfo->pNext, IMPORT_MEMORY_HOST_POINTER_INFO_EXT);
++   if (host_info && host_info->handleType)
++      return tu_import_host_memory(device, pAllocateInfo, host_info, pAllocator, pMem);
++
+    struct tu_memory_heap *mem_heap = &device->physical_device->heap;
+    uint64_t mem_heap_used = p_atomic_read(&mem_heap->used);
+    if (mem_heap_used > mem_heap->size)
+@@ -4396,6 +4529,11 @@ tu_GetMemoryFdKHR(VkDevice _device,
+ 
+    assert(pGetFdInfo->sType == VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR);
+ 
++   if (memory->bo && memory->bo->imported_host_ptr) {
++      *pFd = -1;
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   }
++
+    /* At the moment, we support only the below handle types. */
+    assert(pGetFdInfo->handleType ==
+              VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT ||
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index 4ed479c..b64c9cb 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -139,6 +139,8 @@ struct tu_physical_device
+    uint64_t va_size;
+ 
+    bool has_cached_coherent_memory;
++   bool has_host_ptr_import; /* Actual coherent useraddr probe passed. */
++   uint64_t host_ptr_alignment; /* Actual OS page size, known before properties. */
+    bool has_cached_non_coherent_memory;
+    /* Index for device local, host-coherent, host-cached memory.
+     * Only set to positive index when overwriting device-local, uncached memory
+@@ -514,6 +516,8 @@ struct TU_TESS<chip_range(CHIP >= A8XX)> {
+    static const size_t BO_SIZE = FACTOR_SIZE + PARAM_SIZE;
+ };
+ 
++uint32_t tu_host_ptr_memory_types(const struct tu_physical_device *physical);
++
+ struct tu_device_memory
+ {
+    struct vk_device_memory vk;
+diff --git a/src/freedreno/vulkan/tu_formats.cc b/src/freedreno/vulkan/tu_formats.cc
+index 70ca568..364b698 100644
+--- a/src/freedreno/vulkan/tu_formats.cc
++++ b/src/freedreno/vulkan/tu_formats.cc
+@@ -750,9 +750,20 @@ tu_get_external_image_format_properties(
+       }
+       break;
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:
++      if (!tu_host_image_format_supported(physical_device, pImageFormatInfo->format,
++             pImageFormatInfo->type, pImageFormatInfo->tiling,
++             pImageFormatInfo->usage, pImageFormatInfo->flags))
++         return vk_error(physical_device, VK_ERROR_FORMAT_NOT_SUPPORTED);
++      vk_foreach_struct_const(next, pImageFormatInfo->pNext) {
++         if (next->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO)
++            return vk_error(physical_device, VK_ERROR_FORMAT_NOT_SUPPORTED);
++      }
+       flags = VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+       compat_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+       break;
++   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT:
++      return vk_errorf(physical_device, VK_ERROR_FORMAT_NOT_SUPPORTED,
++                       "Host-imported image memory is unsupported");
+    default:
+       return vk_errorf(physical_device, VK_ERROR_FORMAT_NOT_SUPPORTED,
+                        "VkExternalMemoryTypeFlagBits(0x%x) unsupported",
+@@ -859,6 +870,13 @@ tu_GetPhysicalDeviceImageFormatProperties2(
+             external_props);
+          if (result != VK_SUCCESS)
+             goto fail;
++         if (external_info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT) {
++            VkImageFormatProperties *props = &base_props->imageFormatProperties;
++            props->maxExtent.depth = 1;
++            props->maxMipLevels = MIN2(props->maxMipLevels, 16u);
++            props->maxArrayLayers = 1;
++            props->sampleCounts = VK_SAMPLE_COUNT_1_BIT;
++         }
+       }
+    }
+ 
+diff --git a/src/freedreno/vulkan/tu_image.cc b/src/freedreno/vulkan/tu_image.cc
+index c43e211..140364e 100644
+--- a/src/freedreno/vulkan/tu_image.cc
++++ b/src/freedreno/vulkan/tu_image.cc
+@@ -685,6 +685,10 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
+       ubwc_enabled = false;
+    }
+ 
++   // The host ASTC profile exposes exact opaque slices, never UBWC metadata.
++   if (image->vk.external_handle_types == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT)
++      ubwc_enabled = false;
++
+    /* Whether a view of the image with an R8G8 format could be made. */
+    bool has_r8g8 = tu_is_r8g8(vk_format_to_pipe_format(image->vk.format));
+ 
+@@ -904,6 +908,29 @@ tu_CreateImage(VkDevice _device,
+ 
+    VK_FROM_HANDLE(tu_device, device, _device);
+ 
++   const VkExternalMemoryImageCreateInfo *external =
++      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
++   const bool host_external = external && (external->handleTypes &
++      (VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT |
++       VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT));
++   if (host_external) {
++      if (!device->vk.enabled_extensions.EXT_external_memory_host ||
++          external->handleTypes != VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++          !tu_host_image_format_supported(device->physical_device, pCreateInfo->format,
++             pCreateInfo->imageType, pCreateInfo->tiling, pCreateInfo->usage, pCreateInfo->flags) ||
++          !pCreateInfo->extent.width || !pCreateInfo->extent.height || pCreateInfo->extent.depth != 1 ||
++          pCreateInfo->arrayLayers != 1 || !pCreateInfo->mipLevels || pCreateInfo->mipLevels > 16 ||
++          pCreateInfo->samples != VK_SAMPLE_COUNT_1_BIT ||
++          pCreateInfo->sharingMode != VK_SHARING_MODE_EXCLUSIVE || pCreateInfo->queueFamilyIndexCount ||
++          pCreateInfo->initialLayout != VK_IMAGE_LAYOUT_UNDEFINED)
++         return vk_error(device, VK_ERROR_FORMAT_NOT_SUPPORTED);
++      // No flags2, mutable/compression/Android/WSI override enters this profile.
++      vk_foreach_struct_const(next, pCreateInfo->pNext) {
++         if (next->sType != VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO)
++            return vk_error(device, VK_ERROR_FORMAT_NOT_SUPPORTED);
++      }
++   }
++
+    if (wsi_common_is_swapchain_image(pCreateInfo)) {
+       return wsi_common_create_swapchain_image(device->physical_device->vk.wsi_device,
+                                                pCreateInfo,
+@@ -1058,6 +1085,23 @@ tu_DestroyImage(VkDevice _device,
+    vk_image_destroy(&device->vk, pAllocator, &image->vk);
+ }
+ 
++bool
++tu_host_image_format_supported(const struct tu_physical_device *physical,
++                               VkFormat format, VkImageType type,
++                               VkImageTiling tiling, VkImageUsageFlags2KHR usage,
++                               VkImageCreateFlags2KHR flags)
++{
++   const VkImageUsageFlags2KHR required = VK_IMAGE_USAGE_SAMPLED_BIT |
++                                         VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
++   const VkImageUsageFlags2KHR allowed = required | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
++                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++   return physical->has_host_ptr_import && tu_host_ptr_memory_types(physical) &&
++      (format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK || format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK ||
++       format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK || format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK) &&
++      type == VK_IMAGE_TYPE_2D && tiling == VK_IMAGE_TILING_OPTIMAL &&
++      !flags && (usage & required) == required && !(usage & ~allowed);
++}
++
+ static VkResult
+ tu_image_bind(struct tu_device *device,
+               const VkBindImageMemoryInfo *bind_info)
+@@ -1068,6 +1112,23 @@ tu_image_bind(struct tu_device *device,
+    uint64_t offset = bind_info->memoryOffset;
+    VkResult result;
+ 
++   if (mem && mem->bo && mem->bo->imported_host_ptr) {
++      const uint64_t alignment = MAX2(image->layout[0].base_align,
++                                      device->physical_device->host_ptr_alignment);
++      if (image->vk.external_handle_types != VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++          !tu_host_image_format_supported(device->physical_device, image->vk.format,
++             image->vk.image_type, image->vk.tiling, image->vk.usage, image->vk.create_flags) ||
++          image->vk.array_layers != 1 || image->vk.extent.depth != 1 ||
++          image->vk.mip_levels > 16 || image->vk.samples != VK_SAMPLE_COUNT_1_BIT ||
++          image->layout[0].ubwc || image->lrz_layout.lrz_total_size || !alignment ||
++          offset % alignment || (mem->iova + offset) % image->layout[0].base_align ||
++          offset > mem->size ||
++          align64(image->total_size, alignment) > mem->size - offset ||
++          !(tu_host_ptr_memory_types(device->physical_device) & (1u << mem->vk.memory_type_index)) ||
++          (mem->image && (mem->image != image || offset)))
++         return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   }
++
+    if (!mem) {
+       VkDeviceMemory mem_handle;
+ #ifdef VK_USE_PLATFORM_ANDROID_KHR
+@@ -1146,6 +1207,10 @@ tu_get_image_memory_requirements(struct tu_device *dev, struct tu_image *image,
+                                  VkMemoryRequirements2 *pMemoryRequirements)
+ {
+    uint32_t alignment = image->layout[0].base_align;
++   const bool host_external = image->vk.external_handle_types ==
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
++   if (host_external)
++      alignment = MAX2(alignment, dev->physical_device->host_ptr_alignment);
+    if (image->vk.create_flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT)
+       alignment = MAX2(alignment, os_page_size);
+    if (image->vk.create_flags & VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT)
+@@ -1166,7 +1231,8 @@ tu_get_image_memory_requirements(struct tu_device *dev, struct tu_image *image,
+        */
+       .size = align64(image->total_size, alignment),
+       .alignment = alignment,
+-      .memoryTypeBits = (1 << type_count) - 1,
++      .memoryTypeBits = host_external ? tu_host_ptr_memory_types(dev->physical_device) :
++                                      (1 << type_count) - 1,
+    };
+ 
+    vk_foreach_struct(ext, pMemoryRequirements->pNext) {
+@@ -1175,7 +1241,7 @@ tu_get_image_memory_requirements(struct tu_device *dev, struct tu_image *image,
+          VkMemoryDedicatedRequirements *req =
+             (VkMemoryDedicatedRequirements *) ext;
+          req->requiresDedicatedAllocation =
+-            image->vk.external_handle_types != 0;
++            image->vk.external_handle_types != 0 && !host_external;
+          req->prefersDedicatedAllocation = req->requiresDedicatedAllocation;
+          break;
+       }
+diff --git a/src/freedreno/vulkan/tu_image.h b/src/freedreno/vulkan/tu_image.h
+index df88995..2f94e9f 100644
+--- a/src/freedreno/vulkan/tu_image.h
++++ b/src/freedreno/vulkan/tu_image.h
+@@ -15,6 +15,12 @@
+ #include "fdl/freedreno_lrz_layout.h"
+ #include "tu_knl.h"
+ 
++// Experimental coherent host-import profile, shared by query/create/bind.
++bool tu_host_image_format_supported(const struct tu_physical_device *physical,
++                                    VkFormat format, VkImageType type,
++                                    VkImageTiling tiling, VkImageUsageFlags2KHR usage,
++                                    VkImageCreateFlags2KHR flags);
++
+ #define TU_MAX_PLANE_COUNT 3
+ 
+ struct tu_image
+diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
+index ab27798..c5894ce 100644
+--- a/src/freedreno/vulkan/tu_knl.cc
++++ b/src/freedreno/vulkan/tu_knl.cc
+@@ -115,9 +115,43 @@ tu_bo_init_dmabuf(struct tu_device *dev,
+ int
+ tu_bo_export_dmabuf(struct tu_device *dev, struct tu_bo *bo)
+ {
++   if (bo->imported_host_ptr)
++      return -1;
+    return dev->instance->knl->bo_export_dmabuf(dev, bo);
+ }
+ 
++VkResult
++tu_bo_init_host_ptr(struct tu_device *dev, struct vk_object_base *base,
++                    struct tu_bo **out_bo, void *host_ptr, uint64_t size,
++                    VkMemoryPropertyFlags properties)
++{
++   *out_bo = NULL;
++   const VkMemoryPropertyFlags required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++      VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++   const VkMemoryPropertyFlags allowed = required | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
++   const uintptr_t ptr = (uintptr_t)host_ptr;
++   const uint64_t alignment = dev->physical_device->host_ptr_alignment;
++   if (!dev->instance->knl->bo_init_host_ptr ||
++       !dev->physical_device->has_host_ptr_import || !alignment)
++      return vk_error(dev, VK_ERROR_FEATURE_NOT_PRESENT);
++
++   if (!host_ptr || !size || size > UINTPTR_MAX - ptr ||
++       ptr % alignment || size % alignment ||
++       (properties & required) != required || (properties & ~allowed))
++      return vk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++
++   VkResult result = dev->instance->knl->bo_init_host_ptr(
++      dev, base, out_bo, host_ptr, size, properties);
++   if (result != VK_SUCCESS)
++      return result;
++
++   struct tu_instance *instance = dev->physical_device->instance;
++   vk_address_binding_report(&instance->vk, base ? base : &dev->vk.base,
++                             (*out_bo)->iova, (*out_bo)->size,
++                             VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
++   return VK_SUCCESS;
++}
++
+ void
+ tu_bo_finish(struct tu_device *dev, struct tu_bo *bo)
+ {
+@@ -134,6 +168,12 @@ tu_bo_finish(struct tu_device *dev, struct tu_bo *bo)
+ VkResult
+ tu_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+ {
++   /* External CPU mappings are never remapped, even for placed mappings. */
++   if (bo->imported_host_ptr) {
++      if (placed_addr && placed_addr != bo->map)
++         return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
++      return VK_SUCCESS;
++   }
+    if (bo->map && (placed_addr == NULL || placed_addr == bo->map))
+       return VK_SUCCESS;
+    else if (bo->map)
+@@ -146,6 +186,11 @@ tu_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+ VkResult
+ tu_bo_unmap(struct tu_device *dev, struct tu_bo *bo, bool reserve)
+ {
++   if (bo->imported_host_ptr) {
++      if (reserve)
++         return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
++      return VK_SUCCESS;
++   }
+    if (!bo->map || bo->never_unmap)
+       return VK_SUCCESS;
+ 
+diff --git a/src/freedreno/vulkan/tu_knl.h b/src/freedreno/vulkan/tu_knl.h
+index 4c2bf6a..0d71f9b 100644
+--- a/src/freedreno/vulkan/tu_knl.h
++++ b/src/freedreno/vulkan/tu_knl.h
+@@ -60,6 +60,8 @@ struct tu_bo {
+ 
+    bool implicit_sync : 1;
+    bool never_unmap : 1;
++   /* map aliases application-owned pages: never munmap or reserve this VMA. */
++   bool imported_host_ptr : 1;
+    bool cached_non_coherent : 1;
+    bool lazy : 1;
+ 
+@@ -140,6 +142,11 @@ struct tu_knl {
+                        const char *name);
+    VkResult (*bo_init_dmabuf)(struct tu_device *dev, struct tu_bo **out_bo,
+                               uint64_t size, enum tu_bo_alloc_flags flags, int prime_fd);
++   /* Optional backend operation; public support additionally requires discovery. */
++   VkResult (*bo_init_host_ptr)(struct tu_device *dev,
++                               struct vk_object_base *base,
++                               struct tu_bo **out_bo, void *host_ptr,
++                               uint64_t size, VkMemoryPropertyFlags properties);
+    int (*bo_export_dmabuf)(struct tu_device *dev, struct tu_bo *bo);
+    VkResult (*bo_alloc_lazy)(struct tu_device *dev, struct tu_bo *bo);
+    VkResult (*bo_map)(struct tu_device *dev, struct tu_bo *bo, void *placed_addr);
+@@ -221,6 +228,16 @@ tu_bo_init_dmabuf(struct tu_device *dev,
+ int
+ tu_bo_export_dmabuf(struct tu_device *dev, struct tu_bo *bo);
+ 
++/* Experimental internal operation. Caller owns the CPU mapping and must keep
++ * it stable until GPU access has completed and the BO has been released.
++ * The public allocation entrypoint publishes a Vulkan memory object only
++ * after this BO operation and normal heap accounting both succeed.
++ */
++VkResult
++tu_bo_init_host_ptr(struct tu_device *dev, struct vk_object_base *base,
++                    struct tu_bo **out_bo, void *host_ptr, uint64_t size,
++                    VkMemoryPropertyFlags properties);
++
+ void
+ tu_bo_finish(struct tu_device *dev, struct tu_bo *bo);
+ 
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl.cc b/src/freedreno/vulkan/tu_knl_kgsl.cc
+index 8b51fa2..a60dd46 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -18,6 +18,7 @@
+ 
+ #include "util/libsync.h"
+ #include "util/os_file.h"
++#include "util/os_misc.h"
+ #include "util/timespec.h"
+ #include "util/u_debug.h"
+ #include "util/u_vector.h"
+@@ -409,6 +410,113 @@ kgsl_bo_export_dmabuf(struct tu_device *dev, struct tu_bo *bo)
+    return os_dupfd_cloexec(bo->shared_fd);
+ }
+ 
++/* This helper is shared by physical-device capability discovery and actual
++ * host-pointer imports. Success requires the final object's coherent cached
++ * mapping; ordinary allocation support is not a substitute for this check.
++ */
++static int
++kgsl_import_host_pages(int fd, void *host_ptr, uint64_t size,
++                        struct kgsl_gpuobj_info *info)
++{
++   struct kgsl_gpuobj_import_useraddr addr = {
++      .virtaddr = (uintptr_t)host_ptr,
++   };
++   const uint64_t required_flags = KGSL_MEMFLAGS_IOCOHERENT |
++      ((uint64_t)KGSL_CACHEMODE_WRITEBACK << KGSL_CACHEMODE_SHIFT);
++   struct kgsl_gpuobj_import req = {
++      .priv = (uintptr_t)&addr,
++      /* For ADDR this is the imported memory extent, not sizeof(addr). */
++      .priv_len = size,
++      .flags = required_flags,
++      .type = KGSL_USER_MEM_TYPE_ADDR,
++   };
++   if (safe_ioctl(fd, IOCTL_KGSL_GPUOBJ_IMPORT, &req))
++      return -1;
++
++   *info = (struct kgsl_gpuobj_info) { .id = req.id };
++   if (safe_ioctl(fd, IOCTL_KGSL_GPUOBJ_INFO, info))
++      goto fail;
++
++   if ((req.flags & (KGSL_MEMFLAGS_IOCOHERENT | KGSL_CACHEMODE_MASK)) != required_flags ||
++       (info->flags & (KGSL_MEMFLAGS_IOCOHERENT | KGSL_CACHEMODE_MASK)) != required_flags ||
++       info->size != size || !info->gpuaddr || info->gpuaddr > UINT64_MAX - size ||
++       (info->flags & (KGSL_MEMFLAGS_USE_CPU_MAP | KGSL_MEMFLAGS_GPUREADONLY |
++                       KGSL_MEMFLAGS_SECURE))) {
++      errno = EINVAL;
++      goto fail;
++   }
++   return 0;
++
++fail:
++   {
++      const int error = errno;
++      struct kgsl_gpumem_free_id free_req = { .id = req.id };
++      if (safe_ioctl(fd, IOCTL_KGSL_GPUMEM_FREE_ID, &free_req))
++         mesa_logw("KGSL failed to release rejected host import: %s", strerror(errno));
++      errno = error;
++   }
++   return -1;
++}
++
++static bool
++kgsl_probe_host_import(int fd, size_t size)
++{
++   void *map = mmap(NULL, size, PROT_READ | PROT_WRITE,
++                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++   if (map == MAP_FAILED)
++      return false;
++   memset(map, 0xa5, size);
++
++   struct kgsl_gpuobj_info info;
++   bool supported = kgsl_import_host_pages(fd, map, size, &info) == 0;
++   if (supported) {
++      struct kgsl_gpumem_free_id free_req = { .id = info.id };
++      supported = safe_ioctl(fd, IOCTL_KGSL_GPUMEM_FREE_ID, &free_req) == 0;
++      if (!supported)
++         mesa_logw("KGSL failed to release host-import probe: %s", strerror(errno));
++   }
++   if (munmap(map, size))
++      supported = false;
++   return supported;
++}
++
++static VkResult
++kgsl_bo_init_host_ptr(struct tu_device *dev, struct vk_object_base *base,
++                      struct tu_bo **out_bo, void *host_ptr, uint64_t size,
++                      VkMemoryPropertyFlags properties)
++{
++   struct kgsl_gpuobj_info info;
++   if (kgsl_import_host_pages(dev->physical_device->local_fd, host_ptr, size, &info))
++      return vk_errorf(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE,
++                       "KGSL host pointer import rejected (%s)", strerror(errno));
++
++   struct tu_bo *bo = tu_device_lookup_bo(dev, info.id);
++   if (!bo) {
++      struct kgsl_gpumem_free_id free_req = { .id = info.id };
++      safe_ioctl(dev->physical_device->local_fd, IOCTL_KGSL_GPUMEM_FREE_ID, &free_req);
++      return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
++   }
++   assert(bo->gem_handle == 0);
++   *bo = (struct tu_bo) {
++      .gem_handle = info.id,
++      .size = size,
++      .iova = info.gpuaddr,
++      .map = host_ptr,
++      .name = tu_debug_bos_add(dev, size, "imported host pages"),
++      .refcnt = 1,
++      .shared_fd = -1,
++      .never_unmap = true,
++      .imported_host_ptr = true,
++      .base = base,
++      .unique_id = info.id,
++   };
++   tu_dump_bo_init(dev, bo);
++   TU_RMV(bo_allocate, dev, bo);
++   TU_RMV(bo_map, dev, bo);
++   *out_bo = bo;
++   return VK_SUCCESS;
++}
++
+ static VkResult
+ kgsl_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+ {
+@@ -449,7 +557,7 @@ kgsl_bo_finish(struct tu_device *dev, struct tu_bo *bo)
+    tu_debug_bos_del(dev, bo);
+    tu_dump_bo_del(dev, bo);
+ 
+-   if (bo->map) {
++   if (bo->map && !bo->imported_host_ptr) {
+       TU_RMV(bo_unmap, dev, bo);
+       munmap(bo->map, bo->size);
+    }
+@@ -1760,6 +1868,7 @@ static const struct tu_knl kgsl_knl_funcs = {
+       .submitqueue_close = kgsl_submitqueue_close,
+       .bo_init = kgsl_bo_init,
+       .bo_init_dmabuf = kgsl_bo_init_dmabuf,
++      .bo_init_host_ptr = kgsl_bo_init_host_ptr,
+       .bo_export_dmabuf = kgsl_bo_export_dmabuf,
+       .bo_map = kgsl_bo_map,
+       .bo_allow_dump = kgsl_bo_allow_dump,
+@@ -1888,6 +1997,23 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+       fd, KGSL_MEMFLAGS_IOCOHERENT |
+              (KGSL_CACHEMODE_WRITEBACK << KGSL_CACHEMODE_SHIFT));
+ 
++   /* Experimental, startup-only opt-in. The option alone never advertises
++    * support: the same real import/INFO checks as allocation must succeed,
++    * including cleanup of the probe's own page and kernel object.
++    */
++   if (debug_get_bool_option("TU_DM_HOST_IMPORT", false)) {
++      uint64_t alignment = 0;
++      if (device->has_cached_coherent_memory &&
++          os_get_page_size(&alignment) && alignment &&
++          !(alignment & (alignment - 1))) {
++         device->has_host_ptr_import = kgsl_probe_host_import(fd, alignment);
++         if (device->has_host_ptr_import)
++            device->host_ptr_alignment = alignment;
++      }
++      mesa_logi("Turnip experimental coherent host import: %s",
++                 device->has_host_ptr_import ? "available" : "unsupported");
++   }
++
+    device->has_sparse = kgsl_is_virtual_bo_supported(fd);
+    device->has_sparse_prr = device->has_sparse;
+    device->has_lazy_bos = device->has_sparse;
+diff --git a/src/freedreno/vulkan/tu_queue.cc b/src/freedreno/vulkan/tu_queue.cc
+index 3e6cd0a..de778e9 100644
+--- a/src/freedreno/vulkan/tu_queue.cc
++++ b/src/freedreno/vulkan/tu_queue.cc
+@@ -342,6 +342,34 @@ queue_submit_sparse(struct vk_queue *_queue, struct vk_queue_submit *vk_submit)
+    struct tu_queue *queue = list_entry(_queue, struct tu_queue, vk);
+    struct tu_device *device = queue->device;
+ 
++   /* Host imports support ordinary Buffer binding only. Check all three
++    * sparse binding families before recording any KMD binding changes.
++    */
++   for (uint32_t i = 0; i < vk_submit->buffer_bind_count; i++) {
++      const VkSparseBufferMemoryBindInfo *bind = &vk_submit->buffer_binds[i];
++      for (uint32_t j = 0; j < bind->bindCount; j++) {
++         VK_FROM_HANDLE(tu_device_memory, mem, bind->pBinds[j].memory);
++         if (mem && mem->bo && mem->bo->imported_host_ptr)
++            return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++      }
++   }
++   for (uint32_t i = 0; i < vk_submit->image_bind_count; i++) {
++      const VkSparseImageMemoryBindInfo *bind = &vk_submit->image_binds[i];
++      for (uint32_t j = 0; j < bind->bindCount; j++) {
++         VK_FROM_HANDLE(tu_device_memory, mem, bind->pBinds[j].memory);
++         if (mem && mem->bo && mem->bo->imported_host_ptr)
++            return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++      }
++   }
++   for (uint32_t i = 0; i < vk_submit->image_opaque_bind_count; i++) {
++      const VkSparseImageOpaqueMemoryBindInfo *bind = &vk_submit->image_opaque_binds[i];
++      for (uint32_t j = 0; j < bind->bindCount; j++) {
++         VK_FROM_HANDLE(tu_device_memory, mem, bind->pBinds[j].memory);
++         if (mem && mem->bo && mem->bo->imported_host_ptr)
++            return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++      }
++   }
++
+    pthread_mutex_lock(&device->submit_mutex);
+ 
+    void *submit = tu_submit_create(device);
