@@ -1832,3 +1832,38 @@ guest submission 的内部提交由 7→9；优先验证额外原生资源交接
 资源，涵盖 no-Flush CPU 写及同 recording 的 Image→Buffer 全 payload CS
 读取，原包未变且清理完成。后继游戏吞吐、持续温度及 6GB 仍待验证；当前
 退速的 transient f830 实验不默认交付。
+
+### f830 队列驻留：原游戏吞吐恢复，并保留净内存下降
+
+`6f8188e` 的原游戏普通／native 对照已完成，资源仍为相同 6,217 项、
+f830 驱动、0.60 比例、2750×1260 输出和 1MiB 窗口。两端均完成营地
+原输入路线、官方 Simpleperf／Perfetto／SDP 窗口和原生命周期双存档。
+同一 Surface 的完整间隔均值为普通 31.796ms、native 30.972ms，约
+31.5／32.3 FPS，native 已没有上一版约 12.7 FPS 的吞吐退化。
+
+已审 coherent 导入保持队列所有权，仍保留首次 acquire 与真实资源 hazard。
+native 每次 guest submission 的内部提交从上一版的 9 降到 7，与普通
+纹理对照一致；官方 8 秒窗口的 queue-completion 等待从 199 降到 30 次，
+GPU 时钟约 499MHz。该后继同时包含真实 CPU-effect pending 零门，不能
+把所有 CPU 差异都单独归因于队列驻留。
+
+| 本轮系统端点（KiB） | 普通 ASTC4 | f830 native |
+| --- | ---: | ---: |
+| TOTAL PSS | 2,057,368 | 2,010,567 |
+| TOTAL SWAP PSS | 21,054 | 166 |
+
+本轮 PSS 少 45.70MiB，PSS 与 Swap 合计少 66.10MiB。它仍是端点，
+不是峰值或稳定跨轮幅度，也不能与 Graphics、malloc Alloc 再相加。
+按同一 Surface 完整间隔积分，纹理读取约 101.68／102.43MB，差不到 1%；
+没有证明大幅减少稳态每帧 DRAM 流量，不能把资源包缩小直接写成散热收益。
+两端实际截图未见新增明显黑块或几何缺失，保留动画、镜头和现存地面散点差异。
+
+原事务已恢复原包与目录，退出码 1 来自 SDP collector 在两次 `/proc` 读取间
+自然退出的清理观察竞态；原失败报告保留。独立复核确认 13 个本次 collector、
+GUI、Xvfb 和游戏均已退出，无须重跑有效的游戏／采集阶段。清理工具后继
+`55923e2` 单独修复身份核验，拒绝把复用 PID 当作原工具结束。
+
+本轮根验收：`.local/logs/native-resident-f830-6f8188e-sdp-game-pair-v3-root-actual-review.json`；
+官方分析：`.local/logs/native-resident-f830-6f8188e-sdp-game-pair-v3-analysis/official-resident-vs-transient-comparison-agent-v2.json`。
+后续为同候选持续游玩、公开 API 热状态与内存增长验证；短窗口仍不能证明
+长时间散热达标，也未完成真实 6GB 或 Mali 共享原生纹理游戏验收。
