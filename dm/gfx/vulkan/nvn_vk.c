@@ -69,6 +69,9 @@ typedef struct pool {
 } pool;
 #ifdef DM_VULKAN_SHARED_POOLS
 static int shared_requested,shared_active,shared_extension;
+#ifdef DM_VULKAN_TEST_EMBED
+static int shared_cache_fixture_records;
+#endif
 static uint64_t shared_alignment;
 static void shared_device_probe(void);
 static void shared_pool_materialize(pool *);
@@ -1414,6 +1417,9 @@ static void init_device(void) {
   const char *shared=getenv("DM_VULKAN_SHARED_POOLS");
   if(shared && strcmp(shared,"0") && strcmp(shared,"1"))die("DM_VULKAN_SHARED_POOLS expects0or1");
   shared_requested=shared && !strcmp(shared,"1");
+#ifdef DM_VULKAN_TEST_EMBED
+  shared_cache_fixture_records=getenv("DM_FIXED_SHARED_BUFFER_FIXTURE")!=NULL;
+#endif
 #endif
   const char *device_extensions[16];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;

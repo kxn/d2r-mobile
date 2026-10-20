@@ -65,6 +65,9 @@ static void shared_cache(vk_buffer *b,uint64_t offset,uint64_t bytes,int invalid
     .memory=b->memory,.offset=offset,.size=end-offset};
   if(invalidate)VK_CHECK(vkInvalidateMappedMemoryRanges(V.device,1,&range));
   else VK_CHECK(vkFlushMappedMemoryRanges(V.device,1,&range));
+#ifdef DM_VULKAN_TEST_EMBED
+  if(shared_cache_fixture_records)printf("{\"test_details\":\"fixed-shared-cache\",\"operation\":\"%s\",\"memory_flags\":%u,\"atom\":%llu,\"memory_offset\":%llu,\"cache_bytes\":%llu,\"allocation_bytes\":%llu}\n",invalidate?"invalidate":"flush",b->properties,(unsigned long long)atom,(unsigned long long)range.offset,(unsigned long long)range.size,(unsigned long long)b->size);
+#endif
 }
 static void shared_pool_materialize(pool *p) {
   if(p->shared_closing)die("Shared Pool address after closing");

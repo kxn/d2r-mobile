@@ -162,7 +162,15 @@ try:
  assert 'provider=panvk' in log and 'driverID=20' in log
  assert any(r.get('validation_layer')=='disabled_explicitly' for r in rows)
  assert not re.search(r'VUID-|FATAL|native fault signal=',log)
- result.update(stage='actual-noncoherent-fixed-shared-buffer-passed',actual_memory=memory,
+ cache_ops=[r for r in rows if r.get('test_details')=='fixed-shared-cache']
+ assert {'flush','invalidate'}=={r['operation'] for r in cache_ops}
+ assert any(r['allocation_bytes']==4194304 for r in cache_ops)
+ for r in cache_ops:
+  assert r['memory_flags']==11 and r['atom']==64
+  assert r['memory_offset']%64==0 and r['cache_bytes']%64==0 and r['cache_bytes']>0
+  assert r['memory_offset']+r['cache_bytes']<=r['allocation_bytes']
+
+ result.update(stage='actual-noncoherent-fixed-shared-buffer-passed',actual_memory=memory,cache_operations=cache_ops,
   no_game_or_image_acceptance=True, performance_claim=False)
 except BaseException as e:result.update(stage='failed-preserved',error=repr(e))
 finally:
