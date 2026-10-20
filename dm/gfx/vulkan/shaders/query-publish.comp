@@ -1,0 +1,53 @@
+#version 450
+// Original NVN report ABI: two little-endian 64-bit words, using only u32.
+layout(local_size_x=1) in;
+layout(set=0,binding=0,std430) readonly buffer Results { uint input_words[]; };
+layout(set=0,binding=1,std430) writeonly buffer Report { uint output_words[]; };
+layout(push_constant) uniform Parameters {
+    uint multiplier;
+    int binary_shift;
+    uint valid_bits;
+    uint sample_count;
+    uint destination_word;
+    uint samples_report;
+} p;
+uvec2 add_pair(uvec2 a,uvec2 b) {
+    uint carry;uint lo=uaddCarry(a.x,b.x,carry);
+    return uvec2(lo,a.y+b.y+carry);
+}
+uvec2 scaled_ticks(uvec2 raw) {
+    if(p.valid_bits<32u)raw=uvec2(raw.x&((1u<<p.valid_bits)-1u),0u);
+    else if(p.valid_bits==32u)raw.y=0u;
+    else if(p.valid_bits<64u)raw.y&=(1u<<(p.valid_bits-32u))-1u;
+    uint h0,l0,h1,l1,carry;
+    umulExtended(raw.x,p.multiplier,h0,l0);
+    umulExtended(raw.y,p.multiplier,h1,l1);
+    uint middle=uaddCarry(h0,l1,carry);
+    uvec3 product=uvec3(l0,middle,h1+carry);
+    // Divide the 96-bit product (possibly shifted left) by625. Negative
+    // binary shifts are applied to the quotient, preserving exact floor.
+    int positive=max(p.binary_shift,0),negative=max(-p.binary_shift,0);
+    uint remainder=0u;uvec2 result=uvec2(0u);
+    for(int bit=95+positive;bit>=0;--bit) {
+        int source_bit=bit-positive;uint digit=0u;
+        if(source_bit>=0)digit=(product[source_bit/32]>>uint(source_bit%32))&1u;
+        remainder=(remainder<<1)|digit;
+        bool one=remainder>=625u;if(one)remainder-=625u;
+        int target_bit=bit-negative;
+        // Startup CPU capability bounds prove every valid device timestamp
+        // fits64bits; this branch is not a saturation or fake-query path.
+        if(one && target_bit>=0 && target_bit<64)
+            result[target_bit/32]|=1u<<uint(target_bit%32);
+    }
+    return result;
+}
+void main() {
+    uvec2 ticks=scaled_ticks(uvec2(input_words[0],input_words[1]));
+    uvec2 sum=uvec2(0u);
+    for(uint i=0u;i<p.sample_count;i++)
+        sum=add_pair(sum,uvec2(input_words[2u+2u*i],input_words[3u+2u*i]));
+    uvec2 value=p.samples_report!=0u?sum:ticks;
+    uint at=p.destination_word;
+    output_words[at]=value.x;output_words[at+1u]=value.y;
+    output_words[at+2u]=ticks.x;output_words[at+3u]=ticks.y;
+}

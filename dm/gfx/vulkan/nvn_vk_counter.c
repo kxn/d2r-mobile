@@ -1,6 +1,5 @@
-// Vulkan 时间戳与遮挡查询；只在真实 GPU 栅栏完成后发布 NVN 计数记录。
-// Vulkan timestamps and occlusion queries; publish NVN records only after real
-// GPU fence completion.
+// Vulkan timestamps and occlusion queries. Legacy destinations publish after
+// the true fence; registered fixed-shared destinations publish in GPU order.
 #include "nvn_vk_internal.h"
 #include <stdatomic.h>
 static void completion_add(void (*fn)(void *), void *context, void *dst, size_t size) {
@@ -235,6 +234,33 @@ static void report_done(void *opaque) {
   block_release(r->timestamp);
   free(r);
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+#ifdef DM_VULKAN_TEST_EMBED
+static void (*native_test_observe)(uint64_t,uint32_t,uint64_t,uint64_t);
+void vk_counter_native_test_observer(void (*observe)(uint64_t,uint32_t,uint64_t,uint64_t)) {
+  if(V.cmd)die("Native query observer must be selected outside recording");
+  native_test_observe=observe;
+}
+#endif
+static void report_gpu_cleanup(void *opaque) {
+  report *r=opaque;
+#ifdef DM_VULKAN_TEST_EMBED
+  // Bounded functional oracle only. Normal shared execution never reads query
+  // results on the CPU and never stores counter output from this callback.
+  if(native_test_observe) {
+    uint64_t raw,sum=0;
+    VK_CHECK(vkGetQueryPoolResults(V.device,r->timestamp->handle,r->timestamp_index,1,
+        sizeof raw,&raw,sizeof raw,VK_QUERY_RESULT_64_BIT));
+    for(unsigned k=0;k<r->count;k++) {uint64_t v;
+      VK_CHECK(vkGetQueryPoolResults(V.device,r->samples[k]->block->handle,r->samples[k]->index,1,
+          sizeof v,&v,sizeof v,VK_QUERY_RESULT_64_BIT));sum+=v;}
+    native_test_observe(r->address,r->type,raw,sum);
+  }
+#endif
+  for(unsigned k=0;k<r->count;k++)sample_release(r->samples[k]);
+  block_release(r->timestamp);free(r);
+}
+#endif
 void vk_counter_reset(uint32_t type) {
   if (type != NVN_COUNTER_TYPE_TIMESTAMP &&
       type != NVN_COUNTER_TYPE_TIMESTAMP_TOP &&
@@ -287,6 +313,20 @@ void mtl_sub_counter(uint64_t address, uint32_t type) {
                           ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
                           : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                       r->timestamp->handle, r->timestamp_index);
+#ifdef DM_VULKAN_SHARED_POOLS
+  int shared=vk_pool_shared_destination(address,2*sizeof(uint64_t));
+  if(shared<0)die("Native query destination overlaps an invalid/closing shared Pool range");
+  if(shared>0) {
+    vk_query_native_source *prefix=count?malloc((size_t)count*sizeof *prefix):NULL;
+    if(count&&!prefix)die("Native query prefix allocation");
+    for(unsigned k=0;k<count;k++)prefix[k]=(vk_query_native_source){r->samples[k]->block->handle,r->samples[k]->index};
+    // These report references survive any lookup/deferred callback and hold
+    // original exact query slots until the actual consuming GPU fence.
+    vk_query_native_publish(address,r->timestamp->handle,r->timestamp_index,prefix,count,
+        type==NVN_COUNTER_TYPE_SAMPLES_PASSED);free(prefix);
+    vk_completion(report_gpu_cleanup,r);return;
+  }
+#endif
   r->next = pending_reports;
   pending_reports = r;
   vk_completion_write(report_done,r,(void *)(uintptr_t)address,2*sizeof(uint64_t));
