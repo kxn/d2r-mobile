@@ -50,6 +50,12 @@ run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-
     '-DDM_RENDERDOC_INCLUDE_DIR=' + str(ROOT/'.local/tools/Arm_Performance_Studio_2026.5/renderdoc_for_arm_gpus/include'),
     '-DDM_ANDROID_RUNTIME_OPT_LEVEL=' + args.opt_level)
 run('cmake', '--build', ROOT / '.local/build/android-native', '-j'+str(args.native_jobs), '--target', 'dmhost_android')
+native_window_selected = 'DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE:BOOL=ON' in (ROOT/'.local/build/android-native/CMakeCache.txt').read_text()
+native_previous_astc_compiled = all(marker in (ROOT/'.local/build/android-native/libdmhost_android.so').read_bytes() for marker in
+    (b'native-previous-writer-ASTC-pending-FS',b'native-image-only-original-NVN'))
+if native_window_selected and not native_previous_astc_compiled:
+    raise RuntimeError('Actual ASTC previous-writer AND native-only test bodies absent from host ELF')
+
 rows = {row['键']: row for row in csv.DictReader((ROOT / 'dm/i18n/ui_text.tsv').open(), delimiter='\t')}
 shutil.rmtree(OUT / 'res', ignore_errors=True)
 for resource in sorted((SOURCE/'res').rglob('*')):
@@ -156,6 +162,9 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
           'native_resources_compiled':args.native_resources,
+          'native_previous_writer_ASTC_oracle_compiled':native_previous_astc_compiled,
+          'native_window_app_fixture_compiled':native_window_selected,
+          'native_image_only_ASTC_oracle_compiled':native_previous_astc_compiled,
           'native_jobs':args.native_jobs,
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,

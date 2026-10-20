@@ -57,6 +57,9 @@ static void nr_tail_compare(NVNtexture *tail,unsigned first,NVNtexture *native,N
     nr_draw(native,level,output,expected);nr_draw(tail,level-first,output,actual);CHECK(!memcmp(actual,expected,sizeof actual));
   }
 }
+#ifdef DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE
+#include "native_vulkan_native_previous_astc.inc"
+#endif
 static int native_resource_gpu_test(const char *directory) {
   enum {pool_bytes=4<<20,native_offset=(1<<20)+8192,reference_offset=2<<20,
     linear_offset=3<<20,vertex_offset=(3<<20)+(256<<10),output_offset=(3<<20)+(320<<10),
@@ -161,7 +164,29 @@ static int native_resource_gpu_test(const char *directory) {
     uint64_t serial=((const tex_t *)&native)->serial;
     vk_test_texture_native_binding(serial,&original,&original_offset);
     vk_pool_span_info before,after;
+    unsigned image_only_begin=checks;
+    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_UNBACKED);
+    CHECK(!vk_pool_shared_materialized((uintptr_t)storage+native_offset,payload_size));
+    // CPU production is legal only after the original synchronous GPU uses.
+    // Same-value prepare/publication still exercises the real invalidation
+    // and actual native VkMemory cache path with no ordinary Buffer coverage.
+    CALL(nvnMemoryPoolInvalidateMappedRange,&pool,native_offset,payload_size);
+    dm_guest_write_prepare(storage+native_offset,payload_size);
+    memcpy(storage+native_offset,payload,payload_size);
+    CALL(nvnMemoryPoolFlushMappedRange,&pool,native_offset,payload_size);
+    nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
+    CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_UNBACKED);
+    // First actual VkBuffer consumer: reuse the original GPU copy helper,
+    // rather than using an address-only lookup as a proxy for consumption.
+    uint8_t *opaque_read=malloc(payload_size);CHECK(opaque_read);
+    mtl_sub_begin();vk_pool_requirement buffer_read={(uintptr_t)storage+native_offset,payload_size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+    int first_buffer=vk_pool_operation_begin_ranges(&buffer_read,1);
+    pool_window_read(storage+native_offset,payload_size,opaque_read);
+    vk_pool_operation_end(first_buffer);vk_internal_wait(vk_internal_commit());
+    CHECK(!memcmp(opaque_read,payload,payload_size));free(opaque_read);
     CHECK(vk_pool_span_query((uintptr_t)storage+native_offset,payload_size,&before)==VK_POOL_SPAN_SINGLE);
+    CHECK(vk_pool_shared_materialized((uintptr_t)storage+native_offset,payload_size));
+    printf("{\"test\":\"native-image-only-original-NVN\",\"result\":\"passed\",\"checks_added\":%u,\"actual_ASTC_GPU\":true,\"mips\":9,\"sample_and_ReadTexels_without_Buffer\":true,\"CPU_same_value_without_Buffer\":true,\"late_real_Buffer_copy_payload_exact\":true,\"late_materialized_only\":true}\n",checks-image_only_begin);
     for(unsigned pass=0;pass<2;pass++) {
       mtl_sub_begin();vk_pool_requirement cross={(uintptr_t)storage+native_offset-(pass?98304:32768),
         payload_size+(pass?196608:65536),0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
@@ -263,6 +288,12 @@ static int native_resource_gpu_test(const char *directory) {
   CHECK(!memcmp(storage+alias_offset,storage+native_offset,4096));
   CHECK(!memcmp(storage+native_offset-64,(uint8_t[64]){[0 ... 63]=0xa5},64));
   CHECK(!memcmp(storage+native_offset+payload_size,(uint8_t[64]){[0 ... 63]=0xa5},64));
+#ifdef DM_VULKAN_NATIVE_WINDOW_APP_FIXTURE
+  if(getenv("DM_NATIVE_PREVIOUS_WRITER_ASTC_FIXTURE")) {
+    nr_previous_writer_astc(&native,&reference,&output,&pool,storage,input,linear,native_offset,
+      payload_size,linear_offset,vertex_offset,alias_offset,&S);
+  }
+#endif
   uint64_t native_import_count,native_import_bytes,native_metadata_bytes;
   vk_native_allocation_stats(&native_import_count,&native_import_bytes,&native_metadata_bytes);
   CHECK(native_import_count==1 && native_import_bytes>=payload_size && native_import_bytes<=payload_size+65536);
