@@ -1323,3 +1323,49 @@ compute 轮被拒绝、未执行。原包和完整库存的只读复核及属性
 记录为 `panvk-bc-rebind-gfx-v1-mali-v1/actual-independent-review.json`。
 需先解决现成工具的 feature/allocator 配置，不能据该 VUID 宣称游戏或驱动
 新增回归。
+
+## 共享窗口的官方 CPU 对照（2026-10-20）
+
+同一 `eddb4ca` 二进制的整池与 16MiB 窗口分别采集了官方 Simpleperf 和
+Perfetto。Simpleperf 的 8 秒窗口内，翻译线程 task-clock 为
+5608.93→5772.78ms，完成线程为 316.18→305.27ms。两个模式的 PSO/变体
+分别是 173/31 与 181/33，故这里只记录绝对 CPU 工作量，不能将差值写成
+窗口管理造成的整帧退化。Perfetto 是独立采集窗，不能与上述时间相加。
+
+窗口版 605 个翻译线程用户态样本中，准入调用链 inclusive 命中 44 个。
+已有 fast pin 会跳过稳态 reserve、分配和排序；余下包括真实范围收集、
+锁和覆盖查找，不能把这 44 个样本全算作可删除工作。另有 29 个 self
+样本位于图像别名 AVL 重叠查找，提示继续减少不相交子树遍历；这与
+vickwv 的脏区定位缓存是两处不同的开销。报告为
+`shared-import-windows-eddb4ca-cpu-cost-v1-official-analysis.json` 和
+`shared-window-eddb-steady-cpu-candidates-readonly-v1.json`。
+采集后高通生产包、缓存和资源已恢复，进程停止。
+
+## 原生图像的独立有限导入：Android 验证中
+
+候选 `bb4ac54` 基于 `eddb4ca`。每张原生 VkImage 独立导入 payload
+对应的原 memfd 页，图像绑定的 VkDeviceMemory 不随 Buffer 窗口 union
+改变。长期图像引用与短期提交引用分开，保留原 NC 缓存、写入保护和
+真实数据依赖；物理图像退休后才回收这份导入。没有额外纹理 payload
+副本，但目前仍有与 Buffer 窗口重复的导入登记及缓存维护成本。
+
+源码及实际依赖独立核验已闭合，七组 Lavapipe/VVL/SYNC 功能检查通过，
+包括真实 RGBA 图像与两次窗口 union 的双向别名读写。Lavapipe 不支持的
+ASTC 用例没有计为通过。此候选尚未完成 Android 真 ASTC 或真实游戏验收，
+不代表已降低 FPS、带宽、内存或温度。记录为
+`native-image-window-bb4ac54-root-source-review.json`。
+
+配套 `ba0b943` 工具已生成一张真实火盆材质的原生资源 overlay，其余
+原 BC 资源和上游 UI 保留。使用原 CASC 工具验证整个 VFS，仅该材质与
+总贴图缓存两个条目变化；其余 31,071 个缓存条目和 133,198 个 VFS
+条目不变。错误驱动、错误验收指纹、损坏布局表和已有输出均被拒绝。
+工具、源码指纹与重建参数已保存；没有部署，不能把资源加工成功当作
+原游戏已经使用它。记录为
+`turnip-one-native-overlay-ba0b943-source-ready.json`。
+
+PanVK 官方 replay 的 BDA 配置仍未闭合：最小调试桥接启用设备 BDA 后，
+09499 消失，但 SDK 的内部 allocator 未同步启用相应分配标志，转而出现
+`VUID-vkBindBufferMemory-bufferDeviceAddress-03339`。本轮立即停止，
+未运行 compute 解码对照；不能据此评价解码路线。原生产库存、属性及
+工具清理已经独立核验，Mali 停止。记录为
+`panvk-rebind-bda-gfx-caf392e-mali-v1/actual-independent-review.json`。
