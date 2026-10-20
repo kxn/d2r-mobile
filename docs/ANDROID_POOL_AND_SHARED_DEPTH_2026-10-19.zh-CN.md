@@ -1916,3 +1916,32 @@ stat/record/Perfetto 期间 PSO183/variants33 稳定；双存档、停机及原�
 26b record 窗口存在 PSO 变化；两轮不是匹配 A/B，不声明净涨帧或散热改善。
 该有界几何缓存按明确减少重复链表遍历的机制保留，后续继续用官方 Profile
 检验总成本。实际验收：`.local/logs/native-candidate-short-80a-Q735-v1-root-actual-review.json`。
+
+### 公开 ADPF 提示已实测，保持默认关闭
+
+同一 80a 原游戏进程完成原参考 OFF → hint ON → OFF 的三个官方 Perfetto
+窗口。Q 的公开 API 实际 available=1、duration v2 可用，session 的 TID
+3384 确为 nvn-translate，报告增加且 failures=0。退出前实际 active=0，
+随后原生命周期双存档、停机、原包六目录恢复成功，不是未启用时的假对照。
+
+三个窗口 replay Running/次为 26.023 / 26.313 / 26.171ms，加权频率约
+1590 / 1600 / 1611MHz，CPU7 占比约 19.77 / 18.20 / 16.03%，本轮没有
+显示出 CPU 加速。保留实际 replay 时间范围内两端都完整的同一 Surface
+间隔后，均值为 32.9925 / 32.9944 / 32.9957ms，约 30.3 FPS。没有短窗
+收益证据，不更改默认策略，也不声称改善持续发热。
+
+原始全局 Surface 查询在后两个文件中包含历史 buffer 事件，形成跨采集
+边界的 8.23s / 7.49s 间隔；旧 SQL 与输出保留，不能据此声称掉到 15 FPS。
+后继只按实际 replay 首尾时间裁剪，要求间隔双端均在窗口内，不按慢间隔
+数值剔除 outlier。26b/80a 和长测 20 分钟另行复核仍保留最大约 55ms 的
+慢间隔，没有将原有长测降速过滤掉。
+证据：`.local/logs/native-candidate-80a-adpf-Q735-v1-root-actual-review.json` 和
+`.local/logs/native-candidate-80a-adpf-Q735-v1-analysis/actual-ADPF-ABA-official-summary-agent.json`。
+
+内存后续已确认另一独立机制缺口：Android 官方 ComponentCallbacks2 说明
+API34 起不再发送 RUNNING_MODERATE/LOW/CRITICAL，onLowMemory 也不再
+调用。现有冷 texture 淘汰只由低内存控制入口触发，前台没有自动字节预算。
+因此正在独立候选实现真实 private VkImage allocation 计账和有界冷缓存
+回收；不把逻辑 heap VA、native 同页映射或旧 OEM Graphics 合计误作
+可回收私有 cache。该候选尚未通过真机，不称其已减少内存或避免 LMK。
+官方依据：https://developer.android.com/reference/android/content/ComponentCallbacks2
