@@ -750,6 +750,12 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
   if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_FIXED_SHARED_CAPABILITY_FIXTURE")) {
+    mtl_init();vk_query_native_test_capability_record();
+    if(vk_pool_shared_mode())die("Capability-only fixture unexpectedly selected shared mode");
+    printf("{\"test\":\"PanVK-query-clock-capability\",\"result\":\"recorded\",\"checks\":%u,\"game_modules_executed\":false,\"shared_pool_initialized\":false,\"GPU_timestamp_verified\":false}\n",checks);
+    return 0;
+  }
   if(getenv("DM_FIXED_SHARED_POLICY_TEST")) {
     const char *expected=getenv("DM_FIXED_SHARED_POLICY_TEST");
     int shared=!strcmp(expected,"shared"),sync=!strcmp(expected,"sync-unsupported");

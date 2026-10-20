@@ -391,6 +391,7 @@ int vk_query_clock_parameters(float period,uint32_t bits,uint32_t *multiplier,in
 void vk_query_native_publish(uint64_t address,VkQueryPool timestamp,uint32_t slot,
     const vk_query_native_source *prefix,uint32_t count,uint32_t samples);
 #ifdef DM_VULKAN_TEST_EMBED
+void vk_query_native_test_capability_record(void);
 void vk_counter_native_test_observer(void (*observe)(uint64_t,uint32_t,uint64_t,uint64_t));
 int vk_query_native_test_dispatch(vk_buffer *source,vk_buffer *destination,uint64_t offset,
     float period,uint32_t bits,uint32_t count,uint32_t samples);

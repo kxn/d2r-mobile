@@ -244,7 +244,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 throw new IllegalArgumentException("Fixed shared fixture requires exclusive tests, PanVK, async_submit, explicit validation=false and run_game=false");
             String fixtureKind = getIntent().getStringExtra("fixed_shared_fixture_kind");
             int fixtureMode = fixtureKind == null || "buffer".equals(fixtureKind) ? 0 :
-                    "event".equals(fixtureKind) ? 1 : "query".equals(fixtureKind) ? 2 : -1;
+                    "event".equals(fixtureKind) ? 1 : "query".equals(fixtureKind) ? 2 :
+                    "capability".equals(fixtureKind) ? 3 : -1;
             if (fixtureMode < 0)
                 throw new IllegalArgumentException("Unknown fixed shared fixture kind");
             if (!nativeFixedSharedPoolFixture(fixtureMode))
