@@ -1558,6 +1558,8 @@ static void init_device(void) {
   LOG("[vulkan] queue family=%u queues=%u dedicated WSI worker=%s present queue=%s",V.queue_family,V.queue_count,V.present_worker?"enabled":"reference/unavailable",V.present_queue==V.queue?"render":"separate");
 #ifdef DM_VULKAN_SHARED_POOLS
   shared_device_probe(); // once, before any NVN registration or worker
+  if(shared_active && (V.options.pool_window_bytes || V.options.pool_mirror_reference || V.options.pool_defer_publication))
+    die("Fixed shared mode conflicts with legacy window/mirror/defer options");
 #endif
   vk_pipeline_cache_init();
   pthread_t t;
