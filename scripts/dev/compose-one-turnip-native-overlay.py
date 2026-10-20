@@ -208,11 +208,19 @@ def compose(a):
                     raw / 'data/build_manifest.psv', ui / 'data/.build.config',
                     Path(spec[0]['source']), Path(spec[0]['texture'])]
     source_paths.extend(ui / item['relative'] for item in ui_proof['overlay_files'])
+    source_paths.extend([Path(spec[0]['source']).with_name('resource-input.bin')])
+    source_paths.extend(Path(spec[0]['baked']) / name for name in
+                        ('native-resource-layout.bin', 'native-resource.bin', 'native-resource.json'))
+    source_paths.extend(Path(module.__file__) for module in list(sys.modules.values())
+                        if getattr(module, '__file__', None) and
+                        Path(module.__file__).suffix == '.py' and
+                        Path(module.__file__).resolve().is_relative_to(ROOT))
     generated = {str(p.relative_to(output)): sha(p) for p in output.rglob('*')
                  if p.is_file() and not p.is_symlink()}
     result = {'schema': 1, 'complete': True, 'source_revision': subprocess.check_output(
         ['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip(),
         'source_fingerprints': {str(p): sha(p) for p in source_paths},
+        'python_executable': {'path': sys.executable, 'sha256': sha(sys.executable), 'version': sys.version},
         'driver_sha256': sha(a.driver), 'producer_source_sha256': a.producer_source_sha256,
         'native_table_sha256': sha(files / 'native-layouts.bin'),
         'native_pack_content_sha256': record['pack_content_sha256'],
