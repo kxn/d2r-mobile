@@ -108,6 +108,7 @@ static void dynamic_uniform_test(const void *vertex) {
   vk_descriptor_template_reference(original_template);
 }
 
+#ifndef DM_ANDROID_APP
 // The original NVN draw/readback path, with real A/B/A shaders and full-value
 // changes after a hint has been established. This is not a timing benchmark.
 static void descriptor_shader_hint_test(const void *vertex) {
@@ -187,3 +188,5 @@ static void descriptor_shader_hint_test(const void *vertex) {
   for(unsigned n=0;n<2;n++)CALL(nvnProgramFinalize,&programs[n]);
   CALL(nvnMemoryPoolFinalize,&pool);free(storage);
 }
+
+#endif

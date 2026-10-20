@@ -250,8 +250,8 @@ static void descriptor_history_release(vk_shader_submission *state) {
   }
 }
 static vk_shader_submission *binding_state;
-#ifdef DM_VULKAN_TEST_EMBED
-// Owned path-coverage assertion only; absent from production builds.
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Owned path-coverage assertion only; absent from the actual game APK.
 static unsigned descriptor_shader_hint_test_hits;
 unsigned vk_test_descriptor_shader_hint_hits(void) { return descriptor_shader_hint_test_hits; }
 #endif
@@ -862,7 +862,7 @@ void vk_shader_recycle(vk_shader_submission *state) {
     state->descriptor_current = NULL;
   }
 }
-#ifdef DM_VULKAN_TEST_EMBED
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 unsigned vk_test_descriptor_shader_hint_edges(void) {
   vk_shader_submission *saved=binding_state,*state=calloc(1,sizeof *state);
   if(!state)die("Descriptor hint owned state allocation");
@@ -1614,7 +1614,7 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
     // replacement/recycle and any resolved handle/offset/range change reject.
     descriptor_history_entry *hinted=descriptor_shader_hint_find(s,layout,values,key_bytes);
     if(hinted) {
-#ifdef DM_VULKAN_TEST_EMBED
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
       descriptor_shader_hint_test_hits++;
 #endif
       // Preserve the original stage-last locality as well: after A/B/A,

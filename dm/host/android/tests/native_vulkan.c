@@ -765,6 +765,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#ifndef DM_ANDROID_APP
   if(getenv("DM_DESCRIPTOR_SHADER_HINT_FIXTURE")) {
     uint8_t vertex[0x880]={0};descriptor_shader_hint_test(vertex);
     dynamic_uniform_test(vertex);CHECK(vk_validation_error_count()==0);
