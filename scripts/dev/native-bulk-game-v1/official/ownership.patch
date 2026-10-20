@@ -1,0 +1,10 @@
+--- heap_profile.upstream.py
++++ heap_profile.ownership.py
+@@ -1131,6 +1131,7 @@
+     print("Failed to invoke perfetto: {}".format(perfetto_pid), file=sys.stderr)
+     return 1
+ 
++  print('DM_HEAP_COLLECTOR_OWNERSHIP {"pid":%d,"trace_path":"%s"}' % (perfetto_pid, profile_device_path), flush=True)
+   old_handler = signal.signal(signal.SIGINT, sigint_handler)
+   print("Profiling active. Press Ctrl+C to terminate.")
+   print("You may disconnect your device.")

@@ -1,0 +1,1 @@
+SELECT a.upid,p.pid,p.name,a.heap_name,a.ts,SUM(a.size) AS sampled_unreleased_malloc_bytes,SUM(a.count) AS sampled_unreleased_malloc_count,SUM(CASE WHEN a.size>0 THEN a.size ELSE 0 END) AS sampled_total_malloc_bytes FROM heap_profile_allocation a LEFT JOIN process p USING(upid) GROUP BY a.upid,p.pid,p.name,a.heap_name,a.ts ORDER BY a.upid,a.ts;

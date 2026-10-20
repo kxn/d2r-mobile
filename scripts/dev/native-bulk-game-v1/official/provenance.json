@@ -1,0 +1,11 @@
+{
+  "upstream_url": "https://raw.githubusercontent.com/google/perfetto/386d870e04da1a5ca11b6239343b4db518ddea43/tools/heap_profile",
+  "upstream_commit": "386d870e04da1a5ca11b6239343b4db518ddea43",
+  "original_download_url": "https://raw.githubusercontent.com/google/perfetto/main/tools/heap_profile",
+  "upstream_sha256": "07e79429d06f34fbabc01d7621a3718141f3e21c5c42e4d20ee00c8c5b614d22",
+  "ownership_helper_sha256": "294109e9cacc659e2003abf2fbde44faf5cc787bf3e79edf0cae7eb6511b5cbc",
+  "change": "Exactly one print of PID/path already obtained by original tool; no sampling/configuration/clock/lifecycle changes.",
+  "interface_gap": "Official android --help has no verbose/ownership callback/file/PID output switch; original code holds pid/path internally.",
+  "patch_sha256": "b7c80a8e49c7c54425718a163b56a6c8e1e2fb35d1941e81dfd6606adca5be0d",
+  "preparation_note": "Initial offline insertion refused nonunique SIGINT-handler anchor (host+android); no file written; corrected to Android occurrence only."
+}

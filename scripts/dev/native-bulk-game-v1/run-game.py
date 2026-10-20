@@ -27,6 +27,7 @@ def module(name, path):
     return value
 
 
+heap = module('official_heap_capture', HERE / 'heap-capture.py')
 m = module('accepted_native_game_transaction', OLD / 'transaction.py')
 installer = module('accepted_native_game_installer', OLD / 'installer.py')
 sha, read, require, PKG = m.sha, m.read, m.require, m.PKG
@@ -142,6 +143,8 @@ def proof(path, digest):
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
                                 R / 'scripts/dev/android-game-walk-to.py']}
+    if 'heap_profile' in p:
+        p['controller_sources'].update(heap.proof(p, pinned, read, require))
     return p
 
 
@@ -189,6 +192,11 @@ def phase_game(dev, out, phase, p, token):
     own = None
     ambiguous = False
     launcher = None
+    capture = None
+
+    def profile_journal(value):
+        d['heap_profile'] = value
+        save()
 
     def pid():
         return dev.adb('shell', 'pidof ' + PKG + ' || true')
@@ -207,6 +215,14 @@ def phase_game(dev, out, phase, p, token):
         return now
 
     try:
+        if p.get('heap_profile'):
+            require(not pid(), 'heap startup profile requires no game PID')
+            capture = heap.Capture(dev, out / 'official-heap-profile', p['heap_profile'], profile_journal)
+            if not capture.start():
+                d['heap_profile_arm_failed_no_game_launch'] = True
+                save()
+                return d
+            require(not pid(), 'game started outside owned launcher while arming profile')
         with (out / 'launch.log').open('w') as f:
             launcher = subprocess.Popen(command, stdout=f, stderr=subprocess.STDOUT, cwd=R)
             deadline = time.monotonic() + 120  # A bounded tool observation, not a profiler.
@@ -233,7 +249,10 @@ def phase_game(dev, out, phase, p, token):
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
         m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
-        if p.get('counter_snapshot'):
+        if capture:
+            require(pid() == own, 'PID changed before official profile endpoint')
+            capture.finish(own)
+        if p.get('counter_snapshot') and (capture is None or capture.state['cleanup_confirmed']):
             require(pid() == own, 'PID changed before once-only counter snapshot')
             counter = p['counter_snapshot']
             snapshot_out = out / 'native-import-counter-snapshot'
@@ -280,6 +299,11 @@ def phase_game(dev, out, phase, p, token):
         d['scope'] = 'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance'
         save()
     finally:
+        if capture:
+            # Even invalid/partial official data is not a runtime failure.
+            # Complete tool cleanup first; if it cannot be confirmed, still do
+            # the game's independent safe lifecycle cleanup below.
+            capture.finish(own)
         if launcher is not None and launcher.poll() is None:
             launcher.terminate()
             launcher.wait(timeout=15)
@@ -296,22 +320,33 @@ def phase_game(dev, out, phase, p, token):
                 # below. Preserve its path/hash for explicit later cleanup.
                 d.setdefault('screenshot_collection_errors', []).append(repr(e))
                 save()
-        now = pid()
-        if now:
-            require(not ambiguous and own and now == own, 'unknown/replacement PID; preserve transaction')
-            cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
-                   '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
-            with (out / 'fresh-save.log').open('w') as f:
-                subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
-            fresh = read(out / 'fresh-save.json')
-            require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
-                    and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
-            dev.adb('shell', 'am', 'force-stop', PKG)
-            require(not pid(), 'owned game process still alive')
-            d['fresh_save_then_stopped'] = True
-        else:
-            d['already_exited_no_save_restart'] = True
-        save()
+        try:
+            now = pid()
+            if now:
+                require(not ambiguous and own and now == own, 'unknown/replacement PID; preserve transaction')
+                if capture:
+                    status = dev.app('cat', '/proc/' + own + '/status')
+                    tracer = re.search(r'^TracerPid:\s+(\d+)\s*$', status, re.M)
+                    require(tracer and tracer[1] == '0' and pid() == own, 'game tracer/nonowned PID prevents lifecycle cleanup')
+                    d['game_cleanup_independent_of_profile_health'] = True
+                    save()
+                cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
+                       '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
+                with (out / 'fresh-save.log').open('w') as f:
+                    subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
+                fresh = read(out / 'fresh-save.json')
+                require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
+                        and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
+                dev.adb('shell', 'am', 'force-stop', PKG)
+                require(not pid(), 'owned game process still alive')
+                d['fresh_save_then_stopped'] = True
+            else:
+                d['already_exited_no_save_restart'] = True
+            save()
+        finally:
+            if capture and not capture.state['cleanup_confirmed']:
+                capture.finish(own)  # Late receipt cleanup after independently stopping the game.
+            save()
     return d
 
 
@@ -334,8 +369,14 @@ def main():
     plan = {'offline': True, 'controller_sources': p['controller_sources'],
             'inputs_sha256': args.inputs_sha256, 'runtime': p['runtime_commit'],
             'phases': ['standard-ASTC4', 'native-ASTC4'], 'scale_3d': .60,
-            'output': '2750x1260', 'profiling': False, 'recursive_RomFS_copy': False,
+            'output': '2750x1260', 'profiling': bool(p.get('heap_profile')), 'recursive_RomFS_copy': False,
             'scope': 'Functional and system residency only, not sustained thermal/FPS proof'}
+    if p.get('heap_profile'):
+        plan.update(heap_profile_mode=p['heap_profile']['mode'],
+                    heap_profile_effective_config=p['heap_profile']['effective_config'],
+                    heap_profile_command_template=heap.capture_command(p['heap_profile'], 'UNIQUE_PHASE_EMPTY_OUTPUT'),
+                    no_profiled_FPS_claim=True,
+                    effective_phase_kinds=['control'] if p['heap_profile']['mode'] == 'control-only' else ['control', 'native'])
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -377,7 +418,8 @@ def main():
         created = True
         owner = out / 'owner'
         owner.write_text(token + '\n')
-        for phase in p['phases']:
+        phase_plan = p['phases'][:1] if p.get('heap_profile', {}).get('mode') == 'control-only' else p['phases']
+        for phase in phase_plan:
             active = phase
             name = phase['kind']
             incoming = stage + '/incoming/' + name
@@ -441,10 +483,21 @@ def main():
             phase_result = phase_game(dev, out / name, phase, p, token)
             d['phases'].append(phase_result)
             write()
+            if p.get('heap_profile') and not phase_result.get('heap_profile', {}).get('accepted'):
+                d['profile_outcome'] = 'invalid-or-partial-no-next-phase'
+                d['stage'] = 'official-heap-profile-invalid-original-game-cleaned'
+                write()
+                break
             require(phase_result.get('original_HUD_reached') and phase_result.get('fresh_save_then_stopped'),
                     'phase did not reach HUD / fresh save2')
         owner.unlink()
-        d['stage'] = 'matched-resource-original-game-functional-pair-complete'
+        if p.get('heap_profile'):
+            if d.get('profile_outcome') is None:
+                d['profile_outcome'] = 'control-only-valid' if p['heap_profile']['mode'] == 'control-only' else 'pair-valid'
+                d['stage'] = 'official-heap-profile-' + d['profile_outcome']
+            d['not_original_unprofiled_pair_acceptance'] = True
+        else:
+            d['stage'] = 'matched-resource-original-game-functional-pair-complete'
         write()
     except BaseException as e:
         d['error'] = repr(e)
@@ -511,14 +564,21 @@ def main():
                     dev.adb('shell', 'rm', row['path'])
             dev.app('rm', m.LOCK + '/owner')
             dev.app('rmdir', m.LOCK)
-            d['cleanup_complete'] = True
+            d['resource_cleanup_complete'] = True
+            phase_states = [read(Path(q)) for q in d.get('phase_reports', []) if Path(q).is_file()]
+            unconfirmed = [v['kind'] for v in phase_states if 'heap_profile' in v and not v['heap_profile']['cleanup_confirmed']]
+            if unconfirmed:
+                d['cleanup_errors'].append('official heap collector cleanup unconfirmed: ' + ','.join(unconfirmed))
+            d['cleanup_complete'] = not unconfirmed
             write()
         except BaseException as e:
             d['cleanup_errors'].append(repr(e))
             write()
-    print(json.dumps({k: d.get(k) for k in ['stage', 'error', 'cleanup_errors', 'original_restored']}, indent=2))
+    print(json.dumps({k: d.get(k) for k in ['stage', 'error', 'profile_outcome', 'cleanup_errors', 'original_restored']}, indent=2))
     require(not d.get('error') and not d['cleanup_errors'] and d.get('cleanup_complete'),
             'original-game pair incomplete; preserve journal')
+    if d.get('profile_outcome') == 'invalid-or-partial-no-next-phase':
+        raise SystemExit(2)  # Distinct tool-invalid result; not a runtime failure.
 
 
 if __name__ == '__main__':
