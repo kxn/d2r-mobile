@@ -105,8 +105,9 @@ def deploy_canonical(dev,path,d,output,restore=False):
 def capture_options(token):
  require(re.fullmatch('[a-f0-9]{32}',token),'unsafe capture transaction token')
  settings={'enable_gpu_debug_layers':'1','gpu_debug_app':PKG,'gpu_debug_layers':'VK_LAYER_LUNARG_gfxreconstruct','gpu_debug_layer_app':GFXR_PACKAGE,'gpu_debug_layers_gles':None}
- stem='panvk-submit-'+token
- props={'debug.gfxrecon.capture_process_name':PKG,'debug.gfxrecon.capture_file':'/data/user/0/'+PKG+'/'+DRIVER_DIR+'/shader-cache/'+stem+'.gfxr','debug.gfxrecon.capture_frames':'','debug.gfxrecon.capture_draw_calls':'','debug.gfxrecon.capture_trigger':'','debug.gfxrecon.capture_trigger_boundary':'queue_submits','debug.gfxrecon.capture_queue_submits':'150-174','debug.gfxrecon.capture_file_timestamp':'false','debug.gfxrecon.capture_file_flush':'true','debug.gfxrecon.capture_android_trigger':'false','debug.gfxrecon.capture_trigger_frames':'','debug.gfxrecon.quit_after_capture_frames':'false'}
+ stem='g' # fresh transaction-owned driver/cache directory, never production cache
+ props={'debug.gfxrecon.capture_process_name':PKG,'debug.gfxrecon.capture_file':'/data/data/'+PKG+'/'+DRIVER_DIR+'/shader-cache/'+stem+'.gfxr','debug.gfxrecon.capture_frames':'','debug.gfxrecon.capture_draw_calls':'','debug.gfxrecon.capture_trigger':'','debug.gfxrecon.capture_trigger_boundary':'queue_submits','debug.gfxrecon.capture_queue_submits':'150-174','debug.gfxrecon.capture_file_timestamp':'false','debug.gfxrecon.capture_file_flush':'true','debug.gfxrecon.capture_android_trigger':'false','debug.gfxrecon.capture_trigger_frames':'','debug.gfxrecon.quit_after_capture_frames':'false'}
+ require(all(len(v.encode())<92 for v in props.values()),'Android property value exceeds91bytes')
  return settings,props,stem
 
 def capture_settings(dev,path,d):

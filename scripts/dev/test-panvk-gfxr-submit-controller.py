@@ -28,7 +28,7 @@ def check(v):
  global checks
  assert v;checks+=1
 with tempfile.TemporaryDirectory()as n:
- p=Path(n)/'journal.json';d={'token':'a'*32};dev=Fake();m.capture_settings(dev,p,d);check(d['capture_settings_applied']);check(dev.props['debug.gfxrecon.capture_queue_submits']=='150-174');m.restore_capture_settings(dev,p,d);check(d['capture_settings_restored']);check(not dev.settings and all(v==''for v in dev.props.values()))
+ p=Path(n)/'journal.json';d={'token':'a'*32};dev=Fake();m.capture_settings(dev,p,d);check(d['capture_settings_applied']);check(dev.props['debug.gfxrecon.capture_queue_submits']=='150-174');check(len(dev.props['debug.gfxrecon.capture_file'].encode())<92);m.restore_capture_settings(dev,p,d);check(d['capture_settings_restored']);check(not dev.settings and all(v==''for v in dev.props.values()))
  dev=Fake(True);d={'token':'a'*32}
  try:m.capture_settings(dev,p,d)
  except RuntimeError:pass
