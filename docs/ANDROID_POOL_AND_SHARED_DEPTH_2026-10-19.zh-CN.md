@@ -1652,7 +1652,7 @@ Simpleperf 是另外的 8 秒 stat 和 8 秒 99Hz 调用栈窗口，不能把其
 
 这些结果支持继续处理已观察到的重复绑定、别名证明与状态准备工作，
 并另取硬件 GPU Profile 判断带宽／shader 成本。原生图像 GENERAL 布局
-相关的后续源码候选尚未完成真机对照，不计为已有收益。上节独立内存
+的后续真机结果见下节，不把减少布局指令等同于净 CPU 收益。上节独立内存
 端点的 native PSS **仍多 102.44MiB**、malloc Alloc 多 52.50MiB；本轮较快
 的完成节奏不抵消该成本，批量 native 的净内存／持续散热仍未验收。
 本轮 performance hint 为 reference、active=0，present worker 关闭，
@@ -1662,6 +1662,69 @@ Simpleperf 是另外的 8 秒 stat 和 8 秒 99Hz 调用栈窗口，不能把其
 
 - `.local/logs/native-bulk-game-bcbd751-throughput-cpu-v2-root-Perfetto-review.json`
 - `.local/logs/native-bulk-bcbd751-throughput-cpu-v2-analysis/official-CPU-stat-99Hz-comparison-agent-v1.json`
+
+### 10 月 21 日：native GENERAL 与 1MiB window 的已闭合对照
+
+`6bc0b8a` 仅使已认证 native image 保持其 producer 合同的 GENERAL 布局，
+不推广到普通私有图像；FOREIGN 交接、真实读写依赖和首次布局初始化均保留。
+Adreno 735／AA185、相同 6,217 项资源、固定 0.60 的实际原游戏两端已完成
+路线、存档、停机和原包／六目录／PSO 恢复，截图未见明显新增黑块或缺图。
+本节没有使用 Mali，也不是 6GB 平板验收。
+
+在包围各自 8 秒 record 的 ADB 括号中，native 布局转换增量由旧版
+1,959,057 降至 35,689（约 −98.18%；括号分别为 10.240／11.195 秒）。
+这是消除反复 sampled／transfer 布局往返的工作量证据，不是每帧或耗时比例。
+新 native 回放实际 CPU 为 23.051ms@1707MHz，旧版为 22.786ms@1722MHz；
+未证明净 CPU／吞吐提升。新 native 的 PSS 2,318,988KiB，仍高于同轮普通
+ASTC4 的 2,149,472KiB；Native Heap Alloc 相对旧 native 几乎未变，不能
+把布局指令减少解释为已回收 command pool 或额外 malloc。机制保留，净 RAM
+与持续散热不宣称改善。
+
+随后保持同一 `6bc0b8a`／AA185／资源与渲染参数，仅用已有冷启动选项将
+window 从 16MiB 改为 1MiB；两端也均完整存档、停止、恢复，截图无明显缺图。
+
+| 指标 | 16MiB window | 1MiB window |
+| --- | ---: | ---: |
+| 普通 ASTC4／native Buffer backing（MiB） | 499／547 | 370／369 |
+| native 官方 TOTAL PSS（KiB） | 2,318,988 | 2,103,429 |
+| native 官方 SwapPSS（KiB） | 191 | 19,567 |
+| native 回放实际 CPU／加权频率 | 23.051ms／1707MHz | 23.561ms／1723MHz |
+| native Surface 完成间隔均值（ms） | 29.651 | 29.989 |
+| native 累计新增 span／promotion | 28／12 | 192／161 |
+
+native 实际 Buffer import extent 减少 **178MiB**，PSS 端点少约 **210.5MiB**；
+但 SwapPSS 增加约 18.9MiB、Graphics 分类减少约 96.6MiB，PSS+Swap 差为
+−191.6MiB，不能全部归因于 window 的唯一物理 RAM 节省。Graphics 已包含在
+TOTAL PSS，不能再相加。native image import 仅由 1290／148,512,768B 变为
+1287／148,172,800B；本次主要 extent 差来自普通 Buffer 窗口，而非少加载了
+大量 native 资源。1MiB 下 native Heap Alloc 仍比普通 ASTC4 多约 49.35MiB。
+
+较小窗口增加冷导入／合并和元数据成本；native 三个官方窗口没有继续 promotion，
+因此稳态工具窗不能给出这些冷成本。1MiB control 的 stat 窗口发生 PSO
+179→184、variant 31→33、promotion 204→208，**并非全部窗口稳定**；其
+record／Perfetto 与 native 三窗稳定。native 同窗 CPU 频率积分代理约增加
+3.15%，不证明净提速。Surface 值仍是实际游戏 buffer fence 完成间隔，不能
+混用独立 stat／record 的 CPU 和帧分母，也不使用调试后的浮屏 FPS。
+1MiB 是已证较低 import extent 的 Q 共享模式选项，不据此推广到 Mali 默认，
+不宣称 FPS、持续热态或 6GB 可玩目标完成。
+
+后续 alias 几何负证明候选 `3cfe473` 已推送并完成 host GPU、ASan、完整回归及
+canonical Android 构建：32 槽仅复用“无任何区间重叠”的精确范围证明，成员
+插入／移除推进代号，新增静态 metadata 776B，真实 hazard 和动态绑定仍执行。
+**尚未硬件测量**，不能把该微缓存写成已实测省 CPU。另一路 `f830` 已完成
+nearest、NVN 447／36／40、旧 AA 拒绝及有限 bilinear／trilinear GPU reference
+逐 floatbits 对照，独立包清理及原资产不变已核。全 6,217 项加工尚未闭合，
+不是该新过滤路径的整批游戏、净内存或热态验收。
+
+可复核的本机 receipt：
+
+- GENERAL：`.local/logs/native-general-layout-6bc0b8a-game-throughput-v1/result.json`；
+  官方分析 `.local/logs/native-general-layout-6bc0b8a-game-throughput-v1-analysis/official-comparison-agent-v1.json`。
+- 1MiB：`.local/logs/native-general-layout-6bc0b8a-window1m-game-v1/result.json`；
+  官方分析 `.local/logs/native-general-layout-6bc0b8a-window1m-game-v1-analysis/official-window1m-vs16m-comparison-agent-v1.json`。
+- 有限过滤：`.local/logs/native-astc-linear-filter-reference-q-v1-root-actual-review.json`。
+- alias 源／构建：`.local/logs/shared-alias-negative-proof-3cfe473-source-ready-agent.json`、
+  `.local/logs/shared-alias-negative-proof-3cfe473-canonical-source-ready-agent.json`。
 
 ### 10 月 21 日：默认 malloc backtrace 的实际 ANR 及归因边界
 
