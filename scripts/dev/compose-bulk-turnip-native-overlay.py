@@ -184,14 +184,15 @@ def source_gate(path, expected, hashes, artifact_root):
     require(set(names) <= quality.keys(), 'selected source lacks original ASTC quality record')
     selection = value['selection']
     require(selection['kind'] == 'act1env-and-characters-excluding-declared-terrain-array' and
-            set(selection['format']) <= {81, 95}, 'unsupported initial bulk selection')
+            set(selection.get('formats', selection.get('format', []))) == {81, 95}, 'unsupported initial bulk selection')
     hashes.record(selection['array_closure'])
     closure = json.loads(Path(selection['array_closure']['path']).read_text())
+    closure = closure.get('array_format_closure', closure)
     require(closure.get('groups'), 'original declared array groups missing')
     array_members = {normalized(name) for group in closure['groups'] for name in group['members']}
     require(not set(names) & array_members, 'declared terrain-array member in native single-layer selection')
-    require(all(name.startswith('data/hd/character/') or
-                (name.startswith('data/hd/env/texture/') and '/act1/' in name) for name in names),
+    require(all(name.startswith(('data/hd/character/', 'data/hd/vfx/meshes/character/')) or
+                (name.startswith('data/hd/env/') and '/act1/' in name) for name in names),
             'selection outside initial Act1 environment/character scope')
     replacements = casc.read_replacements(by_name['repl.tsv'])
     require(CACHE in replacements and hashes.file(replacements[CACHE]) == context['source_cache']['sha256'],
@@ -240,6 +241,62 @@ def encode_one(stream, content, encoding, location):
     return key, len(encoded), len(content)
 
 
+def original_baseline(raw, ui, ui_proof_path, names, h):
+    ui_proof = json.loads(ui_proof_path.read_text())
+    h.file(ui_proof_path)
+    require(Path(ui_proof['base']).resolve() == raw and Path(ui_proof['overlay']).resolve() == ui and
+            ui_proof['changed_texture_or_cache_entries'] == [] and ui_proof['original_filetable_prefix_identical'], 'original BC/upstream UI proof required')
+    for item in ui_proof['overlay_files']:
+        require(h.file(ui / item['relative']) == item['sha256'], 'upstream UI baseline changed')
+    manifest = casc.read_manifest(raw)
+    require(CACHE in manifest and all(name in manifest for name in names), 'selected original VFS path missing')
+    cache_bytes = touch_layout._read_entry(str(raw), manifest[CACHE])
+    require(digest(cache_bytes) == ui_proof['cache_original_sha256'], 'original BC cache differs')
+    old = json.loads(cache_bytes)
+    old_map = {normalized(d['filename'].lower()): i for i, d in enumerate(old)}
+    require(len(old_map) == len(old) and set(names) <= old_map.keys(), 'duplicate/missing original descriptor')
+    baseline = bytes(casc.load_vfs1(ui))
+    original = bytes(casc.load_vfs1(raw))
+    oo, osize = struct.unpack_from('>II', original, 28)
+    bo, bsize = struct.unpack_from('>II', baseline, 28)
+    positions = {}
+    for name in names + [CACHE]:
+        op = casc.cft_position(original, oo, oo + osize, manifest, name)
+        bp = casc.cft_position(baseline, bo, bo + bsize, manifest, name)
+        require(op - oo == bp - bo and original[op:op + 25] == baseline[bp:bp + 25], 'UI changed selected texture/cache CFT')
+        positions[name] = bp
+    return ui_proof, manifest, old, old_map, baseline, positions
+
+
+def finalize_overlay(out, inputs, archive_name, archive, cache_path, updated, positions,
+                     manifest, ui_proof, h):
+    output = out / 'romfs_overlay'
+    casc.make_overlay(inputs, output, {CACHE: cache_path}, updated)
+    # Only the final native archive retains payload bytes. Hardlink then remove
+    # the staging pathname; no second payload copy or regeneration is retained.
+    final_archive = output / 'data' / archive_name
+    require(final_archive.is_symlink(), 'prebuilt archive reference unexpectedly materialized')
+    final_archive.unlink()
+    os.link(archive, final_archive)
+    archive.unlink()
+    (inputs / 'data' / archive_name).unlink()
+    (inputs / 'data' / archive_name).symlink_to(final_archive)
+    final = bytes(casc.load_vfs1(output))
+    cp = positions[CACHE]
+    cache_key = final[cp:cp + 16]
+    updated[CACHE] = (cache_key, struct.unpack_from('>I', final, cp + 16)[0], struct.unpack_from('>I', final, cp + 21)[0])
+    for name, entry in updated.items():
+        pos = positions[name]
+        require(final[pos:pos + 16] == entry[0] and struct.unpack_from('>I', final, pos + 16)[0] == entry[1] and
+                struct.unpack_from('>I', final, pos + 21)[0] == entry[2], 'final native/cache CFT differs')
+    one.decoded(output, manifest[CACHE], final[cp:cp + 25], cache_path.read_bytes())
+    proof = comp.prove_tvfs(inputs, output, updated)
+    for item in ui_proof['overlay_files']:
+        if item['relative'] != 'data/.build.config':
+            require(h.file(output / item['relative']) == item['sha256'], 'upstream UI archive/sidecar changed')
+    return output, proof
+
+
 def compose(a):
     out, raw, ui, pack = [p.resolve() for p in [a.out, a.raw, a.ui_overlay, a.native_pack]]
     require(not out.exists(), 'output must be new; partial composition is not resumed')
@@ -250,12 +307,6 @@ def compose(a):
     prepared, quality, source_cache_path = source_gate(a.source_pack_manifest, a.source_pack_manifest_sha256, h, a.artifact_root.resolve())
     context = prepared['source_context']
     require(Path(context['original_build_manifest']['path']).resolve() == raw / 'data/build_manifest.psv', 'original BC build differs')
-    ui_proof = json.loads(a.ui_proof.read_text())
-    h.file(a.ui_proof)
-    require(Path(ui_proof['base']).resolve() == raw and Path(ui_proof['overlay']).resolve() == ui and
-            ui_proof['changed_texture_or_cache_entries'] == [] and ui_proof['original_filetable_prefix_identical'], 'original BC/upstream UI proof required')
-    for item in ui_proof['overlay_files']:
-        require(h.file(ui / item['relative']) == item['sha256'], 'upstream UI baseline changed')
     record = json.loads((pack / 'native-pack.json').read_text())
     h.file(pack / 'native-pack.json')
     names = unique_entries(record['entries'], allow_original_case=True)
@@ -279,23 +330,7 @@ def compose(a):
     require(h.file(a.driver_query) == record['actual_driver_query_sha256'], 'actual producer query changed')
     queried, queried_producer = packer.queried_identity(a.driver_query)
     require(queried.hex() == record['identity'] and queried_producer.hex() == record['producer_source_sha256'], 'actual producer query identity differs')
-    manifest = casc.read_manifest(raw)
-    require(CACHE in manifest and all(name in manifest for name in names), 'selected original VFS path missing')
-    cache_bytes = touch_layout._read_entry(str(raw), manifest[CACHE])
-    require(digest(cache_bytes) == ui_proof['cache_original_sha256'], 'original BC cache differs')
-    old = json.loads(cache_bytes)
-    old_map = {normalized(d['filename'].lower()): i for i, d in enumerate(old)}
-    require(len(old_map) == len(old) and set(names) <= old_map.keys(), 'duplicate/missing original descriptor')
-    baseline = bytes(casc.load_vfs1(ui))
-    original = bytes(casc.load_vfs1(raw))
-    oo, osize = struct.unpack_from('>II', original, 28)
-    bo, bsize = struct.unpack_from('>II', baseline, 28)
-    positions = {}
-    for name in names + [CACHE]:
-        op = casc.cft_position(original, oo, oo + osize, manifest, name)
-        bp = casc.cft_position(baseline, bo, bo + bsize, manifest, name)
-        require(op - oo == bp - bo and original[op:op + 25] == baseline[bp:bp + 25], 'UI changed selected texture/cache CFT')
-        positions[name] = bp
+    ui_proof, manifest, old, old_map, baseline, positions = original_baseline(raw, ui, a.ui_proof, names, h)
     out.mkdir()
     inputs = out / 'inputs'
     one.link_inputs(raw, ui, inputs)
@@ -377,30 +412,7 @@ def compose(a):
     cache_path = files / 'cache'
     cache_path.write_bytes(canonical(patched))
     (files / 'native-layouts.bin').write_bytes(table)
-    output = out / 'romfs_overlay'
-    casc.make_overlay(inputs, output, {CACHE: cache_path}, updated)
-    # Only the final native archive retains payload bytes. Hardlink then remove
-    # the staging pathname; no second payload copy or regeneration is retained.
-    final_archive = output / 'data' / archive_name
-    require(final_archive.is_symlink(), 'prebuilt archive reference unexpectedly materialized')
-    final_archive.unlink()
-    os.link(archive, final_archive)
-    archive.unlink()
-    (inputs / 'data' / archive_name).unlink()
-    (inputs / 'data' / archive_name).symlink_to(final_archive)
-    final = bytes(casc.load_vfs1(output))
-    cp = positions[CACHE]
-    cache_key = final[cp:cp + 16]
-    updated[CACHE] = (cache_key, struct.unpack_from('>I', final, cp + 16)[0], struct.unpack_from('>I', final, cp + 21)[0])
-    for name, entry in updated.items():
-        pos = positions[name]
-        require(final[pos:pos + 16] == entry[0] and struct.unpack_from('>I', final, pos + 16)[0] == entry[1] and
-                struct.unpack_from('>I', final, pos + 21)[0] == entry[2], 'final native/cache CFT differs')
-    one.decoded(output, manifest[CACHE], final[cp:cp + 25], cache_path.read_bytes())
-    proof = comp.prove_tvfs(inputs, output, updated)
-    for item in ui_proof['overlay_files']:
-        if item['relative'] != 'data/.build.config':
-            require(h.file(output / item['relative']) == item['sha256'], 'upstream UI archive/sidecar changed')
+    output, proof = finalize_overlay(out, inputs, archive_name, archive, cache_path, updated, positions, manifest, ui_proof, h)
     for module in list(sys.modules.values()):
         path = getattr(module, '__file__', None)
         if path and Path(path).suffix == '.py' and Path(path).resolve().is_relative_to(ROOT):
@@ -417,6 +429,7 @@ def compose(a):
         'producer_source_sha256': record['producer_source_sha256'],
         'native_table_sha256': digest(table), 'native_pack_content_sha256': record['pack_content_sha256'],
         'source_pack_manifest_sha256': a.source_pack_manifest_sha256,
+        'selected_logicals_sha256': digest(canonical(names)),
         'one_material_functional_receipt_sha256': a.acceptance_sha256,
         'entry_count': len(names), 'entry_proofs': entry_proofs, 'native_payload_bytes': sum(d['image_size'] for d in details),
         'cache_entries': len(old), 'unchanged_cache_entries': len(old) - len(names),

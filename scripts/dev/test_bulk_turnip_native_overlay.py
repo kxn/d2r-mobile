@@ -204,5 +204,41 @@ class Bulk(unittest.TestCase):
             bulk.comp.prove_tvfs(raw, overlay, broken)
 
 
+class StandardControl(unittest.TestCase):
+    def module(self):
+        spec = importlib.util.spec_from_file_location('standard_control', HERE / 'compose-bulk-turnip-astc-control.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_standard_original_NVN_layout_preserved(self):
+        before, astc, native = Bulk.descriptor(self)
+        self.assertEqual(self.module().control_descriptor(before, astc), ['format', 'thumbnailBase64'])
+        self.assertEqual(astc['layoutData'], before['layoutData'])
+
+    def test_native_marker_cannot_enter_control(self):
+        before, astc, native = Bulk.descriptor(self)
+        with self.assertRaisesRegex(ValueError, 'native packaged'):
+            self.module().control_descriptor(before, native)
+
+    def test_control_geometry_metadata_cannot_change(self):
+        before, astc, native = Bulk.descriptor(self)
+        astc['width'] += 1
+        with self.assertRaisesRegex(ValueError, 'descriptor'):
+            self.module().control_descriptor(before, astc)
+
+    def test_control_logical_identity_cannot_change(self):
+        before, astc, native = Bulk.descriptor(self)
+        astc['filename'] = 'data/other'
+        with self.assertRaisesRegex(ValueError, 'descriptor'):
+            self.module().control_descriptor(before, astc)
+
+    def test_control_fullshape_tail_cannot_be_admitted(self):
+        before, astc, native = Bulk.descriptor(self)
+        before['thumbnailMip'] = astc['thumbnailMip'] = 0
+        with self.assertRaisesRegex(ValueError, 'tail'):
+            self.module().control_descriptor(before, astc)
+
+
 if __name__ == '__main__':
     unittest.main()

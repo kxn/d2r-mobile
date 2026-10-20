@@ -71,3 +71,34 @@ production, and measure RAM/bandwidth/heat independently.
 Run `python3 scripts/dev/test_bulk_turnip_native_overlay.py` for owned metadata
 negative controls and real original-CASC multi-entry prebuilt roundtrip. These
 checks do not execute original game modules or claim actual GPU acceptance.
+
+## Matched standard NVN ASTC4 control
+
+`compose-bulk-turnip-astc-control.py` consumes the same source-pack manifest and
+ordered entries before a native bake is available. It writes only those selected
+source ASTC4 containers and their original standard NVN descriptors. There is no
+DMN2 marker or native table. All unselected files remain the identical original
+BC/UI baseline. This avoids comparing the whole27k ASTC pack with6217 native
+entries or confusing BC-to-ASTC quality/layout differences with sharing gains.
+
+```
+python3 scripts/dev/compose-bulk-turnip-astc-control.py \
+  --raw ORIGINAL_ROMFS --ui-overlay ORIGINAL_UI_OVERLAY --ui-proof UI_PROOF \
+  --entries ORDERED_ENTRIES --entries-sha256 ENTRIES_SHA \
+  --source-pack-manifest PREPARED_SOURCE_MANIFEST \
+  --source-pack-manifest-sha256 SOURCE_MANIFEST_SHA \
+  --artifact-root ORIGINAL_AUDIT_WORKSPACE --out NEW_CONTROL_DIRECTORY
+```
+
+Both manifests expose `source_pack_manifest_sha256` and
+`selected_logicals_sha256`; these must match in a later A/B. Both also independently
+prove all unselected CFT/cache/UI contents. Initial6217 includes actual Act1
+environment foliage and VFX character meshes in addition to ordinary texture and
+character paths; declared terrain-array members remain excluded. The shared
+source gate accepts both the producer's `selection.formats` spelling and older
+one-material control records' `selection.format`, and reads array groups from the
+pinned complete composition or its standalone original-declaration proof.
+
+The device experiment must additionally fix the same runtime, loaded driver,
+PSO/cache/quality and `.6` 3D scale. Offline composition reports no FPS, resident
+RAM, bandwidth or thermal improvement and never marks either output deployable.
