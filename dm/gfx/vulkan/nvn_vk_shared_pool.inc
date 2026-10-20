@@ -147,3 +147,30 @@ int vk_test_fixed_shared_pool(uint64_t address,int *ready,int *shadow,uint32_t *
   pthread_mutex_unlock(&V.resources);return valid;
 }
 #endif
+
+// A real CPU conversion read, not a per-draw cache operation. Called only at
+// outer preflight before borrowing images/descriptors. Imported storage stays
+// pinned; no mirror, memcmp, upload stamp or fake clean result is introduced.
+int vk_pool_shared_image_source(uint64_t address,uint64_t bytes,int prepare) {
+  if(!shared_active || !bytes)return 0;
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
+  if(!p || !p->shared || p->shared_closing) {pthread_mutex_unlock(&V.resources);return 0;}
+  if(prepare) {shared_pool_materialize(p);p->references++;}
+  if(!p->backings) {pthread_mutex_unlock(&V.resources);return 0;}
+  int recorded=recording_cpu_write(address,bytes);
+  uint64_t serial=pending_cpu_write(address,bytes);
+  pthread_mutex_unlock(&V.resources);
+  if(!prepare)return !recorded && !serial;
+  int reopen=V.cmd!=VK_NULL_HANDLE;
+  if(recorded) {uint64_t current=vk_internal_commit();if(current>serial)serial=current;}
+  if(serial)vk_internal_wait(serial);
+  if(recorded && reopen)mtl_sub_begin();
+  pthread_mutex_lock(&V.resources);
+  if(p->shared_closing || p!=pool_find(address,bytes))die("Shared image source lifetime changed");
+  // Original shared writeback completion already performs the required
+  // Invalidate before its CPU publication fence. Do not invalidate arbitrary
+  // CPU-dirty source bytes here: doing so could discard newer CPU cachelines.
+  if(!p->references)die("Shared image source reference underflow");
+  p->references--;pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);
+  return 1;
+}

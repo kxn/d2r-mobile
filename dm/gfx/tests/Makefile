@@ -10,11 +10,13 @@ FW=-framework Metal -framework Foundation -framework QuartzCore -framework Image
 # Host crash.c is linked in as well: the write-protect unit tests go through the same page-fault hook as production
 t_nvn: t_nvn.c ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_nvn.c ../../host/crash.c $(GFX) $(FW)
-t_dirty_slots: t_dirty_slots.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty.h
+t_dirty_slots: t_dirty_slots.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_slots.c ../../host/crash.c ../nvn/nvn_dirty.c
-t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty.h
+t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_race.c ../../host/crash.c
-t_dirty_prep_batch: t_dirty_prep_batch.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty.h ../nvn/nvn_platform.c
+t_dirty_scope: t_dirty_scope.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty.h ../nvn/nvn_platform.c
+	clang $(CFLAGS) -pthread -o $@ t_dirty_scope.c ../nvn/nvn_platform.c
+t_dirty_prep_batch: t_dirty_prep_batch.c ../nvn/nvn_dirty.c ../nvn/nvn_dirty_scope.inc ../nvn/nvn_dirty.h ../nvn/nvn_platform.c
 	clang $(CFLAGS) -pthread -o $@ t_dirty_prep_batch.c ../nvn/nvn_platform.c
 t_builtin: t_builtin.m ../nvn/nvn_builtin.h
 	clang -O1 -g -Wall -fobjc-arc -o $@ t_builtin.m -framework Metal -framework Foundation

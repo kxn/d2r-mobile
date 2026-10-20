@@ -34,7 +34,7 @@ enum { BUSY_WAIT_MS = 2000 };
 // 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
 // Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
 #define MAX_RANGE 4096   // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing
-typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes; } range_t;
+typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t lifetime, changes; _Atomic uint32_t *scope_refs; size_t scope_users; } range_t;
 static range_t g_r[MAX_RANGE];
 static _Atomic int g_nr;
 static uintptr_t g_pg, g_shift;
@@ -82,7 +82,8 @@ static uintptr_t address(const void *p) {
 }
 static range_t *find(uintptr_t a) {
     int n = atomic_load(&g_nr);
-    for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_r[i].live, memory_order_acquire) && a >= g_r[i].base && a < g_r[i].end) return &g_r[i];
+    for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_r[i].live, memory_order_acquire) && a >= g_r[i].base && a < g_r[i].end && (!g_r[i].scope_refs ||
+        atomic_load_explicit(&g_r[i].scope_refs[(a-g_r[i].base)>>g_shift],memory_order_acquire))) return &g_r[i];
     return NULL;
 }
 // MAX is a permanent invalid key; saturation must never expose a wrap window.
@@ -169,14 +170,28 @@ static void prep_write(void *addr, size_t len) {
     }
 }
 
+static pthread_once_t dirty_once = PTHREAD_ONCE_INIT;
+static void dirty_init(void) {
+    g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg);
+    dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write);
+}
+#include "nvn_dirty_scope.inc"
 void nvn_dirty_add_range(const void *mem, size_t size) {
-    static int inited;
-    if (!inited) { inited = 1; g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg); dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write); }
+    pthread_once(&dirty_once, dirty_init);
     atomic_fetch_add(&g_adds_total, 1);
     pthread_mutex_lock(&g_slot_mu);
     int n = atomic_load(&g_nr);
+    uintptr_t request=address(mem),request_end=request+size;
+    if(size>UINTPTR_MAX-request)die("legacy dirty range overflow");
+    for(int k=0;k<n;k++) {
+        range_t *r=&g_r[k];
+        if(!r->scope_refs || !atomic_load(&r->live) || request>=r->end || request_end<=r->base)continue;
+        uintptr_t lo=request>r->base?request:r->base,hi=request_end<r->end?request_end:r->end;
+        for(uintptr_t page=(lo-r->base)>>g_shift,last=(hi-1-r->base)>>g_shift;page<=last;page++)
+            if(atomic_load(&r->scope_refs[page]))die("legacy dirty range overlaps owned image scope");
+    }
     int slot = -1;
-    for (int i = 0; i < n; i++) if (!atomic_load_explicit(&g_r[i].live, memory_order_acquire)) { slot = i; break; }
+    for (int i = 0; i < n; i++) if (!g_r[i].scope_refs && !atomic_load_explicit(&g_r[i].live, memory_order_acquire)) { slot = i; break; }
     if (slot < 0) {
         if (n >= MAX_RANGE) {
             int expected = 0;
@@ -216,17 +231,25 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
 void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_lock(&g_slot_mu);
     range_t *r = find(address(mem));
+    if (r && r->scope_refs) die("dirty scope must be released by its exact owner token");
     if (r) { advance(&r->lifetime); advance(&r->changes); prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); advance(&g_changes); }
     pthread_mutex_unlock(&g_slot_mu);
 }
 int nvn_dirty_tracked(const void *addr, size_t len) {
-    range_t *r = find(address(addr)); return r && address(addr) + len <= r->end;
+    uintptr_t a=address(addr);if(!len || len>UINTPTR_MAX-a)return 0;
+    uintptr_t end=a+len;
+    while(a<end) {
+        range_t *r=find(a);if(!r)return 0;
+        uintptr_t stop=r->end<end?r->end:end;
+        if(r->scope_refs)for(uintptr_t p=(a-r->base)>>g_shift,q=(stop-1-r->base)>>g_shift;p<=q;p++)
+            if(!atomic_load_explicit(&r->scope_refs[p],memory_order_acquire))return 0;
+        a=stop;
+    }
+    return 1;
 }
 // 设只读：先把页标成 BUSY，mprotect 落地后才标 PROT（次序与不变式见文件头的状态说明）
 // Set read-only: mark the page BUSY first, and mark it PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
-void nvn_dirty_protect(const void *addr, size_t len) {
-    if (!len || !nvn_dirty_tracked(addr, len)) return;
-    range_t *r = find(address(addr));
+static void protect_one(range_t *r,const void *addr, size_t len) {
     uintptr_t a = address(addr), p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     // 连续置成 PROT 的页合成一次 mprotect（逐页调用在首传大贴图时一帧上千次；选角页启动帧 5：4888 次）。
     // 已是 PROT / BUSY 的页断开连续段：不重复保护，也不碰别的线程正在改的页
@@ -239,6 +262,12 @@ void nvn_dirty_protect(const void *addr, size_t len) {
         if (took && !open) { run = i; open = 1; }
         if (!took && open) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT); open = 0; }
     }
+}
+void nvn_dirty_protect(const void *addr,size_t len) {
+    if(!nvn_dirty_tracked(addr,len))return;
+    uintptr_t a=address(addr),end=a+len;
+    while(a<end) {range_t *r=find(a);if(!r)return;
+        uintptr_t stop=r->end<end?r->end:end;protect_one(r,(void *)a,stop-a);a=stop;}
 }
 uint64_t nvn_dirty_now(void) { return atomic_load(&g_now); }
 uint64_t nvn_dirty_change_epoch(void) {
@@ -261,7 +290,7 @@ int nvn_dirty_range_observe(const void *addr, size_t len, nvn_dirty_range_proof 
     uintptr_t a = address(addr);
     if (!len || len > UINTPTR_MAX - a || pthread_mutex_trylock(&g_slot_mu)) return 0;
     range_t *r = find(a);
-    int valid = r && len <= r->end - a;
+    int valid = r && len <= r->end - a && nvn_dirty_tracked(addr,len);
     if (valid) {
         nvn_dirty_range_proof key = {(uint32_t)(r - g_r), 0,
             atomic_load_explicit(&r->lifetime, memory_order_acquire), 0};
@@ -285,7 +314,7 @@ void nvn_dirty_visit(const void *addr, size_t len, uint64_t stamp,
     if (!len) return;
     uintptr_t a = address(addr);
     range_t *r = find(a);
-    if (!r || len > r->end - a) { visit(addr, len, context); return; }
+    if (!r || len > r->end - a || !nvn_dirty_tracked(addr,len)) { visit(addr, len, context); return; }
     for (size_t offset = 0; offset < len;) {
         uintptr_t current = a + offset, page = (current - r->base) >> g_shift;
         size_t size = g_pg - (current & (g_pg - 1));
@@ -295,14 +324,19 @@ void nvn_dirty_visit(const void *addr, size_t len, uint64_t stamp,
         offset += size;
     }
 }
-int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp) {
-    if (!len) return 0;
-    if (!nvn_dirty_tracked(addr, len)) return 1;   // 未跟踪时保守视为脏，宁可多传也不显示旧内容 | When untracked, conservatively treat as dirty: better to upload more than to show stale content
-    range_t *r = find(address(addr));
+static int since_one(range_t *r,const void *addr,size_t len,uint64_t stamp) {
     if (atomic_load(&r->latest) <= stamp) return 0;
     if (address(addr) == r->base && len == r->end - r->base) return 1;
     uintptr_t a = address(addr), p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     for (uintptr_t i = p; i <= q; i++) if (atomic_load(&r->gen[i]) > stamp) return 1;   // 上传前最后一次写的代号 ≤ 戳；之后的写必 > 戳 | The generation of the last write before upload is <= the stamp; any later write must be > the stamp
+    return 0;
+}
+int nvn_dirty_since(const void *addr,size_t len,uint64_t stamp) {
+    if(!len)return 0;
+    if(!nvn_dirty_tracked(addr,len))return 1;
+    uintptr_t a=address(addr),end=a+len;
+    while(a<end) {range_t *r=find(a);if(!r)return 1;
+        uintptr_t stop=r->end<end?r->end:end;if(since_one(r,(void *)a,stop-a,stamp))return 1;a=stop;}
     return 0;
 }
 void nvn_dirty_slot_stats(int *live, int *used_slots, uint64_t *adds_total) {

@@ -37,3 +37,13 @@ void nvn_dirty_visit(const void *addr, size_t len, uint64_t stamp,
 void nvn_dirty_stats(uint64_t *faults, uint64_t *preps);           // 累计：游戏写触发的缺页次数、宿主写前解保护的页数 | Cumulative: number of page faults triggered by game writes, number of pages unprotected before host writes
 void nvn_dirty_mp_stats(uint64_t *calls, uint64_t *pages, uint64_t *ns);   // 累计：本模块 mprotect 调用次数、覆盖页数、耗时 | Cumulative: this module's mprotect call count, pages covered, time spent
 void nvn_dirty_slot_stats(int *live, int *used_slots, uint64_t *adds_total); // 当前存活槽、槽表高水位、登记总次数 | Currently live slots, slot table high-water mark, total number of registrations
+
+// Image-only ownership. Exact page references; overlapping image scopes share
+// the original state/generation, and final release restores RW. Not a Pool pin
+// or backing provenance certificate. Caller keeps storage mapped through release.
+typedef struct nvn_dirty_scope nvn_dirty_scope;
+nvn_dirty_scope *nvn_dirty_scope_acquire(const void *address,size_t bytes);
+void nvn_dirty_scope_release(nvn_dirty_scope *scope);
+// Known GPU writes invalidate page generations without pretending mprotect sees
+// GPU access. This never unprotects pages or makes GPU data CPU-visible.
+void nvn_dirty_scope_gpu_write(const void *address,size_t bytes);

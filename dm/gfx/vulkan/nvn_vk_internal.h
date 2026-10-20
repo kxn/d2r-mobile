@@ -396,3 +396,10 @@ int vk_query_native_test_dispatch(vk_buffer *source,vk_buffer *destination,uint6
     float period,uint32_t bits,uint32_t count,uint32_t samples);
 #endif
 #endif
+
+#ifdef DM_VULKAN_SHARED_POOLS
+int vk_pool_shared_image_source(uint64_t address,uint64_t bytes,int prepare);
+void vk_texture_shared_source_written(uint64_t address,uint64_t bytes);
+void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes);
+void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes);
+#endif

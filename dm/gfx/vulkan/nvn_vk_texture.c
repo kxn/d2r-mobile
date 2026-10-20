@@ -11,6 +11,7 @@
 #include "nvn_vk_pixel_local_runtime.h"
 #include <math.h>
 #include <stdatomic.h>
+#include <unistd.h>
 typedef struct image_view {
   struct image_view *next;
   VkImageViewCreateInfo description;
@@ -52,6 +53,11 @@ typedef struct image {
   uint64_t stamp;
   uint64_t checked_dirty_epoch,checked_dirty_stamp;
   nvn_dirty_range_proof checked_dirty_range;
+#ifdef DM_VULKAN_SHARED_POOLS
+  nvn_dirty_scope *shared_dirty_scope;
+  struct image *shared_alias_next;
+  int shared_alias_linked;
+#endif
   uint64_t last_use;
   uint64_t trace_stamp, trace_levels;
   int initialized, decoded;
@@ -118,6 +124,19 @@ static unsigned zero_channels(const image *i) {
 static int image_mip_tracked(const image *i) {
   return !!(i->physical_traits&IMAGE_MIP_TRACKED);
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+static image *shared_gpu_aliases;
+static void image_shared_alias_remove(image *i) {
+  if(!i->shared_alias_linked)return;
+  image **at=&shared_gpu_aliases;while(*at && *at!=i)at=&(*at)->shared_alias_next;
+  if(!*at)die("Shared GPU image alias list lifetime");
+  *at=i->shared_alias_next;i->shared_alias_next=NULL;i->shared_alias_linked=0;
+}
+static void image_shared_alias_write(image *i) {
+  if(!vk_pool_shared_mode() || i->shared_alias_linked)return;
+  i->shared_alias_linked=1;i->shared_alias_next=shared_gpu_aliases;shared_gpu_aliases=i;
+}
+#endif
 #include "nvn_vk_image_dependencies.inc"
 static _Atomic int layout_requested=-1,layout_active=0;
 static int layout_reference=0;
@@ -717,9 +736,48 @@ static VkFormat image_binding_format(image *i,const view_t *v,int storage) {
 static VkFormat image_view_format(image *i,const view_t *v) {
   return image_binding_format(i,v,0);
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+// The startup allocator owns this certificate. No pool flag, imported pointer
+// success or historical address pattern can stand in for backing provenance.
+extern int dm_guest_shared_heap_contains(uintptr_t,size_t) __attribute__((weak));
+#ifdef DM_VULKAN_TEST_EMBED
+static uintptr_t shared_image_test_base;static size_t shared_image_test_size;
+void vk_test_shared_image_backing(const void *mem,size_t bytes) {
+  // The owned fixture supplies its own finite MAP_SHARED mapping, never guest.
+  if(bytes>(4u<<20) || (bytes && (!mem || ((uintptr_t)mem&4095) || (bytes&4095))))
+    die("Shared image owned fixture backing extent");
+  shared_image_test_base=(uintptr_t)mem;shared_image_test_size=bytes;
+}
+#endif
+static int shared_image_backing(uint64_t address,uint64_t bytes) {
+  size_t page=(size_t)getpagesize();
+  if(!bytes || bytes>UINTPTR_MAX-address || address+bytes>UINTPTR_MAX-(page-1))return 0;
+  uintptr_t first=address&~(uintptr_t)(page-1),end=(address+bytes+page-1)&~(uintptr_t)(page-1);
+#ifdef DM_VULKAN_TEST_EMBED
+  if(shared_image_test_size && first>=shared_image_test_base &&
+      first-shared_image_test_base<=shared_image_test_size &&
+      end-first<=shared_image_test_size-(first-shared_image_test_base))return 1;
+#endif
+  return dm_guest_shared_heap_contains && dm_guest_shared_heap_contains(first,end-first);
+}
+#endif
 // Only logical copies of textures are used across a visibility callback.
 // Callers must invoke this before borrowing any image/view/descriptor/temp.
 void vk_texture_cpu_preflight(const tex_t *t) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(vk_pool_shared_mode() && t && t->has_layout && t->mem && t->L.size) {
+    if(!shared_image_backing((uintptr_t)t->mem,t->L.size))
+      die("Shared packaged image requires committed shared-heap backing");
+    int read=1;
+    for(image *i=image_buckets[t->serial%8192];i;i=i->hash_next)if(i->tex.serial==t->serial) {
+      uint64_t epoch=nvn_dirty_change_epoch();
+      read=!i->initialized || !(epoch && i->checked_dirty_epoch==epoch &&
+        i->checked_dirty_stamp==i->stamp) && nvn_dirty_since(t->mem,t->L.size,i->stamp);break;
+    }
+    if(read && !vk_pool_shared_image_source((uintptr_t)t->mem,t->L.size,1))
+      die("Shared packaged image source outside live shared Pool");
+  }
+#endif
   if(V.options.pool_defer_publication && t && t->d.target!=NVN_TEXTURE_TARGET_BUFFER &&
       t->mem && t->L.size && vk_pool_cpu_prepare((uintptr_t)t->mem,t->L.size)<0)
     die("Vulkan texture CPU source lifetime changed during preflight");
@@ -857,6 +915,13 @@ static void texture_dirty_mode_begin(void) {
 // body, upload/protection stamp and physical dependency ordering are unchanged.
 static __attribute__((noinline)) void image_upload_contents(image *i) {
   const tex_t *t=&i->tex;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(vk_pool_shared_mode() && !i->shared_dirty_scope) {
+    if(!shared_image_backing((uintptr_t)t->mem,t->L.size))die("Shared image provenance changed");
+    i->shared_dirty_scope=nvn_dirty_scope_acquire(t->mem,t->L.size);
+    if(!i->shared_dirty_scope)die("Shared image dirty scope admission failed");
+  }
+#endif
   // Untracked sources are always uploaded; they must not acquire a proof.
   i->checked_dirty_epoch=0;
   i->checked_dirty_range=(nvn_dirty_range_proof){0};
@@ -925,6 +990,9 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
   // Raw VkImage users can retain a handle and write later without passing
   // through image_record. A later CPU upload cannot revoke that escape.
   i->cpu_rebuildable = !i->external_access;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(i->cpu_rebuildable)image_shared_alias_remove(i);
+#endif
   // Publish only after every mip copy was recorded. The existing ordered
   // image dependencies protect content changes; old views retain lifetimes.
   image_astc_proof(i,ldr);
@@ -939,7 +1007,9 @@ static void image_upload(image *i) {
   const tex_t *t = &i->tex;
   if(!t->has_layout) return;
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(vk_pool_shared_mode())die("Fixed shared packaged image freshness contract not implemented; no silent clean proof or perdraw reupload");
+  if(vk_pool_shared_mode() && (!shared_image_backing((uintptr_t)t->mem,t->L.size) ||
+      !vk_pool_shared_image_source((uintptr_t)t->mem,t->L.size,0)))
+    die("Shared image conversion missing ordered CPU preflight");
 #endif
   vk_mip_clear_texture_access(t,NULL,0);
   if(i->initialized) {
@@ -965,6 +1035,10 @@ static void image_upload(image *i) {
       i->checked_dirty_range=proof;return;
     }
   }
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(vk_pool_shared_mode() && i->initialized && !i->cpu_rebuildable)
+    die("Shared CPU packaged source aliases GPU-owned image: partial freshness/retile not implemented");
+#endif
   image_upload_contents(i);
 }
 
@@ -1525,6 +1599,10 @@ void mtl_tex_release(tex_t *t) {
 }
 uint32_t vk_texture_count(void) { return atomic_load(&live_images); }
 static void image_destroy(image *i) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  image_shared_alias_remove(i);
+  nvn_dirty_scope_release(i->shared_dirty_scope);i->shared_dirty_scope=NULL;
+#endif
   image_recipes_changed();
   image **entry = &image_buckets[i->tex.serial % 8192];
   while (*entry && *entry != i)
@@ -1534,6 +1612,31 @@ static void image_destroy(image *i) {
   atomic_fetch_sub(&live_images, 1);
   image_storage_destroy(i);
 }
+
+#ifdef DM_VULKAN_SHARED_POOLS
+void vk_texture_shared_source_written(uint64_t address,uint64_t bytes) {
+  if(!bytes || bytes>UINT64_MAX-address)return;
+  // The known GPU write publishes page generation/epoch. Every converted
+  // image's existing dirty/stamp proof therefore fails before reuse; actual
+  // ASTC proof describes old physical bytes until original upload replaces it.
+  nvn_dirty_scope_gpu_write((void *)(uintptr_t)address,bytes);
+}
+void vk_texture_shared_linear_access(uint64_t address,uint64_t bytes) {
+  if(!bytes || bytes>UINT64_MAX-address)return;
+  for(image *i=shared_gpu_aliases;i;i=i->shared_alias_next)if(i->initialized && i->tex.mem &&
+      i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
+      address+bytes>(uintptr_t)i->tex.mem)
+    die("Shared linear access aliases GPU-owned optimal image: explicit conversion required");
+}
+void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes) {
+  // Original mtl_pool_del called finish first; no physical users remain.
+  image **at=&images;
+  while(*at) {image *i=*at;
+    if(i->tex.mem && i->tex.L.size && address<(uintptr_t)i->tex.mem+i->tex.L.size &&
+        address+bytes>(uintptr_t)i->tex.mem) {*at=i->next;image_destroy(i);}else at=&i->next;
+  }
+}
+#endif
 
 void mtl_pkg_stats(uint64_t *u, uint64_t *r) {
   *u = uploads;
