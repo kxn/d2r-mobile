@@ -182,8 +182,11 @@ try:
     current,kind=observe_pid(phase,allow_claim=not phase.get('native_terminal_seen',False))
     if stage=='native-assertion-failed' or kind in ('ambiguous','replacement','unclaimed'):
      log=wait_natural_exit(phase);rows,stage,final=parse_oracle_log(log)
-     phase['stage']=stage or 'ownership-ambiguous-without-oracle'
-     if final is not None:phase['final']=final
+     # Final JSON has no PID: after lost ownership a pass cannot be
+     # attributed to this launch. Only preserve an explicit native failure.
+     phase['stage']='native-assertion-failed' if stage=='native-assertion-failed' else 'ownership-failed'
+     phase['terminal_after_unowned_wait']=stage
+     if final is not None:phase['untrusted_final']=final
      break
     if stage is not None:
      phase['stage']=stage

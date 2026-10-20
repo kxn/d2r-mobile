@@ -49,6 +49,14 @@ with tempfile.TemporaryDirectory(prefix='shared-anon-controller-test-')as td:
  assert g['first_pid']=='101'and phase['first_pid']==101 and phase['ownership_ambiguous']
  assert phase['stage']=='native-assertion-failed';no_force(s)
  cases.append('firstPID-preserved-through-crash-child/natural-exit-only')
+ # A final row without PID cannot rescue ambiguous/replacement ownership.
+ passed='{"test":"host-import-standard-api","result":"passed"}\n'
+ for logs,pids in [([passed],['101 202','202','']),(['',passed],['101','202',''])]:
+  g,s,phase,clock=setup(logs,pids);poll(g)
+  assert phase['stage']=='ownership-failed'and phase['terminal_after_unowned_wait']=='oracle-passed'
+  assert phase['untrusted_final']['result']=='passed'and 'final'not in phase
+  assert phase['natural_exit']['all_PIDs_absent'];no_force(s)
+ cases.append('ambiguous-or-replacement-plus-pass-rejected/untrusted-row-retained/no-force')
  # Unknown/replacement processes that do not exit fail boundedly, untouched.
  for logs,pids in [(['',fatal],['101','202']),([fatal],['303'])]:
   g,s,phase,clock=setup(logs,pids)
@@ -68,7 +76,7 @@ with tempfile.TemporaryDirectory(prefix='shared-anon-controller-test-')as td:
  # Malformed raw PID text is saved and never adopted.
  g,s,phase,clock=setup([''],['101 invalid','']);poll(g)
  assert phase['pid_raw'][0]=='101 invalid'and g['first_pid']is None
- assert phase['stage']=='ownership-ambiguous-without-oracle';no_force(s)
+ assert phase['stage']=='ownership-failed';no_force(s)
  cases.append('invalid-raw-PID-durable/no-adoption')
 # Exercise exact argparse order declaration + exact permutation rejection.
 order_arg=next(n for n in tree.body if isinstance(n,ast.Expr)and isinstance(n.value,ast.Call)and n.value.args and isinstance(n.value.args[0],ast.Constant)and n.value.args[0].value=='--matrix-order')
