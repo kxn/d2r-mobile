@@ -166,7 +166,8 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
       )return;
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
-    for(unsigned k=0;k<s->nb;k++) {
+    for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
+      unsigned k;if(!vk_image_binding_next(s,&it,&k))break;
       const vk_binding *b=&s->bindings[k];
       if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
       if(b->reg<0 || b->reg>=(b->kind==4?32:128))continue;
@@ -191,7 +192,8 @@ int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,i
   if(!V.options.pool_defer_publication && !legacy)return 1;
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
-    for(unsigned k=0;k<s->nb;k++) {
+    for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
+      unsigned k;if(!vk_image_binding_next(s,&it,&k))break;
       const vk_binding *b=&s->bindings[k];
       if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
       if(b->reg<0 || b->reg>=(b->kind==4?32:128))return 0;

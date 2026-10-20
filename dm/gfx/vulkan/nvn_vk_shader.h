@@ -38,8 +38,10 @@ typedef struct vk_shader {
   vk_binding *bindings;
   uint32_t image_read_count,storage_descriptor_count;
   int *image_read_slots;
+  uint64_t image_binding_mask[2]; // final-schema indices for original image preflight
   uint64_t pool_binding_mask[2]; // final-schema indices, never current resource contents
   uint32_t pool_binding_mask_ready; // zero retains the original full scan
+  uint32_t image_binding_mask_ready; // zero keeps full scan/errors; fits prior alignment gap
   uint8_t *c1;
   vk_buffer c1_buffer;
   VkShaderModule module;
@@ -61,6 +63,27 @@ typedef struct vk_shader {
   void *pixel_local_data;
   int pixel_local_checked;
 } vk_shader;
+// Only immutable binding indices are enumerated here. Callers retain their
+// original kind/register validation, current handles and all resource effects.
+// Unbuilt/mock or unsupported schemas use the exact original ascending scan.
+typedef struct { uint64_t remaining;unsigned base,cursor;int masked; } vk_image_binding_iterator;
+static inline vk_image_binding_iterator vk_image_binding_begin(const vk_shader *s) {
+  return (vk_image_binding_iterator){.remaining=s->image_binding_mask_ready?s->image_binding_mask[0]:0,
+    .masked=!!s->image_binding_mask_ready};
+}
+static inline int vk_image_binding_next(const vk_shader *s,vk_image_binding_iterator *it,unsigned *index) {
+  if(!it->masked) {
+    if(it->cursor>=s->nb)return 0;
+    *index=it->cursor++;return 1;
+  }
+  if(!it->remaining) {
+    if(it->base)return 0;
+    it->base=64;it->remaining=s->image_binding_mask[1];
+    if(!it->remaining)return 0;
+  }
+  *index=it->base+(unsigned)__builtin_ctzll(it->remaining);
+  it->remaining&=it->remaining-1;return 1;
+}
 enum { VK_TEXEL_STORAGE_BINDINGS=16 };
 typedef struct {
   vk_shader *shader;

@@ -420,11 +420,42 @@ static void shader_pool_binding_mask_build(vk_shader *s) {
 // Cold functional boundary coverage only; no observer or counter on the draw.
 void vk_test_shader_pool_binding_mask_build(vk_shader *s) {shader_pool_binding_mask_build(s);}
 #endif
+// image_read_slots is a store-lookahead projection of logical slots, not
+// binding indices: it also includes texel-buffer kinds7/9 and the optional
+// texel-storage alternative. Reinterpreting it would change that contract.
+static void shader_image_binding_mask_build(vk_shader *s) {
+  s->image_binding_mask[0]=s->image_binding_mask[1]=0;
+  s->image_binding_mask_ready=0;
+  if(s->nb>128 || (s->nb&&!s->bindings))return;
+  unsigned selected=0;
+  for(unsigned k=0;k<s->nb;k++) {
+    const vk_binding *b=&s->bindings[k];
+    if(b->count!=1)return;
+    if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
+    if(b->reg<0 || b->reg>=(b->kind==4?32:128))return;
+    s->image_binding_mask[k/64]|=UINT64_C(1)<<(k%64);selected++;
+  }
+  // All-image schemas skip no entries, so retain their contiguous scan.
+  s->image_binding_mask_ready=selected<s->nb;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+void vk_test_shader_image_binding_mask_build(vk_shader *s) {shader_image_binding_mask_build(s);}
+unsigned vk_test_shader_image_binding_indices(const vk_shader *s,unsigned *indices,unsigned capacity,unsigned *visited) {
+  unsigned n=0,k;*visited=0;
+  for(vk_image_binding_iterator it=vk_image_binding_begin(s);vk_image_binding_next(s,&it,&k);) {
+    (*visited)++;const vk_binding *b=&s->bindings[k];
+    if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
+    if(n==capacity)die("Vulkan image binding test capacity");indices[n++]=k;
+  }
+  return n;
+}
+#endif
 static void shader_descriptor_layouts(vk_shader *s) {
   // Base active-binding compaction and every texel/pixel alternative conversion
   // finish before this shared constructor. Never inherit a different schema's
   // index mask through the alternatives' struct copies.
   shader_pool_binding_mask_build(s);
+  shader_image_binding_mask_build(s);
   s->storage_descriptor_count=0;
   s->has_writable_buffers=0;
   VkDescriptorSetLayoutBinding bindings[128];
@@ -1200,7 +1231,8 @@ VkDescriptorSet vk_descriptor_allocate(VkDescriptorSetLayout layout) {
 }
 void vk_shader_prepare_images(vk_shader *const list[6],int compute) {
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++) if(list[stage])
-    for(unsigned k=0;k<list[stage]->nb;k++) {
+    for(vk_image_binding_iterator it=vk_image_binding_begin(list[stage]);;) {
+      unsigned k;if(!vk_image_binding_next(list[stage],&it,&k))break;
       const vk_binding *b=&list[stage]->bindings[k];
       if(b->kind!=3 && b->kind!=4 && b->kind!=6) continue;
       if(b->reg<0 || b->reg>=(b->kind==4?32:128)) die("Vulkan texture slot unknown");
