@@ -84,7 +84,7 @@ static void pool_operation_bound_nodes(pool_operation_plan *plan) {
   pthread_mutex_unlock(&V.resources);
 }
 static int pool_operation_pin(pool_operation_plan *plan) {
-  int good=1;pthread_mutex_lock(&V.resources);
+  int good=1,geometry_epoch_checked=0;pthread_mutex_lock(&V.resources);
   for(size_t k=0;k<plan->count;k++) {
     const vk_pool_requirement *r=&plan->ranges[k];pool *p=NULL;size_t j=0;
     // Registration rejects wrapping/overlapping intervals, and resources
@@ -98,7 +98,7 @@ static int pool_operation_pin(pool_operation_plan *plan) {
     if(!p)p=pool_find(r->address,r->size);
     pool_span_piece span;
     if(!p || (!pool_native_requirement(p,r) &&
-        !pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&span))) {good=0;break;}
+        !pool_span_resolve_operation(p,r->address-(uintptr_t)p->guest,r->size,&span,&geometry_epoch_checked))) {good=0;break;}
     if(j==plan->pin_count) {p->references++;plan->pins[plan->pin_count++]=p;}
   }
   pthread_mutex_unlock(&V.resources);

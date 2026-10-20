@@ -399,6 +399,10 @@ typedef struct submit_resources {
   struct { pool *owner;pool_gpu_access *use;pool_backing_span *span_hint; } pool_lookups[8];
   unsigned pool_lookup_count,pool_lookup_next;
   uint64_t pool_lookup_epoch;
+  // Geometry only, from actual Buffer consumers already retained by THIS
+  // submission. Never publish an admission-only pin or cache CPU authority.
+  struct { pool *owner;pool_backing_span *span; } pool_span_hints[8];
+  unsigned pool_span_hint_count,pool_span_hint_next;
   // Exact negative result for immutable *earlier* CPU-publication ranges.
   // Completion only removes ranges while this recording owns enqueue order.
   // This is not a cache of current writes, guest bytes or GPU dependencies.
@@ -969,6 +973,7 @@ static void reclaim_submissions(void) {
     submit_resources *r = s->resources;
     r->command_buffers[0].used = r->command_buffers[1].used = 0;
     r->uploads = VK_NULL_HANDLE;
+    r->pool_span_hint_count=r->pool_span_hint_next=0;
     vk_graphics_recycle(r->graphics);
     vk_shader_recycle(r->shader);
     vk_texture_recycle(r->texture);
@@ -2012,6 +2017,72 @@ int vk_pool_range_offset(uint64_t addr,uint64_t size,uint64_t *offset) {
   pthread_mutex_unlock(&V.resources);
   return p!=NULL;
 }
+// Recording-owner only. Check the registry epoch before touching ANY cached
+// owner/span. Each published entry owns no new ref: it is covered by a real
+// pool_gpu_access in this recording, until original completion/reclaim/reset.
+static void pool_recording_hints_refresh(submit_resources *r) {
+  uint64_t epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_acquire);
+  if(r->pool_lookup_epoch!=epoch) {
+    r->pool_lookup_count=r->pool_lookup_next=0;
+    r->pool_span_hint_count=r->pool_span_hint_next=0;r->pool_lookup_epoch=epoch;
+  }
+}
+static int pool_recording_span_hint(submit_resources *r,pool *p,uint64_t offset,
+    uint64_t size,pool_span_piece *out) {
+  if(!r || r->pool_lookup_reference || !V.options.pool_window_bytes || !size ||
+      pool_window_whole(p))return 0;
+  // Caller already checked this epoch; retained nodes cannot move before
+  // the reference drains. A later registry change leaves the OLD epoch here
+  // so the next lookup invalidates, never blesses entries with a new epoch.
+  for(unsigned k=0;k<r->pool_span_hint_count;k++)
+    if(r->pool_span_hints[k].owner==p &&
+        pool_span_retained_hint(p,r->pool_span_hints[k].span,offset,size,out))return 1;
+  return 0;
+}
+static void pool_recording_span_remember(submit_resources *r,pool_gpu_access *use,
+    pool_backing_span *span) {
+  if(!r || !use || r->pool_lookup_reference || !V.options.pool_window_bytes ||
+      !span || (!span->begin && span->end==use->owner->size))return;
+  for(unsigned k=0;k<r->pool_span_hint_count;k++)
+    if(r->pool_span_hints[k].owner==use->owner && r->pool_span_hints[k].span==span)return;
+  unsigned k=r->pool_span_hint_next++%8;
+  r->pool_span_hints[k].owner=use->owner;r->pool_span_hints[k].span=span;
+  if(r->pool_span_hint_count<8)r->pool_span_hint_count++;
+}
+// Called ONLY by recording-owner operation admission with resources held.
+// Preserve the original single locked hint first, and the whole/zero path.
+// Admission borrows a retained proof but never fills the set before a real use.
+static int pool_span_resolve_operation(pool *p,uint64_t offset,uint64_t size,
+    pool_span_piece *out,int *epoch_checked) {
+  if(!size || !p->backings || !p->backings->next)
+    return pool_span_resolve_locked(p,offset,size,out);
+  if(pool_span_retained_hint(p,p->locked_span_hint,offset,size,out))return 1;
+  if(recording_resources && !*epoch_checked) {
+    pool_recording_hints_refresh(recording_resources);*epoch_checked=1;
+  }
+  if(!pool_recording_span_hint(recording_resources,p,offset,size,out) &&
+      !pool_span_resolve(p,offset,size,out))return 0;
+  p->locked_span_hint=out->backing;return 1;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+// All idle owners have already completed effects and reset. Observe only
+// this contract, without selecting a resource owner or modifying its state.
+int vk_test_idle_span_hints_empty(void) {
+  for(submit_resources *r=available_resources;r;r=r->next)
+    if(r->pool_span_hint_count)return 0;
+  return 1;
+}
+// Exact metadata observation in owned tests, not a runtime counter/timer.
+VkBuffer vk_test_recording_span_hint(uint64_t address,uint64_t size,unsigned *count) {
+  pthread_mutex_lock(&V.resources);submit_resources *r=recording_resources;
+  if(r)pool_recording_hints_refresh(r);
+  pool *p=pool_find(address,size);pool_span_piece span;
+  VkBuffer handle=p&&pool_recording_span_hint(r,p,address-(uintptr_t)p->guest,size,&span)?
+      span.backing->buffer.handle:VK_NULL_HANDLE;
+  if(count)*count=r?r->pool_span_hint_count:0;
+  pthread_mutex_unlock(&V.resources);return handle;
+}
+#endif
 static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents) {
   vk_mip_clear_buffer_access(addr,len);
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -2023,10 +2094,7 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
   int guarded=V.options.pool_window_bytes && len && !pool_maintenance;
   submit_resources *r=recording_resources;
   if(r && len && !r->pool_lookup_reference) {
-    uint64_t epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_acquire);
-    if(r->pool_lookup_epoch!=epoch) {
-      r->pool_lookup_count=r->pool_lookup_next=0;r->pool_lookup_epoch=epoch;
-    }
+    pool_recording_hints_refresh(r);
     for(unsigned k=0;k<r->pool_lookup_count;k++) {
       pool *p=r->pool_lookups[k].owner;
       uint64_t base=(uintptr_t)p->guest;
@@ -2036,17 +2104,23 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       // pool/list index or completion-mutated recording_access is consulted.
       uint64_t logical=addr-base;
       pool_span_piece span;
-      if(!pool_span_resolve_retained(p,r->pool_lookups[k].span_hint,logical,len,&span)) {
-        if(guarded)
-          die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
-              (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
-        die("Vulkan pool range requires operation preflight: identity=%llu offset=%llu bytes=%llu",
-            (unsigned long long)p->identity,(unsigned long long)logical,(unsigned long long)len);
+      int remember_span=0;
+      if(!pool_span_retained_hint(p,r->pool_lookups[k].span_hint,logical,len,&span) &&
+          !pool_recording_span_hint(r,p,logical,len,&span)) {
+        if(!pool_span_resolve(p,logical,len,&span)) {
+          if(guarded)
+            die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
+                (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
+          die("Vulkan pool range requires operation preflight: identity=%llu offset=%llu bytes=%llu",
+              (unsigned long long)p->identity,(unsigned long long)logical,(unsigned long long)len);
+        }
+        remember_span=1;
       }
       r->pool_lookups[k].span_hint=span.backing;
       pool_initialize_range(p,logical,len);
       *buf=&span.backing->buffer;*off=span.offset;
       record_pool_range(r->pool_lookups[k].use,logical,len,stages,initial_contents);
+      if(remember_span)pool_recording_span_remember(r,r->pool_lookups[k].use,span.backing);
       pool_lookup_hits++;return 1;
     }
   }
@@ -2077,14 +2151,12 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
     *buf=&span.backing->buffer;*off=span.offset;
     pool_gpu_access *use=record_pool_use(p,logical,len,stages,initial_contents);
     if(r && use && !r->pool_lookup_reference) {
-      uint64_t epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_relaxed);
-      if(r->pool_lookup_epoch!=epoch) {
-        r->pool_lookup_count=r->pool_lookup_next=0;r->pool_lookup_epoch=epoch;
-      }
+      pool_recording_hints_refresh(r);
       unsigned k=r->pool_lookup_next++%8;
       r->pool_lookups[k].owner=p;r->pool_lookups[k].use=use;
       r->pool_lookups[k].span_hint=span.backing;
       if(r->pool_lookup_count<8)r->pool_lookup_count++;
+      pool_recording_span_remember(r,use,span.backing);
     }
   }
   pthread_mutex_unlock(&V.resources);
@@ -3742,6 +3814,7 @@ static void begin_submission(int pool_migration) {
   }
   recording_resources->pool_sync_reference=pool_reference;
   recording_resources->pool_lookup_count=recording_resources->pool_lookup_next=0;
+  recording_resources->pool_span_hint_count=recording_resources->pool_span_hint_next=0;
   recording_resources->pool_lookup_reference=atomic_load(&pool_lookup_requested);
   atomic_store(&pool_lookup_active,recording_resources->pool_lookup_reference);
   recording_resources->upload_scan_reference=atomic_load(&upload_scan_requested);

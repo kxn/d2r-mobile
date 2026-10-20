@@ -157,12 +157,72 @@ static void shared_window_startup_fallback_test(void) {
   CALL(nvnMemoryPoolFinalize,&owner);free(data);CHECK(!vk_validation_error_count());
   printf("{\"test\":\"shared-window-cold-failure-legacy-recovery\",\"checks\":%u,\"actual_GPU_bytes\":true,\"legacy_crossing_and_whole_fallback\":true,\"result\":\"passed\"}\n",checks);
 }
+extern VkBuffer vk_test_recording_span_hint(uint64_t,uint64_t,unsigned *);
+extern int vk_test_idle_span_hints_empty(void);
+static void shared_window_recording_geometry_test(uint8_t *data) {
+  enum {W=65536,N=9};NVNmemoryPoolBuilder mb;NVNmemoryPool owner;
+  CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,4u<<20);
+  CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&owner,&mb));
+  vk_pool_requirement need[N+1];vk_pool_span_info info[N];unsigned count;
+  for(unsigned i=0;i<N+1;i++)need[i]=(vk_pool_requirement){(uintptr_t)data+(2*i+1)*W+64,4,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0};
+  mtl_sub_begin();int token=vk_pool_operation_begin_ranges(need,N);
+  CHECK(!vk_test_recording_span_hint(need[0].address,4,&count) && count==0); // admission is not a real use
+  for(unsigned i=0;i<N;i++)CHECK(vk_pool_span_query(need[i].address,4,&info[i])==VK_POOL_SPAN_SINGLE);
+  uint32_t expected[N],pixels[N];
+  for(unsigned i=0;i<8;i++) {
+    expected[i]=0x71820000+i;pool_window_fill((uint8_t *)(uintptr_t)need[i].address,4,expected[i]);
+  }
+  // Already-used spans must also serve a real nested admission. Distinct
+  // disjoint requirements cannot all hit the original single locked hint.
+  int nested=vk_pool_operation_begin_ranges(need,8);CHECK(nested>token);
+  vk_pool_operation_end(nested);
+  for(unsigned i=0;i<8;i++)CHECK(vk_test_recording_span_hint(need[i].address,4,&count)==info[i].handle && count==8);
+  CHECK(!vk_test_recording_span_hint(need[0].address-64+W-4,8,&count)); // a physical tail crossing
+  CHECK(!vk_test_recording_span_hint((uintptr_t)data+64,4,&count)); // a hole
+  CHECK(!vk_test_recording_span_hint(UINT64_MAX-3,8,&count));
+  CHECK(!vk_test_recording_span_hint(need[0].address,0,&count)); // address-only never proves a range
+  expected[8]=0x71820008;pool_window_fill((uint8_t *)(uintptr_t)need[8].address,4,expected[8]);
+  CHECK(count==8 && !vk_test_recording_span_hint(need[0].address,4,&count)); // ninth evicts only geometry
+  CHECK(vk_test_recording_span_hint(need[8].address,4,&count)==info[8].handle && count==8);
+  // Only the last8 are cached. Reverse reads exercise retained multi-hint
+  // hits AND the evicted original fallback, with different real GPU words.
+  for(int i=N-1;i>=0;i--)pool_window_read((uint8_t *)(uintptr_t)need[i].address,4,(uint8_t *)&pixels[i]);
+  vk_pool_operation_end(token);vk_internal_wait(vk_internal_commit());
+  CHECK(!memcmp(pixels,expected,sizeof pixels)); // real GPU oracle before fault gates
+  mtl_sub_begin();token=vk_pool_operation_begin_ranges(need,N);
+  for(unsigned i=0;i<N;i++)pool_window_read((uint8_t *)(uintptr_t)need[i].address,4,(uint8_t *)&pixels[i]);
+  vk_pool_operation_end(token);
+  // Disjoint publication is legal while this recording retains old spans.
+  // It invalidates geometric slots before dereference without moving old data.
+  vk_pool_reserve_result added;CHECK(vk_pool_reserve_ranges(need+N,1,W,&added)==VK_POOL_RESERVE_OK && added.added_spans==1);
+  CHECK(!vk_test_recording_span_hint(need[1].address,4,&count) && count==0);
+  vk_internal_wait(vk_internal_commit());CHECK(!memcmp(pixels,expected,sizeof pixels));
+  mtl_sub_begin();token=vk_pool_operation_begin_ranges(need,N);
+  CHECK(!vk_test_recording_span_hint(need[1].address,4,&count) && count==0);
+  for(unsigned i=0;i<N;i++)pool_window_read((uint8_t *)(uintptr_t)need[i].address,4,(uint8_t *)&pixels[i]);
+  vk_pool_operation_end(token);vk_internal_wait(vk_internal_commit());CHECK(!memcmp(pixels,expected,sizeof pixels));
+  // An unsubmitted lookup can already own immutable geometry. Reclaim/reset
+  // must discard it even if the registry epoch itself did not change.
+  mtl_sub_begin();token=vk_pool_operation_begin_ranges(need,1);
+  pool_window_read((uint8_t *)(uintptr_t)need[0].address,4,(uint8_t *)&pixels[0]);
+  CHECK(vk_test_recording_span_hint(need[0].address,4,&count)==info[0].handle);
+  vk_pool_operation_end(token);vk_internal_wait(vk_internal_commit());
+  mtl_finish();mtl_sub_begin();
+  CHECK(vk_test_idle_span_hints_empty());
+  CHECK(!vk_test_recording_span_hint(need[0].address,4,&count) && count==0);
+  vk_internal_wait(vk_internal_commit());
+  CALL(nvnMemoryPoolFinalize,&owner);
+  printf("{\"test_details\":\"submission-retained-span-geometry\",\"nine_spans_real_GPU_words\":true,\"admission_does_not_fill\":true,\"ninth_eviction\":true,\"append_epoch\":true,\"reclaim_reset\":true,\"result\":\"passed\"}\n");
+}
 static void shared_import_windows_test(void) {
   enum {size=4<<20,W=65536};
   CHECK(vk_pool_shared_active() && V.options.pool_window_bytes==W);
   CHECK(getenv("DM_SHARED_GUEST_HEAP_FIXTURE"));
   uint8_t *data=bytes;memset(data,0x39,size);
   shared_window_append_observer_test(data);
+  if(getenv("DM_SHARED_SPAN_GEOMETRY_FIXTURE"))shared_window_recording_geometry_test(data);
   NVNmemoryPoolBuilder mb;NVNmemoryPool owner;
   CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
   CALL(nvnMemoryPoolBuilderSetStorage,&mb,data,size);
