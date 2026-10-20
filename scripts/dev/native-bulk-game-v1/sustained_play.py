@@ -12,8 +12,9 @@ R = Path('/home/dl/d2r-mobile')
 RUNTIME = '6f8188e392f21ff045ef640ad8c4f184de048806'
 DRIVER = 'f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
 REVIEW_STATUS = 'ACTUAL_ORIGINAL_GAME_PAIRED_FUNCTIONAL_OFFICIAL_CPU_GPU_MEMORY_PASS_CLEANUP_FOLLOWUP_CONFIRMED'
-CAMP = [{'x': 5215, 'y': 6289, 'area': 1},
-        {'x': 5225, 'y': 6295, 'area': 1},
+# B->C actually succeeded in v1. C->B is explicitly pending real validation;
+# a first reverse miss fails this test rather than inventing a detour.
+CAMP = [{'x': 5225, 'y': 6295, 'area': 1},
         {'x': 5235, 'y': 6289, 'area': 1}]
 
 

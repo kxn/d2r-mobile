@@ -193,8 +193,10 @@ published/executed. The exact accepted 6f8188e runtime, f830 driver, 6217 table,
 1 MiB windows and paired root acceptance are required. No new game binary,
 resources, rendering, sampler, timing probe, SDP GUI or LLDB code is introduced.
 
-Default route repeats the original already verified three camp points through
-`android-game-walk-to.py`. Each call retains its before/after position receipt;
+Default v2 route repeats the original B(5225,6295) / C(5235,6289) points through
+`android-game-walk-to.py`. B→C actually succeeded in v1; reverse C→B remains
+pending first actual validation. This is a bounded camp-load route experiment,
+not pre-proven whole-route gameplay correctness. Each call retains its before/after position receipt;
 a missed target, unexpected area, changed PID or stale world stops the test and
 is not silently retried. A navigation failure alone is not a crash or thermal
 failure. Root may supply separately proven actual-input area transitions; the
@@ -231,3 +233,10 @@ saved and retained; it is not restored from a backup or edited. A complete resul
 requires uninterrupted route completion plus fresh same-PID save2, stop, full
 original-APK/directory restoration and cleanup. The helper's local pass flag
 alone is not this transaction-level acceptance.
+
+V1 failed the fourth C→A direct walk after15s at(5221,6293), while original
+game remained alive/input-ready, no public-API thermal pause. Three prior walks
+were successful; source-only cycle-area closure did not prove that geometric
+return path clear. The failed v1 report remains unchanged and its cold8s trace
+remains a valid short window, never a30min pass. V2 removes A, retains all fail
+gates, and explicitly tests the first reverse rather than claiming it passed.

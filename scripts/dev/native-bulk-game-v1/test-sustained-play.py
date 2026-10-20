@@ -65,7 +65,7 @@ class Flow(unittest.TestCase):
                 if 'android-game-walk-to.py' in ' '.join(cmd):
                     walks[0] += 1
                     clock[0] += 200 # fake scheduling only; not a runtime measurement
-                    if failure == 'walk':
+                    if failure == 'walk' or (failure == 'reverse' and walks[0] == 3):
                         raise subprocess.CalledProcessError(2, cmd)
                     if failure == 'cancel':
                         p['_operator_stop_requested'] = True
@@ -105,7 +105,9 @@ class Flow(unittest.TestCase):
     def test_thermal_pause_never_passes(self): self.exercise('thermal')
     def test_tool_failure_never_passes(self): self.exercise('tool')
     def test_PID_replacement_never_passes(self): self.exercise('PID')
-    def test_walk_failure_never_passes(self): self.exercise('walk')
+    def test_walk_failure_never_passes(self):
+        for failure in ('walk', 'reverse'):
+            with self.subTest(failure=failure): self.exercise(failure)
     def test_cooperative_signal_flag_never_passes(self): self.exercise('cancel')
     def test_owned_stop_request_never_passes(self): self.exercise('request')
     def test_official_trace_identity_must_match(self): self.exercise('identity')
