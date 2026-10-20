@@ -6,15 +6,15 @@ p=Path(__file__).with_name('run-panvk-bc3-focused-fixture.py');tree=ast.parse(p.
 checks=0
 def function(name,env):
  exec(compile(ast.Module(body=[functions[name]],type_ignores=[]),str(p),'exec'),env);return env[name]
-body={'test':'original022-BC3-capture-focused','result':'passed','regions':52,'images':7,'sampled_pixels':371731,'raw_BC_bytes':371920,'backend_CPU_BC_decode':False,'game_modules_executed':False,'checks':1488864}
+body={'test':'original022-BC3-capture-queued21','result':'passed','regions':52,'images':7,'sampled_pixels':371731,'raw_BC_bytes':371920,'backend_CPU_BC_decode':False,'game_modules_executed':False,'checks':1488889,'submitted_recordings':21,'independent_command_objects':21,'command_memory_slice_bytes':32768,'explicit_intermediate_drains':0,'final_fence_waits':1}
 config={'BC3_app_configuration':True,'pid':123,'uid':10174,'provider':'panvk','shared':False,'TRACE':False,'game_modules_executed':False}
 terminal={'BC3_app_terminal':True,'pid':123,'uid':10174,'rc':0,'vendor_id':0x13b5,'shared':False,'game_modules_executed':False}
-rows=[body,config,terminal];f=function('validate_rows',{});assert f(rows,'123')==terminal;checks+=1
-for index,key,value in [(0,'regions',51),(0,'images',6),(0,'sampled_pixels',1),(0,'raw_BC_bytes',1),(0,'backend_CPU_BC_decode',True),(0,'game_modules_executed',True),(0,'checks',3),(1,'pid',999),(1,'shared',True),(1,'TRACE',True),(2,'rc',1),(2,'uid',0),(2,'vendor_id',0x5143)]:
+rows=[body,config,terminal,{'BC3_app_case':'queued21'}];f=function('validate_rows',{});assert f(rows,'123')==terminal;checks+=1
+for index,key,value in [(0,'submitted_recordings',20),(0,'independent_command_objects',1),(0,'command_memory_slice_bytes',1048576),(0,'explicit_intermediate_drains',1),(0,'final_fence_waits',0),(0,'checks',1488866),(3,'BC3_app_case','single-batch'),(0,'regions',51),(0,'images',6),(0,'sampled_pixels',1),(0,'raw_BC_bytes',1),(0,'backend_CPU_BC_decode',True),(0,'game_modules_executed',True),(0,'checks',3),(1,'pid',999),(1,'shared',True),(1,'TRACE',True),(2,'rc',1),(2,'uid',0),(2,'vendor_id',0x5143)]:
  bad=copy.deepcopy(rows);bad[index][key]=value
  try:f(bad,'123');raise RuntimeError('Accepted invalid row '+key)
  except AssertionError:checks+=1
-for bad in [rows+rows[:1],rows+rows[-1:],rows[1:]]:
+for bad in [rows+rows[:1],rows+rows[-1:],rows[1:],rows[:3],rows+[{'test':'original022-BC3-capture-focused'}]]:
  try:f(bad,'123');raise RuntimeError('Accepted missing/duplicate terminal/body')
  except AssertionError:checks+=1
 parse=function('parse_oracle_log',{'json':json})
@@ -37,4 +37,5 @@ try:function('stop_owned',env)();raise RuntimeError('Unowned PID accepted')
 except AssertionError:assert not actions;checks+=1
 # No production lifecycle/mutation entry is called by this controller.
 text=p.read_text();assert 'android-game-background-save.py'not in text and "force-stop',original"not in text and 'setprop'not in text and "'settings','put'"not in text;checks+=1
-print(json.dumps({'checks':checks,'actual_rows_and_cleanup_functions':True,'wrong_counts_CPU_fallback_duplicates_TRACE_foreign_vendor_rejected':True,'unknown_replacement_crash_no_force_stop':True,'one_exact_owned_fixture_stop':True,'production_game_lifecycle_or_settings_mutation':False,'ADB_access':False}))
+assert "'--es','fixture_case','queued21'"in text;checks+=1
+print(json.dumps({'checks':checks,'queued21_no_old_case_no_hidden_drain_count_acceptance':True,'actual_rows_and_cleanup_functions':True,'wrong_counts_CPU_fallback_duplicates_TRACE_foreign_vendor_rejected':True,'unknown_replacement_crash_no_force_stop':True,'one_exact_owned_fixture_stop':True,'production_game_lifecycle_or_settings_mutation':False,'ADB_access':False}))

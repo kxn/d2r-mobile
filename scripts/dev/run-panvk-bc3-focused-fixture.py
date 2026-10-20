@@ -6,8 +6,8 @@ Selected ac88 contains diagnostic source changes, all additional flags OFF; not 
 """
 import argparse,hashlib,importlib.util,json,re,subprocess,time,uuid,signal,zipfile,os,xml.etree.ElementTree as ET
 from pathlib import Path
-R=Path('/home/dl/d2r-mobile');READY=R/'.local/logs/panvk-bc3-focused-89e80fb-source-ready-agent.json'
-READY_SHA='79a878716ff9fa0ccef9d250157981ed0a367e0b6d4320bcb7f5a858857ec65a'
+R=Path('/home/dl/d2r-mobile');READY=R/'.local/logs/panvk-bc3-queued-24a0b43-source-ready-agent.json'
+READY_SHA='2ca5cda82f4cead67c69f403f681c6c2eb2c3273972e2704886c76a1b3bda35d'
 PREVIOUS=R/'.local/worktrees/panvk-shader-map-game-v7/scripts/dev/run-panvk-minegraph-game.py'
 S=importlib.util.spec_from_file_location('reviewed_original022_transaction',PREVIOUS);previous=importlib.util.module_from_spec(S);S.loader.exec_module(previous)
 P=argparse.ArgumentParser();P.add_argument('--serial',default='10.10.10.44:34455');P.add_argument('--artifact',type=Path,required=True);P.add_argument('--output',type=Path,required=True);P.add_argument('--execute',action='store_true');a=P.parse_args()
@@ -28,7 +28,7 @@ shader_files=m['shader_files'];assert set(shader_files)=={k+e for k in ['e5888d2
 assert all(sha(a.artifact/'vulkan-fixture'/n)==h for n,h in shader_files.items())
 driver,promotion=previous.proof();assert driver['driver']['sha256']==m['driver_sha256']
 expected=promotion['promoted_module_and_resource_hashes']
-plan={'scope':'ONE ordinaryUID original022 actualNVN BC3 capture-subset GPU functional run; no game/performance/v7-WAIT equivalence claim','serial':a.serial,'package':pkg,'source_ready_sha256':READY_SHA,'APK_sha256':m['apk_sha256'],'driver_sha256':m['driver_sha256'],'dataset_sha256':m['dataset_sha256'],'source_revision':m['source_revision'],'controller_sha256':sha(__file__),'functional_bound_seconds':75,'install_bound_seconds':70,'launches':1,'shared':False,'TRACE':False,'settings_properties_changed':False,'selected_driver_boundary':'Frozen ac88 diagnostic-source ICD4e7b29e7; only startup token, TRACE/SHADER_MAP OFF, unchanged GPU path; not stock or untouched Mesa','original_baseline':'Existing production022 APK/35resources/stockMali directories are read-only, never save/restage/stop','original_game_policy':'must be stopped; APK35files+4dirs+shaders+properties+layer settings read-only before/after'}
+plan={'scope':'ONE ordinaryUID original022 actualNVN BC3 subset queued21 functional run; one final fence, no game/performance/v7-WAIT equivalence claim','serial':a.serial,'package':pkg,'source_ready_sha256':READY_SHA,'APK_sha256':m['apk_sha256'],'driver_sha256':m['driver_sha256'],'dataset_sha256':m['dataset_sha256'],'source_revision':m['source_revision'],'controller_sha256':sha(__file__),'fixture_case':'queued21','submitted_recordings':21,'explicit_intermediate_drains':0,'final_fence_waits':1,'functional_bound_seconds':75,'install_bound_seconds':70,'launches':1,'shared':False,'TRACE':False,'settings_properties_changed':False,'selected_driver_boundary':'Frozen ac88 diagnostic-source ICD4e7b29e7; only startup token, TRACE/SHADER_MAP OFF, unchanged GPU path; not stock or untouched Mesa','original_baseline':'Existing production022 APK/35resources/stockMali directories are read-only, never save/restage/stop','original_game_policy':'must be stopped; APK35files+4dirs+shaders+properties+layer settings read-only before/after'}
 if not a.execute:print(json.dumps(plan,indent=2));raise SystemExit(0)
 a.output.mkdir(parents=True,exist_ok=False);tmp='/data/local/tmp/dm-panvk-bc3-'+uuid.uuid4().hex
 result={**plan,'stage':'preflight','cleanup_errors':[],'owned_tmp':tmp};made_tmp=False;installation_requested=False;installed=False;installer=None;launch=None;original_before=None;first_pid=None;active_phase=None
@@ -38,8 +38,11 @@ def validate_rows(rows,first_pid):
  terminal=final[0];assert terminal['rc']==0 and terminal['pid']==int(first_pid)and 10000<=terminal['uid']<200000 and terminal['vendor_id']==0x13b5 and terminal['shared']is False and terminal['game_modules_executed']is False
  config=[r for r in rows if r.get('BC3_app_configuration')is True];assert len(config)==1
  c=config[0];assert c['pid']==int(first_pid)and c['uid']==terminal['uid']and c['provider']=='panvk'and c['shared']is False and c['TRACE']is False and c['game_modules_executed']is False
- body=[r for r in rows if r.get('test')=='original022-BC3-capture-focused'];assert len(body)==1
- row=body[0];assert row['result']=='passed'and row['regions']==52 and row['images']==7 and row['sampled_pixels']==371731 and row['raw_BC_bytes']==371920 and row['backend_CPU_BC_decode']is False and row['game_modules_executed']is False and row['checks']>=1488000
+ body=[r for r in rows if r.get('test')=='original022-BC3-capture-queued21'];assert len(body)==1
+ row=body[0];assert row['result']=='passed'and row['regions']==52 and row['images']==7 and row['sampled_pixels']==371731 and row['raw_BC_bytes']==371920 and row['backend_CPU_BC_decode']is False and row['game_modules_executed']is False and row['checks']==1488889
+ assert row['submitted_recordings']==21 and row['independent_command_objects']==21 and row['command_memory_slice_bytes']==32768 and row['explicit_intermediate_drains']==0 and row['final_fence_waits']==1
+ case=[r for r in rows if 'BC3_app_case'in r];assert case==[{'BC3_app_case':'queued21'}]
+ assert not any(r.get('test')=='original022-BC3-capture-focused'for r in rows)
  return terminal
 
 def save():(a.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
@@ -196,8 +199,8 @@ try:
   driver_alias_stat[path]={'device':dev,'major':os.major(dev),'minor':os.minor(dev),'inode':inode,'size':size,'sha256':m['driver_sha256']}
  assert len({(v['device'],v['inode'],v['size'])for v in driver_alias_stat.values()})==1
  result['driver_alias_stat']=driver_alias_stat;save()
- args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_directory','/data/user/0/'+pkg+'/files/runtime']
- phase={'name':'BC3-focused','launch_command':B+args,'launches':1};active_phase=phase;result['runs']=[phase];result['stage']='one-cold-launch';save()
+ args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--es','fixture_directory','/data/user/0/'+pkg+'/files/runtime','--es','fixture_case','queued21']
+ phase={'name':'BC3-queued21','launch_command':B+args,'launches':1};active_phase=phase;result['runs']=[phase];result['stage']='one-cold-launch';save()
  with(a.output/'launch.txt').open('w')as f:launch=subprocess.Popen(B+args,stdout=f,stderr=subprocess.STDOUT)
  deadline=time.monotonic()+75
  while True:
@@ -230,7 +233,7 @@ try:
   assert(major,minor,inode)==(st['major'],st['minor'],st['inode']);mapped.append(line)
  assert mapped;phase['exact_private_driver_mappings']=mapped;verify_resources()
  assert all(ad('exec-out','run-as',pkg,'sha256sum',p).split()[0]==m['driver_sha256']for p in allowed_driver_paths)
- launch.wait(timeout=5);stop_owned(phase);result['stage']='actual-original022-BC3-focused-owned-passed'
+ launch.wait(timeout=5);stop_owned(phase);result['stage']='actual-original022-BC3-queued21-owned-passed'
 except BaseException as e:result.update(stage='failed-preserved',error=repr(e))
 finally:
  try:
@@ -258,4 +261,4 @@ finally:
    result['original_after']=snapshot();assert result['original_after']==original_before;result['original_unchanged']=True
  except BaseException as e:result['cleanup_errors'].append(repr(e))
  save()
-print(json.dumps(result));raise SystemExit(0 if result['stage']=='actual-original022-BC3-focused-owned-passed'and not result['cleanup_errors']else 1)
+print(json.dumps(result));raise SystemExit(0 if result['stage']=='actual-original022-BC3-queued21-owned-passed'and not result['cleanup_errors']else 1)
