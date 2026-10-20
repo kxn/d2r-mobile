@@ -52,9 +52,9 @@ static void shared_image_dirty_test(void) {
   p_clear_color clear={.index=0,.mask=15,.rgba={0,1,0,1}};
   vk_target_clear_color(&target,NULL,&clear);
   vk_internal_wait(vk_internal_commit());
+  shared_image_pixels(&first_clear,green);
   CHECK(nvn_dirty_tracked(data+65536,((tex_t *)&first_clear)->L.size));
   CHECK(vk_test_texture_rebuildable(((tex_t *)&first_clear)->serial)==0);
-  shared_image_pixels(&first_clear,green);
   mtl_pkg_stats(&cu2,&cr2);CHECK(cu2==cu && cr2==cr);
   // An unrelated tracked page changes the global epoch, not this image's
   // source generation. The original negative proof must still preserve GPU.
