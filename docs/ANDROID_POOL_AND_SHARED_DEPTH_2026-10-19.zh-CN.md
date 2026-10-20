@@ -718,6 +718,32 @@ optional replay 禁止内部等待、已初始化干净纹理上的待完成 CPU
 不能仅删深层检查绕过。此轮没有到 HUD，原 c8 APK、模块、资源和驱动已恢复，
 游戏停止。不能据此声称已降低驻留、带宽或温度。
 
+后续修复 `1a5280a` 已补齐普通 draw、dispatch 和公共 helper 的 legacy 准入，
+并在借用资源前处理同 host 页尚未发布的 CPU effect，避免已初始化的 clean
+图像沿版本缓存跳过更新。可选 ghost 重播保守拒绝 tracked packaged 来源，
+实例展开的晚 pending 重验也保持非阻塞；原 NVN draw 不因此丢弃。
+
+同源新包的系统 Mali 普通 UID 独立 GPU 检查通过 1,040,777 项，新增 outer
+preflight 的七项条件均实际通过，包括 clean 图像后排 CPU effect、同页邻字节、
+不同页不额外等待，以及原 shader 的 GPU 像素。验证层和同步验证明确关闭，
+不将功能断言数量冒称为 VVL 验收。它与随后游戏使用相同六个运行库。
+
+该版本随后执行从原始 NSO 重新加工、单独核验的真实 ARM64 游戏，系统
+Vulkan、原 private guest heap、16 MiB 复制 Pool、完整 ASTC4 资源及
+`cbd8d2da0b0f` shader 链。serial19 的逻辑 BC3、42 层七级 mip 数组实际采用
+ASTC4，越过旧错误并到达原选角和营地 HUD；所留截图中地面、人物与 UI 正常。
+原生命周期确认 fresh save 两次提交成功后停机，生产 c8 包和原文件已回滚核验。
+新 APK SHA256 为 `d9171b7f17b48094ba4359dcf3f437b6446a09f2995d51f41f070ccf6eef0b2e`；
+宿主 ELF 为 `fb03f5d8065cec293ae04114e498b548cfaef8e29493389a5b6ddd5edd5c9f8b`。
+
+这是默认关闭候选的一次短营地功能通过，不是完全共享路径通过；独立 Pool
+backing、shadow 与复制仍在。截图的 30.4 只是该时刻显示值，没有受控对照，
+不能算涨帧；驻留、带宽净收益及持续散热尚未验收。后续只准备同 APK 的
+OFF/ON 官方工具对照，不把准备或连接重建写成已经采集。记录为本机
+`legacy-image-cpu-preflight-1a5280a-mali-v1/result.json` 和
+`legacy-image-cpu-preflight-1a5280a-original-mali-v2/root-result.json`，
+后者同时保留 launch、native log、HUD 截图和 fresh-save 证据。
+
 ### 共享 Pool 的快照与非一致性写入保护
 
 共享分支不分配整个 Pool 的 `shadow`，也不通过内容扫描决定 Buffer 上传。
