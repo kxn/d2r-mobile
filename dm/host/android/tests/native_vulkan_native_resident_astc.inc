@@ -8,6 +8,10 @@ static unsigned nr_resident_astc(NVNtexture *native,NVNtexture *reference,NVNtex
   extern int vk_test_native_image_owner(uint64_t);
   extern VkPipelineStageFlags vk_test_native_mip_scope(uint64_t,unsigned,uint64_t *);
   uint64_t serial=((const tex_t *)native)->serial;
+  uint8_t copy_control[0x880];memset(copy_control,26,sizeof copy_control);
+  NVNprogram copy_compute;NVNshaderData copy_stage={.control=copy_control};
+  CHECK(CALL(nvnProgramInitialize,&copy_compute,&device));
+  CHECK(CALL(nvnProgramSetShaders,&copy_compute,1,&copy_stage));
   CHECK(input->levels==9 && V.options.pool_window_bytes==65536);
   CHECK((((pool_t *)pool)->flags&7)==NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED);
   CHECK(vk_test_native_image_owner(serial)==2);
@@ -50,7 +54,18 @@ static unsigned nr_resident_astc(NVNtexture *native,NVNtexture *reference,NVNtex
       .src=(uintptr_t)storage+linear_offset+changed->offset,.view=*(const view_t *)&v,
       .has_view=1,.r={0,0,0,changed->width,changed->height,1}};
     vk_texture_copy_b2t(&update,0,0);update.tex=(const tex_t *)native;
-    vk_texture_copy_b2t(&update,0,0);vk_internal_wait(vk_internal_commit());
+    vk_texture_copy_b2t(&update,0,0);
+    // A distinct VkImage just wrote this native payload. The already-existing
+    // Pool VkBuffer must use global alias visibility, not a named Buffer proof.
+    // The real compute reads the entire opaque payload in the SAME recording:
+    // no intermediate submit, wait, host invalidation or T2B consumer.
+    S=(vk_state){.program=(const prog_t *)&copy_compute};
+    S.ssbo[5][0]=(p_bind_buf){.addr=(uintptr_t)storage+native_offset,.size=payload_size};
+    S.ssbo[5][1]=(p_bind_buf){.addr=(uintptr_t)storage+scratch,.size=payload_size};
+    vk_pipeline_state_changed();vk_dispatch(&(p_dispatch){1,1,1});
+    vk_internal_wait(vk_internal_commit());
+    CALL(nvnMemoryPoolInvalidateMappedRange,pool,native_offset,payload_size);
+    CHECK(!memcmp(storage+scratch,storage+native_offset,payload_size));
     S=state;nr_draw(reference,4,output,expected);
     S=state;nr_draw(native,4,output,actual);
     CHECK(memcmp(original,expected,sizeof expected));
@@ -77,8 +92,8 @@ static unsigned nr_resident_astc(NVNtexture *native,NVNtexture *reference,NVNtex
       vk_test_native_mip_scope(serial,5,&current_clock)==prior_scope && current_clock>=clock);
     clock=current_clock;
   }
-  free(saved);S=state;vk_pipeline_state_changed();
-  unsigned delta=checks-begin;CHECK(delta==104);
-  printf("{\"test\":\"native-resident-owner-original-ASTC\",\"result\":\"passed\",\"checks_added\":%u,\"actual_ASTC_GPU\":true,\"mips\":9,\"CPU_UNCACHED\":true,\"rounds\":3,\"GPU_changed_FS_reference_equal\":true,\"CPU_restore_all_mips_exact\":true,\"explicit_and_noFlush\":true,\"same_value_Flush\":true,\"three_chunks_without_explicit_host_wait\":true,\"owner_and_mip_history_retained\":true,\"game_modules_executed\":false}\n",checks-begin);
+  CALL(nvnProgramFinalize,&copy_compute);free(saved);S=state;vk_pipeline_state_changed();
+  unsigned delta=checks-begin;CHECK(delta==109);
+  printf("{\"test\":\"native-resident-owner-original-ASTC\",\"result\":\"passed\",\"checks_added\":%u,\"actual_ASTC_GPU\":true,\"mips\":9,\"CPU_UNCACHED\":true,\"rounds\":3,\"GPU_changed_FS_reference_equal\":true,\"CPU_restore_all_mips_exact\":true,\"explicit_and_noFlush\":true,\"same_value_Flush\":true,\"three_chunks_without_explicit_host_wait\":true,\"owner_and_mip_history_retained\":true,\"Image_writer_to_Buffer_CS_full_payload\":true,\"game_modules_executed\":false}\n",checks-begin);
   return checks-begin;
 }

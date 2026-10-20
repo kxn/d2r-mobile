@@ -20,9 +20,9 @@ def validate_native_rows(rows,manifest):
  assert previous[0]['positive_cases']==2 and previous[0]['unknown_negative_cases']==1 and previous[0]['mips']==[4,5,6]
  for key in ('old_TRANSFER_and_COMPUTE_histories_retained','current_recording_denied','both_positive_FS_versions_changed','FS_pixels_reference_equal','CS_pixels_reference_equal','T2B_compressed_blocks_exact'):assert previous[0][key] is True
  resident=[r for r in rows if r.get('test')=='native-resident-owner-original-ASTC']
- assert len(resident)==1 and resident[0]['result']=='passed' and resident[0]['checks_added']==105
+ assert len(resident)==1 and resident[0]['result']=='passed' and resident[0]['checks_added']==110
  assert resident[0]['mips']==9 and resident[0]['rounds']==3 and resident[0]['game_modules_executed'] is False
- for key in ('actual_ASTC_GPU','CPU_UNCACHED','GPU_changed_FS_reference_equal','CPU_restore_all_mips_exact','explicit_and_noFlush','same_value_Flush','three_chunks_without_explicit_host_wait','owner_and_mip_history_retained'):assert resident[0][key] is True
+ for key in ('actual_ASTC_GPU','CPU_UNCACHED','GPU_changed_FS_reference_equal','CPU_restore_all_mips_exact','explicit_and_noFlush','same_value_Flush','three_chunks_without_explicit_host_wait','owner_and_mip_history_retained','Image_writer_to_Buffer_CS_full_payload'):assert resident[0][key] is True
  assert previous[0]['resident_scope_history_preserved'] is True
  assert previous[0]['unknown_current_writer_changed_pixels'] is True and previous[0]['unknown_without_intermediate_fence'] is True
  lane=[r for r in rows if r.get('native_allocation_lane') is True]

@@ -2273,6 +2273,17 @@ static int buffer_named_dependencies(VkCommandBuffer command,const vk_buffer_use
     if(!p || !pool_span_resolve(p,u->address-(uintptr_t)p->guest,u->size,&span)) return 0;
     unsigned at=0;while(at<owners_count && backings[at]!=span.backing) at++;
     if(at==owners_count) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      // This barrier and its visibility publication cover the WHOLE backing,
+      // not only u's bytes. An aliased VkImage writer cannot acquire a named
+      // VkBuffer proof through an unrelated read elsewhere in that backing.
+      // Reuse the existing live-import AVL index; never scan native textures.
+      pthread_mutex_lock(&V.resources);
+      int native_alias=native_allocation_overlaps_locked(p,span.backing->begin,
+          span.backing->end-span.backing->begin);
+      pthread_mutex_unlock(&V.resources);
+      if(native_alias)return 0;
+#endif
       if(owners_count==sizeof owners/sizeof *owners) return 0;
       owners[owners_count]=p;backings[owners_count++]=span.backing;
     }
@@ -2473,8 +2484,7 @@ VkPipelineStageFlags vk_test_native_writer_stages(uint64_t address,uint64_t size
   return stages;
 }
 #endif
-static uint64_t buffer_native_image_dependency(uint64_t address,uint64_t size,
-    VkPipelineStageFlags stages,VkAccessFlags access,uint64_t previous) {
+uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages,uint64_t previous) {
   if(native_writer_generation && previous==native_writer_generation)return previous;
   VkCommandBuffer command=VK_NULL_HANDLE;
   VkPipelineStageFlags producers=0,known=VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -2500,25 +2510,11 @@ static uint64_t buffer_native_image_dependency(uint64_t address,uint64_t size,
   }
   if(producers) {
     VkMemoryBarrier barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,
-      .dstAccessMask=access};
+      .dstAccessMask=(stages&VK_PIPELINE_STAGE_TRANSFER_BIT)?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_SHADER_READ_BIT};
     vkCmdPipelineBarrier(command,producers,stages,0,1,&barrier,0,NULL,0,NULL);
-    // A WAW destination write is not visibility for later Buffer reads.
-    if(access&(VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_TRANSFER_READ_BIT|
-        VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_MEMORY_READ_BIT))
-      vk_buffer_producers_visible(producers,stages);
+    vk_buffer_producers_visible(producers,stages);
   }
   return native_writer_generation;
-}
-uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineStageFlags stages,uint64_t previous) {
-  return buffer_native_image_dependency(address,size,stages,
-    (stages&VK_PIPELINE_STAGE_TRANSFER_BIT)?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_SHADER_READ_BIT,previous);
-}
-void vk_buffer_native_image_write_dependency(uint64_t address,uint64_t size,
-    VkPipelineStageFlags stages,VkAccessFlags access) {
-  // Named VkBuffer barriers do not cover a different aliased VkImage. Keep
-  // actual writer availability/destination access in a global memory barrier;
-  // the original Pool dependency engine separately retains reader/WAR scopes.
-  (void)buffer_native_image_dependency(address,size,stages,access,0);
 }
 #endif
 static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStageFlags producers) {

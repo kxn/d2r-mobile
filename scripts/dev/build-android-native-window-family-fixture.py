@@ -27,7 +27,7 @@ assert sha(A.base_apk)==m['apk_sha256'] and len(m['native_library_sha256'])==6
 assert m['native_resident_owner_ASTC_oracle_compiled'] is True
 assert m['native_previous_writer_ASTC_oracle_compiled'] is True and m['native_image_only_ASTC_oracle_compiled'] is True
 with zipfile.ZipFile(A.base_apk) as base_contents:
- assert all(marker in base_contents.read('lib/arm64-v8a/libdmhost_android.so') for marker in (b'native-previous-writer-ASTC-pending-FS',b'native-image-only-original-NVN',b'native-resident-owner-original-ASTC')), 'Actual new ASTC body absent: old family-only ELF rejected'
+ assert all(marker in base_contents.read('lib/arm64-v8a/libdmhost_android.so') for marker in (b'native-previous-writer-ASTC-pending-FS',b'native-image-only-original-NVN',b'native-resident-owner-original-ASTC',b'Image_writer_to_Buffer_CS_full_payload')), 'Actual new ASTC body absent: old family-only ELF rejected'
 
 for name,digest in m['source_inputs'].items():
  p=Path(name);p=p if p.is_absolute() else ROOT/p

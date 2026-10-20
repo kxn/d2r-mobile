@@ -452,5 +452,4 @@ int vk_pool_native_image_write_ready(void *);
 int vk_pool_native_image_queue_resident(void *);
 void vk_native_images_release(void);
 uint64_t vk_buffer_native_image_read(uint64_t,uint64_t,VkPipelineStageFlags,uint64_t);
-void vk_buffer_native_image_write_dependency(uint64_t,uint64_t,VkPipelineStageFlags,VkAccessFlags);
 #endif
