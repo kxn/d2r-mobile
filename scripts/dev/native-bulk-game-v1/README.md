@@ -36,3 +36,27 @@ Run with `--inputs PATH --inputs-sha256 SHA --report PATH`. Add `--execute` only
 after reviewing the exact immutable manifest and prerequisite receipts. There
 is no implicit retry, device discovery, installer settings change, game-state
 mutation, hot graphics-policy switch or recursive deletion of unknown files.
+
+## Optional source-only bcbd751 throughput/CPU plan
+
+`performance_tools` pins the copied existing official99Hz/stat helper and the
+existing `capture-android-scheduler.py`. Same6217/.60/AA185/16MiB transaction,
+no runtime change. The one original3point route finishes first; helper does not
+repeat the old5point route. Original bounded PSO/variant readiness then separate
+stat8s,99HzDWARF8s,Perfetto sched+frame8s windows all finish BEFORE optional LLDB.
+Each tool window records its own target/PSO/variants and public thermal context.
+No cross-window sum or ADB/tick bracket as exact frame denominator.
+
+Important observed Q limitation: `--frame-timeline` produces display-wide
+actual_frame_timeline_slice (and occasionally Activity TX), but existing Q
+captures do not have game SurfaceView actual slices. They DO contain official
+SurfaceFlinger per-buffer PresentFenceSignaled events for a unique exact game
+SurfaceView. Report those separately as official surface-buffer completion
+cadence, not app FrameTimeline or game simulation frames. If the new trace lacks
+an unambiguous target SurfaceView or has loss, throughput is inconclusive; do not
+substitute all-display slices, overlayFPS, shader_present.selected or guestticks.
+Official CPU running within that same Perfetto window can be compared to its
+own surface events; stat and sampledCPU are independent windows.
+
+Preparation/plan is offline. Root reviews one exact pair before any execution;
+original firstPID/save2/6dir CASrestore/settings/toolcleanup remain unchanged.

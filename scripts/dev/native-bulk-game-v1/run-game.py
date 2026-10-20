@@ -111,6 +111,13 @@ def proof(path, digest):
                         '--config', counter['config']['path'], '--config-sha256',
                         counter['config']['sha256'], '--plan'], check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if 'performance_tools' in p:
+        tools = p['performance_tools']
+        require(set(tools) == {'cpu_helper', 'scheduler_helper'}, 'performance tools fields differ')
+        helper = pinned(tools['cpu_helper'])
+        require(helper == HERE / 'capture-official-cpu.py', 'exact reviewed local helper required')
+        require(pinned(tools['scheduler_helper']) == R / 'scripts/dev/capture-android-scheduler.py',
+                'existing official scheduler orchestration required')
     require([v['kind'] for v in p['phases']] == ['control', 'native'], 'matched pair order')
     for phase in p['phases']:
         composition = read(pinned(phase['composition']))
@@ -233,6 +240,26 @@ def phase_game(dev, out, phase, p, token):
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
         m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
+        if p.get('performance_tools'):
+            require(pid() == own, 'PID changed before independent performance windows')
+            performance_out = out / 'official-performance'
+            performance_out.mkdir()
+            command = [sys.executable, p['performance_tools']['cpu_helper']['path'],
+                       p['serial'], own, '1', str(performance_out), '16777216', '1']
+            d['performance_command'] = command
+            save()
+            with (performance_out / 'console.txt').open('w') as log:
+                subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
+            tools_result = read(performance_out / 'official-cpu-capture.json')
+            require(tools_result.get('complete') is True, 'official performance windows incomplete')
+            require(pid() == own, 'PID changed during independent performance windows')
+            d['official_performance_complete'] = True
+            d['performance_stable_target60_PSO_variants_all_windows'] = tools_result[
+                'stable_target60_PSO_variants_all_windows']
+            save()
+            # All Simpleperf/Perfetto windows and owned cleanup finish before
+            # the optional all-stop LLDB snapshot below. Never mix their scopes.
+            read_state(dev, out, 'after-tools')
         if p.get('counter_snapshot'):
             require(pid() == own, 'PID changed before once-only counter snapshot')
             counter = p['counter_snapshot']
@@ -336,6 +363,14 @@ def main():
             'phases': ['standard-ASTC4', 'native-ASTC4'], 'scale_3d': .60,
             'output': '2750x1260', 'profiling': False, 'recursive_RomFS_copy': False,
             'scope': 'Functional and system residency only, not sustained thermal/FPS proof'}
+    if p.get('performance_tools'):
+        plan['profiling'] = True
+        plan['scope'] = 'Three independent official8s stat/record/scheduler-Surface windows before LLDB; not yet measured netthroughput or thermal benefit'
+        plan['official_performance'] = {'stat_seconds': 8, 'record_user_Hz': 99,
+            'record_seconds': 8, 'scheduler_frame_seconds': 8, 'before_LLDB': True,
+            'same_window_CPU_and_Surface_events': 'Perfetto only; stat/record are separate windows',
+            'game_Surface_actual_frame_timeline_may_be_absent': True}
+        plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
