@@ -1,11 +1,11 @@
-"""Exact reviewed848 operation geometry plus alias-gap native-only functional/CPU validation, no new measurements."""
-RUNTIME='848f47ccb58db1fa21fdb985e8e1a7f5fdaee0bb'
-PREDECESSOR='846fb023c2390358127eb1cedf649bc292b93e4d'
-ARTIFACT_BASE='622242282d0868144f1428245a71616fdfeb10b6'
-PREDECESSOR_REVIEW='ef2229ac75daceeca3a9d9626f6b1f1844324bae3d5b55da1a0a4a89f8a64967'
+"""Exact reviewed716 texture retirement index native-only functional/CPU validation, no new measurements."""
+RUNTIME='716cd6cdbdf16cd63d285cc4c063a30fdf0104eb'
+PREDECESSOR='848f47ccb58db1fa21fdb985e8e1a7f5fdaee0bb'
+ARTIFACT_BASE='b8ef8395d94cf6a8d790a2bedcc6a7f59db39e27'
+PREDECESSOR_REVIEW='2b1bc11626e7aa3326160181d9378bd373b3ee0dfbdeb1b449831bdd78d68b62'
 DRIVER='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
-ROOT_REVIEW='c779a738903a3cfc5411267cf23cdc742cb1f23ebcaf32398400be84e50ad207'
-SOURCE_READY='39a2f99ad7b0fdf16f35246aae04bf775447ba524b85ec1e7e57550ed7a7706d'
+ROOT_REVIEW='e48a6ad9c1663594f771961ec2d00d4d37afe18e6a8ad2ea8979a03ff530cf34'
+SOURCE_READY='91963809c88eb76a856de63e31a7f197444d7684cc5b13803368ae0c5f3febfc'
 BASE='6f8188e392f21ff045ef640ad8c4f184de048806'
 
 
@@ -16,11 +16,11 @@ def validate(p,pinned,read,require):
             'counter_snapshot' not in p and 'performance_tools' in p,
             'short CPU candidate mode excludes longtest, SDP and LLDB')
     require(p['runtime_commit']==RUNTIME and p['driver']['sha256']==DRIVER
-            and p['pool_window_bytes']==1048576,'exact848/f830/1MiB target only')
+            and p['pool_window_bytes']==1048576,'exact716/f830/1MiB target only')
     require(p['phases'][1]['composition_data']['entry_count']==6217,'same6217 only')
     require(c['root_review']['sha256']==ROOT_REVIEW,'exact root candidate review required')
     review=read(pinned(c['root_review']))
-    require(review['status']=='ROOT_REVIEWED_EXACT848_CANONICAL_AND_FRESH_RAW28'
+    require(review['status']=='ROOT_REVIEWED_EXACT716_CANONICAL_AND_FRESH_RAW28'
             and review['runtime']==RUNTIME and review['base']==ARTIFACT_BASE
             and review['actual_device_authorized'] is False and review['tool_ready_authorized'] is True,
             'candidate source review differs')
@@ -38,12 +38,13 @@ def validate(p,pinned,read,require):
             'reviewed APK/libraries/raw original inputs differ')
     pinned(review['APK']); pinned(review['source_review'])
     audit=read(pinned(review['complete_audit']))
-    require(audit['status']=='EXACT_848F47C_SOURCE_COMPLETE_CANONICAL_FRESH_RAW_CLOSURE_VERIFIED_NO_DEVICE'
+    require(audit['status']=='EXACT_716CD6C_SOURCE_COMPLETE_CANONICAL_FRESH_RAW_CLOSURE_VERIFIED_NO_DEVICE'
             and audit['commit']==RUNTIME and audit['separate_original_NSO_rebuild_and_verify_only_pass'] is True
             and audit['new_host_cache_getter_and_epoch_death_symbols_absent_APP'] is True
             and audit['native_APP_death_env_literal_absent'] is True
             and audit['source_ready']['sha256']==SOURCE_READY
             and audit['operation_geometry_APP_probes_absent'] is True
+            and audit['texture_retirement_index_APP_probes_absent'] is True
             and audit['root_source_review']==review['source_review'] and audit['raw_deployment_files']==28
             and audit['canonical_ready']==p['canonical'] and audit['raw_ready']==p['raw']
             and len(audit['six_library_hashes_and_LOAD_alignment'])==6
@@ -58,23 +59,29 @@ def validate(p,pinned,read,require):
     for row in qualified['refs']:pinned(row)
 
     require(c['qualified_predecessor_short']['sha256']==PREDECESSOR_REVIEW,
-            'exact actual846 short root review required')
+            'exact actual848 short root review required')
     previous=read(pinned(c['qualified_predecessor_short']))
-    require(previous['status']=='ROOT_REVIEWED_EXACT846_REAL_GAME_SHORT_OFFICIAL_ANALYSIS_CLEANUP_COMPLETE'
+    require(previous['status']=='ROOT_REVIEWED_EXACT848_REAL_GAME_SHORT_OFFICIAL_ANALYSIS_CLEANUP_COMPLETE'
             and previous['runtime']==PREDECESSOR and previous['game_modules_executed'] is True
             and previous['route_completed']==3,
-            'actual846 functional qualification required')
-    for key in ('artifact_review','analysis_ready','analysis'):pinned(previous[key])
-    actual=read(pinned(previous['result']))
+            'actual848 functional qualification required')
+    for key in ('functional_review','analysis_ready','analysis'):pinned(previous[key])
+    functional=read(pinned(previous['functional_review']))
+    require(functional['runtime']==PREDECESSOR and functional['game_modules_executed'] is True
+            and functional['route_completed']==3 and functional['fresh_original_lifecycle_save_commits']==2
+            and functional['no_game_process_followup'] is True,
+            'actual848 functional save/restoration incomplete')
+    pinned(functional['artifact_review'])
+    actual=read(pinned(functional['result']))
     require(actual['stage']=='native-original-game-short-candidate-validation-complete'
             and actual['plan']['runtime']==PREDECESSOR
             and actual['original_restored'] is True and actual['cleanup_complete'] is True
             and actual['cleanup_errors']==[] and len(actual['phases'])==1,
-            'actual846 short transaction not complete')
+            'actual848 short transaction not complete')
     phase=actual['phases'][0]
     require(phase['original_HUD_reached'] is True and phase['game_modules_executed'] is True
             and phase['original_route_completed']==3 and phase['fresh_save_then_stopped'] is True
             and phase['official_performance_complete'] is True and phase['cpu_validity'] is True,
-            'actual846 originalgame/CPU/save qualification incomplete')
-    # Historical846 is functional/tool qualification, not a matched performance baseline.
+            'actual848 originalgame/CPU/save qualification incomplete')
+    # Historical848 is functional/tool qualification, not a matched performance baseline.
     # Never manufacture matched CPU/FPS/heat gains from these independent short runs.
