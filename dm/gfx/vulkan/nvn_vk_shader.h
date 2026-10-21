@@ -290,3 +290,7 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
 int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,int compute);
 
 int vk_ghost_cpu_draw_ready(vk_shader *const list[6],const vk_state *state,const p_draw *,const p_draw_idx *);
+
+// SamplerType.Shadow (metadata bit10) requires comparison-capable views.
+void vk_texture_prepare_comparison(int id,VkShaderStageFlagBits stage);
+VkImageView vk_texture_view_comparison(int id,VkShaderStageFlagBits stage,VkImageLayout *layout);
