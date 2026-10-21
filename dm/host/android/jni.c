@@ -771,6 +771,21 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeThermalL
   vk_set_thermal_limit(limit);
   dm_android_3d_thermal_limit(limit);
 }
+// Read existing CPU-side published state only while the debug panel is visible.
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeManualLimit(
+    JNIEnv *env, jclass klass, jint limit) {
+  (void)env; (void)klass; vk_set_manual_limit(limit);
+}
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeDebugState(
+    JNIEnv *env, jclass klass, jfloatArray output) {
+  (void)klass;
+  if ((*env)->GetArrayLength(env,output)!=9) return;
+  uint32_t gw,gh,sw,sh; vk_window_output_sizes(&gw,&gh,&sw,&sh);
+  extern int mtl_fps_target(void);
+  float values[]={vk_requested_fps(),mtl_fps_target(),vk_thermal_limit(),vk_manual_limit(),
+                  gw,gh,sw,sh,dm_3d_scale_cur()};
+  (*env)->SetFloatArrayRegion(env,output,0,9,values);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTrimMemory(
     JNIEnv *env,jclass klass) {
   (void)env;(void)klass;

@@ -53,6 +53,7 @@ final class TouchControls extends View {
     private final SparseIntArray slots = new SparseIntArray();
     private float scale = 1;
     private boolean running;
+    private final DebugTouchGate debugTouchGate = new DebugTouchGate();
     TouchControls(Context context, boolean debugPad) {
         super(context); setFocusable(false);
         density = context.getResources().getDisplayMetrics().density;
@@ -144,6 +145,8 @@ final class TouchControls extends View {
     private void pollFrame() {
         if (!running) return;
         if (refreshState() || continuousRedraw) invalidate();
+        if (getContext() instanceof MainActivity)
+            ((MainActivity)getContext()).updateDebugPanel(layout[158], thermal.lines()[0], thermal.status());
         scheduleFrame();
     }
     void continuousRedraw(boolean value) { continuousRedraw = value; invalidate(); }
@@ -170,6 +173,11 @@ final class TouchControls extends View {
         // Let the native bridge return a dragged inventory item as upstream does.
         for (int i=0;i<slots.size();++i) nativeTouch(3,slots.valueAt(i),0,0);
         slots.clear(); refreshState(); invalidate();
+    }
+    void blockForDebug(boolean blocked) {
+        debugTouchGate.block(blocked);
+        cancelTouches();
+        nativeReset();
     }
     @Override public WindowInsets onApplyWindowInsets(WindowInsets insets) {
         android.graphics.Insets safe = insets.getInsetsIgnoringVisibility(
@@ -300,6 +308,13 @@ final class TouchControls extends View {
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (!running) return false;
         int action = event.getActionMasked(), at = event.getActionIndex();
+        if (debugTouchGate.consume(action == MotionEvent.ACTION_DOWN,
+                action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) return true;
+        if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN)
+                && fpsBox.contains(event.getX(at), event.getY(at))) {
+            if (getContext() instanceof MainActivity) ((MainActivity)getContext()).showDebugPanel(true);
+            return true;
+        }
         if (action == MotionEvent.ACTION_CANCEL) { cancelTouches(); return true; }
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             int slot = freeSlot(); if (slot < 0) return true;

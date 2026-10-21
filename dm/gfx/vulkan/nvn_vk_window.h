@@ -30,3 +30,9 @@ void vk_window_drop_present(uint64_t sequence);
 uint64_t vk_window_present(const void *texture, const int crop[4], uint64_t sequence);
 void vk_window_discard(int on);
 int vk_window_discarding(void);
+
+// Application-only debug ceilings; zero follows the existing game policy.
+void vk_set_manual_limit(int limit);
+int vk_manual_limit(void);
+int vk_thermal_limit(void);
+int vk_requested_fps(void);

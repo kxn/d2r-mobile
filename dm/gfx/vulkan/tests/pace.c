@@ -12,6 +12,10 @@ int dm_fps_setting(void) { return setting; }
 double vk_window_refresh(void) { return refresh; }
 int mtl_fps_target(void);
 void vk_set_thermal_limit(int limit);
+void vk_set_manual_limit(int limit);
+int vk_manual_limit(void);
+int vk_thermal_limit(void);
+int vk_requested_fps(void);
 double mtl_pace_hz(void);
 int main(int argc, char **argv) {
   assert(argc==2); int forced=atoi(argv[1]); unsigned checks=0;
@@ -44,5 +48,28 @@ int main(int argc, char **argv) {
   vk_set_thermal_limit(0);
   assert(mtl_fps_target()==(forced?forced:60)); checks++;
   setting=30; assert(mtl_fps_target()==(forced?forced:30)); checks++;
+  // Manual ceiling is independent of thermal and never raises the original target.
+  const int caps[]={0,20,30,40,60,99,-1};
+  for (unsigned i=0;i<sizeof(caps)/sizeof(*caps);i++) {
+    vk_set_manual_limit(caps[i]); int cap=caps[i];
+    if (cap==99 || cap<0) cap=0;
+    assert(vk_manual_limit()==cap && vk_thermal_limit()==0); checks++;
+    for (unsigned m=0;m<2;m++) {
+      setting=m?30:60; int original=forced?forced:setting;
+      int target=cap && cap<original?cap:original;
+      assert(vk_requested_fps()==original && mtl_fps_target()==target); checks++;
+      const double cap_displays[]={60,90,120};
+      for (unsigned d=0;d<3;d++) {
+        refresh=cap_displays[d]; double pace=mtl_pace_hz();
+        assert(pace>0 && (!cap || pace<=target)); checks++;
+      }
+    }
+  }
+  setting=60; vk_set_manual_limit(40); vk_set_thermal_limit(20); refresh=165;
+  assert(mtl_fps_target()==20 && fabs(mtl_pace_hz()-20)<1e-6); checks++;
+  vk_set_thermal_limit(0);
+  assert(mtl_fps_target()==(forced==30?30:40)); checks++;
+  vk_set_manual_limit(0);
+  assert(mtl_fps_target()==(forced?forced:60)); checks++;
   printf("{\"pacing_checks\":%u,\"forced_fps\":%d,\"result\":\"passed\"}\n",checks,forced);
 }

@@ -5,13 +5,19 @@
 #include "nvn_vk_window.h"
 #include <stdatomic.h>
 __attribute__((weak)) int dm_fps_setting(void) { return 60; }
-static _Atomic int thermal_limit;
+static _Atomic int thermal_limit, manual_limit;
+void vk_set_manual_limit(int limit) {
+  atomic_store_explicit(&manual_limit,
+      limit==20 || limit==30 || limit==40 || limit==60 ? limit : 0, memory_order_relaxed);
+}
+int vk_manual_limit(void) { return atomic_load_explicit(&manual_limit,memory_order_relaxed); }
+int vk_thermal_limit(void) { return atomic_load_explicit(&thermal_limit,memory_order_relaxed); }
 void vk_set_thermal_limit(int limit) {
   int next=limit==20 || limit==30?limit:0;
   if(atomic_exchange(&thermal_limit,next)!=next)
     LOG("[vulkan] thermal render limit %d FPS (0=original setting)",next);
 }
-int mtl_fps_target(void) {
+int vk_requested_fps(void) {
   static _Atomic int override=-2;
   int fps=atomic_load(&override);
   if (fps==-2) {
@@ -23,10 +29,17 @@ int mtl_fps_target(void) {
       if (fps>0) LOG("DM_FPS=%d: original frame-rate test override",fps);
     } else fps=unset;
   }
-  int target=fps>0?fps:dm_fps_setting()==30?30:60;
-  int limit=atomic_load_explicit(&thermal_limit,memory_order_relaxed);
-  return limit && target>limit?limit:target;
+  return fps>0?fps:dm_fps_setting()==30?30:60;
+}
+int mtl_fps_target(void) {
+  int target=vk_requested_fps(), thermal=vk_thermal_limit(), manual=vk_manual_limit();
+  if (thermal && target>thermal) target=thermal;
+  if (manual && target>manual) target=manual;
+  return target;
 }
 double mtl_pace_hz(void) {
-  return nvn_pace_hz(vk_window_refresh(),mtl_fps_target());
+  double hz=nvn_pace_hz(vk_window_refresh(),mtl_fps_target());
+  // An explicit application cap is a ceiling, even at non-divisible refresh rates.
+  int cap=mtl_fps_target();
+  return (vk_manual_limit() || vk_thermal_limit()) && hz>cap ? cap : hz;
 }

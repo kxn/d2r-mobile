@@ -151,6 +151,32 @@ public final class ThermalPolicyTest {
         f.status(0); eq(0, f.limit); eq("limit 0 @0", f.changes.get(0));
         f.status(0); f.queue.until(60000); eq(1, f.changes.size());
     }
+    private static void disablingPauseCancelsArmedAndAlreadyDispatchedDeadline() {
+        Fixture f = new Fixture(); f.status(3); f.queue.until(44000);
+        Runnable stale = f.queue.messages.peek().task;
+        f.policy.setPauseEnabled(false); stale.run();
+        f.queue.until(100000); eq(0, f.pauses); eq(20, f.limit);
+        f.status(4); eq(0, f.pauses); eq(0, f.queue.messages.size());
+        f.status(3); f.policy.setPauseEnabled(true);
+        f.queue.until(144999); eq(0, f.pauses);
+        f.queue.until(145000); eq(1, f.pauses);
+    }
+    private static void enablingPauseUsesCurrentCriticalStatus() {
+        Fixture f = new Fixture(); f.policy.setPauseEnabled(false); f.status(4);
+        eq(0, f.pauses); f.policy.setPauseEnabled(true); eq(1, f.pauses);
+        f.policy.setPauseEnabled(true); eq(1, f.pauses);
+        Fixture g = new Fixture(); g.policy.setPauseEnabled(false); g.status(3);
+        g.status(0); g.policy.setPauseEnabled(true); g.queue.until(100000); eq(0, g.pauses);
+    }
+    private static void capSwitchReleasesLimitWithoutDisablingPause() {
+        Fixture f = new Fixture(); f.status(3); eq(20, f.limit);
+        f.policy.setLimitEnabled(false); eq(0, f.limit);
+        f.status(2); eq(0, f.limit); f.policy.setLimitEnabled(true); eq(30, f.limit);
+        f.policy.setLimitEnabled(false); f.status(4); eq(0, f.limit); eq(1, f.pauses);
+        Fixture g = new Fixture(); g.policy.setLimitEnabled(false); g.status(3); g.status(0);
+        g.policy.setLimitEnabled(true); eq(0, g.limit);
+        g.policy.setPauseEnabled(false); g.status(3); eq(20, g.limit); eq(0, g.pauses);
+    }
     public static void main(String[] args) {
         severeDeadlineIsNotDebounced();
         queuedCriticalThenSevereCannotCancelPause();
@@ -164,6 +190,9 @@ public final class ThermalPolicyTest {
         staleDispatchCannotCompleteNewIntervalEarly();
         noNewDefaultLimitOrDuplicateActions();
         recreatedActivitySynchronizesExistingNativeLimit();
-        System.out.println("ThermalPolicy: 12 queue/virtual-time regressions passed");
+        disablingPauseCancelsArmedAndAlreadyDispatchedDeadline();
+        enablingPauseUsesCurrentCriticalStatus();
+        capSwitchReleasesLimitWithoutDisablingPause();
+        System.out.println("ThermalPolicy: 15 queue/virtual-time regressions passed");
     }
 }

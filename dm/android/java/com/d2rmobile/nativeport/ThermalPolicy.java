@@ -17,6 +17,7 @@ final class ThermalPolicy {
     private final Scheduler scheduler;
     private final Actions actions;
     private boolean active, known, limited, severeLimited, pauseIssued;
+    private boolean limitEnabled = true, pauseEnabled = true;
     // The native host can outlive an Activity. Apply the first known limit,
     // including zero, instead of assuming its existing atomic is already zero.
     private int status = -1, limit = -1;
@@ -28,6 +29,27 @@ final class ThermalPolicy {
     ThermalPolicy(Scheduler scheduler, Actions actions) {
         this.scheduler = scheduler;
         this.actions = actions;
+    }
+    boolean limitEnabled() { return limitEnabled; }
+    boolean pauseEnabled() { return pauseEnabled; }
+    void setLimitEnabled(boolean enabled) {
+        if (limitEnabled == enabled) return;
+        limitEnabled = enabled;
+        // The switch also releases Android's adaptive-scale thermal constraint
+        // through the existing Actions.limit/JNI path, without altering game FPS.
+        limited = severeLimited = false;
+        cancelRecovery();
+        applyLimit(0);
+        if (known) status(status);
+    }
+    void setPauseEnabled(boolean enabled) {
+        if (pauseEnabled == enabled) return;
+        pauseEnabled = enabled;
+        severeSince = -1;
+        scheduler.removeCallbacks(severePause);
+        pauseIssued = false;
+        // A new enable starts a fresh severe interval; current CRITICAL is immediate.
+        if (enabled && known) status(status);
     }
     void setActive(boolean value) {
         if (active == value) return;
@@ -55,13 +77,13 @@ final class ThermalPolicy {
             applyLimit(severeLimited ? 20 : 30);
         } else if (!limited) applyLimit(0);
         if (!active || pauseIssued) return;
-        if (next >= CRITICAL) {
+        if (pauseEnabled && next >= CRITICAL) {
             // Run on this UI callback, not as a zero-delay message that a
             // previously queued downgrade notification could cancel.
             pauseOnce();
             return;
         }
-        if (next >= SEVERE) {
+        if (pauseEnabled && next >= SEVERE) {
             if (severeSince < 0) {
                 severeSince = scheduler.now();
                 scheduler.postDelayed(severePause, SEVERE_MS);
@@ -90,6 +112,7 @@ final class ThermalPolicy {
         }
     }
     private void applyLimit(int fps) {
+        if (!limitEnabled) fps = 0;
         if (limit == fps) return;
         limit = fps;
         actions.limit(fps);
@@ -104,7 +127,7 @@ final class ThermalPolicy {
         return false;
     }
     private void severeDeadline() {
-        if (active && !pauseIssued && severeSince >= 0 && (!known || status >= SEVERE)
+        if (pauseEnabled && active && !pauseIssued && severeSince >= 0 && (!known || status >= SEVERE)
                 && due(severeSince, SEVERE_MS, severePause)) pauseOnce();
     }
     private void partlyRecoveredDeadline() {
@@ -125,7 +148,7 @@ final class ThermalPolicy {
         }
     }
     private void pauseOnce() {
-        if (!active || pauseIssued) return;
+        if (!pauseEnabled || !active || pauseIssued) return;
         pauseIssued = true;
         cancelDeadlines();
         actions.pause();

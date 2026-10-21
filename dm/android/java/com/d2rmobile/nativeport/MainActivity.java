@@ -28,6 +28,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeTrimMemory();
     private static native void nativeVmaMemoryDumpRequest();
     private static native void nativeThermalLimit(int limit);
+    private static native void nativeManualLimit(int limit);
+    private static native void nativeDebugState(float[] output);
+    private static final DebugPanel.Settings debugSettings = new DebugPanel.Settings();
+    private DebugPanel debugPanel;
+    private final float[] debugState = new float[9];
     private static native void nativeSurface(Surface surface, float refresh);
     private static native void nativeBack();
     private static native void nativePipelineByteHash(boolean legacy);
@@ -320,6 +325,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         touchControls = new TouchControls(this, getIntent().getBooleanExtra("touch_debug", false));
         touchControls.continuousRedraw(getIntent().getBooleanExtra("overlay_continuous", false));
         content.addView(touchControls);
+        debugPanel = new DebugPanel(this, debugSettings, new DebugPanel.Actions() {
+            @Override public void close() { showDebugPanel(false); }
+            @Override public void thermalCap(boolean enabled) {
+                debugSettings.thermalCap = enabled; thermalPolicy.setLimitEnabled(enabled);
+            }
+            @Override public void thermalPause(boolean enabled) {
+                debugSettings.thermalPause = enabled; thermalPolicy.setPauseEnabled(enabled);
+            }
+            @Override public void manualCap(int fps) { debugSettings.manualCap = fps; nativeManualLimit(fps); }
+        });
+        content.addView(debugPanel);
+        nativeManualLimit(debugSettings.manualCap);
+        thermalPolicy.setLimitEnabled(debugSettings.thermalCap);
+        thermalPolicy.setPauseEnabled(debugSettings.thermalPause);
         setContentView(content);
         immersive();
         if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -332,9 +351,24 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // 系统返回沿原游戏的返回/菜单路径执行；HOME 仍由正常生命周期存盘。
     // System Back uses original game back/menu actions; HOME uses lifecycle saving.
     private void gameBack() {
+        if (debugPanelVisible()) { showDebugPanel(false); return; }
         if (!started) return;
         resetInput();
         nativeBack();
+    }
+    private boolean debugPanelVisible() { return debugPanel != null && debugPanel.getVisibility() == View.VISIBLE; }
+    void showDebugPanel(boolean visible) {
+        if (debugPanel == null || visible == debugPanelVisible()) return;
+        // Cancel, never UP: opening over a held skill/joystick must not release a skill.
+        touchControls.blockForDebug(visible);
+        GameInput.reset();
+        debugPanel.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (visible) debugPanel.sync();
+    }
+    void updateDebugPanel(float fps, String battery, int status) {
+        if (!debugPanelVisible()) return;
+        nativeDebugState(debugState);
+        debugPanel.update(fps, battery, status, debugState);
     }
     @Override public void onBackPressed() { gameBack(); }
     // 仅 UI 线程进入 JNI；游戏线程不附加到 ART，保留原原生线程的 TLS 和栈环境。
@@ -600,9 +634,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (focused) immersive();
     }
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (debugPanelVisible()) {
+            if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK && event.getAction() == android.view.KeyEvent.ACTION_UP)
+                showDebugPanel(false);
+            return true;
+        }
         return started && GameInput.key(event) || super.dispatchKeyEvent(event);
     }
     @Override public boolean onGenericMotionEvent(android.view.MotionEvent event) {
+        if (debugPanelVisible()) return true;
         return started && GameInput.motion(event) || super.onGenericMotionEvent(event);
     }
     @Override public void onTrimMemory(int level) {
