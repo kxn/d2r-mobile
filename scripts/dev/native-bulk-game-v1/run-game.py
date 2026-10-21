@@ -215,6 +215,13 @@ def proof(path, digest):
         require(helper == HERE / 'capture-official-cpu.py', 'exact reviewed local helper required')
         require(pinned(tools['scheduler_helper']) == HERE.parent / 'capture-android-scheduler.py',
                 'existing official scheduler orchestration required')
+    if 'official_cpu_aa' in p:
+        require(p['official_cpu_aa'] == {'repetitions': 3, 'record_seconds': 30,
+                'sample_frequency_Hz': 99, 'DWARF_bytes': 65528, 'keep_failed_debug_info': True}
+                and p.get('performance_tools') and p.get('native_host_experiment')
+                and not any(p.get(k) for k in ('official_gpu_tools', 'official_l1i_record',
+                    'sustained_play', 'counter_snapshot')),
+                'A/A requires original host qualification and fixed3x30s99Hz65528B/debug-info tools only')
     if 'official_gpu_tools' in p:
         gpu = p['official_gpu_tools']
         require(set(gpu) == {'helper', 'config', 'scheduler_helper'} and p.get('performance_tools'),
@@ -256,6 +263,8 @@ def proof(path, digest):
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
                                 R / 'scripts/dev/android-game-walk-to.py']}
+    if p.get('official_cpu_aa'):
+        p['controller_sources'][str(HERE / 'official_cpu_aa.py')] = sha(HERE / 'official_cpu_aa.py')
     p['_execution_phases'] = p['phases']
     if 'sustained_play' in p:
         sustained = module('source_pinned_sustained_play', HERE / 'sustained_play.py')
@@ -408,10 +417,29 @@ def phase_game(dev, out, phase, p, token):
                        p['serial'], own, '1', str(performance_out), str(p['pool_window_bytes']), '1']
             if p.get('official_l1i_record'):
                 command.append('1')  # Independent raw-L1I record; original cpu-clock command unchanged.
+            if p.get('official_cpu_aa'):
+                command.extend(['0', str(p['official_cpu_aa']['DWARF_bytes'])])
+            if p.get('official_cpu_aa'):
+                d['official_cpu_aa'] = p['official_cpu_aa']
+                d['AA_overlap_and_reproducibility_require_offline_review'] = True
             d['performance_command'] = command
             save()
             with (performance_out / 'console.txt').open('w') as log:
-                subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
+                if p.get('official_cpu_aa'):
+                    capture = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+                    try:
+                        require(capture.wait() == 0, 'official A/A capture incomplete')
+                    finally:
+                        if capture.poll() is None:
+                            capture.terminate()  # helper cooperatively closes its owned tools before save2/CAS
+                            try:
+                                capture.wait(timeout=70)
+                            except subprocess.TimeoutExpired:
+                                capture.kill()
+                                capture.wait(timeout=10)
+                                raise
+                else:
+                    subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
             tools_result = read(performance_out / 'official-cpu-capture.json')
             require(tools_result.get('complete') is True, 'official performance windows incomplete')
             require(pid() == own, 'PID changed during independent performance windows')
@@ -595,6 +623,12 @@ def main():
                 'independent_window_and_overhead': True, 'cpu_clock99_DWARF16384_unchanged': True,
                 'scope': 'Refill PC samples, not all frontend stalls or per-frame work; preserve failed unwinds'}
             plan['scope'] += '; one additional independent raw-L1I refill record window'
+        if p.get('official_cpu_aa'):
+            plan['official_performance'] = dict(p['official_cpu_aa'],
+                Perfetto_seconds=8, Perfetto_only_bookends=2, concurrent_record_traces=3,
+                overlap='Requires offline official sample MONOTONIC and Perfetto clock_snapshot mapping',
+                scope='Samebinary A/A and measurement disturbance; no new optimization or FPS gain claim')
+            plan['scope'] = 'Same74 originalgame/PID/camp:3x30s officialrecord and5x8s Perfetto; original save2/CAS'
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
     if p.get('official_gpu_tools'):
         plan['official_gpu'] = {'optional': True, 'tool': 'SDP2026.9 Realtime GUI',
@@ -662,6 +696,11 @@ def main():
             p['_operator_stop_requested'] = True
         signal.signal(signal.SIGTERM, request_stop)
         signal.signal(signal.SIGINT, request_stop)
+    if p.get('official_cpu_aa'):
+        def cancel_AA(signum, frame):
+            raise KeyboardInterrupt('A/A cancelled; close owned capture before original save2/CAS')
+        signal.signal(signal.SIGTERM, cancel_AA)
+        signal.signal(signal.SIGINT, cancel_AA)
     try:
         dev.app('sh', '-c', 'test ! -e "$1"', 'sh', stage)
         dev.app('mkdir', '-p', stage + '/backup', stage + '/incoming')
