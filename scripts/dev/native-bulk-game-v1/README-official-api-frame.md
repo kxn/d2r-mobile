@@ -1,0 +1,15 @@
+One official Q735/f830 API-structure frame
+
+Default is offline. The new explicit `official_api_frame` input selects one existing GFXReconstruct triggered Vulkan frame, separately from CPU/SDP/AA/debugger captures. Existing source/canonical/raw28/6SO/full2838/CASC/UI checks and the original six-directory transaction remain mandatory. There is no runtime, shader, driver or game-binary change.
+
+The prepared533 input retains f830, shared guest heap, native6217 with2838 qualified ASTC6 replacements,1MiB windows, fixed.60,2750x1260 and the original three normal camp walks. Only native executes; control assets are still authenticated. The same reviewed-artifact parameters can select4422 after its real canonical/raw/root receipt is available. No historical receipt is relabelled.
+
+Before launch the adapter verifies the exact existing official `com.arm.frameadvisor.replay` APK. If absent/different, it fails without installing a substitute. It snapshots the original five GPU-layer settings and eight capture properties, rejects conflicting frame/submit/draw triggers, then applies the original successful single-frame settings. No global ADB server restart or Mali operation is involved.
+
+After the original route, it requires the same owned PID and actual mapped GFXR layer/f830 library, proves no capture started before the trigger, triggers once and waits at most90s for the original official closed-capture marker. There is no retry, restart, custom logger or timing measurement. This is an orchestration deadline, not a profiling result.
+
+The unchanged original lifecycle finally performs fresh save2 and stop (or does not restart an already dead process). An outer finally restores every touched property/setting even when configuration, launch, capture or save fails. It preserves primary failure evidence. Only after the owned game is stopped can the raw file be copied through one exclusive owned `/data/local/tmp` path and pulled, with remote/local size and SHA checks. The owned system copy is removed only after hash verification; the original private capture is retained with its path for recovery. The original six-directory/APK restoration still runs on any export failure.
+
+The original official gfxrecon-info/convert tools verify one nonblank Vulkan frame from the original app and generate API JSONL. No replay is performed. HOST_ALLOCATION_EXT payload capture and replay correctness remain unproven, including mapped/shadow pointer and coherent-noFlush limitations. The capture can first establish actual API/state/offset/group-size structure; it is not ordinary performance, GPU time, FPS, thermal or all-texture visual acceptance.
+
+Offline evidence uses the original compiler17 mode tests, six transaction-cleanup tests and four offline-performance tests plus eight adapter policy/failure controls. The original phase save/stop finally body and outer CAS finally are AST-identical; CPU/scheduler/AA/SDP helpers, installer, identity and original input/launch/save scripts remain unchanged.

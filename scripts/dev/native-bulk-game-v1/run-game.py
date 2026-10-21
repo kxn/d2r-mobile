@@ -211,6 +211,9 @@ def proof(path, digest):
                  '179c82dfa412153b6564974e29fc35036e0b3507') or
                  any(k in p for k in ('native_compiler_experiment', 'native_host_experiment'))) and p.get('performance_tools'),
                 'independent raw-L1I record requires an exact reviewed runtime with official tools')
+    if 'official_api_frame' in p:
+        api = module('source_pinned_official_api_frame', HERE / 'official_api_frame.py')
+        p['_official_api_frame'] = api.validate(p, pinned)
     if 'performance_tools' in p:
         tools = p['performance_tools']
         require(set(tools) == {'cpu_helper', 'scheduler_helper'}, 'performance tools fields differ')
@@ -268,6 +271,9 @@ def proof(path, digest):
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
                                 R / 'scripts/dev/android-game-walk-to.py']}
+    if p.get('official_api_frame'):
+        p['controller_sources'][str(HERE / 'official_api_frame.py')] = sha(HERE / 'official_api_frame.py')
+        p['controller_sources'][p['_official_api_frame']['existing_controller']['path']] = p['_official_api_frame']['existing_controller']['sha256']
     if p.get('official_cpu_aa'):
         p['controller_sources'][str(HERE / 'official_cpu_aa.py')] = sha(HERE / 'official_cpu_aa.py')
     p['_execution_phases'] = p['phases']
@@ -342,6 +348,7 @@ def phase_game(dev, out, phase, p, token):
     own = None
     ambiguous = False
     launcher = None
+    api_frame = None
 
     def pid():
         return dev.adb('shell', 'pidof ' + PKG + ' || true')
@@ -360,6 +367,11 @@ def phase_game(dev, out, phase, p, token):
         return now
 
     try:
+        if p.get('official_api_frame'):
+            api = module('source_pinned_official_api_frame_run', HERE / 'official_api_frame.py')
+            api_frame = api.Capture(dev, out, p, token, pid, save)
+            d['official_api_frame_report'] = str(api_frame.report)
+            api_frame.configure()
         with (out / 'launch.log').open('w') as f:
             launcher = subprocess.Popen(command, stdout=f, stderr=subprocess.STDOUT, cwd=R)
             deadline = time.monotonic() + 120  # A bounded tool observation, not a profiler.
@@ -398,6 +410,9 @@ def phase_game(dev, out, phase, p, token):
         else:
             m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
+        if api_frame is not None:
+            api_frame.trigger(own)
+            current = read_state(dev, out, 'after-api-frame')
         if p.get('official_gpu_tools') and p.get('_official_gpu_disabled'):
             d['gpu_validity'] = False
             d['official_gpu_complete'] = False
@@ -552,37 +567,46 @@ def phase_game(dev, out, phase, p, token):
             d['scope'] = p['_asset_validation']['scope']
         save()
     finally:
-        if launcher is not None and launcher.poll() is None:
-            launcher.terminate()
-            launcher.wait(timeout=15)
-        for leaf, args in [('native.log', None), ('crash-logcat.txt', ['logcat', '-b', 'crash', '-d', '-v', 'threadtime'])]:
-            try:
-                (out / leaf).write_text(dev.adb(*args) if args else dev.app('cat', 'files/runtime/native.log'))
-            except Exception as e:
-                d.setdefault('collection_errors', []).append(repr(e))
-        for shot in d.get('screenshots', []):
-            try:
-                m.screenshot_pull_remove(dev, shot, report, d)
-            except Exception as e:
-                # A failed host pull must not bypass the original save/stop
-                # below. Preserve its path/hash for explicit later cleanup.
-                d.setdefault('screenshot_collection_errors', []).append(repr(e))
-                save()
-        now = pid()
-        if now:
-            require(not ambiguous and own and now == own, 'unknown/replacement PID; preserve transaction')
-            cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
-                   '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
-            with (out / 'fresh-save.log').open('w') as f:
-                subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
-            fresh = read(out / 'fresh-save.json')
-            require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
-                    and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
-            dev.adb('shell', 'am', 'force-stop', PKG)
-            require(not pid(), 'owned game process still alive')
-            d['fresh_save_then_stopped'] = True
-        else:
-            d['already_exited_no_save_restart'] = True
+        try:
+            if launcher is not None and launcher.poll() is None:
+                launcher.terminate()
+                launcher.wait(timeout=15)
+            for leaf, args in [('native.log', None), ('crash-logcat.txt', ['logcat', '-b', 'crash', '-d', '-v', 'threadtime'])]:
+                try:
+                    (out / leaf).write_text(dev.adb(*args) if args else dev.app('cat', 'files/runtime/native.log'))
+                except Exception as e:
+                    d.setdefault('collection_errors', []).append(repr(e))
+            for shot in d.get('screenshots', []):
+                try:
+                    m.screenshot_pull_remove(dev, shot, report, d)
+                except Exception as e:
+                    # A failed host pull must not bypass the original save/stop
+                    # below. Preserve its path/hash for explicit later cleanup.
+                    d.setdefault('screenshot_collection_errors', []).append(repr(e))
+                    save()
+            now = pid()
+            if now:
+                require(not ambiguous and own and now == own, 'unknown/replacement PID; preserve transaction')
+                cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
+                       '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
+                with (out / 'fresh-save.log').open('w') as f:
+                    subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
+                fresh = read(out / 'fresh-save.json')
+                require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
+                        and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
+                dev.adb('shell', 'am', 'force-stop', PKG)
+                require(not pid(), 'owned game process still alive')
+                d['fresh_save_then_stopped'] = True
+            else:
+                d['already_exited_no_save_restart'] = True
+            save()
+        finally:
+            if api_frame is not None:
+                api_frame.restore()
+    if api_frame is not None:
+        api_frame.export_after_stop()
+        d['official_api_frame_complete'] = True
+        d['scope'] = p['_official_api_frame']['scope']
         save()
     return d
 
@@ -671,6 +695,9 @@ def main():
         plan['native_host_experiment'] = {**p['native_host_experiment'],
             'game_logic_unchanged': True, 'compiler_policy': 'original179 O3 / no LTO',
             'root_review': p['native_candidate_validation']['root_review']}
+    if p.get('official_api_frame'):
+        plan.update(official_api_frame=p['_official_api_frame'], profiling=False,
+                    scope=p['_official_api_frame']['scope'])
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -713,7 +740,7 @@ def main():
             p['_operator_stop_requested'] = True
         signal.signal(signal.SIGTERM, request_stop)
         signal.signal(signal.SIGINT, request_stop)
-    if p.get('official_cpu_aa'):
+    if p.get('official_cpu_aa') or p.get('official_api_frame'):
         def cancel_AA(signum, frame):
             raise KeyboardInterrupt('A/A cancelled; close owned capture before original save2/CAS')
         signal.signal(signal.SIGTERM, cancel_AA)
@@ -794,7 +821,9 @@ def main():
                 require(phase_result.get('sustained_play', {}).get('continuous_pass') is True,
                         '30min sustained route did not complete')
         owner.unlink()
-        d['stage'] = ('qualified-native-ASTC6-original-game-resource-validation-complete'
+        d['stage'] = ('official-Q735-f830-one-API-frame-structure-complete-not-replay'
+                      if p.get('official_api_frame') else
+                      'qualified-native-ASTC6-original-game-resource-validation-complete'
                       if p.get('_asset_validation') else
                       'native-original-game-short-candidate-validation-complete'
                       if p.get('native_candidate_validation') else
