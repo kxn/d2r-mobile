@@ -866,6 +866,13 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_POOL_PUBLICATION_FIXTURE")) {pool_publication_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-publication\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_BINDING_MASK_FIXTURE")) {shader_pool_ranges_test();pool_binding_mask_gpu_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-binding-mask\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_FLAGS_FIXTURE")) {pool_flags_test();printf("{\"test\":\"pool-flags\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#ifndef DM_ANDROID_APP
+  if(getenv("DM_PLANNED_FORWARD_FIXTURE")&&!getenv("DM_PLANNED_FORWARD_GPU_ONLY")) {
+    mtl_init();CALL(nvnQueueFinish,&queue);
+    extern unsigned vk_pass_test_forward_reuse(void);
+    checks+=vk_pass_test_forward_reuse();
+  }
+#endif
   ds_plane_store_test();
   if(getenv("DM_DS_PLANE_STORE_FIXTURE")) {CHECK(vk_validation_error_count()==0);printf("{\"test\":\"ds-plane-store\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_PIXEL_LOCAL_RENDER_FIXTURE"))return pixel_local_render_test();
@@ -1399,6 +1406,12 @@ int dm_vulkan_test_main(void) {
       uint8_t *p = pixels + (y * 16 + x) * 4;
       CHECK(p[0] == x * 17 && p[1] == y * 17 && p[2] == 64 && p[3] == 255);
     }
+#ifndef DM_ANDROID_APP
+  if(getenv("DM_PLANNED_FORWARD_FIXTURE")) {
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"planned-forward-reuse\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   // 重复注册不能泄漏；替换过滤/边界状态后检查真实采样，旧对象延迟回收。
   // Re-registration must not leak. Verify changed sampling on the GPU while
   // retaining replaced samplers through the original snapshot grace period.
