@@ -122,6 +122,8 @@ def proof(path, digest):
             'explicit input SHA256 required')
     require(sha(path) == digest, 'input manifest changed')
     p = read(path)
+    require('native_compiler_experiment' not in p or 'native_candidate_validation' in p,
+            'compiler experiment must pass the reviewed candidate gate')
     require(p['schema'] == 1 and p['serial'] == '10CG570J59001U1', 'Q735 scope')
     p['pool_window_bytes'] = p.get('pool_window_bytes', 16777216)
     require(type(p['pool_window_bytes']) is int and
@@ -200,10 +202,11 @@ def proof(path, digest):
         require(p['official_memory_map'] == {'tool': '/system/bin/showmap', 'format': 'json'},
                 'only the existing system showmap JSON memory snapshot is allowed')
     if 'official_l1i_record' in p:
-        require(p['official_l1i_record'] is True and p['runtime_commit'] in
+        require(p['official_l1i_record'] is True and (p['runtime_commit'] in
                 ('53c7d26628142a383c9c5f8d39a3edc23a1674c3',
                  'd14808f591b0de60c241340c3f5c5df708f4e36b',
-                 '179c82dfa412153b6564974e29fc35036e0b3507') and p.get('performance_tools'),
+                 '179c82dfa412153b6564974e29fc35036e0b3507') or
+                 'native_compiler_experiment' in p) and p.get('performance_tools'),
                 'independent raw-L1I record requires an exact reviewed runtime with official tools')
     if 'performance_tools' in p:
         tools = p['performance_tools']
@@ -261,9 +264,10 @@ def proof(path, digest):
             [HERE / 'sustained_play.py', HERE / 'capture-sustained-scheduler.py']})
         # Keep both compositions authenticated above; execute only native.
         p['_execution_phases'] = [p['phases'][1]]
+    compiler_runtime = None
     if 'native_candidate_validation' in p:
         candidate = module('source_pinned_native_candidate_gate', HERE / 'candidate_gate.py')
-        candidate.validate(p, pinned, read, require)
+        compiler_runtime = candidate.validate(p, pinned, read, require)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
     if p['phases'][1]['composition']['sha256'] in ('8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3',
@@ -271,7 +275,7 @@ def proof(path, digest):
         require('qualified_native_asset_validation' in p, 'mixed32 assets require explicit bounded resource qualification')
     if 'qualified_native_asset_validation' in p:
         asset = module('source_pinned_qualified_native_asset_gate', HERE / 'qualified_asset_gate.py')
-        p['_asset_validation'] = asset.validate(p, pinned, read, require)
+        p['_asset_validation'] = asset.validate(p, pinned, read, require, compiler_runtime=compiler_runtime)
         p['controller_sources'][str(HERE / 'qualified_asset_gate.py')] = sha(HERE / 'qualified_asset_gate.py')
     return p
 
@@ -608,6 +612,10 @@ def main():
             'full2838_assets_independently_qualified': True, 'single_component_CPU_AB': False,
             'scope': 'Combined runtime plus full2838 resources; prior d148 full-resource window is a qualified comparison, not isolated component benefit'}
         plan['scope'] += '; combined CPU179c82d; independent additional raw-L1I window retained; no individual component benefit claim'
+    if p.get('native_compiler_experiment'):
+        plan['native_compiler_experiment'] = {**p['native_compiler_experiment'],
+            'runtime_source_semantics_changed': False, 'compiler_only_comparison': True,
+            'root_review': p['native_candidate_validation']['root_review']}
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))

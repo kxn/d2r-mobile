@@ -193,7 +193,38 @@ POOL_SOURCE='cc87e79cbe7cf5573980ab6d8d5a902add232c82cbf3987a478290b2f3acba63'
 POOL_ASSETS='c10b5a4977d46fc3c946c739f344dfc5167f52a7f6d15f494de303ad12bf5713'
 
 
+def reviewed_artifacts(p, review, pinned, read, require):
+    """Existing canonical/raw identities, APP closure and default runtime flags."""
+    for key in ('canonical', 'raw'):
+        actual=review[key+'_ready']
+        require(actual['sha256']==p[key]['sha256'] and str(pinned(actual))==str(pinned(p[key])),
+                'canonical/raw differ from root-reviewed records')
+    canonical=read(pinned(p['canonical']));raw=read(pinned(p['raw']))
+    require(canonical['commit']==raw['source_commit']==p['runtime_commit']
+            and review['APK']==canonical['canonical_APK']['archive']
+            and review['host_ELF_SHA256']==canonical['canonical_native_library_sha256']['libdmhost_android.so']
+            and review['host_ELF_BuildID']==canonical['canonical_host_ELF_build_id']
+            and len(canonical['canonical_native_library_sha256'])==6
+            and len(raw['28_deployment_file_hashes'])==28 and len(raw['raw_original_inputs'])==3
+            and raw['revision_provenance_fresh'] is True, 'reviewed APK/raw provenance differs')
+    flags=canonical['effective_build']
+    source=canonical['source_only_candidate']
+    require(flags['cold_phase_compile_reference'] is False and flags['cold_phase_default_outline'] is True
+            and flags['pool_pin_compile_reference'] is False and flags['pool_pin_default_borrow'] is True
+            and 'vk_test_pool_operation_pin_counts' in canonical['new_APP_fixture_exclusion']['symbols_absent']
+            and review['source_ready']['sha256']==source['sha256']
+            and str(pinned(review['source_ready']))==str(pinned(source))
+            and pinned(source).stat().st_size==source['bytes'], 'effective flags/APP closure/sourcechain differs')
+    require(review['actual_APP_preprocessed_units']==6, 'six actual APP closures required')
+    for key in ('raw28_hashes_verified','six_APK_libraries_verified','new_fixture_symbols_absent_APP','compile_reference_OFF'):
+        require(review[key] is True,'root closure absent '+key)
+    pinned(review['APK'])
+    return canonical,raw
+
+
 def validate(p,pinned,read,require):
+    if 'native_compiler_experiment' in p:
+        return validate_compiler(p,pinned,read,require)
     if p['runtime_commit'] != POOL_RUNTIME:
         return validate_store(p,pinned,read,require)
     import copy
@@ -216,33 +247,11 @@ def validate(p,pinned,read,require):
     require(p['canonical']['sha256']==POOL_CANONICAL and p['raw']['sha256']==POOL_RAW
             and review['canonical_ready']==p['canonical'] and review['raw_ready']==p['raw'],
             'pool combined reviewed canonical/raw differs')
-    canonical=read(pinned(p['canonical']));raw=read(pinned(p['raw']))
-    require(canonical['commit']==raw['source_commit']==POOL_RUNTIME
-            and review['APK']==canonical['canonical_APK']['archive']
-            and review['host_ELF_SHA256']==canonical['canonical_native_library_sha256']['libdmhost_android.so']
-            and review['host_ELF_BuildID']==canonical['canonical_host_ELF_build_id']
-            and len(canonical['canonical_native_library_sha256'])==6
-            and len(raw['28_deployment_file_hashes'])==28
-            and len(raw['raw_original_inputs'])==3
-            and raw['all_23_module_rule_artifact_bytes_equal_53c'] is True
-            and raw['executables_equal_53c'] is True and raw['revision_provenance_fresh'] is True,
-            'pool combined actual APK/raw provenance differs')
-    flags=canonical['effective_build']
-    require(flags['cold_phase_compile_reference'] is False
-            and flags['cold_phase_default_outline'] is True
-            and flags['pool_pin_compile_reference'] is False
-            and flags['pool_pin_default_borrow'] is True
-            and 'vk_test_pool_operation_pin_counts' in canonical['new_APP_fixture_exclusion']['symbols_absent']
-            and canonical['source_only_candidate']['sha256']==POOL_SOURCE
-            and review['source_ready']['sha256']==POOL_SOURCE
-            and str(pinned(review['source_ready']))==str(pinned(canonical['source_only_candidate']))
-            and pinned(canonical['source_only_candidate']).stat().st_size==canonical['source_only_candidate']['bytes'],
-            'pool combined effective flags/fixture APP closure/sourcechain differs')
-    require(review['actual_APP_preprocessed_units']==6, 'pool combined six actual APP closures required')
-    for key in ('raw28_hashes_verified','six_APK_libraries_verified','new_fixture_symbols_absent_APP',
-                'compile_reference_OFF'):
-        require(review[key] is True,'pool combined root closure absent '+key)
-    pinned(review['source_ready']);pinned(review['APK'])
+    canonical,raw=reviewed_artifacts(p,review,pinned,read,require)
+    require(raw['all_23_module_rule_artifact_bytes_equal_53c'] is True
+            and raw['executables_equal_53c'] is True
+            and canonical['source_only_candidate']['sha256']==POOL_SOURCE,
+            'pool combined raw compatibility/source differs')
     require(len(review['component_source_reviews'])==2, 'pool combined component root reviews required')
     for row in review['component_source_reviews']:pinned(row)
     full=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/native-qualified-astc6-full-game-d148-root-actual-review.json',
@@ -262,3 +271,72 @@ def validate(p,pinned,read,require):
     control['runtime_commit']=STORE_RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
     control['native_candidate_validation']['root_review']=old_root
     validate_store(control,pinned,read,require)
+
+
+# Fixed, already game-qualified baseline; compiler experiments do not replay the
+# historical 8480/959 surrogate runtime chain or relabel those runs.
+POOL_ACTUAL={'path':'/home/dl/d2r-mobile/.local/logs/native-cpu-pool-pin-coherent-179-full2838-root-actual-review.json',
+             'sha256':'24f3acbe1ca3899592af629d6ca04324de7230f645f3dbc6246db47f0b7a37ff'}
+THIN_COMPILE=['-flto=thin']
+THIN_LINK=['-flto=thin','-O3','-fuse-ld=lld','-Wl,--thinlto-jobs=2']
+
+
+def validate_compiler(p,pinned,read,require):
+    """Only a root-reviewed ThinLTO rebuild of 179, with the same full2838 assets.
+
+    The caller authenticates the complete inputs SHA, including root_review;
+    source equivalence is the root's independent diff finding, not self-approval.
+    """
+    require(p['native_compiler_experiment']=={'strategy':'thinlto','base_runtime':POOL_RUNTIME}
+            and set(p['native_candidate_validation'])=={'root_review'}
+            and p['runtime_commit']!=POOL_RUNTIME, 'fixed179 ThinLTO compiler experiment only')
+    require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
+            and p.get('official_l1i_record') is True and p.get('performance_tools')
+            and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
+            'compiler experiment requires original f830/1MiB/full2838 and official tools')
+    review=read(pinned(p['native_candidate_validation']['root_review']))
+    require(review['status']=='ROOT_REVIEWED_HOST_THINLTO_CANONICAL_AND_FRESH_RAW28'
+            and review['runtime']==p['runtime_commit'] and review['base']==POOL_RUNTIME
+            and review['tool_ready'] is True and review['actual_device_evidence'] is False
+            and review['compiler_only_changes'] is True and review['runtime_C_CPP_source_equal_base'] is True,
+            'independently reviewed compiler-only source diff required')
+    canonical,raw=reviewed_artifacts(p,review,pinned,read,require)
+    source=read(pinned(review['source_ready']))
+    require(source['commit']==p['runtime_commit'] and source['base']==POOL_RUNTIME,
+            'compiler source-ready revision/base differs')
+    base_review=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/cpu-pool-pin-coherent-179c82d-root-canonical-raw-review.json',
+                            'sha256':POOL_REVIEW}))
+    base=read(pinned(base_review['canonical_ready']));base_raw=read(pinned(base_review['raw_ready']))
+    require(base_review['canonical_ready']['sha256']==POOL_CANONICAL and base_review['raw_ready']['sha256']==POOL_RAW
+            and raw['raw_original_inputs']==base_raw['raw_original_inputs'], 'original NSO inputs differ from179')
+    stable={k:v for k,v in base_raw['28_deployment_file_hashes'].items()
+            if not k.endswith('.provenance.json') and k not in ('build_src.sha256','rewrite-manifest.json')}
+    require(len(stable)==23 and all(raw['28_deployment_file_hashes'].get(k)==v for k,v in stable.items()),
+            'compiler experiment changed rewritten modules/rules')
+    for kind in ('symbols_absent','literals_absent'):
+        require(set(base['new_APP_fixture_exclusion'][kind])<=set(canonical['new_APP_fixture_exclusion'][kind]),
+                'compiler experiment lost APP fixture exclusions')
+    require(len(canonical['new_APP_fixture_exclusion']['actual_preprocessed_closure'])==6,
+            'compiler experiment requires six actual APP units')
+    flags=canonical['effective_build'];manifest=read(pinned(canonical['canonical_build_manifest']))
+    for key in ('tlsdesc','shared_pools_compiled_default_OFF','shared_import_windows_compiled',
+                'native_resources_compiled','opt_level','NDK','API','ABI','jobs'):
+        require(flags[key]==base['effective_build'][key], 'compiler experiment changed runtime build option '+key)
+    require(flags['host_compiler_strategy']=='thinlto' and flags['thinlto'] is True
+            and flags['thinlto_backend_jobs']==2 and flags['thinlto_compile_options']==THIN_COMPILE
+            and flags['thinlto_link_options']==THIN_LINK
+            and manifest['source_revision']==p['runtime_commit']
+            and manifest['native_library_sha256']==canonical['canonical_native_library_sha256']
+            and manifest['apk_sha256']==canonical['canonical_APK']['archive']['sha256']
+            and manifest['host_opt_level']=='3' and manifest['host_thinlto'] is True
+            and manifest['host_thinlto_backend_jobs']==2
+            and manifest['host_extra_compile_options']==THIN_COMPILE and manifest['host_extra_link_options']==THIN_LINK,
+            'canonical ThinLTO effective manifest/flags differ')
+    actual=read(pinned(POOL_ACTUAL))
+    require(actual['runtime']==POOL_RUNTIME and actual['canonical_raw_source_review']['sha256']==POOL_REVIEW
+            and all(actual[k] is True for k in ('game_modules_executed','original_three_routes_complete',
+                'fresh_save2_then_stopped','original_restored','cleanup_complete','visual_root_actually_viewed_after'))
+            and actual['cleanup_errors']==[], 'actual179 full2838 game/restore prerequisite incomplete')
+    for key in ('original_report','actual_output_archive_and_original_path_map','phase','save'):pinned(actual[key])
+    # Only this successful gate can extend the otherwise exact runtime asset gate.
+    return p['runtime_commit']
