@@ -32,7 +32,7 @@ def main():
     args.output = args.output.resolve()
     meta = json.loads((args.capture / 'official-cpu-capture.json').read_text())
     assert meta['complete'] and len(meta['AA_windows']) == 3
-    assert meta['AA_DWARF_bytes'] == 65528 and meta['AA_keep_failed_debug_info']
+    assert meta['AA_DWARF_bytes'] == 49152 and meta['AA_keep_failed_debug_info']
     args.output.mkdir(exist_ok=False)
     (args.output / 'binary_cache').symlink_to(args.binary_cache.resolve(), target_is_directory=True)
     commands, windows = [], []

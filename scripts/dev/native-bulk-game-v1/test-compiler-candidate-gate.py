@@ -67,7 +67,7 @@ class Compiler(unittest.TestCase):
     def test_AA_uses_original_artifacts_without_independent_L1I_window(self):
         self.p.pop('official_l1i_record')
         self.p['official_cpu_aa'] = {'repetitions': 3, 'record_seconds': 30,
-            'sample_frequency_Hz': 99, 'DWARF_bytes': 65528, 'keep_failed_debug_info': True}
+            'sample_frequency_Hz': 99, 'DWARF_bytes': 49152, 'keep_failed_debug_info': True}
         self.assertEqual(self.invoke(), self.runtime)
 
     def test_root_diff_and_closure_required(self):

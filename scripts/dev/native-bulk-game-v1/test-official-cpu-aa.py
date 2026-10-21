@@ -41,6 +41,7 @@ class Flow(unittest.TestCase):
                         self.path = Path(argv[argv.index('--output') + 1])
                     else:
                         events.append('record-start')
+                        assert 'exec 3>&1' not in argv[-1], 'No extra inherited fd across Android exec'
                         words = shlex.split(shlex.split(argv[-1])[-1])
                         self.remote = words[words.index('-o') + 1]
                         tools[self.remote] = self
@@ -120,7 +121,7 @@ class Flow(unittest.TestCase):
                  patch.object(aa, 'started', ready):
                 try:
                     aa.run(folder=root, base=['adb', '-s', 'SERIAL'], package='owned.app', pid='12345',
-                           stack=65528, phase=phase, endpoint=lambda name: copy.deepcopy(sample),
+                           stack=49152, phase=phase, endpoint=lambda name: copy.deepcopy(sample),
                            app=app, ad=ad, exact=lambda: None, snapshot=lambda name: events.append(name),
                            save=save, env={}, scheduler=D / 'scheduler-fixture.py')
                     self.assertIsNone(fault)
@@ -140,7 +141,8 @@ class Flow(unittest.TestCase):
                 self.assertEqual(len(set(tools)), 3)
                 for ordinal, row in enumerate(phase['AA_windows'], 1):
                     self.assertIn('--keep-failed-unwinding-debug-info', row['command'])
-                    self.assertIn('dwarf,65528', row['command'])
+                    self.assertIn('dwarf,49152', row['command'])
+                    self.assertEqual(row['command'][row['command'].index('--start_profiling_fd') + 1], '1')
                     self.assertTrue((root / f'AA-record-{ordinal}.metadata.json').is_file())
                     self.assertTrue(row['capture_complete'])
 
@@ -156,6 +158,17 @@ class Flow(unittest.TestCase):
         self.assertIn(b'STARTED', aa.started(process, io.BytesIO()))
         self.assertEqual(process.wait(timeout=5), 0)
         process.stdout.close()
+
+    def test_actual_stdout_ready_then_close_still_captures_stderr(self):
+        # Mirrors the official readyfd1 close: fd2 remains the merged console.
+        code = 'import os;os.write(1,b"STARTED");os.close(1);os.write(2,b"after-ready-stderr")'
+        process = subprocess.Popen(['sh', '-c', 'exec ' + shlex.join(['python3', '-c', code])],
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        console = io.BytesIO()
+        aa.started(process, console)
+        tail, _ = process.communicate(timeout=5)
+        self.assertIn(b'after-ready-stderr', console.getvalue() + tail)
+        self.assertEqual(process.returncode, 0)
 
     def test_actual_eof_before_ready_refused(self):
         process = subprocess.Popen(['python3', '-c', 'pass'], stdout=subprocess.PIPE)
@@ -181,7 +194,7 @@ class Flow(unittest.TestCase):
                     ast.unparse(n.test) == "'official_cpu_aa' in p")
         code = compile(ast.Module(body=[node], type_ignores=[]), '<actual-AA-mode>', 'exec')
         good = {'official_cpu_aa': {'repetitions': 3, 'record_seconds': 30, 'sample_frequency_Hz': 99,
-                                  'DWARF_bytes': 65528, 'keep_failed_debug_info': True},
+                                  'DWARF_bytes': 49152, 'keep_failed_debug_info': True},
                 'performance_tools': {'source': True}, 'native_host_experiment': {'reviewed': True}}
         require = lambda v, text: self.assertTrue(v, text)
         exec(code, {'p': good, 'require': require})

@@ -40,12 +40,12 @@ def bracket(first, last):
 
 def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
         snapshot, save, env, scheduler):
-    assert stack == 65528
+    assert stack == 49152
     phase.update(scope='Same-binary same-PID A/A: three official30s cpu-clock:u99Hz records; '
                        'each contains an intended original8s Perfetto window, plus Perfetto-only bookends',
                  AA_record_seconds=30, AA_repetitions=3, AA_DWARF_bytes=stack,
                  AA_keep_failed_debug_info=True,
-                 AA_method_change='65528B stacks and official failed-unwind debug info; original8s16KiB record is not a strict A/A counterpart',
+                 AA_method_change='49152B stacks and official failed-unwind debug info; original8s16KiB record is not a strict A/A counterpart',
                  AA_windows=[], AA_overlap_accepted=False,
                  AA_overlap_scope='Pending offline verification: official sample MONOTONIC timestamps '
                                   'must be mapped using Perfetto clock_snapshot; live processes alone are insufficient')
@@ -110,7 +110,7 @@ def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
                        '--call-graph', 'dwarf,' + str(stack), '--post-unwind=yes',
                        '--no-callchain-joiner', '--keep-failed-unwinding-result',
                        '--keep-failed-unwinding-debug-info',
-                       '--start_profiling_fd', '3', '-o', remote]
+                       '--start_profiling_fd', '1', '-o', remote]
             row = {'ordinal': ordinal + 1, 'command': command, 'owned_PID': int(pid),
                    'duration_seconds_requested': 30, 'sample_frequency_Hz': 99,
                    'DWARF_bytes': stack, 'overlap_accepted': False}
@@ -121,9 +121,9 @@ def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
                 app('mkdir', '-p', 'files/runtime/profiles')
                 if prop != '0':
                     ad('shell', 'setprop', 'security.perf_harden', '0')
-                # Original owned PID-file pattern; fd3 is the official ready protocol.
+                # Original owned PID-file pattern; inherited stdout is the official ready fd.
                 import shlex
-                shell = 'echo $$ > ' + shlex.quote(remote_pid) + '; exec 3>&1; exec ' + shlex.join(command)
+                shell = 'echo $$ > ' + shlex.quote(remote_pid) + '; exec ' + shlex.join(command)
                 with (folder / (name + '-simpleperf-console.log')).open('wb') as log:
                     process = subprocess.Popen([*base, 'shell', shlex.join(
                         ['run-as', package, 'sh', '-c', shell])], stdout=subprocess.PIPE,

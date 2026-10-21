@@ -217,11 +217,11 @@ def proof(path, digest):
                 'existing official scheduler orchestration required')
     if 'official_cpu_aa' in p:
         require(p['official_cpu_aa'] == {'repetitions': 3, 'record_seconds': 30,
-                'sample_frequency_Hz': 99, 'DWARF_bytes': 65528, 'keep_failed_debug_info': True}
+                'sample_frequency_Hz': 99, 'DWARF_bytes': 49152, 'keep_failed_debug_info': True}
                 and p.get('performance_tools') and p.get('native_host_experiment')
                 and not any(p.get(k) for k in ('official_gpu_tools', 'official_l1i_record',
                     'sustained_play', 'counter_snapshot')),
-                'A/A requires original host qualification and fixed3x30s99Hz65528B/debug-info tools only')
+                'A/A requires original host qualification and fixed3x30s99Hz49152B/debug-info tools only')
     if 'official_gpu_tools' in p:
         gpu = p['official_gpu_tools']
         require(set(gpu) == {'helper', 'config', 'scheduler_helper'} and p.get('performance_tools'),
