@@ -24,7 +24,7 @@
 
 组合 UBSan policy 在原 HLE `nvnCommandBufferBindVertexAttribState(0,NULL)` 的零长度 memcpy nonnull 合同处中止（`hle_nvn.c:842`），初次失败原样保留。随后纳入上面的独立已审 HLE 保护，以完整 ASan+UBSan 重建并复测原 oracle；最终 source-ready 仅据真实新结果记录资格，不把原失败改为成功。
 
-尚缺 Android 实际构建/栈和真实游戏功能/CPU 对照。本次没有执行真实游戏模块，也不将软件 GPU oracle 当作 Android 原生游戏进展。
+以上记录源码阶段资格；当时尚未构建 Android 或执行真实游戏。后续主线组合版本的实际验证见文末，软件 GPU oracle 仍不能替代真机结果。
 
 
 ## 后继：把不可变范围证明留在准入（e0 保持冻结）
@@ -35,4 +35,16 @@
 
 可转移的证明：成功准入已精确解析此 `(address,size)`；row/key 与独立 pin 绑定同一 Pool/backing。Pool 删除先移出 registry/推进 epoch，然后等待全部 references 归零；ordinary migration 发布时只允许自己的唯一 reference；shared union 自持一个 reference 并等其他 references 释放。operation 的独立 pin 因而同时阻止对象释放和物理替换。单纯补充不相交窗口可推进 epoch，让旧表保守失效。`p->guest/size` 及已存在 backing 的 `begin/end/buffer` 不在有效 pin 期间原地修改；generation 仍逐次核对。故完整 key 的原范围与 offset 无须每次重算，不能类推为 ready、writer 或 stage 的稳定性。
 
-仍保留表行/owner 索引边界与 generation 检查；子范围、碰撞、registry 变化、operation 结束保持原回退。生命周期与 hazard 不改。新增构建校验每 operation 每普通 Buffer 一次，不称作罕见/零成本。单个 range 只消费一次时可能没有收益；没有实际使用到本表的 range 还要承担保存成本。后继仅宿主资格，不是主线或 Android 性能验收。
+仍保留表行/owner 索引边界与 generation 检查；子范围、碰撞、registry 变化、operation 结束保持原回退。生命周期与 hazard 不改。新增构建校验每 operation 每普通 Buffer 一次，不称作罕见/零成本。单个 range 只消费一次时可能没有收益；没有实际使用到本表的 range 还要承担保存成本。独立后继源码资格与下面的主线组合真机资格分开记录。
+
+## 主线组合 848f47c：Android 实际执行与 CPU 边界
+
+`848f47c` 合并了此后继、纯图像别名空洞证明和零数量绑定的 HLE 保护。完整原构建入口生成 Java/APK 与六个 SO，O3、原编译选项、16KiB 对齐不变；最终 APP 的热绘制栈仍为 6496B，测试 getter/消费计数未进入 APP。三个未加工 NSO 重新生成后，独立 verify-only 核验 28 项部署产物。
+
+Q735 使用 f830、native6217、1MiB 窗口、2750×1260 输出及固定 0.60 的 3D 比例。真实原游戏完成三段营地移动；两张截图未见明显黑块或几何错误，原生命周期确认两次存档提交，随后恢复原 D7 包与驱动并停机。这不是全部场景或长时间游玩的正确性证明。
+
+现有官方 Perfetto 的同一 Surface 窗口包含 232 个完整显示间隔：整个 NvN 线程实际 Running 为 26.079ms／间隔，replay 为 25.010ms／间隔；平均显示间隔 33.424ms。频率跟踪覆盖完整窗口，按 Running 加权约 1611MHz。CPU 预算仍明显超过 16.7ms，不能据此宣布解决帧率或发热。
+
+Simpleperf 的 stat 窗口包含 PSO 174→181、变体 31→33 的变化，之后 record／Perfetto 窗口稳定在 181／33。历史 98a 的 26.875ms 来自不同窗口，不能把差值当作此优化的净收益。新增的官方 `instructions:u` 事件实际有非零结果，但输出没有完整的 PMU 缩放覆盖率，不能保证所有计数器都在整个窗口持续计数。
+
+本机证据入口：`.local/logs/native-candidate-geometry-848-Q735-v1-root-functional-review.json`、`.local/logs/operation-buffer-main-848f47c-root-canonical-raw-review.json`、`.local/logs/native-candidate-geometry-848-Q735-v1-analysis/actual848-vs98a-frozen-ready-agent.json`。这些记录分别对应实际执行、构建来源和官方工具分析，均不把局部少算等同于已验证整帧提速。
