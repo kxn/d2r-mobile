@@ -86,7 +86,7 @@ static void image_page_demote(image *i) {
   replacement.decoded=1;replacement.bpp=4;replacement.compressed_page_array=2;
   image_allocate(&replacement);
   image_page_replace(i,&replacement,old);
-  for(unsigned level=0;level<i->levels;level++) {
+  for(unsigned level=0;level+1<i->levels;level++) {
     VkImageSubresourceLayers sub={i->aspect,level,0,i->layers};
     int width=mip(i->extent.width,level),height=mip(i->extent.height,level);
     VkImageBlit blit={.srcSubresource=sub,.dstSubresource=sub,
