@@ -79,7 +79,7 @@ static int walk(const uint8_t *p, unsigned depth) {
     // node before any store-index/replay consumer. A failed walk invalidates
     // the plan. Do not initialize those reverse outputs twice.
     o->op=p;
-    const uint8_t forward[4]={0,0,(uint8_t)h.op,0};
+    const uint8_t forward[4]={0,0,(uint8_t)h.op,1}; // Owned fault: stale nonzero counter marker.
     memcpy((uint8_t *)o+offsetof(planned_op,draw),forward,sizeof forward);
     // The flattened snapshot is immutable until replay retires. Retain the
     // already validated opcode instead of chasing its raw header in each
