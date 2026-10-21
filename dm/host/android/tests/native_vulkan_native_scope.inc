@@ -188,6 +188,16 @@ static void native_acquire_scope_gpu_test(void) {
     }
     NVNtextureView first=nr_view(0);mtl_reg_tex(71,(const tex_t *)&source,(const view_t *)&first);
     S=graphics_state;vk_pipeline_state_changed();vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    // A second real draw keeps the exact registered mip view. Its native
+    // physical recipe may avoid replacement preparation, never consumption:
+    // the existing FS pixels, previous writers and later CS/TRANSFER oracles
+    // below still check the actual imported image after both commands.
+    extern uint64_t vk_test_native_sampled_preflight_noops(void);
+    uint64_t noops=vk_test_native_sampled_preflight_noops();
+    vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+    CHECK(vk_test_native_sampled_preflight_noops()>noops);
+#endif
     if(!order || order>=3) {
       extern VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t,unsigned);
       // Unvisited mip1 must retain the acquire's real directed source. This
