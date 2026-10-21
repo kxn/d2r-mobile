@@ -384,3 +384,22 @@ CPU预检候选成功时省去完整binding iterator、plan重建和逐源resolv
 原Android入口构建、535入口/524隐藏fast符号、1333导出与09a9严格相同、原UI/签名/16KiB对齐以及原6+新增1个实际APP预处理闭包均已核验。三个原NSO重新加工并独立verify28，23项稳定模块/规则产物字节与09a9一致。根独立核对5,699项哈希；实际Android ELF确认新增64B逻辑元数据和48B条件变量，无新增GPU缓冲或线程。Q已进入真实游戏营地并开始原工具对照，尚未形成整轮CPU/FPS/内存或持续温度结论；Mali和A650不操作。
 
 证据：`.local/logs/cpu-source-completion-e2d24a7-source-ready-agent.json`、`cpu-source-completion-e2d24a7-root-canonical-raw-review.json`、`cpu-source-completion-e2d24a7-combined-tests/results.json`（后两项同位于`.local/logs/`）。实现备份分支为`codex/cpu-source-completion-combined-v1`，尚未合入稳定运行时。
+
+### e2d 与紧邻09a9实际对照：通知减负成立，预检没有整体下降
+
+两次真实游戏事务均终态0，原三段移动、save2、停止、原包与资源恢复完成。根实际查看两版前后四张营地图，未见明显缺失，并独立核实最终原APK哈希及PID为空。原工具6份30秒FP与10份8秒Perfetto全部保留，各自生成官方图；根复核327份输出和记录引用共427项哈希、10窗trace health为空、6窗官方时钟重叠成立。不再为这个候选重采基线。
+
+| 同口径结果 | e2d候选 | 新紧邻09a9对照 | 解释 |
+| --- | --- | --- | --- |
+| guest wait循环实际CPU/Surface（5窗） | 0.080–0.097ms | 0.299–0.352ms | 每个窗口均有局部CPU工作减少；这是guest等待循环，不是NvN/GPU关键路径 |
+| 等待内显式非IRQ唤醒（每原8秒窗口） | 253–307 | 2498–2708 | 无谓唤醒显著减少，仍保留必要最终通知；不是精确condvar返回次数 |
+| 整NvN Running/Surface（全部5窗） | 25.488/25.898/28.013/27.600/28.029ms | 27.065/28.034/27.788/27.239/28.102ms | 保留早窗不同频率/工作量，未证明稳定整线程提速 |
+| CPU源预检完整职责（各3窗用户态样本） | 5.161/5.591/5.548% | 4.792/4.846/4.378% | 没有表现下降，新增helper和内联finish证明均计入，不能声称省掉改前5%包络 |
+| 平均完整Surface间隔 | 约33.13–33.14ms | 约33.18–33.24ms | 仍约30FPS，不能称已到16.7ms |
+| 单次端点TOTAL PSS | 1,968,546KiB | 2,006,236KiB | 两个独立进程的端点差，不能据此宣称内存优化；两侧private image均344,166,400B |
+
+预检的进一步归属改变了实施顺序：候选采样源preflight枝仍占NvN的1.985/2.134/2.118%；其中71/90/80%的样本落在源码可证明为普通packaged源的backing、bucket/dirty与CPU-effect路径，而非可直接返回的native marker。`nvn_dirty_since`、逐图像状态及真实CPU源契约仍在；已有pending-effect零计数早退，不能重复提议加同类计数器。source resolve仍约1.63–1.67%。新空证明helper约0.13–0.17%，finish新增证明约0–0.13%，是实际新增工作，不按独立符号消失记成零。样本不能给出缓存命中率、失败次数或资格比例。
+
+保留通知修改的机制和局部实跑收益；空预检候选的正确性合同、实现及新增成本保留，不继续扩大到普通CPU源。下一轮将空预检从主要提速方向降级，回到真实绑定/消费的数据表示和跨层职责预算；当前约24%的binding子树依然含必要资源操作，不能承诺整段可删。当前没有稳定FPS、内存或持续温度改善结论，也没有6GB设备验收。Q已停，Mali仍暂停，A650不新增测试。
+
+证据：`.local/logs/cpu-source-completion-e2d24a7-analysis-v1/result.json`、`.local/logs/cpu-source-completion-e2d24a7-root-official-analysis-review.json`、`.local/logs/cpu-source-completion-e2d24a7-Q735-two-round-root-functional-review.json`。
