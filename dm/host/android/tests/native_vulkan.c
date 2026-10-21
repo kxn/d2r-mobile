@@ -785,6 +785,31 @@ int dm_vulkan_test_main(void) {
     CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"draw-logical-lookup\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
+  if(getenv("DM_BINDING_CONSUMER_FIXTURE")) {
+    extern unsigned vk_test_binding_consumer_edges(void);
+    extern void vk_test_binding_consumer_counts(uint64_t *,uint64_t *);
+    checks+=vk_test_binding_consumer_edges();uint8_t vertex[0x880]={0};
+    uint64_t compiled0,reference0,compiled,reference;vk_test_binding_consumer_counts(&compiled0,&reference0);
+    int mode=vk_binding_consumer_reference_mode();
+    // Existing Queue helpers need an owned command arena even on this early
+    // fixture entry. Keep all NVN submissions before direct host-only submits.
+    uint8_t *arena;CHECK(!posix_memalign((void **)&arena,65536,1<<20));
+    NVNmemoryPoolBuilder builder;NVNmemoryPool command_pool;
+    CALL(nvnMemoryPoolBuilderSetDefaults,&builder);CALL(nvnMemoryPoolBuilderSetDevice,&builder,&device);
+    CALL(nvnMemoryPoolBuilderSetStorage,&builder,arena,1<<20);
+    CALL(nvnMemoryPoolBuilderSetFlags,&builder,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    CHECK(CALL(nvnMemoryPoolInitialize,&command_pool,&builder));CHECK(CALL(nvnCommandBufferInitialize,&cmd,&device));
+    CALL(nvnCommandBufferAddCommandMemory,&cmd,&command_pool,0,1<<20);
+    descriptor_shader_hint_test(vertex);dynamic_uniform_test(vertex);
+    uint8_t controls[13][0x880];for(unsigned n=0;n<13;n++)memset(controls[n],n,sizeof controls[n]);
+    storage_offset_dependency_test(controls[5]);compute_texel_dependencies_test(controls[2]);
+    logical_preflight_test(controls[3],controls[4]);recipe_reentrant_test(controls[12],controls[4]);
+    texel_storage_test(vertex);texel_storage_bits_test(vertex);
+    CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&command_pool);free(arena);
+    vk_test_binding_consumer_counts(&compiled,&reference);CHECK(mode?reference>reference0:compiled>compiled0);
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"compiled-binding-consumer\",\"checks\":%u,\"reference\":%d,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks,mode);return 0;
+  }
   if(getenv("DM_DESCRIPTOR_SHADER_HINT_FIXTURE")) {
     uint8_t vertex[0x880]={0};descriptor_shader_hint_test(vertex);
     dynamic_uniform_test(vertex);CHECK(vk_validation_error_count()==0);

@@ -36,6 +36,7 @@ typedef struct vk_shader {
   uint32_t quad_readonly_sources;
   uint32_t storage_bias_mask;
   vk_binding *bindings;
+  struct vk_binding_consumer *binding_consumers; // final immutable schema; NULL keeps reference interpreter
   uint32_t image_read_count,storage_descriptor_count;
   int *image_read_slots;
   uint64_t image_binding_mask[2]; // final-schema indices for original image preflight
@@ -124,6 +125,8 @@ VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_
 VkDescriptorSet vk_shader_pixel_local_bindings(const vk_pixel_local_proof *proof,int dynamic,
     vk_uniform_offsets *offsets,const VkImageView views[VK_PIXEL_LOCAL_MAX_INPUTS],
     const VkImageLayout layouts[VK_PIXEL_LOCAL_MAX_INPUTS],const vk_texel_storage_selection *selection);
+void vk_binding_consumer_reference(int reference);
+int vk_binding_consumer_reference_mode(void);
 void vk_descriptor_template_reference(int reference);
 int vk_descriptor_template_reference_mode(void);
 void vk_descriptor_history_reference(int reference);

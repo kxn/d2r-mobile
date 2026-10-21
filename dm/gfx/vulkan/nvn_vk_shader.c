@@ -492,6 +492,166 @@ unsigned vk_test_shader_image_binding_indices(const vk_shader *s,unsigned *indic
   return n;
 }
 #endif
+// Compile the complete final binding schema once, as Metal's argument encoder
+// does for its immutable reflection. This stores no resource/dirty/ready fact:
+// every operation still consumes the current source through the original paths.
+// Direct state offsets are safe because S itself has process lifetime. Alternative
+// schemas must compile their own program rather than inherit a base program.
+enum { BIND_UNIFORM, BIND_STORAGE, BIND_IMAGE, BIND_PIXEL_LOCAL,
+       BIND_TEXEL_STORAGE, BIND_TEXEL, BIND_INVALID };
+enum { BIND_VALUE_BUFFER, BIND_VALUE_IMAGE, BIND_VALUE_TEXEL };
+// Upper opcode bits are immutable operation-specific parameters. Images use
+// storage/view/sampler/quad; storage buffers use writable; texels use storage
+// and writable. The low three bits select one ordinary switch operation.
+enum { BIND_OP_MASK=7,BIND_PARAM_STORAGE=16,BIND_PARAM_VIEW=32,
+       BIND_PARAM_SAMPLER=64,BIND_PARAM_QUAD=128 };
+struct vk_binding_consumer {
+  uint16_t source,aux; // state offset; sampler offset / constant bank / bias or input slot
+  uint8_t op,value,dynamic[2];
+};
+_Static_assert(sizeof(struct vk_binding_consumer)==8,"Immutable binding consumer cost");
+_Static_assert(sizeof(vk_state)<UINT16_MAX,"Binding consumer state offset width");
+static atomic_int binding_consumer_reference=-1;
+void vk_binding_consumer_reference(int reference) {atomic_store(&binding_consumer_reference,!!reference);}
+int vk_binding_consumer_reference_mode(void) {
+  int reference=atomic_load(&binding_consumer_reference);
+  if(reference<0) {
+    const char *setting=getenv("DM_VULKAN_BINDING_CONSUMER_REFERENCE");
+    if(setting && strcmp(setting,"0") && strcmp(setting,"1"))die("DM_VULKAN_BINDING_CONSUMER_REFERENCE expects 0 or 1");
+    reference=setting && !strcmp(setting,"1");atomic_store(&binding_consumer_reference,reference);
+  }
+  return reference;
+}
+static unsigned binding_consumer_op(int kind) {
+  if(kind==0 || kind==1)return BIND_UNIFORM;
+  if(kind==2 || kind==8)return BIND_STORAGE;
+  if(kind>=3 && kind<=6)return BIND_IMAGE;
+  if(kind==VK_BINDING_PIXEL_LOCAL)return BIND_PIXEL_LOCAL;
+  if(kind==VK_BINDING_TEXEL_STORAGE)return BIND_TEXEL_STORAGE;
+  if(kind==7 || kind==9)return BIND_TEXEL;
+  return BIND_INVALID;
+}
+static int binding_consumer_compile(const vk_shader *s,unsigned n,struct vk_binding_consumer *out) {
+  const vk_binding *b=&s->bindings[n];
+  struct vk_binding_consumer c={.source=UINT16_MAX,.aux=UINT16_MAX,.op=binding_consumer_op(b->kind)};
+  if(s->stage>=6 || b->count!=1 || c.op==BIND_INVALID)return 0;
+  const void *source=NULL,*sampler=NULL;
+  if(c.op==BIND_UNIFORM) {
+    if(b->kind==1 && (b->reg<0 || b->reg>=19))return 0;
+    c.aux=b->kind==0?UINT16_MAX:b->reg; // signed original constant bank
+    if(b->kind==1 && b->reg>=3)source=&S.ubo[s->stage][b->reg-3];
+  }
+  else if(c.op==BIND_STORAGE) {
+    if(b->reg<0 || b->reg>=16)return 0;
+    source=b->kind==8?(void *)&S.ubo[s->stage][b->reg]:(void *)&S.ssbo[s->stage][b->reg];
+  } else if(c.op==BIND_IMAGE || c.op==BIND_TEXEL) {
+    int limit=b->kind==4 || b->kind==9?32:128;
+    if(b->reg<0 || b->reg>=limit)return 0;
+    source=b->kind==4 || b->kind==9?(void *)&S.img[s->stage][b->reg]:
+      b->kind==5?(void *)&S.samp[s->stage][b->reg]:(void *)&S.tex[s->stage][b->reg];
+    if(b->kind==3 || b->kind==5) {
+      if(b->kind==3 && b->sampler>=0) {
+        if(b->sampler>=128)return 0;
+        sampler=&S.samp[s->stage][b->sampler];
+      } else sampler=source;
+    }
+  } else if(c.op==BIND_PIXEL_LOCAL && (b->sampler<0 || b->sampler>=VK_PIXEL_LOCAL_MAX_INPUTS))return 0;
+  if(source)c.source=(const uint8_t *)source-(const uint8_t *)&S;
+  if(sampler)c.aux=(const uint8_t *)sampler-(const uint8_t *)&S;
+  c.value=c.op==BIND_IMAGE || c.op==BIND_PIXEL_LOCAL?BIND_VALUE_IMAGE:
+      c.op==BIND_TEXEL?BIND_VALUE_TEXEL:BIND_VALUE_BUFFER;
+  c.dynamic[0]=s->dynamic_uniform_ordinals[0][n];c.dynamic[1]=s->dynamic_uniform_ordinals[1][n];
+  if(c.op==BIND_STORAGE) {
+    c.aux=b->reg+(b->kind==8?16:0); // original shader bias slot
+    if(b->flags&1)c.op|=BIND_PARAM_STORAGE;
+  } else if(c.op==BIND_IMAGE) {
+    if(b->kind==4)c.op|=BIND_PARAM_STORAGE;
+    if(b->kind!=5)c.op|=BIND_PARAM_VIEW;
+    if(b->kind==3 || b->kind==5)c.op|=BIND_PARAM_SAMPLER;
+    if(s->quad_readonly_sources && s->stage==1 && (b->kind==3 || b->kind==6) && b->type==3)c.op|=BIND_PARAM_QUAD;
+  } else if(c.op==BIND_PIXEL_LOCAL)c.aux=b->sampler;
+  else if(c.op==BIND_TEXEL) {
+    if(b->kind==9)c.op|=BIND_PARAM_STORAGE;
+    if(vk_binding_writable(b))c.op|=BIND_PARAM_VIEW;
+  }
+  *out=c;return 1;
+}
+static void shader_binding_consumers_build(vk_shader *s) {
+  // A shallow copied alternative does not own the base program.
+  s->binding_consumers=NULL;
+  if(!s->nb || s->nb>128 || !s->bindings)return;
+  struct vk_binding_consumer program[128];
+  for(unsigned n=0;n<s->nb;n++)if(!binding_consumer_compile(s,n,&program[n]))return;
+  s->binding_consumers=malloc(s->nb*sizeof *s->binding_consumers);
+  if(!s->binding_consumers)die("Vulkan binding consumer schema allocation");
+  memcpy(s->binding_consumers,program,s->nb*sizeof *program);
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t binding_consumer_test_compiled,binding_consumer_test_reference;
+void vk_test_binding_consumer_counts(uint64_t *compiled,uint64_t *reference) {
+  *compiled=binding_consumer_test_compiled;*reference=binding_consumer_test_reference;
+}
+unsigned vk_test_binding_consumer_edges(void) {
+  unsigned checks=0;
+#define CONSUMER_CHECK(x) do{if(!(x))die("Binding consumer edge line %d",__LINE__);checks++;}while(0)
+  vk_binding bindings[]={{.kind=0,.count=1},{.kind=1,.reg=0,.count=1},
+    {.kind=1,.reg=3,.count=1},{.kind=2,.reg=15,.count=1},
+    {.kind=8,.reg=0,.count=1},{.kind=3,.reg=127,.sampler=126,.count=1},
+    {.kind=3,.reg=126,.sampler=-1,.count=1},{.kind=4,.reg=31,.count=1},
+    {.kind=5,.reg=127,.count=1},{.kind=6,.reg=0,.count=1},
+    {.kind=7,.reg=127,.count=1},{.kind=9,.reg=31,.count=1},
+    {.kind=VK_BINDING_TEXEL_STORAGE,.reg=0,.count=1},
+    {.kind=VK_BINDING_PIXEL_LOCAL,.sampler=0,.count=1}};
+  vk_shader shader={.stage=1,.bindings=bindings,.nb=sizeof bindings/sizeof *bindings};
+  shader.dynamic_uniform_ordinals[0][2]=1;shader.dynamic_uniform_ordinals[1][2]=2;
+  shader_binding_consumers_build(&shader);CONSUMER_CHECK(shader.binding_consumers);
+  const struct vk_binding_consumer *c=shader.binding_consumers;
+  CONSUMER_CHECK(c[0].source==UINT16_MAX && c[1].source==UINT16_MAX);
+  CONSUMER_CHECK((uint8_t *)&S+c[2].source==(uint8_t *)&S.ubo[1][0]);
+  CONSUMER_CHECK(c[2].dynamic[0]==1 && c[2].dynamic[1]==2);
+  CONSUMER_CHECK((uint8_t *)&S+c[3].source==(uint8_t *)&S.ssbo[1][15]);
+  CONSUMER_CHECK((uint8_t *)&S+c[4].source==(uint8_t *)&S.ubo[1][0]);
+  CONSUMER_CHECK((uint8_t *)&S+c[5].source==(uint8_t *)&S.tex[1][127]);
+  CONSUMER_CHECK((uint8_t *)&S+c[5].aux==(uint8_t *)&S.samp[1][126]);
+  CONSUMER_CHECK(c[6].aux==c[6].source);
+  CONSUMER_CHECK((uint8_t *)&S+c[7].source==(uint8_t *)&S.img[1][31]);
+  CONSUMER_CHECK((uint8_t *)&S+c[8].source==(uint8_t *)&S.samp[1][127] && c[8].aux==c[8].source);
+  CONSUMER_CHECK(c[10].value==BIND_VALUE_TEXEL && c[12].value==BIND_VALUE_BUFFER && c[13].value==BIND_VALUE_IMAGE);
+  vk_binding parameter={.kind=2,.reg=3,.count=1,.flags=1};
+  vk_shader parameter_shader={.stage=1,.nb=1,.bindings=&parameter};
+  struct vk_binding_consumer parameter_consumer;
+  CONSUMER_CHECK(binding_consumer_compile(&parameter_shader,0,&parameter_consumer));
+  CONSUMER_CHECK((parameter_consumer.op&BIND_OP_MASK)==BIND_STORAGE && (parameter_consumer.op&BIND_PARAM_STORAGE));
+  parameter=(vk_binding){.kind=9,.reg=31,.count=1,.flags=4};
+  CONSUMER_CHECK(binding_consumer_compile(&parameter_shader,0,&parameter_consumer));
+  CONSUMER_CHECK((parameter_consumer.op&(BIND_PARAM_STORAGE|BIND_PARAM_VIEW))==(BIND_PARAM_STORAGE|BIND_PARAM_VIEW));
+  parameter=(vk_binding){.kind=6,.reg=3,.count=1,.type=3};parameter_shader.quad_readonly_sources=1;
+  CONSUMER_CHECK(binding_consumer_compile(&parameter_shader,0,&parameter_consumer));
+  CONSUMER_CHECK((parameter_consumer.op&(BIND_PARAM_VIEW|BIND_PARAM_QUAD))==(BIND_PARAM_VIEW|BIND_PARAM_QUAD));
+  // Shallow alternatives compile their own changed kind/source/ordinal schema.
+  vk_binding changed={.kind=9,.reg=3,.count=1};vk_shader alt=shader;alt.nb=1;alt.bindings=&changed;
+  shader_binding_consumers_build(&alt);CONSUMER_CHECK(alt.binding_consumers!=shader.binding_consumers);
+  CONSUMER_CHECK((uint8_t *)&S+alt.binding_consumers[0].source==(uint8_t *)&S.img[1][3]);
+  free(alt.binding_consumers);free(shader.binding_consumers);shader.binding_consumers=NULL;
+  struct vk_binding_consumer out;
+  int kinds[]={2,8,3,4,5,6,7,9};int limits[]={16,16,128,32,128,128,128,32};
+  shader.nb=1;shader.bindings=&changed;
+  for(unsigned n=0;n<8;n++)for(unsigned side=0;side<2;side++) {
+    changed=(vk_binding){.kind=kinds[n],.reg=side?limits[n]:-1,.count=1};
+    CONSUMER_CHECK(!binding_consumer_compile(&shader,0,&out));
+  }
+  changed=(vk_binding){.kind=3,.reg=0,.sampler=128,.count=1};CONSUMER_CHECK(!binding_consumer_compile(&shader,0,&out));
+  changed=(vk_binding){.kind=6,.reg=0,.count=2};CONSUMER_CHECK(!binding_consumer_compile(&shader,0,&out));
+  changed=(vk_binding){.kind=999,.count=1};CONSUMER_CHECK(!binding_consumer_compile(&shader,0,&out));
+  changed=(vk_binding){.kind=VK_BINDING_PIXEL_LOCAL,.sampler=VK_PIXEL_LOCAL_MAX_INPUTS,.count=1};CONSUMER_CHECK(!binding_consumer_compile(&shader,0,&out));
+  // A mixed valid/invalid program never publishes a partial compiled prefix.
+  vk_binding mixed[]={{.kind=6,.reg=0,.count=1},{.kind=4,.reg=32,.count=1}};
+  shader.nb=2;shader.bindings=mixed;shader_binding_consumers_build(&shader);CONSUMER_CHECK(!shader.binding_consumers);
+  shader.stage=6;shader.nb=1;CONSUMER_CHECK(!binding_consumer_compile(&shader,0,&out));
+#undef CONSUMER_CHECK
+  return checks;
+}
+#endif
 static void shader_descriptor_layouts(vk_shader *s) {
   // Base active-binding compaction and every texel/pixel alternative conversion
   // finish before this shared constructor. Never inherit a different schema's
@@ -562,6 +722,7 @@ static void shader_descriptor_layouts(vk_shader *s) {
     }
     s->dynamic_descriptors[variant]=s->dynamic_uniform_count[variant]?descriptor_layout_get(bindings,s->nb):s->descriptors;
   }
+  shader_binding_consumers_build(s);
   s->descriptor_templates[0]=descriptor_template_create(s,0);
   for(unsigned variant=0;variant<2;variant++)
     s->descriptor_templates[variant+1]=s->dynamic_uniform_count[variant]?descriptor_template_create(s,variant+1):s->descriptor_templates[0];
@@ -1408,22 +1569,33 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
   memset(bias_words,0,16*sizeof *bias_words);
   if(bias_stage>=2)memset(bias_words+16,0,16*sizeof *bias_words);
   descriptor_value values[128];
+  const struct vk_binding_consumer *program=vk_binding_consumer_reference_mode()?NULL:s->binding_consumers;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(program)binding_consumer_test_compiled+=s->nb;else binding_consumer_test_reference+=s->nb;
+#endif
+  VkShaderStageFlagBits consuming_stage=vk_stage(s->stage);
+  VkPipelineStageFlags producing_stage=producer_stage(s->stage);
   for (uint32_t n = 0; n < s->nb; n++) {
     const vk_binding *b = &s->bindings[n];
-    if (b->count != 1)
+    const struct vk_binding_consumer *consumer=program?program+n:NULL;
+    if (!consumer && b->count != 1)
       die("Vulkan descriptor arrays pending: %s binding %d", s->key,
           b->binding);
     VkDescriptorBufferInfo buffer = {0};
     VkBufferView texel = VK_NULL_HANDLE;
     VkDescriptorImageInfo image;
-    if (b->kind == 0 || b->kind == 1) {
+    unsigned op=consumer?consumer->op&BIND_OP_MASK:binding_consumer_op(b->kind);
+    switch(op) {
+    case BIND_UNIFORM: {
       vk_buffer *v = NULL;
       uint64_t offset = 0;
-      if (b->kind == 1 && b->reg >= 3 && b->reg < 19) {
-        const p_bind_buf *u = &S.ubo[s->stage][b->reg - 3];
-        if(s->stage<5) vk_buffer_shader_read(u->addr,u->size,producer_stage(s->stage));
+      const p_bind_buf *u=consumer?(consumer->source==UINT16_MAX?NULL:
+        (const p_bind_buf *)((const uint8_t *)&S+consumer->source)):
+        b->kind==1 && b->reg>=3 && b->reg<19?&S.ubo[s->stage][b->reg-3]:NULL;
+      if (u) {
+        if(s->stage<5) vk_buffer_shader_read(u->addr,u->size,producing_stage);
         if (u->addr && u->size &&
-            vk_pool_address_stage(u->addr,u->size,(void **)&v,&offset,producer_stage(s->stage)) &&
+            vk_pool_address_stage(u->addr,u->size,(void **)&v,&offset,producing_stage) &&
             !(offset % V.props.limits.minUniformBufferOffsetAlignment)) {
           // 原 Metal 路径直接引用池内常量；符合 Vulkan 对齐时同样直接绑定，保留
           // GPU 更新顺序。 Like original Metal, directly bind pool uniforms
@@ -1435,20 +1607,23 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
         }
       }
       if (!buffer.buffer) {
-        v = constant(s, b->kind == 0 ? -1 : b->reg,&offset);
+        v = constant(s, consumer?(int16_t)consumer->aux:b->kind == 0 ? -1 : b->reg,&offset);
         buffer.buffer = v->handle;
         buffer.offset = offset;
         buffer.range = 65536;
       }
-    } else if (b->kind == 2 || b->kind == 8) {
-      if (b->flags & 1)
-        current_operation.shader_buffer_writes |= producer_stage(s->stage);
-      if (b->reg < 0 || b->reg >= 16)
+      break;
+    }
+    case BIND_STORAGE: {
+      int writable=consumer?!!(consumer->op&BIND_PARAM_STORAGE):!!(b->flags&1);
+      if (writable)
+        current_operation.shader_buffer_writes |= producing_stage;
+      if (!consumer && (b->reg < 0 || b->reg >= 16))
         die("Vulkan storage slot %d", b->reg);
-      p_bind_buf *u =
+      p_bind_buf *u=consumer?(p_bind_buf *)((uint8_t *)&S+consumer->source):
           b->kind == 8 ? &S.ubo[s->stage][b->reg] : &S.ssbo[s->stage][b->reg];
-      if(s->stage<5 && !(b->flags&1))
-        vk_buffer_shader_read(u->addr,u->size,producer_stage(s->stage));
+      if(s->stage<5 && !writable)
+        vk_buffer_shader_read(u->addr,u->size,producing_stage);
       vk_buffer *v;
       uint64_t off;
       if (!u->addr || !u->size) {
@@ -1457,11 +1632,11 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
         off = 0;
         buffer.range = 65536;
       } else {
-        if (!vk_pool_address_stage(u->addr,u->size,(void **)&v,&off,producer_stage(s->stage)))
+        if (!vk_pool_address_stage(u->addr,u->size,(void **)&v,&off,producing_stage))
           die("Vulkan storage outside pool");
         buffer.range = u->size;
         uint64_t prefix=off%V.props.limits.minStorageBufferOffsetAlignment;
-        unsigned bias_slot=b->reg+(b->kind==8?16:0);
+        unsigned bias_slot=consumer?consumer->aux:b->reg+(b->kind==8?16:0);
         int biased=prefix&&!(off%4)&&(s->storage_bias_mask&(1u<<bias_slot))&&
           !binding_state->storage_bias_reference&&
           u->size<=V.props.limits.maxStorageBufferRange&&
@@ -1473,7 +1648,7 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
           current_operation.storage_bias_words[s->stage][bias_slot]=prefix/4;
           off-=prefix;buffer.range+=prefix;
           shader_recorded.storage_direct += 1;
-          if(b->flags&1) vk_buffer_writeback_stage(u->addr,u->size,producer_stage(s->stage));
+          if(writable) vk_buffer_writeback_stage(u->addr,u->size,producing_stage);
         } else if (prefix) {
           // NVN 接受的子缓冲偏移可能小于 Vulkan 对齐要求；经 GPU
           // 暂存与拷回保持命令顺序。 NVN sub-buffer offsets can be smaller than
@@ -1494,7 +1669,7 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
             // 写代号改变后重拷，可写绑定仍逐绘制拷回。 Reuse read-only
             // alignment copies across draws. GPU writes invalidate them;
             // writable bindings still copy back per draw.
-            if (!(b->flags & 1))
+            if (!writable)
               for (constant_copy *copy = binding_state->readonly_storage_copies[bucket]; copy;
                    copy = copy->next)
                 if (copy->address == u->addr && copy->size == u->size &&
@@ -1515,7 +1690,7 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
               vk_buffer_transfer_written();
               shader_recorded.storage_copy_ops += 1;
               shader_recorded.storage_copy_bytes += c.size;
-              if (!(b->flags & 1)) {
+              if (!writable) {
                 constant_copy *copy = calloc(1, sizeof *copy);
                 if (!copy)
                   die("Vulkan readonly storage cache allocation");
@@ -1535,70 +1710,90 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
             current_operation.storage_copies[index].writable = 0;
             current_operation.storage_copy_count++;
           }
-          if (b->flags & 1)
+          if (writable)
             current_operation.storage_copies[index].writable = 1;
           v = current_operation.storage_copies[index].aligned;
           off = 0;
-        } else if (b->flags & 1)
-          vk_buffer_writeback_stage(u->addr,u->size,producer_stage(s->stage));
+        } else if (writable)
+          vk_buffer_writeback_stage(u->addr,u->size,producing_stage);
       }
       buffer.buffer = v->handle;
       buffer.offset = off;
-    } else if (b->kind == 3 || b->kind == 4 || b->kind == 5 || b->kind == 6) {
+      break;
+    }
+    case BIND_IMAGE: {
       image=(VkDescriptorImageInfo){.imageLayout = VK_IMAGE_LAYOUT_GENERAL};
       // Image producers are owned by the image dependency batch. They do not
       // write guest buffer mirrors or invalidate cached buffer constants, and
       // must not force the buffer fallback's global post-draw barrier.
-      int limit = b->kind == 4 ? 32 : 128;
-      if (b->reg < 0 || b->reg >= limit)
+      int storage=consumer?!!(consumer->op&BIND_PARAM_STORAGE):b->kind==4;
+      int limit = storage ? 32 : 128;
+      if (!consumer && (b->reg < 0 || b->reg >= limit))
         die("Vulkan texture slot unknown");
-      uint64_t h = b->kind == 4   ? S.img[s->stage][b->reg]
+      uint64_t h = consumer?*(const uint64_t *)((const uint8_t *)&S+consumer->source):
+                   b->kind == 4   ? S.img[s->stage][b->reg]
                    : b->kind == 5 ? S.samp[s->stage][b->reg]
                                   : S.tex[s->stage][b->reg];
-      if (b->kind != 5) {
+      if (consumer?!!(consumer->op&BIND_PARAM_VIEW):b->kind!=5) {
         // Only plain 2D resources can belong to the bounded speculative
         // closure. Other original FS resources retain their existing views.
-        int quad_plain=s->quad_readonly_sources && s->stage==1 &&
+        int quad_plain=consumer?!!(consumer->op&BIND_PARAM_QUAD):s->quad_readonly_sources && s->stage==1 &&
             (b->kind==3 || b->kind==6) && b->type==3;
         image.imageView = quad_plain ?
-            vk_texture_view_binding_quad(h & 0xfffff,b->kind==4,vk_stage(s->stage),&image.imageLayout):
-            vk_texture_view_binding(h & 0xfffff,b->kind==4,vk_stage(s->stage),&image.imageLayout);
+            vk_texture_view_binding_quad(h & 0xfffff,storage,consuming_stage,&image.imageLayout):
+            vk_texture_view_binding(h & 0xfffff,storage,consuming_stage,&image.imageLayout);
       }
-      if (b->kind == 3 || b->kind == 5) {
-        int sid = b->kind == 3 && b->sampler >= 0
+      if (consumer?!!(consumer->op&BIND_PARAM_SAMPLER):b->kind==3 || b->kind==5) {
+        int sid = consumer?*(const uint64_t *)((const uint8_t *)&S+consumer->aux)>>20:
+                      b->kind == 3 && b->sampler >= 0
                       ? S.samp[s->stage][b->sampler] >> 20
                       : h >> 20;
         image.sampler = vk_sampler(sid);
       }
-    } else if (b->kind==VK_BINDING_PIXEL_LOCAL) {
-      if(!local_views || !local_layouts || b->sampler<0 || b->sampler>=VK_PIXEL_LOCAL_MAX_INPUTS || !local_views[b->sampler] ||
-         (local_layouts[b->sampler]!=VK_IMAGE_LAYOUT_GENERAL && local_layouts[b->sampler]!=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+      break;
+    }
+    case BIND_PIXEL_LOCAL: {
+      unsigned slot=consumer?consumer->aux:(unsigned)b->sampler;
+      if(!local_views || !local_layouts || slot>=VK_PIXEL_LOCAL_MAX_INPUTS || !local_views[slot] ||
+         (local_layouts[slot]!=VK_IMAGE_LAYOUT_GENERAL && local_layouts[slot]!=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
         die("Vulkan missing proved pixel-local input");
-      image=(VkDescriptorImageInfo){.imageView=local_views[b->sampler],.imageLayout=local_layouts[b->sampler]};
-    } else if (b->kind==VK_BINDING_TEXEL_STORAGE) {
+      image=(VkDescriptorImageInfo){.imageView=local_views[slot],.imageLayout=local_layouts[slot]};
+      break;
+    }
+    case BIND_TEXEL_STORAGE: {
       buffer=texel_storage_descriptor(s,b,selection);
-    } else if (b->kind == 7 || b->kind == 9) {
-      if (b->kind == 9 && vk_binding_writable(b))
-        current_operation.shader_buffer_writes |= producer_stage(s->stage);
-      if (b->reg < 0 || b->reg >= (b->kind == 9 ? 32 : 128))
+      break;
+    }
+    case BIND_TEXEL: {
+      int storage=consumer?!!(consumer->op&BIND_PARAM_STORAGE):b->kind==9;
+      int writable=consumer?!!(consumer->op&BIND_PARAM_VIEW):vk_binding_writable(b);
+      if (storage && writable)
+        current_operation.shader_buffer_writes |= producing_stage;
+      if (!consumer && (b->reg < 0 || b->reg >= (b->kind == 9 ? 32 : 128)))
         die("Vulkan texel buffer slot %d", b->reg);
-      uint64_t h =
+      uint64_t h =consumer?*(const uint64_t *)((const uint8_t *)&S+consumer->source):
           b->kind == 9 ? S.img[s->stage][b->reg] : S.tex[s->stage][b->reg];
-      texel = vk_texel_buffer(h & 0xfffff,b->kind==9,vk_binding_writable(b),producer_stage(s->stage));
-    } else
-      die("Vulkan binding pending: %s kind=%d", s->key, b->kind);
-    if (b->kind==0 || b->kind==1 || b->kind==2 || b->kind==8 || b->kind==VK_BINDING_TEXEL_STORAGE) {
-      if(dynamic && s->dynamic_uniform_ordinals[dynamic-1][n]) {
+      texel = vk_texel_buffer(h & 0xfffff,storage,writable,producing_stage);
+      break;
+    }
+    default: die("Vulkan binding pending: %s kind=%d", s->key, b->kind);
+    }
+    unsigned value_kind=consumer?consumer->value:
+      op==BIND_IMAGE || op==BIND_PIXEL_LOCAL?BIND_VALUE_IMAGE:
+      op==BIND_TEXEL?BIND_VALUE_TEXEL:BIND_VALUE_BUFFER;
+    if (value_kind==BIND_VALUE_BUFFER) {
+      unsigned dynamic_ordinal=dynamic?(consumer?consumer->dynamic[dynamic-1]:s->dynamic_uniform_ordinals[dynamic-1][n]):0;
+      if(dynamic_ordinal) {
         // Dependencies above use the original byte range. Only the descriptor
         // representation changes: aligned high bits stay immutable, low bits
         // are supplied again on every draw, including a descriptor cache hit.
-        unsigned ordinal=s->dynamic_uniform_ordinals[dynamic-1][n]-1;
+        unsigned ordinal=dynamic_ordinal-1;
         offsets->offsets[ordinal]=(uint32_t)buffer.offset;
         buffer.offset &= ~UINT64_C(0xffffffff);
       }
       values[n]=(descriptor_value){(uint64_t)buffer.buffer,buffer.offset,buffer.range};
     }
-    else if ((b->kind>=3 && b->kind<=6) || b->kind==VK_BINDING_PIXEL_LOCAL) {
+    else if (value_kind==BIND_VALUE_IMAGE) {
       values[n]=(descriptor_value){(uint64_t)image.imageView,(uint64_t)image.sampler,image.imageLayout};
     }
     else {
