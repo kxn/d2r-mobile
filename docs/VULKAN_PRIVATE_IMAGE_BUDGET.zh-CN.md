@@ -77,3 +77,24 @@ FPS也不代替持续游玩/热/6GB验收。原022生产APK、模块、shader、
 （SHA256 `9fa235de5f04dfee27f5b693beba1beaa767eaae19dbef06b771d2044c54c4f8`）。
 showmap分析：`.local/logs/mali-candidate-guest-773d530-v1-analysis/official-showmap-memory-analysis-agent.json`
 （SHA256 `7fbb0eab1719b04b2da03da2cc867ee50545f8f1d9ef764209fbdff4758647c9`）。
+
+### ASTC6 的同阶段轻量内存对照
+
+相同 773 运行时、系统 Vulkan/sharedOFF、原 cbd8 shader/UI，ASTC4 与修正后
+11,605 项 ASTC6 资源分别完成相同两段营地行走，然后立即使用系统 meminfo
+与一次 showmap。两轮全部实际快照均为 `.75`，行走初始/结束坐标相同；
+本轮不重复 CPU/GPU 采集，消除旧 full4 在长采集后降至 `.65` 的阶段混杂。
+
+本次 ASTC6 的总 PSS 为 3,224,228 KiB，ASTC4 为 3,270,622 KiB，差
+45.307 MiB。其中 guest heap/Unknown 少 32.762 MiB、GL mtrack 少 7.020 MiB，
+Native Heap PSS 少 2.676 MiB；这些类别已包含在总量里，不能再次相加。
+showmap 是另一个重叠视角，也不能与 meminfo TOTAL 相加。两轮 Pool backing
+容量都为 387 MiB，先前与更晚端点相比的 48 MiB 容量差没有复现，不能归为
+ASTC6 的固有收益。私有图像 allocation 少 16.673 MiB 也不直接等于物理 PSS。
+两轮预算实际释放均为零，内存变化不是前台淘汰取得的结果。
+
+这是同测量流程的一次短营地端点对照；实际 tick 为 302/321、PSO 数为
+178/181，不能称相同工作量的多轮随机 A/B，更不能证明持续发热、带宽、
+野外战斗或 6GB 已验收。两次均经原生命周期 save2 后停止并恢复原包资源。
+对照见 `.local/logs/mali773-ASTC4-ASTC6-lightweight-memory-comparison-v1/result.json`
+（SHA256 `1f367c7c444356b74f650056caece7c684ca6d064854049c01e6c42bf4b8b63d`）。
