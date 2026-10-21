@@ -1,10 +1,10 @@
-"""Exact reviewed d5@80a native-only functional/CPU validation, no new measurements."""
-RUNTIME='d5ecbcd5ec9667553085ab6ce26f545c39603d9e'
+"""Exact reviewed10c@36bb836 native-only functional/CPU validation, no new measurements."""
+RUNTIME='10c53698a3155522e743a01f7e5b0e3d860b69ad'
 PREDECESSOR='80a71bcf10e92b100027ffa32d71eec85852d7fc'
-ARTIFACT_BASE=PREDECESSOR
+ARTIFACT_BASE='36bb836affcd1ec62b164602df5f0cabbf0ef22a'
 PREDECESSOR_REVIEW='145dbcfd60d0d9aec9d810e727a4b5b68f08c0a6a3ef1bf830fb2466442380a8'
 DRIVER='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
-ROOT_REVIEW='7a229393ff71f96afa849f7ae45ebe8350da80e87699d8763fd143845aa98b12'
+ROOT_REVIEW='91e6618783ce50c88d81a00c60a887cf73111bc27af7b91d12548f141b117309'
 BASE='6f8188e392f21ff045ef640ad8c4f184de048806'
 
 
@@ -15,28 +15,35 @@ def validate(p,pinned,read,require):
             'counter_snapshot' not in p and 'performance_tools' in p,
             'short CPU candidate mode excludes longtest, SDP and LLDB')
     require(p['runtime_commit']==RUNTIME and p['driver']['sha256']==DRIVER
-            and p['pool_window_bytes']==1048576,'exact d5@80a/f830/1MiB target only')
+            and p['pool_window_bytes']==1048576,'exact10c@36bb836/f830/1MiB target only')
     require(p['phases'][1]['composition_data']['entry_count']==6217,'same6217 only')
     require(c['root_review']['sha256']==ROOT_REVIEW,'exact root candidate review required')
     review=read(pinned(c['root_review']))
-    require(review['status']=='ROOT_REVIEWED_SOURCE_CANONICAL_RAW_CANDIDATE_NO_DEVICE_YET'
-            and review['runtime']==RUNTIME and review['base_runtime']==ARTIFACT_BASE,
+    require(review['status']=='ROOT_REVIEWED_EXACT_10C_CANONICAL_AND_FRESH_RAW28'
+            and review['runtime']==RUNTIME and review['base']==ARTIFACT_BASE
+            and review['device_access'] is False,
             'candidate source review differs')
-    require(review['raw_outputs']==28 and len(review['raw_original_inputs'])==3
-            and review['separate_verify_only_root_returncode']==0,
-            'candidate raw artifacts incomplete')
+    require(review['raw_deployment_files']==28, 'candidate raw artifacts incomplete')
     for key in ('canonical','raw'):
         actual=review[key+'_ready']
         require(str(pinned(actual))==str(pinned(p[key])) and actual['sha256']==p[key]['sha256'],
                 'canonical/raw not those actually root-reviewed')
     canonical=read(pinned(p['canonical']))
     raw=read(pinned(p['raw']))
-    require(len(review['six_APK_libraries'])==6
-            and review['six_APK_libraries']==canonical['canonical_native_library_sha256']
+    require(len(review['six_native_library_sha256'])==6
+            and review['six_native_library_sha256']==canonical['canonical_native_library_sha256']
             and review['APK']==canonical['canonical_APK']['archive']
-            and review['raw_original_inputs']==raw['raw_original_inputs'],
+            and review['host_ELF_sha256']==canonical['canonical_native_library_sha256']['libdmhost_android.so']
+            and review['host_ELF_BuildID']==canonical['canonical_host_ELF_build_id']
+            and len(raw['raw_original_inputs'])==3 and len(raw['28_deployment_file_hashes'])==28,
             'reviewed APK/libraries/raw original inputs differ')
-    pinned(review['APK']); pinned(review['root_source_review'])
+    pinned(review['APK']); pinned(review['source_review'])
+    audit=read(pinned(review['complete_audit']))
+    require(audit['status']=='EXACT_10C_SOURCE_CANONICAL_AND_FRESH_RAW_CLOSURE_VERIFIED_NO_DEVICE'
+            and audit['commit']==RUNTIME and audit['separate_fresh_original_NSO_and_verify_only'] is True
+            and audit['actual_APP_test_observer_absent'] is True and audit['raw_deployment_files']==28
+            and audit['canonical_ready']==p['canonical'] and audit['raw_ready']==p['raw'],
+            'candidate complete actual build/verify closure differs')
     qualified=read(pinned(c['qualified_base_pair']))
     require(qualified['status']=='ACTUAL_ORIGINAL_GAME_PAIRED_FUNCTIONAL_OFFICIAL_CPU_GPU_MEMORY_PASS_CLEANUP_FOLLOWUP_CONFIRMED'
             and qualified['runtime']==BASE and qualified['driver']==DRIVER

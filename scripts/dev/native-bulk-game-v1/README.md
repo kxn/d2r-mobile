@@ -308,3 +308,19 @@ launcher、资源/路线和恢复逐字节保留；runtime使用独立80a后继d
 不维护提示。短测只提供当前实际工作量/频率/CPU热点、功能和恢复证据；80a历史短测
 不是匹配A/B，不能用父函数inclusive比例或历史historyhits冒充可省CPU/FPS/热收益。
 execution_ready保持false；root审源码后另建ROOT输入，不覆旧工具、旧报告或资源。
+
+
+### 10c5369 首遍计划写入候选短验证
+
+本 tools-only 后继保持 e66 原事务、launcher、CPU helper、三点路线与 save2/CAS
+恢复不变；仅严格 candidate/artifact gate 指向已冻结10c@36bb836及其root审查，
+仍保留 actual80a 与6f paired资格。输入额外保留 actuald5 官方结果和773 Q预算
+资格，便于比较现成样本。仍只native6217/f830/sharedON/.60fixed/2750×1260/1MiB，
+独立8s stat、99Hz record与Perfetto，不加SDP/LLDB/ADPF或任何测量器。
+
+10c自身仅聚合16B planned_op中的4B forward写入，完整逆扫覆盖其余字段；相对
+actuald5，此源码还合入773预算与主线文档，不能把两次短测称sole10c单变量。
+已有773 Q短测CPU可重建118.99MiB、512MiB预算未触发且累计释放0，只能界定
+当时工作集，不能保证新run绝不触发；本次读取原有预算计账确认。短测频率、
+PSO/variants、路线视角与工作量需实报；未测候选收益，不能把写指令减少直接
+称CPU/FPS/热改善。DRAFT execution_ready=false，root另建ROOT授权输入。
