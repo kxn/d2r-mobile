@@ -31,6 +31,28 @@ FP与DWARF是独立运行，位置有1px差且PSO185与184不同，不把跨方�
 
 准备阶段已拒绝两个重复方案：prepare 到 descriptor 的再次传递已有 source_flow/recipe，native GENERAL prepare 已是无操作；准入到消费的几何交付已有 operation geometry/recording 借用。它们不能省掉全部约20%绑定工作，继续加表只会增加失效与生命周期成本。只对具备可证明工作减少的完整路径实施实验。
 
+## 2026-10-22：完整职责预算与首个按需窗口真机结果
+
+新同一APK `a31a0f0` 的 OFF1 已完成3×30秒FP、5×8秒Perfetto、三段原输入、存档2次、退出及原包恢复。三个窗口 NvN 2292/2340/2294个用户态样本全部保留x_thread祖先。五个宏观窗口的 NvN Running/完整Surface间隔为27.55～28.14ms，Surface平均约33.2ms；位置和PSO185/variants33稳定。排队就绪仅约0.16～0.21ms/间隔，不支持把大部分实跑时间归因于等锁/抢不到CPU。睡眠约4.9～5.4ms与CPU实跑分开看。其他APP累计CPU仍约25～27ms/间隔，跨核并行，不能与NvN相加成帧延迟。
+
+完整draw只作一个大类时约占72～75%；按互斥直属子树拆开后，绑定约21～22%、准入7.4～8.2%、CPU图像来源3.8～5.0%、绘制后图像历史3.4～4.6%、附件/Pass处理5.2～6.1%、图像prepare2.1～2.7%、依赖/请求批次约1.8%、VBO/index消费2.6～3.3%。draw self约4.0～4.6%，含内联状态/Key工作，不能伪分。实际驱动draw约2.8～4.2%、绑定PSO1.0～1.6%、绑定set1.2～1.8%；query仅约0.04～0.17%。各窗原始siblings及未归类孩子完整保留，不将这些比例与外层inclusive重叠相加。
+
+改前预算与研究顺序：
+
+| 方向 | 已有覆盖证据与预算边界 | 决策 |
+|---|---|---|
+| 取消不必要的整轮资源准入 | 目标整项约8%用户态样本；乐观只约2ms量级预算，实际消费者、引用及别名成本仍在 | 保留默认OFF实验，先修正确性，不能声称可单独达到60FPS |
+| 改变每draw绑定表示与工作生成方式 | binding约21～22%中，self仅4.4～4.6%，真正descriptor创建整子树仅1.8～2.0%，其中driver update约1.1% | 优先研究长寿命资源表/每draw轻量参数等架构；不能以替换descriptor更新API就声称省21% |
+| 相邻兼容draw批量交付 | 可能同时减少状态Key、绑定构造与驱动调用；但必须先证明同PSO/Pass/状态连续组的规模及合法数据依赖 | 未有可合并组数量和净收益预算前不写大方案；不重排透明/不透明、不改玩法 |
+| 去除共享路径遗留上传账本职责 | record_pool_range整项约1.7～1.9%，明确属于旧upload分支的PC仅约0.31～0.38%；实际pages/stage依赖不能省 | 机制有价值但优先级低；不以整段pool_address或sync耗时作为可得收益 |
+| 再做命令预解码/已有缓存 | NVN已录成typed p_*包，每Submission已有16B planned_op展开；dynamicUBO/schema/templates/set/history/source/recipe缓存均存在 | 不重复实现，不将大类占比当成缺失功能 |
+
+从27ms到16.7ms需要约38%的时间减少。当前没有证据证明仍有一个可删除的30～40%重复工作坑；上述是职责包络和研究预算，不是已经兑现的收益，也不是可直接相加的百分比。对更大架构先给覆盖量、必须保留的语义、新增GPU/RAM成本及实施规模，再安排代码。
+
+ON1在加载约16秒时触发 `image_bc_copy_decode` 的既有保护：`Mixed compressed copy requires observed BC3 storage with no defined alias`，没有得到任何可比较的ON Profile。原APK/资源已恢复，cleanup为空，根核pidof为空；ON2/OFF2不执行。源审发现T2T的原copy/retile范围准备位于ASTC观察之前，观察要求完整已物化shared backing；跳过通用准入会使这项前置条件缺失。保护条件的具体子项没有逐项日志，不能将源码因果解释伪称已经逐项测量。后继需保留实际拷贝准备/观察，只在完整消费者合同成立的绘制路径取消前置遍历；不能关闭保护、改资源或游戏binary来通过。实验仍在独立分支，未默认启用或合入稳定主线。
+
+本机证据：`shared-lazy-a31a0f0-OFF1-FP-Q735-v1-analysis/wholepath/source-review.json`、`shared-lazy-a31a0f0-OFF-ON-macro-v1/OFF1/run-facts.json`、`shared-lazy-a31a0f0-ON1-root-failure-review.json`（均位于`.local/logs/`）。
+
 以下原实施顺序保留作历史记录，新的具体结构方案按上述完整路径继续调查：
 
 1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。宿主ThinLTO已完成相同资源的原游戏对照：整线程Running约27.36ms vs27.51ms、频率约1577 vs1583MHz，仍约30FPS。编译选项保留为默认关闭的实验入口，不继续以编译微调为主线。
