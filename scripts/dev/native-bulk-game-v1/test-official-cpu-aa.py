@@ -28,7 +28,7 @@ previous_command = next(n.value for n in ast.walk(ast.parse(previous_source))
 
 
 class Flow(unittest.TestCase):
-    def exercise(self, fault=None, callgraph='dwarf'):
+    def exercise(self, fault=None, callgraph='dwarf', expected_chain='9507875007c6'):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             phase = {'stages': []}
@@ -46,6 +46,7 @@ class Flow(unittest.TestCase):
                     if self.trace:
                         events.append('trace-start')
                         self.path = Path(argv[argv.index('--output') + 1])
+                        assert argv[argv.index('--expected-chain') + 1] == expected_chain
                     else:
                         events.append('record-start')
                         assert 'exec 3>&1' not in argv[-1], 'No extra inherited fd across Android exec'
@@ -60,7 +61,7 @@ class Flow(unittest.TestCase):
                             return 1
                         self.path.write_bytes(b'fake-host-trace')
                         self.path.with_suffix('.json').write_text(json.dumps({
-                            'pid': 12345, 'seconds_requested': 8, 'shader_chain': '9507875007c6',
+                            'pid': 12345, 'seconds_requested': 8, 'shader_chain': ('9507875007c6' if fault == 'chain' else expected_chain),
                             'app_markers_requested': True, 'clean_atrace_print_requested': True,
                             'frame_timeline_requested': True, 'trace_sha256': 'fake-not-device-proof'}))
                     self.returncode = 0
@@ -130,7 +131,7 @@ class Flow(unittest.TestCase):
                     aa.run(folder=root, base=['adb', '-s', 'SERIAL'], package='owned.app', pid='12345',
                            stack=49152 if callgraph == 'dwarf' else None, callgraph=callgraph, phase=phase, endpoint=lambda name: copy.deepcopy(sample),
                            app=app, ad=ad, exact=lambda: None, snapshot=lambda name: events.append(name),
-                           save=save, env={}, scheduler=D / 'scheduler-fixture.py')
+                           save=save, env={}, scheduler=D / 'scheduler-fixture.py', expected_chain=expected_chain)
                     self.assertIsNone(fault)
                 except (RuntimeError, AssertionError, KeyboardInterrupt):
                     self.assertIsNotNone(fault)
@@ -164,6 +165,8 @@ class Flow(unittest.TestCase):
                     self.assertTrue(row['capture_complete'])
 
     def test_three_distinct_record_and_five_trace_windows(self): self.exercise()
+    def test_new_pinned_chain_uses_identical_five_windows(self): self.exercise(expected_chain='8b016120f586')
+    def test_new_pinned_chain_refuses_old_actual_chain(self): self.exercise('chain',expected_chain='8b016120f586')
     def test_FP_same_three_records_without_DWARF_or_failure_stack_flags(self): self.exercise(callgraph='fp')
     def test_FP_failure_preserves_original_cleanup(self): self.exercise('ready', callgraph='fp')
     def test_missing_ready_restores_owned_tool_and_property(self): self.exercise('ready')
@@ -319,6 +322,43 @@ class Flow(unittest.TestCase):
                         with self.assertRaises(AssertionError):scope['endpoint']('refuse')
                     state.pop('shared_lazy_windows')
                     with self.assertRaises(AssertionError):scope['endpoint']('missing')
+
+    def test_capture_expected_chain_arguments_and_normal_report(self):
+        helper=(D/'capture-official-cpu.py').read_text()
+        prefix=helper.split('# This receipt proves')[0]
+        for chain in ('9507875007c6','8b016120f586'):
+            for order in (['--expected-chain',chain,'--expect-shared-lazy-windows','1'],
+                          ['--expect-shared-lazy-windows','1','--expected-chain',chain]):
+                scope={}
+                with patch('sys.argv',['capture','10CG570J59001U1','12345','1','/home/dl/d2r-mobile/.local/logs/unused','1048576','1','0','fp',*order]):
+                    exec(compile(prefix,'<actual-capture-chain-prefix>','exec'),scope)
+                self.assertEqual(scope['expected_chain'],chain)
+                self.assertTrue(scope['lazy_expected'])
+                self.assertEqual(scope['phase']['expected_shader_chain'],chain)
+        tree=ast.parse(helper)
+        assertion=next(n for n in ast.walk(tree) if isinstance(n,ast.Assert) and "capture['shader_chain']" in ast.unparse(n.test))
+        code=compile(ast.Module(body=[assertion],type_ignores=[]),'<actual-normal-chain-check>','exec')
+        for expected in ('9507875007c6','8b016120f586'):
+            for actual in ('9507875007c6','8b016120f586'):
+                scope={'pid':'12345','expected_chain':expected,'capture':{'pid':12345,'seconds_requested':8,'shader_chain':actual}}
+                if actual==expected:exec(code,scope)
+                else:
+                    with self.assertRaises(AssertionError):exec(code,scope)
+
+    def test_runner_passes_pinned_baseline_and_scheduler_precheck(self):
+        tree=ast.parse((D/'run-game.py').read_text())
+        expr=next(n for n in ast.walk(tree) if isinstance(n,ast.Expr) and "command.extend(['--expected-chain', p['baseline_data']['chain']])"==ast.unparse(n))
+        code=compile(ast.Module(body=[expr],type_ignores=[]),'<actual-runner-chain>','exec')
+        for chain in ('9507875007c6','8b016120f586'):
+            scope={'p':{'baseline_data':{'chain':chain}},'command':['original-capture','unchanged-window-arguments']};exec(code,scope)
+            self.assertEqual(scope['command'],['original-capture','unchanged-window-arguments','--expected-chain',chain])
+        scheduler=ast.parse((D.parent/'capture-android-scheduler.py').read_text())
+        node=next(n for n in ast.walk(scheduler) if isinstance(n,ast.If) and ast.unparse(n.test)=='args.expected_chain is not None and chain != args.expected_chain')
+        code=compile(ast.Module(body=[node],type_ignores=[]),'<actual-scheduler-pinned-chain-precheck>','exec')
+        for chain in ('9507875007c6','8b016120f586'):
+            exec(code,{'args':SimpleNamespace(expected_chain=chain),'chain':chain})
+            with self.assertRaises(SystemExit):exec(code,{'args':SimpleNamespace(expected_chain=chain),'chain':'000000000000'})
+        exec(code,{'args':SimpleNamespace(expected_chain=None),'chain':'legacy-standalone-behavior'})
 
 
 if __name__ == '__main__':

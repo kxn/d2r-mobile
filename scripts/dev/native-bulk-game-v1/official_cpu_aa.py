@@ -39,8 +39,10 @@ def bracket(first, last):
 
 
 def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
-        snapshot, save, env, scheduler, callgraph='dwarf'):
+        snapshot, save, env, scheduler, callgraph='dwarf', expected_chain='9507875007c6'):
     assert (callgraph == 'dwarf' and stack == 49152) or (callgraph == 'fp' and stack is None)
+    assert len(expected_chain)==12 and all(c in '0123456789abcdef' for c in expected_chain)
+    phase['expected_shader_chain'] = expected_chain
     phase.update(scope='Same-binary same-PID A/A: three official30s cpu-clock:u99Hz records; '
                        'each contains an intended original8s Perfetto window, plus Perfetto-only bookends',
                  AA_record_seconds=30, AA_repetitions=3, AA_callgraph=callgraph, AA_DWARF_bytes=stack,
@@ -63,7 +65,7 @@ def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
         output = folder / (name + '.pftrace')
         command = [sys.executable, str(scheduler), '--serial', base[-1], '--seconds', '8',
                    '--buffer-mb', '64', '--app-markers', '--clean-atrace-print',
-                   '--frame-timeline', '--output', str(output)]
+                   '--frame-timeline', '--expected-chain', expected_chain, '--output', str(output)]
         with (folder / (name + '-console.log')).open('w') as log:
             process = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
@@ -81,7 +83,7 @@ def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
         exact()
         report = json.loads(output.with_suffix('.json').read_text())
         assert report['pid'] == int(pid) and report['seconds_requested'] == 8
-        assert report['shader_chain'] == '9507875007c6'
+        assert report['shader_chain'] == expected_chain, 'shader chain differs from pinned baseline'
         assert all(report[k] for k in ('app_markers_requested', 'clean_atrace_print_requested',
                                        'frame_timeline_requested'))
         snapshot(name + '-after')

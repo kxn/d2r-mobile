@@ -151,6 +151,7 @@ def proof(path, digest):
     driver_span_policy(p)
     baseline = read(pinned(p['baseline']))
     require(baseline['game_PID_absent'] is True, 'baseline must be stopped')
+    require(re.fullmatch('[0-9a-f]{12}', baseline['chain']) is not None, 'pinned stopped baseline shader chain differs')
     ready = read(pinned(p['canonical']))
     raw = read(pinned(p['raw']))
     require(ready['commit'] == p['runtime_commit'], 'host source revision differs')
@@ -465,6 +466,7 @@ def phase_game(dev, out, phase, p, token):
                 d['AA_overlap_and_reproducibility_require_offline_review'] = True
             if 'shared_lazy_windows' in p:
                 command.extend(['--expect-shared-lazy-windows', str(p['shared_lazy_windows'])])
+            command.extend(['--expected-chain', p['baseline_data']['chain']])
             d['performance_command'] = command
             save()
             with (performance_out / 'console.txt').open('w') as log:
@@ -485,6 +487,8 @@ def phase_game(dev, out, phase, p, token):
                     subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
             tools_result = read(performance_out / 'official-cpu-capture.json')
             require(tools_result.get('complete') is True, 'official performance windows incomplete')
+            require(tools_result.get('expected_shader_chain') == p['baseline_data']['chain'],
+                    'official performance expected chain differs from pinned baseline')
             require(pid() == own, 'PID changed during independent performance windows')
             d['official_performance_complete'] = True
             d['cpu_validity'] = True

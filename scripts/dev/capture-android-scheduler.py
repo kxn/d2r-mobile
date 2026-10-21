@@ -18,6 +18,7 @@ PACKAGE='com.d2rmobile.nativeport'
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial',required=True)
+    parser.add_argument('--expected-chain',help='pinned stopped-baseline shader chain; require exact match before capture')
     parser.add_argument('--seconds',type=int,default=10)
     parser.add_argument('--buffer-mb',type=int,choices=(32,64,128),default=32,
                         help='official Perfetto ring buffer capacity; increase for current-capture overwrite/loss, not service-lifetime discarded-chunk totals')
@@ -28,6 +29,8 @@ def main():
     parser.add_argument('--frame-timeline',action='store_true',help='request official SurfaceFlinger frame/timeline sources; verify packet counts before interpreting')
     parser.add_argument('--thermal-events',action='store_true',help='request the Android thermal tracing category; verify which events the device actually emits')
     args=parser.parse_args()
+    if args.expected_chain is not None and (len(args.expected_chain)!=12 or any(c not in '0123456789abcdef' for c in args.expected_chain)):
+        parser.error('--expected-chain must be a complete lowercase12-hex chain')
     sidecars=[args.output,args.output.with_suffix('.json'),args.output.with_suffix('.pbtxt'),args.output.with_suffix('.capture.log')]
     if not 1<=args.seconds<=30 or args.output.suffix!='.pftrace' or any(p.exists() for p in sidecars):
         parser.error('use a new .pftrace output and duration from 1 to 30 seconds')
@@ -49,6 +52,8 @@ def main():
     if not apk.startswith('/') or '\n' in apk:raise SystemExit('one APK path is required')
     apk_sha=adb('shell',shlex.join(['sha256sum',apk])).split()[0]
     chain=adb('exec-out','run-as',PACKAGE,'cat','files/runtime/shaders/.chain').strip()
+    if args.expected_chain is not None and chain!=args.expected_chain:
+        raise SystemExit('shader chain differs from pinned stopped baseline; no capture started')
     # APP markers do not require the global gfx category. Enabling gfx also
     # activates driver/framework instrumentation and changes the measured load.
     app_markers=('  atrace_apps: "'+PACKAGE+'"\n') if args.app_markers else ''
@@ -99,7 +104,7 @@ duration_ms: %d
             'clean_atrace_print_requested':args.clean_atrace_print,
             'app_markers_requested':args.app_markers,
             'thermal_events_requested':args.thermal_events,'frame_timeline_requested':args.frame_timeline,
-            'shader_chain':chain,'before':before,'after':after,'thermal_before':thermal_before,
+            'shader_chain':chain,'expected_shader_chain':args.expected_chain,'before':before,'after':after,'thermal_before':thermal_before,
             'thermal_after':thermal_after,'trace_sha256':hashlib.sha256(args.output.read_bytes()).hexdigest(),
             'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'scope':'CPU scheduler/frequency system trace, optional native replay/submit/publish annotations. Submit-to-observed-fence includes queueing/driver/GPU/CPU wake latency, not pure GPU execution. Verify event counts; GPU frequency may be unavailable.'}

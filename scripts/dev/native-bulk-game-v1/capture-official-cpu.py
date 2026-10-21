@@ -3,11 +3,16 @@
 from pathlib import Path
 import subprocess as S,json,sys,shlex,hashlib,os,time
 R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
-argv=sys.argv[1:];lazy_expected=None
-if len(argv)>=2 and argv[-2]=='--expect-shared-lazy-windows':
- assert argv[-1] in ('0','1');lazy_expected=argv[-1]=='1';argv=argv[:-2]
+argv=sys.argv[1:];lazy_expected=None;expected_chain='9507875007c6';seen=set()
+while len(argv)>=2 and argv[-2] in ('--expect-shared-lazy-windows','--expected-chain'):
+ flag,value=argv[-2:];assert flag not in seen;seen.add(flag);argv=argv[:-2]
+ if flag=='--expect-shared-lazy-windows':
+  assert value in ('0','1');lazy_expected=value=='1'
+ else:
+  assert len(value)==12 and all(c in '0123456789abcdef' for c in value);expected_chain=value
 serial,pid,mode,folder,window_arg,trace_arg=argv[:6];assert len(argv)in(6,7,8)
 refill_arg=argv[6]if len(argv)>=7 else'0';aa_option=argv[7]if len(argv)==8 else None;aa_callgraph='fp'if aa_option=='fp'else'dwarf';aa_stack=int(aa_option)if aa_option is not None and aa_callgraph=='dwarf'else None;assert aa_stack in(None,49152);assert aa_option is None or(refill_arg=='0'and trace_arg=='1');assert refill_arg in('0','1');refill=refill_arg=='1';assert trace_arg in ('0','1');trace=trace_arg=='1';assert serial=='10CG570J59001U1'and pid.isdecimal()and mode in ('0','1');shared=mode=='1';window=int(window_arg);assert shared and window in (0,1048576,16777216);D=Path(folder).resolve();assert D.is_relative_to(R/'.local/logs');B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',serial];phase={'owned_PID':int(pid),'shared_requested':shared,'scope':'Official8s cpu-clock:user99Hz DWARF16384, originalgamejoystick, no kernel samples/no custom sampler/timer','stages':[],'pre_record_cache_states':[],'window_bytes':window,'wait_wall_not_measured':not trace}
+phase['expected_shader_chain']=expected_chain
 if lazy_expected is not None:phase['shared_lazy_windows_expected']=lazy_expected
 # This receipt proves sameUID event open/permission only, not sample attribution.
 if refill:
@@ -32,7 +37,7 @@ def cpu_policy_snapshot(boundary):
   stdout,stderr,rc=error.stdout or b'',error.stderr or b'','timeout'
  leaf=D/('cpu-policy-'+boundary)
  leaf.with_suffix('.stdout.txt').write_bytes(stdout);leaf.with_suffix('.stderr.txt').write_bytes(stderr);leaf.with_suffix('.rc.txt').write_text(rc+'\n')
-exact();assert ad('shell','sha256sum','/system/bin/simpleperf').split()[0]=='b868bf7d7aaffec117c5c758b594594d71a80de35b1e5b48a10b2f2eccae239c';phase['tool_sha256']='b868bf7d7aaffec117c5c758b594594d71a80de35b1e5b48a10b2f2eccae239c';save()
+exact();assert app('cat','files/runtime/shaders/.chain')==expected_chain,'shader chain differs from pinned baseline';assert ad('shell','sha256sum','/system/bin/simpleperf').split()[0]=='b868bf7d7aaffec117c5c758b594594d71a80de35b1e5b48a10b2f2eccae239c';phase['tool_sha256']='b868bf7d7aaffec117c5c758b594594d71a80de35b1e5b48a10b2f2eccae239c';save()
 env=os.environ.copy();env['PATH']=str(R/'.local/android-sdk/platform-tools')+':'+env['PATH']
 phase['original_route']='Already completed once by parent matched6217 transaction; no extra walk here';save()
 # Bounded existing game-state readiness observation, not timing instrumentation.
@@ -50,7 +55,7 @@ cpu_policy_snapshot('ready')
 maps=app('cat','/proc/'+pid+'/maps');(D/'maps.txt').write_text(maps);assert not any(x in maps.lower()for x in ['renderdoc','libvklayer_khronos_validation','liblwi','libvklayer_sdp'])
 if aa_option is not None:
  from official_cpu_aa import run
- run(folder=D,base=B,package=PKG,pid=pid,stack=aa_stack,callgraph=aa_callgraph,phase=phase,endpoint=endpoint,app=app,ad=ad,exact=exact,snapshot=cpu_policy_snapshot,save=save,env=env,scheduler=Path(__file__).resolve().parents[1]/'capture-android-scheduler.py')
+ run(folder=D,base=B,package=PKG,pid=pid,stack=aa_stack,callgraph=aa_callgraph,phase=phase,endpoint=endpoint,app=app,ad=ad,exact=exact,snapshot=cpu_policy_snapshot,save=save,env=env,scheduler=Path(__file__).resolve().parents[1]/'capture-android-scheduler.py',expected_chain=expected_chain)
  sys.exit(0)
 stat_events={
  'stat':'task-clock,cpu-cycles:u,cpu-cycles:k,instructions:u,minor-faults,major-faults,context-switches,cpu-migrations',
@@ -97,17 +102,18 @@ for kind in capture_kinds:
 if trace:
  first=endpoint('before-scheduler')
  assert first['frame_pacing']['target_fps']==60,'Target not60 before optional scheduler; no hot override'
- command=[sys.executable,str(Path(__file__).resolve().parents[1]/'capture-android-scheduler.py'),'--serial',serial,'--seconds','8','--buffer-mb','64','--app-markers','--clean-atrace-print','--frame-timeline','--output',str(D/'completion-scheduler.pftrace')]
+ command=[sys.executable,str(Path(__file__).resolve().parents[1]/'capture-android-scheduler.py'),'--serial',serial,'--seconds','8','--buffer-mb','64','--app-markers','--clean-atrace-print','--frame-timeline','--expected-chain',expected_chain,'--output',str(D/'completion-scheduler.pftrace')]
  phase['official_scheduler_command']=command;save()
  cpu_policy_snapshot('pre-scheduler')
  with(D/'scheduler-console.log').open('w')as f:S.run(command,env=env,stdout=f,stderr=S.STDOUT,check=True,timeout=50)
  cpu_policy_snapshot('post-scheduler')
  exact();last=endpoint('after-scheduler');capture=json.loads((D/'completion-scheduler.json').read_text())
- assert capture['pid']==int(pid)and capture['shader_chain']=='9507875007c6'and capture['seconds_requested']==8
+ assert capture['pid']==int(pid)and capture['shader_chain']==expected_chain and capture['seconds_requested']==8
  assert capture['app_markers_requested']and capture['clean_atrace_print_requested']and capture['frame_timeline_requested']
  phase['scheduler_bracket']={'target':[first['frame_pacing']['target_fps'],last['frame_pacing']['target_fps']],'PSO':[first['pipeline_prepare']['pipelines'],last['pipeline_prepare']['pipelines']],'variants':[first['uniform_specialization']['variants'],last['uniform_specialization']['variants']]}
  b=phase['scheduler_bracket'];b['stable_target60_PSO_variants']=b['target']==[60,60]and b['PSO'][0]==b['PSO'][1]and b['variants'][0]==b['variants'][1]
  phase['wait_scope']='Official scheduler/APP marker wall intervals only, separate window from stat/record; observed fence includes driver/GPU/CPU wake, not pure GPU time or additive critical path.'
+exact();assert app('cat','files/runtime/shaders/.chain')==expected_chain,'shader chain differs from pinned baseline'
 (D/'thermal-public-api.log').write_text(ad('logcat','-d','--pid='+pid,'-s','DmThermal:I','AndroidRuntime:E'))
 phase['stable_target60_PSO_variants_all_windows']=all(phase[k+'_bracket']['stable_target60_PSO_variants']for k in (capture_kinds+('scheduler',)if trace else capture_kinds))
 phase['public_thermal_only']=True;phase['frame_scope']='Official SurfaceFlinger frame/timeline request; analysis must verify exact game SurfaceView. Existing Q traces have buffer PresentFenceSignaled but no app SurfaceView actual_frame_timeline_slice. No fallback to display-wide FPS.';phase['no_GPU_counter_or_FPS_gain_claim']=True;phase['complete']=True;save()
