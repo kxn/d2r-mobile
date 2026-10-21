@@ -2812,8 +2812,16 @@ static VkImageViewType view_type(int target) {
     return VK_IMAGE_VIEW_TYPE_2D;
   }
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Functional count of logical refreshes only; never an app performance metric.
+static uint64_t texture_source_test_refreshes;
+uint64_t vk_test_texture_source_refreshes(void) {return texture_source_test_refreshes;}
+#endif
 const tex_t *vk_texture_source_resolve(vk_texture_source_value *value,int id) {
   if(value->id!=id || value->epoch!=atomic_load(&descriptor_epoch)) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    texture_source_test_refreshes++;
+#endif
     texture_descriptor local;uint64_t epoch;
     const texture_descriptor *d=texture_descriptor_lookup(id,&local,&epoch);
     value->id=id;value->epoch=epoch;value->valid=d!=NULL;

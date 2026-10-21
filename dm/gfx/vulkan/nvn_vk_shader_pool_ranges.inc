@@ -208,7 +208,7 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
         // The CPU source walk is the producer: enumerate and decode once, then
         // hand the same logical value to native admission after publication.
         image_source_entry *entry=&source_plan->entries[source_plan->count++];
-        entry->reg=b->reg;entry->source.id=-1;source_part->count++;
+        entry->reg=b->reg;source_part->count++;
         const tex_t *t=image_source_resolve(entry,state,stage);
         if(t && (!packaged_only || (t->has_layout && t->mem && t->L.size)))vk_texture_cpu_preflight(t);
         continue;

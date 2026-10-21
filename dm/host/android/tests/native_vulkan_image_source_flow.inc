@@ -3,6 +3,7 @@ extern void vk_test_image_source_flow(int);
 extern int vk_test_image_source_origin(const tex_t *,uint64_t *);
 extern unsigned vk_test_image_source_live(void);
 extern uint64_t vk_test_image_source_bytes(void);
+extern uint64_t vk_test_texture_source_refreshes(void);
 void __real_vk_texture_cpu_preflight(const tex_t *);
 int __real_vk_texture_native_pool_collect(const tex_t *,VkPipelineStageFlags,int,vk_pool_requirement_sink,void *);
 static int source_flow_observe;
@@ -33,6 +34,48 @@ int __wrap_vk_texture_native_pool_collect(const tex_t *t,VkPipelineStageFlags st
 }
 extern void vk_test_shader_image_binding_mask_build(vk_shader *);
 static int image_source_owned_sink(void *context,const vk_pool_requirement *range) {(void)context;(void)range;return 1;}
+static void image_source_reuse_boundaries(void) {
+  vk_state saved=S;S.targets=(p_set_rt){0};
+  tex_t a={.serial=UINT64_C(0x1000000000000300)},b={.serial=UINT64_C(0x1000000000000400)};
+  mtl_set_tex_pool_n(128);for(int n=40;n<43;n++)mtl_reg_tex(n,&a,NULL);
+  vk_binding bindings[3]={{.kind=6,.count=1,.reg=0},{.kind=6,.count=1,.reg=1},{.kind=6,.count=1,.reg=2}};
+  vk_shader shader={.stage=1,.nb=2,.bindings=bindings,.pool_binding_mask_ready=1};
+  vk_shader *list[6]={NULL,&shader};vk_test_shader_image_binding_mask_build(&shader);
+  S.tex[1][0]=40;S.tex[1][1]=41;S.tex[1][2]=42;
+  uint64_t before=vk_test_texture_source_refreshes();
+  int token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(vk_test_texture_source_refreshes()==before+2);
+  CHECK(vk_shader_pool_ranges_state(list,&S,0,image_source_owned_sink,NULL));
+  vk_shader_image_sources_end(token);CHECK(!vk_test_image_source_live());
+  before=vk_test_texture_source_refreshes();
+  token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(vk_test_texture_source_refreshes()==before); // Neither lookup nor tex_t copy again.
+  CHECK(vk_shader_pool_ranges_state(list,&S,0,image_source_owned_sink,NULL));vk_shader_image_sources_end(token);
+  shader.nb=1;vk_test_shader_image_binding_mask_build(&shader);
+  token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(vk_test_texture_source_refreshes()==before);vk_shader_image_sources_end(token);
+  shader.nb=3;vk_test_shader_image_binding_mask_build(&shader);
+  token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(vk_test_texture_source_refreshes()==before+1); // Only the new tail needs its first value.
+  vk_shader_image_sources_end(token);before=vk_test_texture_source_refreshes();
+  // Another shader/stage may reuse the same scratch ordinal, but never its old id.
+  vk_shader vertex={.stage=0,.nb=1,.bindings=bindings,.pool_binding_mask_ready=1};
+  vk_test_shader_image_binding_mask_build(&vertex);list[0]=&vertex;list[1]=NULL;S.tex[0][0]=41;
+  token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(vk_test_texture_source_refreshes()==before+1 && source_flow_last_cpu->serial==a.serial);
+  vk_shader_image_sources_end(token);list[0]=NULL;list[1]=&shader;
+  mtl_reg_tex(40,&b,NULL);before=vk_test_texture_source_refreshes();
+  token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(vk_test_texture_source_refreshes()==before+3 && source_flow_last_cpu->serial==a.serial);
+  CHECK(vk_shader_pool_ranges_state(list,&S,0,image_source_owned_sink,NULL));
+  vk_shader_image_sources_end(token);mtl_set_tex_pool_n(0);
+  token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(!vk_shader_pool_ranges_state(list,&S,0,image_source_owned_sink,NULL));vk_shader_image_sources_end(token);
+  mtl_set_tex_pool_n(128);token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+  CHECK(vk_shader_pool_ranges_state(list,&S,0,image_source_owned_sink,NULL));vk_shader_image_sources_end(token);
+  S=saved;mtl_set_tex_pool_n(4);
+  LOG("[image source reuse oracle] adjacent operation lookup/copy eliminated; shrink/grow/new tail, shader/stage/id replacement, register epoch and limit invalidation preserved");
+}
 static void image_source_value_boundaries(void) {
   vk_state saved=S;S.targets=(p_set_rt){0};
   vk_binding binding={.kind=6,.count=1,.reg=0};
@@ -124,7 +167,7 @@ static void image_source_flow_check(void) {
 static void image_source_flow_test(void) {
   mtl_init();CHECK(V.options.pool_window_bytes && (vk_pool_shared_mode() || V.options.pool_defer_publication));
   uint8_t controls[13][0x880];for(unsigned n=0;n<13;n++)memset(controls[n],n,0x880);
-  vk_test_image_source_flow(1);source_flow_observe=1;image_source_value_boundaries();
+  vk_test_image_source_flow(1);source_flow_observe=1;image_source_reuse_boundaries();image_source_value_boundaries();
   logical_preflight_test(controls[3],controls[4]);
   recipe_reentrant_test(controls[12],controls[4]);
   image_source_native_table_metadata();image_source_flow_check();

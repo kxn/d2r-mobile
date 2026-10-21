@@ -74,7 +74,11 @@ static image_source_plan *image_sources_start(vk_shader *const list[6],const vk_
     if(plan->allocation_failed)return NULL;
     void *memory=realloc(plan->entries,(size_t)count*sizeof *plan->entries);
     if(!memory) {plan->allocation_failed=1;return NULL;} // retain the original path, never retry OOM each draw
-    plan->entries=memory;plan->capacity=count;
+    plan->entries=memory;
+    // Logical values may outlive a scope, but only id+descriptor epoch may
+    // admit them again. New storage has no such proof; initialize its ids.
+    for(unsigned n=plan->capacity;n<count;n++)plan->entries[n].source.id=-1;
+    plan->capacity=count;
   }
   plan->count=0;plan->expected=count;plan->compute=compute;
   for(unsigned stage=0;stage<6;stage++) {
