@@ -4713,6 +4713,3669 @@ NVN_C(nvnth_522):
     stadd x17, [x16]
     ldr x17, [x16, #8]
     br x17
+#ifdef DM_ANDROID_APP
+    .globl NVN_C(nvnth_fast_0)
+NVN_C(nvnth_fast_0):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #0
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_1)
+NVN_C(nvnth_fast_1):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #16
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_2)
+NVN_C(nvnth_fast_2):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #32
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_3)
+NVN_C(nvnth_fast_3):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #48
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_4)
+NVN_C(nvnth_fast_4):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #64
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_5)
+NVN_C(nvnth_fast_5):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #80
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_6)
+NVN_C(nvnth_fast_6):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #96
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_7)
+NVN_C(nvnth_fast_7):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #112
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_8)
+NVN_C(nvnth_fast_8):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #128
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_9)
+NVN_C(nvnth_fast_9):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #144
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_10)
+NVN_C(nvnth_fast_10):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #160
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_11)
+NVN_C(nvnth_fast_11):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #176
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_12)
+NVN_C(nvnth_fast_12):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #192
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_13)
+NVN_C(nvnth_fast_13):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #208
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_14)
+NVN_C(nvnth_fast_14):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #224
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_15)
+NVN_C(nvnth_fast_15):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #240
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_16)
+NVN_C(nvnth_fast_16):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #256
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_17)
+NVN_C(nvnth_fast_17):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #272
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_18)
+NVN_C(nvnth_fast_18):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #288
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_19)
+NVN_C(nvnth_fast_19):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #304
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_20)
+NVN_C(nvnth_fast_20):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #320
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_21)
+NVN_C(nvnth_fast_21):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #336
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_22)
+NVN_C(nvnth_fast_22):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #352
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_23)
+NVN_C(nvnth_fast_23):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #368
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_24)
+NVN_C(nvnth_fast_24):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #384
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_25)
+NVN_C(nvnth_fast_25):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #400
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_26)
+NVN_C(nvnth_fast_26):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #416
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_27)
+NVN_C(nvnth_fast_27):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #432
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_28)
+NVN_C(nvnth_fast_28):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #448
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_29)
+NVN_C(nvnth_fast_29):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #464
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_30)
+NVN_C(nvnth_fast_30):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #480
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_31)
+NVN_C(nvnth_fast_31):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #496
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_32)
+NVN_C(nvnth_fast_32):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #512
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_33)
+NVN_C(nvnth_fast_33):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #528
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_34)
+NVN_C(nvnth_fast_34):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #544
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_35)
+NVN_C(nvnth_fast_35):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #560
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_36)
+NVN_C(nvnth_fast_36):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #576
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_37)
+NVN_C(nvnth_fast_37):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #592
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_38)
+NVN_C(nvnth_fast_38):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #608
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_39)
+NVN_C(nvnth_fast_39):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #624
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_40)
+NVN_C(nvnth_fast_40):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #640
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_41)
+NVN_C(nvnth_fast_41):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #656
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_42)
+NVN_C(nvnth_fast_42):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #672
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_43)
+NVN_C(nvnth_fast_43):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #688
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_44)
+NVN_C(nvnth_fast_44):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #704
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_45)
+NVN_C(nvnth_fast_45):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #720
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_46)
+NVN_C(nvnth_fast_46):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #736
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_47)
+NVN_C(nvnth_fast_47):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #752
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_48)
+NVN_C(nvnth_fast_48):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #768
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_49)
+NVN_C(nvnth_fast_49):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #784
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_50)
+NVN_C(nvnth_fast_50):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #800
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_51)
+NVN_C(nvnth_fast_51):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #816
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_52)
+NVN_C(nvnth_fast_52):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #832
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_53)
+NVN_C(nvnth_fast_53):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #848
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_54)
+NVN_C(nvnth_fast_54):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #864
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_55)
+NVN_C(nvnth_fast_55):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #880
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_56)
+NVN_C(nvnth_fast_56):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #896
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_57)
+NVN_C(nvnth_fast_57):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #912
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_58)
+NVN_C(nvnth_fast_58):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #928
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_59)
+NVN_C(nvnth_fast_59):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #944
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_60)
+NVN_C(nvnth_fast_60):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #960
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_61)
+NVN_C(nvnth_fast_61):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #976
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_62)
+NVN_C(nvnth_fast_62):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #992
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_63)
+NVN_C(nvnth_fast_63):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1008
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_64)
+NVN_C(nvnth_fast_64):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1024
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_65)
+NVN_C(nvnth_fast_65):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1040
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_66)
+NVN_C(nvnth_fast_66):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1056
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_67)
+NVN_C(nvnth_fast_67):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1072
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_68)
+NVN_C(nvnth_fast_68):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1088
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_69)
+NVN_C(nvnth_fast_69):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1104
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_70)
+NVN_C(nvnth_fast_70):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1120
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_71)
+NVN_C(nvnth_fast_71):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1136
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_72)
+NVN_C(nvnth_fast_72):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1152
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_73)
+NVN_C(nvnth_fast_73):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1168
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_74)
+NVN_C(nvnth_fast_74):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1184
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_75)
+NVN_C(nvnth_fast_75):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1200
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_76)
+NVN_C(nvnth_fast_76):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1216
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_77)
+NVN_C(nvnth_fast_77):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1232
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_78)
+NVN_C(nvnth_fast_78):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1248
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_79)
+NVN_C(nvnth_fast_79):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1264
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_80)
+NVN_C(nvnth_fast_80):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1280
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_81)
+NVN_C(nvnth_fast_81):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1296
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_82)
+NVN_C(nvnth_fast_82):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1312
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_83)
+NVN_C(nvnth_fast_83):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1328
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_84)
+NVN_C(nvnth_fast_84):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1344
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_85)
+NVN_C(nvnth_fast_85):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1360
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_86)
+NVN_C(nvnth_fast_86):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1376
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_87)
+NVN_C(nvnth_fast_87):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1392
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_88)
+NVN_C(nvnth_fast_88):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1408
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_89)
+NVN_C(nvnth_fast_89):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1424
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_90)
+NVN_C(nvnth_fast_90):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1440
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_91)
+NVN_C(nvnth_fast_91):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1456
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_92)
+NVN_C(nvnth_fast_92):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1472
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_93)
+NVN_C(nvnth_fast_93):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1488
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_94)
+NVN_C(nvnth_fast_94):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1504
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_95)
+NVN_C(nvnth_fast_95):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1520
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_96)
+NVN_C(nvnth_fast_96):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1536
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_97)
+NVN_C(nvnth_fast_97):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1552
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_98)
+NVN_C(nvnth_fast_98):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1568
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_99)
+NVN_C(nvnth_fast_99):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1584
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_100)
+NVN_C(nvnth_fast_100):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1600
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_101)
+NVN_C(nvnth_fast_101):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1616
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_102)
+NVN_C(nvnth_fast_102):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1632
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_103)
+NVN_C(nvnth_fast_103):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1648
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_104)
+NVN_C(nvnth_fast_104):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1664
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_105)
+NVN_C(nvnth_fast_105):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1680
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_106)
+NVN_C(nvnth_fast_106):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1696
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_107)
+NVN_C(nvnth_fast_107):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1712
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_108)
+NVN_C(nvnth_fast_108):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1728
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_109)
+NVN_C(nvnth_fast_109):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1744
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_110)
+NVN_C(nvnth_fast_110):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1760
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_111)
+NVN_C(nvnth_fast_111):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1776
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_112)
+NVN_C(nvnth_fast_112):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1792
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_113)
+NVN_C(nvnth_fast_113):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1808
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_114)
+NVN_C(nvnth_fast_114):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1824
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_115)
+NVN_C(nvnth_fast_115):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1840
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_116)
+NVN_C(nvnth_fast_116):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1856
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_117)
+NVN_C(nvnth_fast_117):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1872
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_118)
+NVN_C(nvnth_fast_118):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1888
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_119)
+NVN_C(nvnth_fast_119):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1904
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_120)
+NVN_C(nvnth_fast_120):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1920
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_121)
+NVN_C(nvnth_fast_121):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1936
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_122)
+NVN_C(nvnth_fast_122):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1952
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_123)
+NVN_C(nvnth_fast_123):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1968
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_124)
+NVN_C(nvnth_fast_124):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #1984
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_125)
+NVN_C(nvnth_fast_125):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2000
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_126)
+NVN_C(nvnth_fast_126):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2016
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_127)
+NVN_C(nvnth_fast_127):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2032
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_128)
+NVN_C(nvnth_fast_128):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2048
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_129)
+NVN_C(nvnth_fast_129):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2064
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_130)
+NVN_C(nvnth_fast_130):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2080
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_131)
+NVN_C(nvnth_fast_131):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2096
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_132)
+NVN_C(nvnth_fast_132):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2112
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_133)
+NVN_C(nvnth_fast_133):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2128
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_134)
+NVN_C(nvnth_fast_134):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2144
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_135)
+NVN_C(nvnth_fast_135):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2160
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_136)
+NVN_C(nvnth_fast_136):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2176
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_137)
+NVN_C(nvnth_fast_137):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2192
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_138)
+NVN_C(nvnth_fast_138):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2208
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_139)
+NVN_C(nvnth_fast_139):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2224
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_140)
+NVN_C(nvnth_fast_140):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2240
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_141)
+NVN_C(nvnth_fast_141):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2256
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_142)
+NVN_C(nvnth_fast_142):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2272
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_143)
+NVN_C(nvnth_fast_143):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2288
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_144)
+NVN_C(nvnth_fast_144):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2304
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_145)
+NVN_C(nvnth_fast_145):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2320
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_146)
+NVN_C(nvnth_fast_146):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2336
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_147)
+NVN_C(nvnth_fast_147):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2352
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_148)
+NVN_C(nvnth_fast_148):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2368
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_149)
+NVN_C(nvnth_fast_149):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2384
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_150)
+NVN_C(nvnth_fast_150):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2400
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_151)
+NVN_C(nvnth_fast_151):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2416
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_152)
+NVN_C(nvnth_fast_152):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2432
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_153)
+NVN_C(nvnth_fast_153):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2448
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_154)
+NVN_C(nvnth_fast_154):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2464
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_155)
+NVN_C(nvnth_fast_155):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2480
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_156)
+NVN_C(nvnth_fast_156):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2496
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_157)
+NVN_C(nvnth_fast_157):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2512
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_158)
+NVN_C(nvnth_fast_158):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2528
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_159)
+NVN_C(nvnth_fast_159):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2544
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_160)
+NVN_C(nvnth_fast_160):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2560
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_161)
+NVN_C(nvnth_fast_161):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2576
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_162)
+NVN_C(nvnth_fast_162):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2592
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_163)
+NVN_C(nvnth_fast_163):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2608
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_164)
+NVN_C(nvnth_fast_164):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2624
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_165)
+NVN_C(nvnth_fast_165):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2640
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_166)
+NVN_C(nvnth_fast_166):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2656
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_167)
+NVN_C(nvnth_fast_167):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2672
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_168)
+NVN_C(nvnth_fast_168):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2688
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_169)
+NVN_C(nvnth_fast_169):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2704
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_170)
+NVN_C(nvnth_fast_170):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2720
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_171)
+NVN_C(nvnth_fast_171):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2736
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_172)
+NVN_C(nvnth_fast_172):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2752
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_173)
+NVN_C(nvnth_fast_173):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2768
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_174)
+NVN_C(nvnth_fast_174):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2784
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_175)
+NVN_C(nvnth_fast_175):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2800
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_176)
+NVN_C(nvnth_fast_176):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2816
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_177)
+NVN_C(nvnth_fast_177):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2832
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_178)
+NVN_C(nvnth_fast_178):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2848
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_179)
+NVN_C(nvnth_fast_179):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2864
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_180)
+NVN_C(nvnth_fast_180):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2880
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_181)
+NVN_C(nvnth_fast_181):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2896
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_182)
+NVN_C(nvnth_fast_182):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2912
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_183)
+NVN_C(nvnth_fast_183):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2928
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_184)
+NVN_C(nvnth_fast_184):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2944
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_185)
+NVN_C(nvnth_fast_185):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2960
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_186)
+NVN_C(nvnth_fast_186):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2976
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_187)
+NVN_C(nvnth_fast_187):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #2992
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_188)
+NVN_C(nvnth_fast_188):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3008
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_189)
+NVN_C(nvnth_fast_189):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3024
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_190)
+NVN_C(nvnth_fast_190):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3040
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_191)
+NVN_C(nvnth_fast_191):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3056
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_192)
+NVN_C(nvnth_fast_192):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3072
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_193)
+NVN_C(nvnth_fast_193):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3088
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_194)
+NVN_C(nvnth_fast_194):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3104
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_195)
+NVN_C(nvnth_fast_195):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3120
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_196)
+NVN_C(nvnth_fast_196):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3136
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_197)
+NVN_C(nvnth_fast_197):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3152
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_198)
+NVN_C(nvnth_fast_198):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3168
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_199)
+NVN_C(nvnth_fast_199):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3184
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_200)
+NVN_C(nvnth_fast_200):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3200
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_201)
+NVN_C(nvnth_fast_201):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3216
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_202)
+NVN_C(nvnth_fast_202):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3232
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_203)
+NVN_C(nvnth_fast_203):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3248
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_204)
+NVN_C(nvnth_fast_204):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3264
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_205)
+NVN_C(nvnth_fast_205):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3280
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_206)
+NVN_C(nvnth_fast_206):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3296
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_207)
+NVN_C(nvnth_fast_207):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3312
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_208)
+NVN_C(nvnth_fast_208):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3328
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_209)
+NVN_C(nvnth_fast_209):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3344
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_210)
+NVN_C(nvnth_fast_210):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3360
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_211)
+NVN_C(nvnth_fast_211):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3376
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_212)
+NVN_C(nvnth_fast_212):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3392
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_213)
+NVN_C(nvnth_fast_213):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3408
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_214)
+NVN_C(nvnth_fast_214):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3424
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_215)
+NVN_C(nvnth_fast_215):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3440
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_216)
+NVN_C(nvnth_fast_216):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3456
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_217)
+NVN_C(nvnth_fast_217):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3472
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_218)
+NVN_C(nvnth_fast_218):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3488
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_219)
+NVN_C(nvnth_fast_219):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3504
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_220)
+NVN_C(nvnth_fast_220):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3520
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_221)
+NVN_C(nvnth_fast_221):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3536
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_222)
+NVN_C(nvnth_fast_222):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3552
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_223)
+NVN_C(nvnth_fast_223):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3568
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_224)
+NVN_C(nvnth_fast_224):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3584
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_225)
+NVN_C(nvnth_fast_225):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3600
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_226)
+NVN_C(nvnth_fast_226):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3616
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_227)
+NVN_C(nvnth_fast_227):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3632
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_228)
+NVN_C(nvnth_fast_228):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3648
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_229)
+NVN_C(nvnth_fast_229):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3664
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_230)
+NVN_C(nvnth_fast_230):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3680
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_231)
+NVN_C(nvnth_fast_231):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3696
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_232)
+NVN_C(nvnth_fast_232):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3712
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_233)
+NVN_C(nvnth_fast_233):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3728
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_234)
+NVN_C(nvnth_fast_234):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3744
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_235)
+NVN_C(nvnth_fast_235):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3760
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_236)
+NVN_C(nvnth_fast_236):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3776
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_237)
+NVN_C(nvnth_fast_237):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3792
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_238)
+NVN_C(nvnth_fast_238):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3808
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_239)
+NVN_C(nvnth_fast_239):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3824
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_240)
+NVN_C(nvnth_fast_240):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3840
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_241)
+NVN_C(nvnth_fast_241):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3856
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_242)
+NVN_C(nvnth_fast_242):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3872
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_243)
+NVN_C(nvnth_fast_243):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3888
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_244)
+NVN_C(nvnth_fast_244):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3904
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_245)
+NVN_C(nvnth_fast_245):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3920
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_246)
+NVN_C(nvnth_fast_246):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3936
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_247)
+NVN_C(nvnth_fast_247):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3952
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_248)
+NVN_C(nvnth_fast_248):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3968
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_249)
+NVN_C(nvnth_fast_249):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #3984
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_250)
+NVN_C(nvnth_fast_250):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4000
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_251)
+NVN_C(nvnth_fast_251):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4016
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_252)
+NVN_C(nvnth_fast_252):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4032
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_253)
+NVN_C(nvnth_fast_253):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4048
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_254)
+NVN_C(nvnth_fast_254):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4064
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_255)
+NVN_C(nvnth_fast_255):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4080
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_256)
+NVN_C(nvnth_fast_256):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4096
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_257)
+NVN_C(nvnth_fast_257):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4112
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_258)
+NVN_C(nvnth_fast_258):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4128
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_259)
+NVN_C(nvnth_fast_259):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4144
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_260)
+NVN_C(nvnth_fast_260):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4160
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_261)
+NVN_C(nvnth_fast_261):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4176
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_262)
+NVN_C(nvnth_fast_262):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4192
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_263)
+NVN_C(nvnth_fast_263):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4208
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_264)
+NVN_C(nvnth_fast_264):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4224
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_265)
+NVN_C(nvnth_fast_265):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4240
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_266)
+NVN_C(nvnth_fast_266):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4256
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_267)
+NVN_C(nvnth_fast_267):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4272
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_268)
+NVN_C(nvnth_fast_268):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4288
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_269)
+NVN_C(nvnth_fast_269):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4304
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_270)
+NVN_C(nvnth_fast_270):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4320
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_271)
+NVN_C(nvnth_fast_271):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4336
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_272)
+NVN_C(nvnth_fast_272):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4352
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_273)
+NVN_C(nvnth_fast_273):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4368
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_274)
+NVN_C(nvnth_fast_274):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4384
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_275)
+NVN_C(nvnth_fast_275):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4400
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_276)
+NVN_C(nvnth_fast_276):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4416
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_277)
+NVN_C(nvnth_fast_277):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4432
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_278)
+NVN_C(nvnth_fast_278):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4448
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_279)
+NVN_C(nvnth_fast_279):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4464
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_280)
+NVN_C(nvnth_fast_280):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4480
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_281)
+NVN_C(nvnth_fast_281):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4496
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_282)
+NVN_C(nvnth_fast_282):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4512
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_283)
+NVN_C(nvnth_fast_283):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4528
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_284)
+NVN_C(nvnth_fast_284):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4544
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_285)
+NVN_C(nvnth_fast_285):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4560
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_286)
+NVN_C(nvnth_fast_286):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4576
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_287)
+NVN_C(nvnth_fast_287):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4592
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_288)
+NVN_C(nvnth_fast_288):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4608
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_289)
+NVN_C(nvnth_fast_289):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4624
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_290)
+NVN_C(nvnth_fast_290):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4640
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_291)
+NVN_C(nvnth_fast_291):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4656
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_292)
+NVN_C(nvnth_fast_292):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4672
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_293)
+NVN_C(nvnth_fast_293):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4688
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_294)
+NVN_C(nvnth_fast_294):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4704
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_295)
+NVN_C(nvnth_fast_295):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4720
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_296)
+NVN_C(nvnth_fast_296):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4736
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_297)
+NVN_C(nvnth_fast_297):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4752
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_298)
+NVN_C(nvnth_fast_298):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4768
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_299)
+NVN_C(nvnth_fast_299):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4784
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_300)
+NVN_C(nvnth_fast_300):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4800
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_301)
+NVN_C(nvnth_fast_301):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4816
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_302)
+NVN_C(nvnth_fast_302):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4832
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_303)
+NVN_C(nvnth_fast_303):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4848
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_304)
+NVN_C(nvnth_fast_304):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4864
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_305)
+NVN_C(nvnth_fast_305):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4880
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_306)
+NVN_C(nvnth_fast_306):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4896
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_307)
+NVN_C(nvnth_fast_307):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4912
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_308)
+NVN_C(nvnth_fast_308):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4928
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_309)
+NVN_C(nvnth_fast_309):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4944
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_310)
+NVN_C(nvnth_fast_310):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4960
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_311)
+NVN_C(nvnth_fast_311):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4976
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_312)
+NVN_C(nvnth_fast_312):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #4992
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_313)
+NVN_C(nvnth_fast_313):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5008
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_314)
+NVN_C(nvnth_fast_314):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5024
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_315)
+NVN_C(nvnth_fast_315):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5040
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_316)
+NVN_C(nvnth_fast_316):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5056
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_317)
+NVN_C(nvnth_fast_317):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5072
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_318)
+NVN_C(nvnth_fast_318):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5088
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_319)
+NVN_C(nvnth_fast_319):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5104
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_320)
+NVN_C(nvnth_fast_320):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5120
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_321)
+NVN_C(nvnth_fast_321):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5136
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_322)
+NVN_C(nvnth_fast_322):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5152
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_323)
+NVN_C(nvnth_fast_323):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5168
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_324)
+NVN_C(nvnth_fast_324):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5184
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_325)
+NVN_C(nvnth_fast_325):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5200
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_326)
+NVN_C(nvnth_fast_326):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5216
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_327)
+NVN_C(nvnth_fast_327):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5232
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_328)
+NVN_C(nvnth_fast_328):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5248
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_329)
+NVN_C(nvnth_fast_329):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5264
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_330)
+NVN_C(nvnth_fast_330):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5280
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_331)
+NVN_C(nvnth_fast_331):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5296
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_332)
+NVN_C(nvnth_fast_332):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5312
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_333)
+NVN_C(nvnth_fast_333):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5328
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_334)
+NVN_C(nvnth_fast_334):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5344
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_335)
+NVN_C(nvnth_fast_335):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5360
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_336)
+NVN_C(nvnth_fast_336):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5376
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_337)
+NVN_C(nvnth_fast_337):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5392
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_338)
+NVN_C(nvnth_fast_338):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5408
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_339)
+NVN_C(nvnth_fast_339):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5424
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_340)
+NVN_C(nvnth_fast_340):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5440
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_341)
+NVN_C(nvnth_fast_341):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5456
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_342)
+NVN_C(nvnth_fast_342):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5472
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_343)
+NVN_C(nvnth_fast_343):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5488
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_344)
+NVN_C(nvnth_fast_344):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5504
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_345)
+NVN_C(nvnth_fast_345):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5520
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_346)
+NVN_C(nvnth_fast_346):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5536
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_347)
+NVN_C(nvnth_fast_347):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5552
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_348)
+NVN_C(nvnth_fast_348):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5568
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_349)
+NVN_C(nvnth_fast_349):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5584
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_350)
+NVN_C(nvnth_fast_350):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5600
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_351)
+NVN_C(nvnth_fast_351):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5616
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_352)
+NVN_C(nvnth_fast_352):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5632
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_353)
+NVN_C(nvnth_fast_353):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5648
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_354)
+NVN_C(nvnth_fast_354):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5664
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_355)
+NVN_C(nvnth_fast_355):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5680
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_356)
+NVN_C(nvnth_fast_356):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5696
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_357)
+NVN_C(nvnth_fast_357):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5712
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_358)
+NVN_C(nvnth_fast_358):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5728
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_359)
+NVN_C(nvnth_fast_359):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5744
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_360)
+NVN_C(nvnth_fast_360):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5760
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_361)
+NVN_C(nvnth_fast_361):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5776
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_362)
+NVN_C(nvnth_fast_362):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5792
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_363)
+NVN_C(nvnth_fast_363):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5808
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_364)
+NVN_C(nvnth_fast_364):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5824
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_365)
+NVN_C(nvnth_fast_365):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5840
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_366)
+NVN_C(nvnth_fast_366):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5856
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_367)
+NVN_C(nvnth_fast_367):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5872
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_368)
+NVN_C(nvnth_fast_368):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5888
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_369)
+NVN_C(nvnth_fast_369):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5904
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_370)
+NVN_C(nvnth_fast_370):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5920
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_371)
+NVN_C(nvnth_fast_371):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5936
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_372)
+NVN_C(nvnth_fast_372):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5952
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_373)
+NVN_C(nvnth_fast_373):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5968
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_374)
+NVN_C(nvnth_fast_374):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #5984
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_375)
+NVN_C(nvnth_fast_375):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6000
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_376)
+NVN_C(nvnth_fast_376):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6016
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_377)
+NVN_C(nvnth_fast_377):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6032
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_378)
+NVN_C(nvnth_fast_378):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6048
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_379)
+NVN_C(nvnth_fast_379):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6064
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_380)
+NVN_C(nvnth_fast_380):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6080
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_381)
+NVN_C(nvnth_fast_381):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6096
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_382)
+NVN_C(nvnth_fast_382):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6112
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_383)
+NVN_C(nvnth_fast_383):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6128
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_384)
+NVN_C(nvnth_fast_384):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6144
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_385)
+NVN_C(nvnth_fast_385):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6160
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_386)
+NVN_C(nvnth_fast_386):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6176
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_387)
+NVN_C(nvnth_fast_387):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6192
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_388)
+NVN_C(nvnth_fast_388):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6208
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_389)
+NVN_C(nvnth_fast_389):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6224
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_390)
+NVN_C(nvnth_fast_390):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6240
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_391)
+NVN_C(nvnth_fast_391):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6256
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_392)
+NVN_C(nvnth_fast_392):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6272
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_393)
+NVN_C(nvnth_fast_393):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6288
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_394)
+NVN_C(nvnth_fast_394):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6304
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_395)
+NVN_C(nvnth_fast_395):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6320
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_396)
+NVN_C(nvnth_fast_396):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6336
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_397)
+NVN_C(nvnth_fast_397):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6352
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_398)
+NVN_C(nvnth_fast_398):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6368
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_399)
+NVN_C(nvnth_fast_399):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6384
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_400)
+NVN_C(nvnth_fast_400):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6400
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_401)
+NVN_C(nvnth_fast_401):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6416
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_402)
+NVN_C(nvnth_fast_402):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6432
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_403)
+NVN_C(nvnth_fast_403):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6448
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_404)
+NVN_C(nvnth_fast_404):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6464
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_405)
+NVN_C(nvnth_fast_405):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6480
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_406)
+NVN_C(nvnth_fast_406):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6496
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_407)
+NVN_C(nvnth_fast_407):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6512
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_408)
+NVN_C(nvnth_fast_408):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6528
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_409)
+NVN_C(nvnth_fast_409):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6544
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_410)
+NVN_C(nvnth_fast_410):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6560
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_411)
+NVN_C(nvnth_fast_411):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6576
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_412)
+NVN_C(nvnth_fast_412):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6592
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_413)
+NVN_C(nvnth_fast_413):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6608
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_414)
+NVN_C(nvnth_fast_414):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6624
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_415)
+NVN_C(nvnth_fast_415):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6640
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_416)
+NVN_C(nvnth_fast_416):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6656
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_417)
+NVN_C(nvnth_fast_417):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6672
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_418)
+NVN_C(nvnth_fast_418):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6688
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_419)
+NVN_C(nvnth_fast_419):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6704
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_420)
+NVN_C(nvnth_fast_420):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6720
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_421)
+NVN_C(nvnth_fast_421):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6736
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_422)
+NVN_C(nvnth_fast_422):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6752
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_423)
+NVN_C(nvnth_fast_423):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6768
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_424)
+NVN_C(nvnth_fast_424):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6784
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_425)
+NVN_C(nvnth_fast_425):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6800
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_426)
+NVN_C(nvnth_fast_426):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6816
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_427)
+NVN_C(nvnth_fast_427):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6832
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_428)
+NVN_C(nvnth_fast_428):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6848
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_429)
+NVN_C(nvnth_fast_429):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6864
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_430)
+NVN_C(nvnth_fast_430):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6880
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_431)
+NVN_C(nvnth_fast_431):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6896
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_432)
+NVN_C(nvnth_fast_432):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6912
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_433)
+NVN_C(nvnth_fast_433):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6928
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_434)
+NVN_C(nvnth_fast_434):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6944
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_435)
+NVN_C(nvnth_fast_435):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6960
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_436)
+NVN_C(nvnth_fast_436):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6976
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_437)
+NVN_C(nvnth_fast_437):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #6992
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_438)
+NVN_C(nvnth_fast_438):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7008
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_439)
+NVN_C(nvnth_fast_439):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7024
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_440)
+NVN_C(nvnth_fast_440):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7040
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_441)
+NVN_C(nvnth_fast_441):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7056
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_442)
+NVN_C(nvnth_fast_442):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7072
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_443)
+NVN_C(nvnth_fast_443):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7088
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_444)
+NVN_C(nvnth_fast_444):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7104
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_445)
+NVN_C(nvnth_fast_445):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7120
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_446)
+NVN_C(nvnth_fast_446):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7136
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_447)
+NVN_C(nvnth_fast_447):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7152
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_448)
+NVN_C(nvnth_fast_448):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7168
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_449)
+NVN_C(nvnth_fast_449):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7184
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_450)
+NVN_C(nvnth_fast_450):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7200
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_451)
+NVN_C(nvnth_fast_451):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7216
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_452)
+NVN_C(nvnth_fast_452):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7232
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_453)
+NVN_C(nvnth_fast_453):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7248
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_454)
+NVN_C(nvnth_fast_454):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7264
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_455)
+NVN_C(nvnth_fast_455):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7280
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_456)
+NVN_C(nvnth_fast_456):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7296
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_457)
+NVN_C(nvnth_fast_457):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7312
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_458)
+NVN_C(nvnth_fast_458):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7328
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_459)
+NVN_C(nvnth_fast_459):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7344
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_460)
+NVN_C(nvnth_fast_460):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7360
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_461)
+NVN_C(nvnth_fast_461):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7376
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_462)
+NVN_C(nvnth_fast_462):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7392
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_463)
+NVN_C(nvnth_fast_463):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7408
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_464)
+NVN_C(nvnth_fast_464):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7424
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_465)
+NVN_C(nvnth_fast_465):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7440
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_466)
+NVN_C(nvnth_fast_466):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7456
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_467)
+NVN_C(nvnth_fast_467):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7472
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_468)
+NVN_C(nvnth_fast_468):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7488
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_469)
+NVN_C(nvnth_fast_469):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7504
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_470)
+NVN_C(nvnth_fast_470):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7520
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_471)
+NVN_C(nvnth_fast_471):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7536
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_472)
+NVN_C(nvnth_fast_472):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7552
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_473)
+NVN_C(nvnth_fast_473):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7568
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_474)
+NVN_C(nvnth_fast_474):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7584
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_475)
+NVN_C(nvnth_fast_475):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7600
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_476)
+NVN_C(nvnth_fast_476):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7616
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_477)
+NVN_C(nvnth_fast_477):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7632
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_478)
+NVN_C(nvnth_fast_478):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7648
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_479)
+NVN_C(nvnth_fast_479):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7664
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_480)
+NVN_C(nvnth_fast_480):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7680
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_481)
+NVN_C(nvnth_fast_481):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7696
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_482)
+NVN_C(nvnth_fast_482):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7712
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_483)
+NVN_C(nvnth_fast_483):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7728
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_484)
+NVN_C(nvnth_fast_484):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7744
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_485)
+NVN_C(nvnth_fast_485):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7760
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_486)
+NVN_C(nvnth_fast_486):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7776
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_487)
+NVN_C(nvnth_fast_487):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7792
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_488)
+NVN_C(nvnth_fast_488):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7808
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_489)
+NVN_C(nvnth_fast_489):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7824
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_490)
+NVN_C(nvnth_fast_490):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7840
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_491)
+NVN_C(nvnth_fast_491):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7856
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_492)
+NVN_C(nvnth_fast_492):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7872
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_493)
+NVN_C(nvnth_fast_493):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7888
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_494)
+NVN_C(nvnth_fast_494):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7904
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_495)
+NVN_C(nvnth_fast_495):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7920
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_496)
+NVN_C(nvnth_fast_496):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7936
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_497)
+NVN_C(nvnth_fast_497):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7952
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_498)
+NVN_C(nvnth_fast_498):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7968
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_499)
+NVN_C(nvnth_fast_499):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #7984
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_500)
+NVN_C(nvnth_fast_500):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8000
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_501)
+NVN_C(nvnth_fast_501):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8016
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_502)
+NVN_C(nvnth_fast_502):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8032
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_503)
+NVN_C(nvnth_fast_503):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8048
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_504)
+NVN_C(nvnth_fast_504):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8064
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_505)
+NVN_C(nvnth_fast_505):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8080
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_506)
+NVN_C(nvnth_fast_506):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8096
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_507)
+NVN_C(nvnth_fast_507):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8112
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_508)
+NVN_C(nvnth_fast_508):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8128
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_509)
+NVN_C(nvnth_fast_509):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8144
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_510)
+NVN_C(nvnth_fast_510):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8160
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_511)
+NVN_C(nvnth_fast_511):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8176
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_512)
+NVN_C(nvnth_fast_512):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8192
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_513)
+NVN_C(nvnth_fast_513):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8208
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_514)
+NVN_C(nvnth_fast_514):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8224
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_515)
+NVN_C(nvnth_fast_515):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8240
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_516)
+NVN_C(nvnth_fast_516):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8256
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_517)
+NVN_C(nvnth_fast_517):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8272
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_518)
+NVN_C(nvnth_fast_518):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8288
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_519)
+NVN_C(nvnth_fast_519):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8304
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_520)
+NVN_C(nvnth_fast_520):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8320
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_521)
+NVN_C(nvnth_fast_521):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8336
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+    .globl NVN_C(nvnth_fast_522)
+NVN_C(nvnth_fast_522):
+    NVN_ADDR(x16, nvn_slot)
+    mov x17, #8352
+    add x16, x16, x17
+    ldr x17, [x16, #8]
+    br x17
+#endif
     .data
     .p2align 3
     .globl NVN_C(nvn_thunk)
@@ -5240,6 +8903,533 @@ NVN_C(nvn_thunk):
     .quad NVN_C(nvnth_520)
     .quad NVN_C(nvnth_521)
     .quad NVN_C(nvnth_522)
+#ifdef DM_ANDROID_APP
+    .globl NVN_C(nvn_thunk_fast)
+NVN_C(nvn_thunk_fast):
+    .quad NVN_C(nvnth_fast_0)
+    .quad NVN_C(nvnth_fast_1)
+    .quad NVN_C(nvnth_fast_2)
+    .quad NVN_C(nvnth_fast_3)
+    .quad NVN_C(nvnth_fast_4)
+    .quad NVN_C(nvnth_fast_5)
+    .quad NVN_C(nvnth_fast_6)
+    .quad NVN_C(nvnth_fast_7)
+    .quad NVN_C(nvnth_fast_8)
+    .quad NVN_C(nvnth_fast_9)
+    .quad NVN_C(nvnth_fast_10)
+    .quad NVN_C(nvnth_fast_11)
+    .quad NVN_C(nvnth_fast_12)
+    .quad NVN_C(nvnth_fast_13)
+    .quad NVN_C(nvnth_fast_14)
+    .quad NVN_C(nvnth_fast_15)
+    .quad NVN_C(nvnth_fast_16)
+    .quad NVN_C(nvnth_fast_17)
+    .quad NVN_C(nvnth_fast_18)
+    .quad NVN_C(nvnth_fast_19)
+    .quad NVN_C(nvnth_fast_20)
+    .quad NVN_C(nvnth_fast_21)
+    .quad NVN_C(nvnth_fast_22)
+    .quad NVN_C(nvnth_fast_23)
+    .quad NVN_C(nvnth_fast_24)
+    .quad NVN_C(nvnth_fast_25)
+    .quad NVN_C(nvnth_fast_26)
+    .quad NVN_C(nvnth_fast_27)
+    .quad NVN_C(nvnth_fast_28)
+    .quad NVN_C(nvnth_fast_29)
+    .quad NVN_C(nvnth_fast_30)
+    .quad NVN_C(nvnth_fast_31)
+    .quad NVN_C(nvnth_fast_32)
+    .quad NVN_C(nvnth_fast_33)
+    .quad NVN_C(nvnth_fast_34)
+    .quad NVN_C(nvnth_fast_35)
+    .quad NVN_C(nvnth_fast_36)
+    .quad NVN_C(nvnth_fast_37)
+    .quad NVN_C(nvnth_fast_38)
+    .quad NVN_C(nvnth_fast_39)
+    .quad NVN_C(nvnth_fast_40)
+    .quad NVN_C(nvnth_fast_41)
+    .quad NVN_C(nvnth_fast_42)
+    .quad NVN_C(nvnth_fast_43)
+    .quad NVN_C(nvnth_fast_44)
+    .quad NVN_C(nvnth_fast_45)
+    .quad NVN_C(nvnth_fast_46)
+    .quad NVN_C(nvnth_fast_47)
+    .quad NVN_C(nvnth_fast_48)
+    .quad NVN_C(nvnth_fast_49)
+    .quad NVN_C(nvnth_fast_50)
+    .quad NVN_C(nvnth_fast_51)
+    .quad NVN_C(nvnth_fast_52)
+    .quad NVN_C(nvnth_fast_53)
+    .quad NVN_C(nvnth_fast_54)
+    .quad NVN_C(nvnth_fast_55)
+    .quad NVN_C(nvnth_fast_56)
+    .quad NVN_C(nvnth_fast_57)
+    .quad NVN_C(nvnth_fast_58)
+    .quad NVN_C(nvnth_fast_59)
+    .quad NVN_C(nvnth_fast_60)
+    .quad NVN_C(nvnth_fast_61)
+    .quad NVN_C(nvnth_fast_62)
+    .quad NVN_C(nvnth_fast_63)
+    .quad NVN_C(nvnth_fast_64)
+    .quad NVN_C(nvnth_fast_65)
+    .quad NVN_C(nvnth_fast_66)
+    .quad NVN_C(nvnth_fast_67)
+    .quad NVN_C(nvnth_fast_68)
+    .quad NVN_C(nvnth_fast_69)
+    .quad NVN_C(nvnth_fast_70)
+    .quad NVN_C(nvnth_fast_71)
+    .quad NVN_C(nvnth_fast_72)
+    .quad NVN_C(nvnth_fast_73)
+    .quad NVN_C(nvnth_fast_74)
+    .quad NVN_C(nvnth_fast_75)
+    .quad NVN_C(nvnth_fast_76)
+    .quad NVN_C(nvnth_fast_77)
+    .quad NVN_C(nvnth_fast_78)
+    .quad NVN_C(nvnth_fast_79)
+    .quad NVN_C(nvnth_fast_80)
+    .quad NVN_C(nvnth_fast_81)
+    .quad NVN_C(nvnth_fast_82)
+    .quad NVN_C(nvnth_fast_83)
+    .quad NVN_C(nvnth_fast_84)
+    .quad NVN_C(nvnth_fast_85)
+    .quad NVN_C(nvnth_fast_86)
+    .quad NVN_C(nvnth_fast_87)
+    .quad NVN_C(nvnth_fast_88)
+    .quad NVN_C(nvnth_fast_89)
+    .quad NVN_C(nvnth_fast_90)
+    .quad NVN_C(nvnth_fast_91)
+    .quad NVN_C(nvnth_fast_92)
+    .quad NVN_C(nvnth_fast_93)
+    .quad NVN_C(nvnth_fast_94)
+    .quad NVN_C(nvnth_fast_95)
+    .quad NVN_C(nvnth_fast_96)
+    .quad NVN_C(nvnth_fast_97)
+    .quad NVN_C(nvnth_fast_98)
+    .quad NVN_C(nvnth_fast_99)
+    .quad NVN_C(nvnth_fast_100)
+    .quad NVN_C(nvnth_fast_101)
+    .quad NVN_C(nvnth_fast_102)
+    .quad NVN_C(nvnth_fast_103)
+    .quad NVN_C(nvnth_fast_104)
+    .quad NVN_C(nvnth_fast_105)
+    .quad NVN_C(nvnth_fast_106)
+    .quad NVN_C(nvnth_fast_107)
+    .quad NVN_C(nvnth_fast_108)
+    .quad NVN_C(nvnth_fast_109)
+    .quad NVN_C(nvnth_fast_110)
+    .quad NVN_C(nvnth_fast_111)
+    .quad NVN_C(nvnth_fast_112)
+    .quad NVN_C(nvnth_fast_113)
+    .quad NVN_C(nvnth_fast_114)
+    .quad NVN_C(nvnth_fast_115)
+    .quad NVN_C(nvnth_fast_116)
+    .quad NVN_C(nvnth_fast_117)
+    .quad NVN_C(nvnth_fast_118)
+    .quad NVN_C(nvnth_fast_119)
+    .quad NVN_C(nvnth_fast_120)
+    .quad NVN_C(nvnth_fast_121)
+    .quad NVN_C(nvnth_fast_122)
+    .quad NVN_C(nvnth_fast_123)
+    .quad NVN_C(nvnth_fast_124)
+    .quad NVN_C(nvnth_fast_125)
+    .quad NVN_C(nvnth_fast_126)
+    .quad NVN_C(nvnth_fast_127)
+    .quad NVN_C(nvnth_fast_128)
+    .quad NVN_C(nvnth_fast_129)
+    .quad NVN_C(nvnth_fast_130)
+    .quad NVN_C(nvnth_fast_131)
+    .quad NVN_C(nvnth_fast_132)
+    .quad NVN_C(nvnth_fast_133)
+    .quad NVN_C(nvnth_fast_134)
+    .quad NVN_C(nvnth_fast_135)
+    .quad NVN_C(nvnth_fast_136)
+    .quad NVN_C(nvnth_fast_137)
+    .quad NVN_C(nvnth_fast_138)
+    .quad NVN_C(nvnth_fast_139)
+    .quad NVN_C(nvnth_fast_140)
+    .quad NVN_C(nvnth_fast_141)
+    .quad NVN_C(nvnth_fast_142)
+    .quad NVN_C(nvnth_fast_143)
+    .quad NVN_C(nvnth_fast_144)
+    .quad NVN_C(nvnth_fast_145)
+    .quad NVN_C(nvnth_fast_146)
+    .quad NVN_C(nvnth_fast_147)
+    .quad NVN_C(nvnth_fast_148)
+    .quad NVN_C(nvnth_fast_149)
+    .quad NVN_C(nvnth_fast_150)
+    .quad NVN_C(nvnth_fast_151)
+    .quad NVN_C(nvnth_fast_152)
+    .quad NVN_C(nvnth_fast_153)
+    .quad NVN_C(nvnth_fast_154)
+    .quad NVN_C(nvnth_fast_155)
+    .quad NVN_C(nvnth_fast_156)
+    .quad NVN_C(nvnth_fast_157)
+    .quad NVN_C(nvnth_fast_158)
+    .quad NVN_C(nvnth_fast_159)
+    .quad NVN_C(nvnth_fast_160)
+    .quad NVN_C(nvnth_fast_161)
+    .quad NVN_C(nvnth_fast_162)
+    .quad NVN_C(nvnth_fast_163)
+    .quad NVN_C(nvnth_fast_164)
+    .quad NVN_C(nvnth_fast_165)
+    .quad NVN_C(nvnth_fast_166)
+    .quad NVN_C(nvnth_fast_167)
+    .quad NVN_C(nvnth_fast_168)
+    .quad NVN_C(nvnth_fast_169)
+    .quad NVN_C(nvnth_fast_170)
+    .quad NVN_C(nvnth_fast_171)
+    .quad NVN_C(nvnth_fast_172)
+    .quad NVN_C(nvnth_fast_173)
+    .quad NVN_C(nvnth_fast_174)
+    .quad NVN_C(nvnth_fast_175)
+    .quad NVN_C(nvnth_fast_176)
+    .quad NVN_C(nvnth_fast_177)
+    .quad NVN_C(nvnth_fast_178)
+    .quad NVN_C(nvnth_fast_179)
+    .quad NVN_C(nvnth_fast_180)
+    .quad NVN_C(nvnth_fast_181)
+    .quad NVN_C(nvnth_fast_182)
+    .quad NVN_C(nvnth_fast_183)
+    .quad NVN_C(nvnth_fast_184)
+    .quad NVN_C(nvnth_fast_185)
+    .quad NVN_C(nvnth_fast_186)
+    .quad NVN_C(nvnth_fast_187)
+    .quad NVN_C(nvnth_fast_188)
+    .quad NVN_C(nvnth_fast_189)
+    .quad NVN_C(nvnth_fast_190)
+    .quad NVN_C(nvnth_fast_191)
+    .quad NVN_C(nvnth_fast_192)
+    .quad NVN_C(nvnth_fast_193)
+    .quad NVN_C(nvnth_fast_194)
+    .quad NVN_C(nvnth_fast_195)
+    .quad NVN_C(nvnth_fast_196)
+    .quad NVN_C(nvnth_fast_197)
+    .quad NVN_C(nvnth_fast_198)
+    .quad NVN_C(nvnth_fast_199)
+    .quad NVN_C(nvnth_fast_200)
+    .quad NVN_C(nvnth_fast_201)
+    .quad NVN_C(nvnth_fast_202)
+    .quad NVN_C(nvnth_fast_203)
+    .quad NVN_C(nvnth_fast_204)
+    .quad NVN_C(nvnth_fast_205)
+    .quad NVN_C(nvnth_fast_206)
+    .quad NVN_C(nvnth_fast_207)
+    .quad NVN_C(nvnth_fast_208)
+    .quad NVN_C(nvnth_fast_209)
+    .quad NVN_C(nvnth_fast_210)
+    .quad NVN_C(nvnth_fast_211)
+    .quad NVN_C(nvnth_fast_212)
+    .quad NVN_C(nvnth_fast_213)
+    .quad NVN_C(nvnth_fast_214)
+    .quad NVN_C(nvnth_fast_215)
+    .quad NVN_C(nvnth_fast_216)
+    .quad NVN_C(nvnth_fast_217)
+    .quad NVN_C(nvnth_fast_218)
+    .quad NVN_C(nvnth_fast_219)
+    .quad NVN_C(nvnth_fast_220)
+    .quad NVN_C(nvnth_fast_221)
+    .quad NVN_C(nvnth_fast_222)
+    .quad NVN_C(nvnth_fast_223)
+    .quad NVN_C(nvnth_fast_224)
+    .quad NVN_C(nvnth_fast_225)
+    .quad NVN_C(nvnth_fast_226)
+    .quad NVN_C(nvnth_fast_227)
+    .quad NVN_C(nvnth_fast_228)
+    .quad NVN_C(nvnth_fast_229)
+    .quad NVN_C(nvnth_fast_230)
+    .quad NVN_C(nvnth_fast_231)
+    .quad NVN_C(nvnth_fast_232)
+    .quad NVN_C(nvnth_fast_233)
+    .quad NVN_C(nvnth_fast_234)
+    .quad NVN_C(nvnth_fast_235)
+    .quad NVN_C(nvnth_fast_236)
+    .quad NVN_C(nvnth_fast_237)
+    .quad NVN_C(nvnth_fast_238)
+    .quad NVN_C(nvnth_fast_239)
+    .quad NVN_C(nvnth_fast_240)
+    .quad NVN_C(nvnth_fast_241)
+    .quad NVN_C(nvnth_fast_242)
+    .quad NVN_C(nvnth_fast_243)
+    .quad NVN_C(nvnth_fast_244)
+    .quad NVN_C(nvnth_fast_245)
+    .quad NVN_C(nvnth_fast_246)
+    .quad NVN_C(nvnth_fast_247)
+    .quad NVN_C(nvnth_fast_248)
+    .quad NVN_C(nvnth_fast_249)
+    .quad NVN_C(nvnth_fast_250)
+    .quad NVN_C(nvnth_fast_251)
+    .quad NVN_C(nvnth_fast_252)
+    .quad NVN_C(nvnth_fast_253)
+    .quad NVN_C(nvnth_fast_254)
+    .quad NVN_C(nvnth_fast_255)
+    .quad NVN_C(nvnth_fast_256)
+    .quad NVN_C(nvnth_fast_257)
+    .quad NVN_C(nvnth_fast_258)
+    .quad NVN_C(nvnth_fast_259)
+    .quad NVN_C(nvnth_fast_260)
+    .quad NVN_C(nvnth_fast_261)
+    .quad NVN_C(nvnth_fast_262)
+    .quad NVN_C(nvnth_fast_263)
+    .quad NVN_C(nvnth_fast_264)
+    .quad NVN_C(nvnth_fast_265)
+    .quad NVN_C(nvnth_fast_266)
+    .quad NVN_C(nvnth_fast_267)
+    .quad NVN_C(nvnth_fast_268)
+    .quad NVN_C(nvnth_fast_269)
+    .quad NVN_C(nvnth_fast_270)
+    .quad NVN_C(nvnth_fast_271)
+    .quad NVN_C(nvnth_fast_272)
+    .quad NVN_C(nvnth_fast_273)
+    .quad NVN_C(nvnth_fast_274)
+    .quad NVN_C(nvnth_fast_275)
+    .quad NVN_C(nvnth_fast_276)
+    .quad NVN_C(nvnth_fast_277)
+    .quad NVN_C(nvnth_fast_278)
+    .quad NVN_C(nvnth_fast_279)
+    .quad NVN_C(nvnth_fast_280)
+    .quad NVN_C(nvnth_fast_281)
+    .quad NVN_C(nvnth_fast_282)
+    .quad NVN_C(nvnth_fast_283)
+    .quad NVN_C(nvnth_fast_284)
+    .quad NVN_C(nvnth_fast_285)
+    .quad NVN_C(nvnth_fast_286)
+    .quad NVN_C(nvnth_fast_287)
+    .quad NVN_C(nvnth_fast_288)
+    .quad NVN_C(nvnth_fast_289)
+    .quad NVN_C(nvnth_fast_290)
+    .quad NVN_C(nvnth_fast_291)
+    .quad NVN_C(nvnth_fast_292)
+    .quad NVN_C(nvnth_fast_293)
+    .quad NVN_C(nvnth_fast_294)
+    .quad NVN_C(nvnth_fast_295)
+    .quad NVN_C(nvnth_fast_296)
+    .quad NVN_C(nvnth_fast_297)
+    .quad NVN_C(nvnth_fast_298)
+    .quad NVN_C(nvnth_fast_299)
+    .quad NVN_C(nvnth_fast_300)
+    .quad NVN_C(nvnth_fast_301)
+    .quad NVN_C(nvnth_fast_302)
+    .quad NVN_C(nvnth_fast_303)
+    .quad NVN_C(nvnth_fast_304)
+    .quad NVN_C(nvnth_fast_305)
+    .quad NVN_C(nvnth_fast_306)
+    .quad NVN_C(nvnth_fast_307)
+    .quad NVN_C(nvnth_fast_308)
+    .quad NVN_C(nvnth_fast_309)
+    .quad NVN_C(nvnth_fast_310)
+    .quad NVN_C(nvnth_fast_311)
+    .quad NVN_C(nvnth_fast_312)
+    .quad NVN_C(nvnth_fast_313)
+    .quad NVN_C(nvnth_fast_314)
+    .quad NVN_C(nvnth_fast_315)
+    .quad NVN_C(nvnth_fast_316)
+    .quad NVN_C(nvnth_fast_317)
+    .quad NVN_C(nvnth_fast_318)
+    .quad NVN_C(nvnth_fast_319)
+    .quad NVN_C(nvnth_fast_320)
+    .quad NVN_C(nvnth_fast_321)
+    .quad NVN_C(nvnth_fast_322)
+    .quad NVN_C(nvnth_fast_323)
+    .quad NVN_C(nvnth_fast_324)
+    .quad NVN_C(nvnth_fast_325)
+    .quad NVN_C(nvnth_fast_326)
+    .quad NVN_C(nvnth_fast_327)
+    .quad NVN_C(nvnth_fast_328)
+    .quad NVN_C(nvnth_fast_329)
+    .quad NVN_C(nvnth_fast_330)
+    .quad NVN_C(nvnth_fast_331)
+    .quad NVN_C(nvnth_fast_332)
+    .quad NVN_C(nvnth_fast_333)
+    .quad NVN_C(nvnth_fast_334)
+    .quad NVN_C(nvnth_fast_335)
+    .quad NVN_C(nvnth_fast_336)
+    .quad NVN_C(nvnth_fast_337)
+    .quad NVN_C(nvnth_fast_338)
+    .quad NVN_C(nvnth_fast_339)
+    .quad NVN_C(nvnth_fast_340)
+    .quad NVN_C(nvnth_fast_341)
+    .quad NVN_C(nvnth_fast_342)
+    .quad NVN_C(nvnth_fast_343)
+    .quad NVN_C(nvnth_fast_344)
+    .quad NVN_C(nvnth_fast_345)
+    .quad NVN_C(nvnth_fast_346)
+    .quad NVN_C(nvnth_fast_347)
+    .quad NVN_C(nvnth_fast_348)
+    .quad NVN_C(nvnth_fast_349)
+    .quad NVN_C(nvnth_fast_350)
+    .quad NVN_C(nvnth_fast_351)
+    .quad NVN_C(nvnth_fast_352)
+    .quad NVN_C(nvnth_fast_353)
+    .quad NVN_C(nvnth_fast_354)
+    .quad NVN_C(nvnth_fast_355)
+    .quad NVN_C(nvnth_fast_356)
+    .quad NVN_C(nvnth_fast_357)
+    .quad NVN_C(nvnth_fast_358)
+    .quad NVN_C(nvnth_fast_359)
+    .quad NVN_C(nvnth_fast_360)
+    .quad NVN_C(nvnth_fast_361)
+    .quad NVN_C(nvnth_fast_362)
+    .quad NVN_C(nvnth_fast_363)
+    .quad NVN_C(nvnth_fast_364)
+    .quad NVN_C(nvnth_fast_365)
+    .quad NVN_C(nvnth_fast_366)
+    .quad NVN_C(nvnth_fast_367)
+    .quad NVN_C(nvnth_fast_368)
+    .quad NVN_C(nvnth_fast_369)
+    .quad NVN_C(nvnth_fast_370)
+    .quad NVN_C(nvnth_fast_371)
+    .quad NVN_C(nvnth_fast_372)
+    .quad NVN_C(nvnth_fast_373)
+    .quad NVN_C(nvnth_fast_374)
+    .quad NVN_C(nvnth_fast_375)
+    .quad NVN_C(nvnth_fast_376)
+    .quad NVN_C(nvnth_fast_377)
+    .quad NVN_C(nvnth_fast_378)
+    .quad NVN_C(nvnth_fast_379)
+    .quad NVN_C(nvnth_fast_380)
+    .quad NVN_C(nvnth_fast_381)
+    .quad NVN_C(nvnth_fast_382)
+    .quad NVN_C(nvnth_fast_383)
+    .quad NVN_C(nvnth_fast_384)
+    .quad NVN_C(nvnth_fast_385)
+    .quad NVN_C(nvnth_fast_386)
+    .quad NVN_C(nvnth_fast_387)
+    .quad NVN_C(nvnth_fast_388)
+    .quad NVN_C(nvnth_fast_389)
+    .quad NVN_C(nvnth_fast_390)
+    .quad NVN_C(nvnth_fast_391)
+    .quad NVN_C(nvnth_fast_392)
+    .quad NVN_C(nvnth_fast_393)
+    .quad NVN_C(nvnth_fast_394)
+    .quad NVN_C(nvnth_fast_395)
+    .quad NVN_C(nvnth_fast_396)
+    .quad NVN_C(nvnth_fast_397)
+    .quad NVN_C(nvnth_fast_398)
+    .quad NVN_C(nvnth_fast_399)
+    .quad NVN_C(nvnth_fast_400)
+    .quad NVN_C(nvnth_fast_401)
+    .quad NVN_C(nvnth_fast_402)
+    .quad NVN_C(nvnth_fast_403)
+    .quad NVN_C(nvnth_fast_404)
+    .quad NVN_C(nvnth_fast_405)
+    .quad NVN_C(nvnth_fast_406)
+    .quad NVN_C(nvnth_fast_407)
+    .quad NVN_C(nvnth_fast_408)
+    .quad NVN_C(nvnth_fast_409)
+    .quad NVN_C(nvnth_fast_410)
+    .quad NVN_C(nvnth_fast_411)
+    .quad NVN_C(nvnth_fast_412)
+    .quad NVN_C(nvnth_fast_413)
+    .quad NVN_C(nvnth_fast_414)
+    .quad NVN_C(nvnth_fast_415)
+    .quad NVN_C(nvnth_fast_416)
+    .quad NVN_C(nvnth_fast_417)
+    .quad NVN_C(nvnth_fast_418)
+    .quad NVN_C(nvnth_fast_419)
+    .quad NVN_C(nvnth_fast_420)
+    .quad NVN_C(nvnth_fast_421)
+    .quad NVN_C(nvnth_fast_422)
+    .quad NVN_C(nvnth_fast_423)
+    .quad NVN_C(nvnth_fast_424)
+    .quad NVN_C(nvnth_fast_425)
+    .quad NVN_C(nvnth_fast_426)
+    .quad NVN_C(nvnth_fast_427)
+    .quad NVN_C(nvnth_fast_428)
+    .quad NVN_C(nvnth_fast_429)
+    .quad NVN_C(nvnth_fast_430)
+    .quad NVN_C(nvnth_fast_431)
+    .quad NVN_C(nvnth_fast_432)
+    .quad NVN_C(nvnth_fast_433)
+    .quad NVN_C(nvnth_fast_434)
+    .quad NVN_C(nvnth_fast_435)
+    .quad NVN_C(nvnth_fast_436)
+    .quad NVN_C(nvnth_fast_437)
+    .quad NVN_C(nvnth_fast_438)
+    .quad NVN_C(nvnth_fast_439)
+    .quad NVN_C(nvnth_fast_440)
+    .quad NVN_C(nvnth_fast_441)
+    .quad NVN_C(nvnth_fast_442)
+    .quad NVN_C(nvnth_fast_443)
+    .quad NVN_C(nvnth_fast_444)
+    .quad NVN_C(nvnth_fast_445)
+    .quad NVN_C(nvnth_fast_446)
+    .quad NVN_C(nvnth_fast_447)
+    .quad NVN_C(nvnth_fast_448)
+    .quad NVN_C(nvnth_fast_449)
+    .quad NVN_C(nvnth_fast_450)
+    .quad NVN_C(nvnth_fast_451)
+    .quad NVN_C(nvnth_fast_452)
+    .quad NVN_C(nvnth_fast_453)
+    .quad NVN_C(nvnth_fast_454)
+    .quad NVN_C(nvnth_fast_455)
+    .quad NVN_C(nvnth_fast_456)
+    .quad NVN_C(nvnth_fast_457)
+    .quad NVN_C(nvnth_fast_458)
+    .quad NVN_C(nvnth_fast_459)
+    .quad NVN_C(nvnth_fast_460)
+    .quad NVN_C(nvnth_fast_461)
+    .quad NVN_C(nvnth_fast_462)
+    .quad NVN_C(nvnth_fast_463)
+    .quad NVN_C(nvnth_fast_464)
+    .quad NVN_C(nvnth_fast_465)
+    .quad NVN_C(nvnth_fast_466)
+    .quad NVN_C(nvnth_fast_467)
+    .quad NVN_C(nvnth_fast_468)
+    .quad NVN_C(nvnth_fast_469)
+    .quad NVN_C(nvnth_fast_470)
+    .quad NVN_C(nvnth_fast_471)
+    .quad NVN_C(nvnth_fast_472)
+    .quad NVN_C(nvnth_fast_473)
+    .quad NVN_C(nvnth_fast_474)
+    .quad NVN_C(nvnth_fast_475)
+    .quad NVN_C(nvnth_fast_476)
+    .quad NVN_C(nvnth_fast_477)
+    .quad NVN_C(nvnth_fast_478)
+    .quad NVN_C(nvnth_fast_479)
+    .quad NVN_C(nvnth_fast_480)
+    .quad NVN_C(nvnth_fast_481)
+    .quad NVN_C(nvnth_fast_482)
+    .quad NVN_C(nvnth_fast_483)
+    .quad NVN_C(nvnth_fast_484)
+    .quad NVN_C(nvnth_fast_485)
+    .quad NVN_C(nvnth_fast_486)
+    .quad NVN_C(nvnth_fast_487)
+    .quad NVN_C(nvnth_fast_488)
+    .quad NVN_C(nvnth_fast_489)
+    .quad NVN_C(nvnth_fast_490)
+    .quad NVN_C(nvnth_fast_491)
+    .quad NVN_C(nvnth_fast_492)
+    .quad NVN_C(nvnth_fast_493)
+    .quad NVN_C(nvnth_fast_494)
+    .quad NVN_C(nvnth_fast_495)
+    .quad NVN_C(nvnth_fast_496)
+    .quad NVN_C(nvnth_fast_497)
+    .quad NVN_C(nvnth_fast_498)
+    .quad NVN_C(nvnth_fast_499)
+    .quad NVN_C(nvnth_fast_500)
+    .quad NVN_C(nvnth_fast_501)
+    .quad NVN_C(nvnth_fast_502)
+    .quad NVN_C(nvnth_fast_503)
+    .quad NVN_C(nvnth_fast_504)
+    .quad NVN_C(nvnth_fast_505)
+    .quad NVN_C(nvnth_fast_506)
+    .quad NVN_C(nvnth_fast_507)
+    .quad NVN_C(nvnth_fast_508)
+    .quad NVN_C(nvnth_fast_509)
+    .quad NVN_C(nvnth_fast_510)
+    .quad NVN_C(nvnth_fast_511)
+    .quad NVN_C(nvnth_fast_512)
+    .quad NVN_C(nvnth_fast_513)
+    .quad NVN_C(nvnth_fast_514)
+    .quad NVN_C(nvnth_fast_515)
+    .quad NVN_C(nvnth_fast_516)
+    .quad NVN_C(nvnth_fast_517)
+    .quad NVN_C(nvnth_fast_518)
+    .quad NVN_C(nvnth_fast_519)
+    .quad NVN_C(nvnth_fast_520)
+    .quad NVN_C(nvnth_fast_521)
+    .quad NVN_C(nvnth_fast_522)
+#endif
     .globl NVN_C(nvn_names)
 NVN_C(nvn_names):
     .quad Ln0

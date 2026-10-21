@@ -9,7 +9,7 @@ static void x_shared_close(const void *);
 static void x_shared_cache(uint64_t,size_t,int);
 #endif
 // NVN 接口层：接管 main 导入的 nvnBootstrapLoader，sdk 里的 NVN 驱动整块不执行。
-// 523 个 NVN 名字一律返回计数跳板（nvn_thunks.S），跳板再转到这里的实现：
+// 523 个 NVN 名字返回静态跳板（nvn_thunks.S），Android APP 普通模式不计数；显式诊断和 Apple 保持计数：
 //   · 有语义的（设备 / 内存池 / 贴图与采样器 / 队列 / 窗口 / 同步 / 事件 / 命令缓冲内存）按 NVN 语义实现，对象是真的；
 //   · 只改 GPU 状态、没有 CPU 可见结果的（状态对象、绑定、绘制、清除…）录成命令，提交时回放；
 //   · 其余（main 只加载不调用的 307 个 + 头文件无原型的）接 nvn_unimpl_entry：被调到即报红打印名字。
@@ -17,9 +17,9 @@ static void x_shared_cache(uint64_t,size_t,int);
 // Metal 命令缓冲（nvn_mtl.m）：缓冲拷贝 / uniform 更新走 blit（GPU 时序），事件写值 / 计数器在 GPU 完成后写；
 // 同步对象 = 提交栅栏值，等待只在 GPU 完成后放行。
 // 每个实现都按 nvn_protos.h 的原型做编译期签名检查（NVNboolean 参数按 uint32_t 收、只看低 8 位）。
-// 环境开关：DM_NVN_FRAMES=N 前 N 帧逐帧打印调用表（默认 3）；DM_NVN_TSV=路径 每帧调用表与计时写 TSV（DM_NVN_TSV_CALLS=0 只写计时）；DM_SLOWFRAME=1 只把掉帧的逐帧分项写进日志；DM_NVN_LOG=1 记对象创建。
+// 环境开关：DM_NVN_FRAMES=N 前 N 帧逐帧打印调用表（默认 3）；DM_NVN_TSV=路径 每帧调用表与计时写 TSV（DM_NVN_TSV_CALLS=0 只写计时）；DM_SLOWFRAME=1 只把掉帧的逐帧分项写进日志；DM_NVN_LOG=1 记对象创建。Android APP 普通模式不统计次数；显式设置 DM_NVN_FRAMES、DM_NVN_TSV 或 DM_NVN_PROF 即恢复计数。
 // NVN interface layer: takes over the nvnBootstrapLoader imported by main; the NVN driver in sdk is not executed at all.
-// All 523 NVN names return counting thunks (nvn_thunks.S), and the thunks forward to the implementations here:
+// All 523 NVN names return static thunks (nvn_thunks.S). Android app normal mode skips counts; explicit diagnostics and Apple retain them:
 //   - those with semantics (device / memory pools / textures and samplers / queue / window / sync / events / command buffer memory) are implemented per NVN semantics, and the objects are real;
 //   - those that only change GPU state and have no CPU-visible result (state objects, bindings, draws, clears...) are recorded as commands and replayed at submit;
 //   - the rest (the 307 that main only loads but never calls + those without a prototype in the header) go to nvn_unimpl_entry: reports a failure and prints the name when called.
@@ -27,7 +27,7 @@ static void x_shared_cache(uint64_t,size_t,int);
 // Metal command buffer (nvn_mtl.m): buffer copies / uniform updates go through blit (GPU ordering), event value writes / counters are written after the GPU completes;
 // sync object = submit fence value, and waits are released only after the GPU completes.
 // Every implementation gets a compile-time signature check against the prototypes in nvn_protos.h (NVNboolean parameters are received as uint32_t, only the low 8 bits are looked at).
-// Environment switches: DM_NVN_FRAMES=N prints the call table per frame for the first N frames (default 3); DM_NVN_TSV=path writes the per-frame call table and timing to a TSV (DM_NVN_TSV_CALLS=0 writes timing only); DM_SLOWFRAME=1 writes only the per-frame breakdown of dropped frames to the log; DM_NVN_LOG=1 logs object creation.
+// Environment switches: DM_NVN_FRAMES=N prints the call table per frame for the first N frames (default 3); DM_NVN_TSV=path writes the per-frame call table and timing to a TSV (DM_NVN_TSV_CALLS=0 writes timing only); DM_SLOWFRAME=1 writes only the per-frame breakdown of dropped frames to the log; DM_NVN_LOG=1 logs object creation. Android app normal mode skips counts; explicitly setting DM_NVN_FRAMES, DM_NVN_TSV or DM_NVN_PROF restores counting.
 #include "../../host/hle.h"
 #include "nvn_protos.h"
 #include "nvn_count.h"
@@ -101,6 +101,18 @@ typedef struct { _Atomic uint64_t cnt; void *fn; } nvn_slot_t;
 nvn_slot_t nvn_slot[NVN_NFUNC];                 // 跳板按 i*16 访问，布局不可改 | The thunk accesses it by i*16; the layout must not change
 _Static_assert(sizeof(nvn_slot_t) == 16, "跳板按 16 字节步长寻址");
 extern void *nvn_thunk[NVN_NFUNC];
+#ifdef DM_ANDROID_APP
+extern void *nvn_thunk_fast[NVN_NFUNC];
+#endif
+static void **g_thunks = nvn_thunk;
+static int g_call_counts = 1;
+// Freeze dispatch before publishing any function address. No per-call flag/env read.
+static void nvn_init_dispatch(void) {
+#ifdef DM_ANDROID_APP
+    g_call_counts = getenv("DM_NVN_FRAMES") || getenv("DM_NVN_TSV") || getenv("DM_NVN_PROF");
+    g_thunks = g_call_counts ? nvn_thunk : nvn_thunk_fast;
+#endif
+}
 extern const char *nvn_names[NVN_NFUNC];
 extern void nvn_unimpl_entry(void);
 extern void nvn_prof_entry(void);
@@ -137,6 +149,7 @@ static unsigned g_nsem;                          // 语义实现个数（nvn_ini
 
 static void nvn_init_slots(void) {
     static int done; if (done) return; done = 1;
+    nvn_init_dispatch();
     g_log = getenv("DM_NVN_LOG") != NULL;
 #ifdef __APPLE__
     unsigned long sz;
@@ -160,7 +173,7 @@ static void nvn_init_slots(void) {
 static void *nvn_lookup(const char *name) {
     nvn_init_slots();
     for (unsigned i = 0; i < NVN_NFUNC; i++)
-        if (!strcmp(nvn_names[i], name)) return nvn_thunk[i];
+        if (!strcmp(nvn_names[i], name)) return g_thunks[i];
     LOG("【红】NVN 取址未知名字：%s", name ? name : "(null)");
     return NULL;
 }
@@ -1329,6 +1342,9 @@ __attribute__((constructor)) static void nvn_nops_register(void) {
     if (getenv("DM_NVN_PROF"))
         for (unsigned i = 0; i < NVN_NFUNC; i++)
             if (nvn_slot[i].fn != (void *)nvn_unimpl_entry && strcmp(nvn_names[i], "nvnQueuePresentTexture")) { nvn_real[i] = nvn_slot[i].fn; nvn_slot[i].fn = (void *)nvn_prof_entry; }
+#ifdef DM_ANDROID_APP
+    LOG("[nvn] call counting: %s", g_call_counts ? "enabled" : "disabled (Android app normal mode)");
+#endif
     LOG("[nvn] 空设备：名字 %u，已实现 %u（语义 %u + 空实现 %u），其余 %u 个接报红桩",
         NVN_NFUNC, g_nsem + nnop, g_nsem, nnop, NVN_NFUNC - g_nsem - nnop);
 }
@@ -1415,19 +1431,21 @@ static void dump_frame(void) {
         const char *t = getenv("DM_NVN_TSV"); if (t && !(g_tsv = fopen(t, "w"))) LOG("【红】打不开 %s", t);
         if (g_tsv) fprintf(g_tsv, "# kind: nvn-per-frame  name 为 NVN 函数名时值 = 调用次数；@ 开头为计时埋点（ms / 个）\nframe\tname\tvalue\n");
     }
-    uint64_t total = 0; unsigned nfn = 0;
-    char line[8192]; size_t o = 0; line[0] = 0;
-    for (unsigned i = 0; i < NVN_NFUNC; i++) {
-        uint64_t c = atomic_load(&nvn_slot[i].cnt), d = c - g_prev[i];
-        g_prev[i] = c;
-        if (!d) continue;
-        total += d; nfn++;
-        if (g_tsv && calls) fprintf(g_tsv, "%llu\t%s\t%llu\n", g_frame, nvn_names[i], d);
-        if (g_frame <= (uint64_t)nframes && o < sizeof line - 96) o += snprintf(line + o, sizeof line - o, " %s=%llu", nvn_names[i] + 3, d);
+    if (g_call_counts) {
+        uint64_t total = 0; unsigned nfn = 0;
+        char line[8192]; size_t o = 0; line[0] = 0;
+        for (unsigned i = 0; i < NVN_NFUNC; i++) {
+            uint64_t c = atomic_load(&nvn_slot[i].cnt), d = c - g_prev[i];
+            g_prev[i] = c;
+            if (!d) continue;
+            total += d; nfn++;
+            if (g_tsv && calls) fprintf(g_tsv, "%llu\t%s\t%llu\n", g_frame, nvn_names[i], d);
+            if (g_frame <= (uint64_t)nframes && o < sizeof line - 96) o += snprintf(line + o, sizeof line - o, " %s=%llu", nvn_names[i] + 3, d);
+        }
+        if (g_tsv) fflush(g_tsv);
+        if (g_frame <= (uint64_t)nframes) LOG("[nvn] %s %llu：%u 个函数 %llu 次调用 |%s", g_frame ? "帧" : "初始化", g_frame, nfn, total, line);
+        else if (g_frame % 300 == 0) LOG("[nvn] 帧 %llu：%u 个函数 %llu 次调用", g_frame, nfn, total);
     }
-    if (g_tsv) fflush(g_tsv);
-    if (g_frame <= (uint64_t)nframes) LOG("[nvn] %s %llu：%u 个函数 %llu 次调用 |%s", g_frame ? "帧" : "初始化", g_frame, nfn, total, line);
-    else if (g_frame % 300 == 0) LOG("[nvn] 帧 %llu：%u 个函数 %llu 次调用", g_frame, nfn, total);
     g_frame++; cs_dump();
     // 每 300 帧读一次常驻内存，交图形层打内存读数行（mtl_mem_stat，低频封顶）。内存看门狗：常驻超过上限就报红自行退出——只在 Mac 宿主上缺省开（24 GB：宿主内存失控
     // 会把整机拖进内核崩溃，同机别的程序两次如此），或测试时用 DM_MEM_CAP_GB=<整数> 指定；玩家的 iOS 包不设上限（被系统杀之前自己退没有意义，反而多一种闪退）
