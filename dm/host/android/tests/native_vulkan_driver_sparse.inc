@@ -1,5 +1,8 @@
 // Independent GPU math/oracle; the shader reads both arms and two c0 banks.
 // Same-key driver hits must not bypass the output buffer's changing offset.
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+extern vk_buffer *vk_test_driver_span_constant(vk_shader *,int,uint64_t *,uint64_t *);
+#endif
 static uint32_t sparse_address_oracle(unsigned reg,int ubo) {
   const p_bind_buf *b=ubo?&S.ubo[5][reg]:&S.ssbo[5][reg];
   return (uint32_t)b->addr^(uint32_t)(b->addr>>32)^(uint32_t)b->size;
