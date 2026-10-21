@@ -213,7 +213,7 @@ def proof(path, digest):
         require(set(tools) == {'cpu_helper', 'scheduler_helper'}, 'performance tools fields differ')
         helper = pinned(tools['cpu_helper'])
         require(helper == HERE / 'capture-official-cpu.py', 'exact reviewed local helper required')
-        require(pinned(tools['scheduler_helper']) == R / 'scripts/dev/capture-android-scheduler.py',
+        require(pinned(tools['scheduler_helper']) == HERE.parent / 'capture-android-scheduler.py',
                 'existing official scheduler orchestration required')
     if 'official_gpu_tools' in p:
         gpu = p['official_gpu_tools']

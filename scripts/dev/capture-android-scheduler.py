@@ -67,6 +67,7 @@ data_sources { config { name: "linux.ftrace" ftrace_config {
   ftrace_events: "sched/sched_switch"
   ftrace_events: "sched/sched_waking"
   ftrace_events: "power/cpu_frequency"
+  ftrace_events: "power/cpu_frequency_limits"
   ftrace_events: "power/cpu_idle"
   ftrace_events: "power/gpu_frequency"
 %s%s  compact_sched { enabled: true }

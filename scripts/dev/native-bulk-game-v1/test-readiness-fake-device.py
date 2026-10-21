@@ -6,7 +6,7 @@ Successful readiness stops at the next original thread-list read: no official
 capture command, fake performance result, clock/sample or device is generated.
 """
 from pathlib import Path
-import copy,json,runpy,shlex,sys,tempfile,unittest
+import copy,json,runpy,shlex,subprocess,sys,tempfile,unittest
 from unittest.mock import patch
 R=Path('/home/dl/d2r-mobile');HELPER=Path(__file__).with_name('capture-official-cpu.py')
 SERIAL='10CG570J59001U1';PID='12345';PKG='com.d2rmobile.nativeport'
@@ -37,9 +37,14 @@ class RealReadiness(unittest.TestCase):
      self.assertTrue(records,'Unexpected extra state read');row=records.pop(0);state_reads.append(row);return json.dumps(row)+'\n'
     if parts[2:4]==['sh','-c'] and 'task/*' in parts[4]:raise ReachedTools('real readiness passed; stop before official tool windows')
     raise AssertionError('Unexpected fake-device command: '+repr(command))
+   def snapshot(command,**kwargs):
+    self.assertEqual(command[:4],[str(R/'.local/android-sdk/platform-tools/adb'),'-s',SERIAL,'shell'])
+    self.assertIn('for p in /sys/devices/system/cpu/cpufreq/policy*',command[4])
+    # A permission denial is retained as raw evidence; it cannot gate readiness.
+    return subprocess.CompletedProcess(command,1,b'',b'Permission denied\n')
    def forbidden(*args,**kwargs):raise AssertionError('No process/device may run in offline readiness test')
    argv=[str(HELPER),SERIAL,PID,'1',str(out),str(window),'1']
-   with patch.object(sys,'argv',argv),patch('subprocess.check_output',side_effect=check_output),patch('subprocess.run',side_effect=forbidden),patch('subprocess.Popen',side_effect=forbidden),patch('time.sleep',return_value=None):
+   with patch.object(sys,'argv',argv),patch('subprocess.check_output',side_effect=check_output),patch('subprocess.run',side_effect=snapshot),patch('subprocess.Popen',side_effect=forbidden),patch('time.sleep',return_value=None):
     if passes:
      with self.assertRaises(ReachedTools):runpy.run_path(str(HELPER),run_name='__main__')
     else:
@@ -48,6 +53,8 @@ class RealReadiness(unittest.TestCase):
    self.assertEqual(len(actual['pre_record_cache_states']),expect_count)
    self.assertEqual(len(list(out.glob('cache-ready-*.json'))),expect_count)
    self.assertEqual((out/'before-tools.json').exists(),passes)
+   self.assertEqual((out/'cpu-policy-ready.rc.txt').exists(),passes)
+   if passes:self.assertEqual((out/'cpu-policy-ready.rc.txt').read_text(),'1\n')
    self.assertNotIn('stat_official_command',actual);self.assertNotIn('record_official_command',actual)
    self.assertNotIn('official_scheduler_command',actual);self.assertNotIn('complete',actual)
    self.assertEqual(len(state_reads),expect_count+int(passes))

@@ -13,6 +13,15 @@ def app(*a):return ad('shell',shlex.join(['run-as',PKG,*a]))
 def endpoint(n):
  exact();v=json.loads(app('tail','-n','1','files/runtime/game-state.jsonl'));assert v['valid']and v['world_input_ready']and v['area']==1 and v['guest_heap']['shared']is shared and v['scale_3d']==.60 and v['pool_windows']['window_bytes']==window and v['game_output']==v['surface_output']=={'width':2750,'height':1260};assert not v['world_freeze']['host_frozen']and not v['runtime_extrap']['enabled'];(D/(n+'.json')).write_text(json.dumps(v,indent=2)+'\n');return v
 def save():(D/'official-cpu-capture.json').write_text(json.dumps(phase,indent=2)+'\n')
+def cpu_policy_snapshot(boundary):
+ # One standard sysfs read at an existing boundary, outside every tool window.
+ snapshot_command=B+['shell','rc=0; for p in /sys/devices/system/cpu/cpufreq/policy*; do for n in scaling_min_freq scaling_max_freq scaling_governor cpuinfo_max_freq; do printf "%s\\n" "$p/$n"; cat "$p/$n" || rc=1; done; done; exit "$rc"']
+ try:
+  result=S.run(snapshot_command,capture_output=True,timeout=20);stdout,stderr,rc=result.stdout,result.stderr,str(result.returncode)
+ except S.TimeoutExpired as error:
+  stdout,stderr,rc=error.stdout or b'',error.stderr or b'','timeout'
+ leaf=D/('cpu-policy-'+boundary)
+ leaf.with_suffix('.stdout.txt').write_bytes(stdout);leaf.with_suffix('.stderr.txt').write_bytes(stderr);leaf.with_suffix('.rc.txt').write_text(rc+'\n')
 exact();assert ad('shell','sha256sum','/system/bin/simpleperf').split()[0]=='b868bf7d7aaffec117c5c758b594594d71a80de35b1e5b48a10b2f2eccae239c';phase['tool_sha256']='b868bf7d7aaffec117c5c758b594594d71a80de35b1e5b48a10b2f2eccae239c';save()
 env=os.environ.copy();env['PATH']=str(R/'.local/android-sdk/platform-tools')+':'+env['PATH']
 phase['original_route']='Already completed once by parent matched6217 transaction; no extra walk here';save()
@@ -26,6 +35,7 @@ for attempt in range(30):
  time.sleep(.4)
 assert stable>=4,'PSO/variant readiness never stabilized'
 assert endpoint('before-tools')['frame_pacing']['target_fps']==60,'Target is not60 before tools; preserve run, no hot policy changes'
+cpu_policy_snapshot('ready')
 (D/'thread-names-before.txt').write_text(app('sh','-c','for t in /proc/"$1"/task/*; do printf "%s\\t" "${t##*/}"; cat "$t/comm"; done','sh',pid))
 maps=app('cat','/proc/'+pid+'/maps');(D/'maps.txt').write_text(maps);assert not any(x in maps.lower()for x in ['renderdoc','libvklayer_khronos_validation','liblwi','libvklayer_sdp'])
 stat_events={
@@ -73,9 +83,11 @@ for kind in capture_kinds:
 if trace:
  first=endpoint('before-scheduler')
  assert first['frame_pacing']['target_fps']==60,'Target not60 before optional scheduler; no hot override'
- command=[sys.executable,str(R/'scripts/dev/capture-android-scheduler.py'),'--serial',serial,'--seconds','8','--buffer-mb','64','--app-markers','--clean-atrace-print','--frame-timeline','--output',str(D/'completion-scheduler.pftrace')]
+ command=[sys.executable,str(Path(__file__).resolve().parents[1]/'capture-android-scheduler.py'),'--serial',serial,'--seconds','8','--buffer-mb','64','--app-markers','--clean-atrace-print','--frame-timeline','--output',str(D/'completion-scheduler.pftrace')]
  phase['official_scheduler_command']=command;save()
+ cpu_policy_snapshot('pre-scheduler')
  with(D/'scheduler-console.log').open('w')as f:S.run(command,env=env,stdout=f,stderr=S.STDOUT,check=True,timeout=50)
+ cpu_policy_snapshot('post-scheduler')
  exact();last=endpoint('after-scheduler');capture=json.loads((D/'completion-scheduler.json').read_text())
  assert capture['pid']==int(pid)and capture['shader_chain']=='9507875007c6'and capture['seconds_requested']==8
  assert capture['app_markers_requested']and capture['clean_atrace_print_requested']and capture['frame_timeline_requested']
