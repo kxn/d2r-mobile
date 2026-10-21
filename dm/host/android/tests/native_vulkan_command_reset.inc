@@ -36,9 +36,70 @@ static void command_reset_pixels(const uint8_t *data,unsigned slots,uint32_t bas
   for(unsigned n=0;n<64;n++)CHECK(data[4096-64+n]==0xa5);
   for(unsigned n=0;n<64;n++)CHECK(data[4096+slots*64+n]==0xa5);
 }
+#ifndef DM_ANDROID_APP
+// The real GPU/effect/reset gates establish states, without elapsed timing or
+// production waiter instrumentation. The host runner bounds a lost wakeup.
+typedef struct {
+  pthread_mutex_t mu;
+  pthread_cond_t cv;
+  uint64_t fence;
+  uint32_t readback[64],published;
+  unsigned started,entered,release;
+} guest_fence_wait_context;
+typedef struct {guest_fence_wait_context *shared;uint64_t timeout;int done,valid;} guest_fence_wait_result;
+static void guest_fence_wait_effect(void *opaque) {
+  guest_fence_wait_context *c=opaque;
+  pthread_mutex_lock(&c->mu);c->entered=1;pthread_cond_broadcast(&c->cv);
+  while(!c->release)pthread_cond_wait(&c->cv,&c->mu);
+  c->published=UINT32_C(0x49ab32cd);
+  pthread_mutex_unlock(&c->mu);
+}
+static void *guest_fence_wait_thread(void *opaque) {
+  guest_fence_wait_result *r=opaque;guest_fence_wait_context *c=r->shared;
+  pthread_mutex_lock(&c->mu);c->started++;pthread_cond_broadcast(&c->cv);
+  pthread_mutex_unlock(&c->mu);
+  r->done=mtl_wait(c->fence,r->timeout);
+  // The completed predicate's publication orders the real CPU effects. Do
+  // not use our fixture lock as a substitute for that happens-before edge.
+  r->valid=c->published==UINT32_C(0x49ab32cd);
+  for(unsigned n=0;n<64;n++)r->valid&=c->readback[n]==UINT32_C(0x12349876);
+  return NULL;
+}
+static void guest_fence_wait_scope_test(void) {
+  CHECK(!V.cmd && V.timeline_semaphore);mtl_finish();
+  guest_fence_wait_context c={.mu=PTHREAD_MUTEX_INITIALIZER,.cv=PTHREAD_COND_INITIALIZER};
+  VkSemaphore gate=pool_copy_gate();vk_command_reset_test_gate(1);
+  mtl_sub_begin();uint64_t serial=vk_recording_serial();
+  vk_buffer *source=vk_temp_buffer(sizeof c.readback);
+  vkCmdFillBuffer(V.cmd,source->handle,0,sizeof c.readback,UINT32_C(0x12349876));
+  vk_barrier();vk_effect_copy(c.readback,source->map,sizeof c.readback);
+  vk_completion(guest_fence_wait_effect,&c);c.fence=mtl_sub_commit();
+  CHECK(!mtl_wait(c.fence,0));CHECK(!mtl_wait(c.fence,1));
+  guest_fence_wait_result results[2]={{.shared=&c,.timeout=UINT64_MAX},{.shared=&c,.timeout=30000000000ull}};pthread_t waiters[2];
+  for(unsigned n=0;n<2;n++)CHECK(!pthread_create(&waiters[n],NULL,guest_fence_wait_thread,&results[n]));
+  pthread_mutex_lock(&c.mu);while(c.started!=2)pthread_cond_wait(&c.cv,&c.mu);pthread_mutex_unlock(&c.mu);
+  pool_copy_signal(&gate);
+  pthread_mutex_lock(&c.mu);while(!c.entered)pthread_cond_wait(&c.cv,&c.mu);
+  CHECK(!c.published);pthread_mutex_unlock(&c.mu);
+  // GPU/copy finished, but the CPU callback has not published completion.
+  CHECK(!mtl_wait(c.fence,0));CHECK(!mtl_wait(c.fence,1));
+  pthread_mutex_lock(&c.mu);c.release=1;pthread_cond_broadcast(&c.cv);pthread_mutex_unlock(&c.mu);
+  for(unsigned n=0;n<2;n++){CHECK(!pthread_join(waiters[n],NULL));CHECK(results[n].done&&results[n].valid);}
+  CHECK(mtl_wait(c.fence,0));CHECK(mtl_wait(c.fence,1));CHECK(mtl_wait(c.fence,UINT64_MAX));
+  CHECK(vk_command_reset_test_wait_blocked(serial)==serial);
+  uint64_t done,ready;unsigned sets;vk_command_reset_test_snapshot(&done,&ready,&sets);
+  CHECK(done==serial && ready<serial); // completion is not reset readiness
+  vk_command_reset_test_gate(0);mtl_finish();vkDestroySemaphore(V.device,gate,NULL);
+  CHECK(!pthread_cond_destroy(&c.cv));CHECK(!pthread_mutex_destroy(&c.mu));
+  LOG("[guest fence wait scope fixture] pending zero/finite timeouts, finite/infinite waiters, real GPU bytes+CPUeffect before completion and reset-independent return passed");
+}
+#endif
 static void command_pool_reset_test(void) {
   CHECK(V.cmd==VK_NULL_HANDLE);
   mtl_finish();
+#ifndef DM_ANDROID_APP
+  guest_fence_wait_scope_test();
+#endif
   uint8_t *data;CHECK(!posix_memalign((void **)&data,65536,65536));
   memset(data,0xa5,65536);
   NVNmemoryPoolBuilder builder;NVNmemoryPool pool;
