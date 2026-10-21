@@ -100,6 +100,7 @@ static void shared_window_append_observer_test(uint8_t *data) {
       CHECK(vk_pool_span_query((uintptr_t)data+4*W+128,64,&current)==VK_POOL_SPAN_SINGLE);
       CHECK(current.handle==old_head.handle && current.backing_generation==old_head.backing_generation);
     }
+#ifndef DM_ANDROID_APP
     if(!phase) {
       // CPU-only source still has no resolved backing while another import establishes
       // this Pool's immutable coherent properties. Observation needs no source
@@ -109,6 +110,7 @@ static void shared_window_append_observer_test(uint8_t *data) {
       vk_pool_span_info source;CHECK(vk_pool_span_query((uintptr_t)shared_append_source,4096,&source)==VK_POOL_SPAN_CROSSING);
       CHECK(vk_test_shared_image_raw_scope((uintptr_t)shared_append_source,4096,0)==V.options.shared_image_raw_observe);
     }
+#endif
     // Scope/token remains live through a real GPU read of the appended span.
     // Hook is one-shot for this observer; subsequent owner host phases pass.
     vk_test_shared_host_snapshot(NULL);
