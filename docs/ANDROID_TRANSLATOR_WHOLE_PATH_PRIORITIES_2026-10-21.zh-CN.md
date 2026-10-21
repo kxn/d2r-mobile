@@ -4,7 +4,7 @@
 
 当前实施顺序：
 
-1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一候选179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控通过，canonical及fresh raw28完成，实际游戏对照进行中。
+1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。下一轮单独试宿主ThinLTO，让编译器跨翻译单元处理整条路径；不叠加其他画质或游戏逻辑改动。
 2. 完整ASTC6混合包已进入原游戏并完成三段跑动、存档和恢复；全6217 native payload从443,588,608降到373,624,832B，减少66.72MiB。实际营地NvN Running约26.68ms/完整Surface间隔，出图约33.52ms，未证明净FPS或进程PSS下降。保留资源表示收益，继续测实际加载范围与持续成本，不把资源大小当DRAM或温度。
 3. 进一步评估是否能把Submission/可证明片段中的元数据和几何准入一次交付给多个draw。先查已有walk、source_flow、geometry和recipe边界，不盲加跨draw缓存；低覆盖的分类删除不足以将约27ms直接压到16.7ms。已有native GENERAL不变量的小候选f5e5fca单独保留，未插入179冻结。
 4. A650独立查GPU故障，保留1MiB，不切回整池或随机改Shader。现有同run命令已完整解码，描述符范围和对齐未见明确错误；缺输入payload时不推断动态值。Mali依用户要求暂停，帧回调和翻译多线程暂不实施。
@@ -144,3 +144,27 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 - `.local/logs/shared-whole-d148-offline-analysis-v1/whole0-control1MiB-facts-agent.json`
 - `.local/logs/coherent-native-cache-v1-tests/result.json`
 - `.local/logs/native-qualified-astc6-full2838-root-asset-review.json`
+
+## 同一完整ASTC6包上的统一CPU版本结果
+
+179c82d和原d148均实际执行完整6217混合包（三段原摇杆路径、原存档2次、停止并恢复原包）；候选画面短测未见明显营地黑块或缺失几何。主线84df3da的运行时文件与已测试179c82d一致，原APK/NSO产物仍保留真实179构建记录，没有改写版本标签。
+
+| 版本 | 完整Surface间隔 | NvN Running/间隔 | Running加权频率 | 平均出图间隔 |
+| --- | ---: | ---: | ---: | ---: |
+| 原d148 + full2838 | 232 | 26.67854ms | 1603.23MHz | 33.521829ms |
+| 179统一CPU + full2838 | 235 | 27.51098ms | 1583.28MHz | 33.097001ms |
+
+两侧p50/p95均约33.24ms；未证明净提速，不将均值的小幅变化称作涨帧。CPU样本中native cache遍历从4/620到0/618，准入inclusive从9.19%到8.25%，pin inclusive从3.87%到3.40%；绑定仍约20%。局部路径变化成立不等于整条线程已经变快，不相加嵌套比例。不同实际频率/核心及一次顺序运行也不能证明净回归。
+
+准入的实际可见CPU caller均为原draw：179的51个样本中43个从OP_DRAW_IDX、8个从OP_DRAW进入；原d148为48/9。未采到内部read/transfer/dispatch直接caller不表示它们从未调用。原admissions为全类型计数，没有分类；不能从stream.draws倒推它，因为后者在split统计V.draws差、含compute/专用draw且漏尾段。
+
+候选TOTAL PSS1,980,341KiB，对照2,031,850KiB，相差50.30MiB；不能归因于只增加最多4,224B元数据且不减GPU分配的CPU改动。image cache两侧仍344,166,400B。完整ASTC6包的66.72MiB表示量收益和进程PSS继续分别记录。
+
+本次执行argv错误地将report放在logs根层，原控制器按report.parent输出。完整80个实际文件已原字节归档到独占目录，记录original_path/archive_path/sha256/size，原result及metadata路径未改，也没有因此重采。7d54716对后续工具增加执行前report父目录与声明output一致的检查；真实host CLI正确路径通过，错误路径在设备操作前拒绝。该路径错误不改变实际游戏通过、存档恢复或工具数据的结论。
+
+- `.local/logs/native-cpu-pool-pin-coherent-179-full2838-root-actual-review.json`
+- `.local/logs/native-cpu-pool-pin-coherent-179-full2838-Q735-v1/archive-map-root.json`
+- `.local/logs/cpu-pool-pin-coherent-179-full2838-offline-analysis-v1/facts-and-evidence-agent.json`
+- `.local/logs/submission-resource-admission-scope-readonly-v1/result.json`
+
+更大的前置资源计划尚未实施：当前walk只有路径/DS/query/store摘要，提前collect只是搬工作；提前reserve会导入后来被跳过操作的页面，native图像cold create还会实际acquire。只有已backed资源的lazy段lease可能在完整失效/生命周期合同下减少整轮工作，但还缺真实范围重复率与state generation。准入和索引的可见样本并集约12.97%，即便全部删除也不能单独把26～27ms降到16.7ms，不能许诺这一个改动解决60FPS。
