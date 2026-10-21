@@ -556,12 +556,13 @@ def main():
             native_candidate_validation=p['native_candidate_validation'])
     if p.get('performance_tools'):
         plan['profiling'] = True
-        plan['scope'] = ('Originalthreewalks and five independent official8s CPU windows, including two PMU stat windows; no newpaired or thermal claim'
+        plan['scope'] = ('Originalthreewalks and seven independent official8s CPU windows, including four PMU stat windows; no newpaired or thermal claim'
                          if p.get('native_candidate_validation') else
-                         'Five independent official8s stat/record/PMU/scheduler-Surface windows before LLDB; not yet measured netthroughput or thermal benefit')
+                         'Seven independent official8s stat/record/PMU/scheduler-Surface windows before LLDB; not yet measured netthroughput or thermal benefit')
         plan['official_performance'] = {'stat_seconds': 8, 'record_user_Hz': 99,
             'record_seconds': 8, 'scheduler_frame_seconds': 8, 'before_LLDB': True,
             'pmu_core_stat_seconds': 8, 'pmu_memory_stat_seconds': 8,
+            'pmu_front_cache_stat_seconds': 8, 'pmu_front_stalls_stat_seconds': 8,
             'pmu_limit': 'Inspect actual event availability and multiplex/scaling; not per-frame instructions or DRAM traffic',
             'same_window_CPU_and_Surface_events': 'Perfetto only; stat/record are separate windows',
             'game_Surface_actual_frame_timeline_may_be_absent': True}

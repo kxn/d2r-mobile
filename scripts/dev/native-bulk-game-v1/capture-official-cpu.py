@@ -28,9 +28,11 @@ stat_events={
  'stat':'task-clock,cpu-cycles:u,cpu-cycles:k,instructions:u,minor-faults,major-faults,context-switches,cpu-migrations',
  'pmu-core':'task-clock,cpu-cycles:u,instructions:u,branch-misses:u,stalled-cycles-frontend:u,stalled-cycles-backend:u',
  'pmu-memory':'task-clock,cpu-cycles:u,instructions:u,cache-references:u,cache-misses:u,bus-cycles:u',
+ 'pmu-front-cache':'task-clock,cpu-cycles:u,instructions:u,raw-l1i-cache:u,raw-l1i-cache-refill:u,raw-l1i-tlb-refill:u',
+ 'pmu-front-stalls':'task-clock,cpu-cycles:u,stalled-cycles-frontend:u,raw-stall-frontend-l1i:u,raw-stall-frontend-tlb:u,raw-stall-frontend-membound:u,raw-stall-frontend-cpubound:u',
 }
-capture_kinds=('stat','record','pmu-core','pmu-memory')
-phase['PMU_scope']='Two additional official8s stat windows. Listed event names are not evidence that every PMU supports/counts them; preserve unavailable/multiplex/scaling output. Windows are separate, not per-frame instruction or DRAM-bandwidth measurements.'
+capture_kinds=('stat','record','pmu-core','pmu-memory','pmu-front-cache','pmu-front-stalls')
+phase['PMU_scope']='Four additional official8s stat windows, two for the measured frontend-stall/cache gap. Listed event names are not evidence that every PMU supports/counts them; preserve unavailable/multiplex/scaling output. Windows are separate, not per-frame instruction or DRAM-bandwidth measurements.'
 for kind in capture_kinds:
  first=endpoint('before-'+kind)
  token='native-bulk-bc-cpucost-v1-'+(('window'+str(window))if window else'whole')+'-'+kind;remote='files/runtime/profiles/'+token+('.data'if kind=='record'else'.csv');remotepid='files/runtime/profiles/'+token+'.pid';prop=ad('shell','getprop','security.perf_harden');assert prop in ('0','1');assert app('sh','-c','if test -e "$1" || test -e "$2"; then echo EXISTS; fi','sh',remote,remotepid)=='';profiles_existed=app('sh','-c','if test -d files/runtime/profiles; then echo DIR; fi')=='DIR';app('mkdir','-p','files/runtime/profiles')
