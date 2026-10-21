@@ -242,7 +242,7 @@ class WaitIdentity:
   mapped=rows[0].split()[-1]
   require('!/'not in mapped and self.dev.adb('shell','sha256sum',mapped).split()[0]==WAIT_ELF_SHA,'mapped exact host ELF differs')
   drivers=[x.split()[-1]for x in maps.splitlines()if'libvulkan_freedreno.so'in x]
-  require(drivers and self.dev.adb('shell','sha256sum',drivers[0]).split()[0]==self.p['driver']['sha256'],'mapped driver differs')
+  require(drivers and self.dev.app('sha256sum',drivers[0]).split()[0]==self.p['driver']['sha256'],'mapped driver differs')
   require(self.dev.app('sh','-c','test ! -e "$1" || echo EXISTS','sh',self.pidfile)=='','owned server pidfile collision')
   self.port=self.dev.adb('forward','tcp:0','localabstract:'+self.sock);require(self.port.isdecimal(),'allocated forward absent')
   self.r.update(owned_PID=int(own),mapped_host=mapped,slide=hex(slide),forward_port=int(self.port));self.write()
