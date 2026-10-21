@@ -187,6 +187,9 @@ def proof(path, digest):
                         '--config', counter['config']['path'], '--config-sha256',
                         counter['config']['sha256'], '--plan'], check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if 'official_memory_map' in p:
+        require(p['official_memory_map'] == {'tool': '/system/bin/showmap', 'format': 'json'},
+                'only the existing system showmap JSON memory snapshot is allowed')
     if 'performance_tools' in p:
         tools = p['performance_tools']
         require(set(tools) == {'cpu_helper', 'scheduler_helper'}, 'performance tools fields differ')
@@ -438,6 +441,19 @@ def phase_game(dev, out, phase, p, token):
             save()
         require(pid() == own, 'PID changed before residency snapshot')
         (out / 'official-dumpsys-meminfo.txt').write_text(dev.adb('shell', 'dumpsys', 'meminfo', own))
+        if p.get('official_memory_map'):
+            # One system-tool snapshot AFTER performance windows. No app code,
+            # sampling loop, debugger, page touching or custom smaps reader.
+            text = dev.adb('shell', 'run-as', PKG, '/system/bin/showmap',
+                           '-a', '-v', '-o', 'json', own)
+            (out / 'official-showmap.json').write_text(text)
+            maps = json.loads(text)
+            require(isinstance(maps, list) and maps and
+                    all({'object', 'RSS', 'PSS', 'start addr', 'end addr'} <= set(row)
+                        for row in maps), 'official showmap output incomplete')
+            require(pid() == own, 'PID changed during system memory snapshot')
+            d['official_showmap_complete'] = True
+            save()
         m.screenshot_collect(dev, own, d, report, out, 'HUD-after-route')
         require(current['valid'] and current['world_input_ready'], 'original world not input-ready')
         require(current['scale_3d'] == .60 and current['game_output'] == current['surface_output']
