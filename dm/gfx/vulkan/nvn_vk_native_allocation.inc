@@ -80,6 +80,14 @@ static void native_allocation_cache_visit(const alias_range_node *node,uint64_t 
   native_allocation_cache_visit(node->right,offset,end,invalidate);
 }
 static void native_allocation_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int invalidate) {
+  // Every live Buffer/native import in this Pool has exactly these memory
+  // properties: both import publishers reject a mismatch while holding
+  // resources. For coherent memory shared_cache() is a no-op for every
+  // intersecting allocation, so avoid walking the allocation index at all.
+  // This is only cache maintenance: the caller still validates the logical
+  // range and proves complete physical coverage, and all access histories,
+  // submission ordering and CPU publication remain unchanged.
+  if(p->shared_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)return;
   // Every intersecting immutable VkMemory has its own required cache op;
   // one canonical Buffer's memory cannot replace this alias visibility.
   native_allocation_cache_visit(p->native_allocation_index,offset,offset+bytes,invalidate);
