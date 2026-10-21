@@ -6,7 +6,7 @@
 
 1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。宿主ThinLTO已完成相同资源的原游戏对照：整线程Running约27.36ms vs27.51ms、频率约1577 vs1583MHz，仍约30FPS。编译选项保留为默认关闭的实验入口，不继续以编译微调为主线。
 2. 完整ASTC6混合包已进入原游戏并完成三段跑动、存档和恢复；全6217 native payload从443,588,608降到373,624,832B，减少66.72MiB。实际营地NvN Running约26.68ms/完整Surface间隔，出图约33.52ms，未证明净FPS或进程PSS下降。保留资源表示收益，继续测实际加载范围与持续成本，不把资源大小当DRAM或温度。
-3. 进一步评估是否能把Submission/可证明片段中的元数据和几何准入一次交付给多个draw。先查已有walk、source_flow、geometry和recipe边界，不盲加跨draw缓存；低覆盖的分类删除不足以将约27ms直接压到16.7ms。native GENERAL小候选已独立源码审查及8项GPU/ASan内容测试，179后继43e856f正在canonical/raw构建；只减少准备和纯布局分类，仍执行全部真实消费/依赖，宽包络3.074%含大量保留工作，不是预期收益。
+3. 进一步评估是否能把Submission/可证明片段中的元数据和几何准入一次交付给多个draw。先查已有walk、source_flow、geometry和recipe边界，不盲加跨draw缓存；低覆盖的分类删除不足以将约27ms直接压到16.7ms。native GENERAL与同值纹理注册免全局失效已合成2fc55c2，完成canonical/raw28、原游戏三段移动、save2与恢复并进入主线。仅减少可证明的元数据/准备工作，实际资源消费和依赖仍执行；未证明净CPU/FPS收益。
 4. A650独立查GPU故障，保留1MiB，不切回整池或随机改Shader。现有同run命令已完整解码，描述符范围和对齐未见明确错误；缺输入payload时不推断动态值。Mali依用户要求暂停，帧回调和翻译多线程暂不实施。
 
 整池实验的明确代价是额外739.78MiB PSS，NvN Running约25.75ms vs27.05ms，仍约30FPS；不能把约8%的准入子树视为无成本可删除，更不能作为6GB默认。以下保留各轮原始判断、实施和对照记录。
@@ -183,3 +183,15 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 优先级继续聚焦绑定约20%和完整资源准备/依赖责任的批量重复工作。纯mtl_exec解释器self仅12/618≈1.94%，flatten会引入CALL-return/END/checkpoint语义维护，当前不实施。Allocator可归属样本也只约0.65%，不另造大内存池。下一轮优先找能够减少整轮工作、且失效条件可证明的实现，而不是继续调整小函数布局。
 
 证据：`.local/logs/host-thinlto-9225954-root-actual-review.json`；`.local/logs/host-thinlto-922-full2838-offline-analysis-v1/facts-and-evidence-agent.json`。设备已恢复原包并停止，Mali仍按用户要求暂停。
+
+## 资源准备组合2fc：机制合入，未证明整帧提速
+
+179后继2fc55c2增加两项：原生采样图像已固定GENERAL且无mip/格式/Storage准备时跳过无效准备；完整tex_t及view字节相同、有效的重复注册不再改变全局descriptor epoch。两者各自原GPU内容测试通过，新增测试从APP排除；真实变更、CPU写、GPU writer、native/Buffer alias、物理生命周期均保持。
+
+原游戏实际237个完整Surface间隔，整NvN Running27.849208ms/间隔、加权1575.40MHz、平均出图32.954417ms，仍约30FPS。scheduler bracket本身PSO184/184、variants33/33稳定；更早CPU采样窗中PSO177→184，不能称整轮steady。该scheduler bracket的既有recipe view命中94.1103%，历史179为93.1111%；慢路/guest分别625.84与746.93，但场景/PSO/频率未严格匹配，不把差额归因成单项收益。views/prepares是命中计数，不是总调用量，不能当同值注册命中数。
+
+主线运行时代码与2fc相同，另保留默认OFF的ThinLTO构建入口。实际短测截图未见明显缺画面，原生命周期存档2次后已停机、恢复原包与资源；没有长期发热或全游戏验收结论。
+
+后续组合74e4050独立构建：既有logical lookup锁内重核完整当前值后，只延续逻辑未变recipe的epoch；正常Android NVN入口移除共享诊断STADD，显式诊断仍走原计数入口。后者来自全PID已有27/1065入口叶样本及真实LLVM指令，不能全归因给原子写，也不能承诺相同比例提速。增加约16.3KiB静态text/table，新fast ELF符号隐藏；不改变游戏/绘制语义。
+
+证据：`.local/logs/native-preparation-2fc55c2-root-actual-review.json`；`.local/logs/native-preparation-2fc55c2-full2838-offline-analysis-v1/facts-and-evidence-agent.json`。
