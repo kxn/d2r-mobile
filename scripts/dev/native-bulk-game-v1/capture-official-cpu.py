@@ -35,6 +35,9 @@ for kind in capture_kinds:
  first=endpoint('before-'+kind)
  token='native-bulk-bc-cpucost-v1-'+(('window'+str(window))if window else'whole')+'-'+kind;remote='files/runtime/profiles/'+token+('.data'if kind=='record'else'.csv');remotepid='files/runtime/profiles/'+token+'.pid';prop=ad('shell','getprop','security.perf_harden');assert prop in ('0','1');assert app('sh','-c','if test -e "$1" || test -e "$2"; then echo EXISTS; fi','sh',remote,remotepid)=='';profiles_existed=app('sh','-c','if test -d files/runtime/profiles; then echo DIR; fi')=='DIR';app('mkdir','-p','files/runtime/profiles')
  command=(['/system/bin/simpleperf','record','--in-app','-p',pid,'--duration','8','-e','cpu-clock:u','-f','99','--call-graph','dwarf,16384','--post-unwind=yes','--no-callchain-joiner','--keep-failed-unwinding-result','-o',remote] if kind=='record' else ['/system/bin/simpleperf','stat','--csv','--per-thread','--no-inherit','--monitor-new-thread','-p',pid,'--duration','8','-e',stat_events[kind],'-o',remote]);phase[kind+'_official_command']=command;phase['perf_harden_before']=prop;save()
+ # Official CSV summaries omit enabled/running times; retain verbose raw PMU
+ # records instead of treating an absent scaling annotation as full coverage.
+ if kind.startswith('pmu-'):command.insert(2,'--verbose')
  try:
   if prop!='0':ad('shell','setprop','security.perf_harden','0')
   shell='echo $$ > '+shlex.quote(remotepid)+'; exec '+shlex.join(command)
