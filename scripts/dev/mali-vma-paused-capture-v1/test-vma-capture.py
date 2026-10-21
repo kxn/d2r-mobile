@@ -6,6 +6,7 @@ RAW=b'{"General":{"Total":{"AllocationCount":17}},"DetailedMap":{}}\n'
 HASH=hashlib.sha256(RAW).hexdigest();START='Android native start pid=101\noriginal boot'
 REQ='\n[vulkan VMA dump] explicit request accepted=1; consumes at next normal suspend'
 DONE='\n[vulkan VMA dump] complete=1 errno=0 file=/data/user/0/'+m.PKG+'/files/runtime/temp/vulkan-vma.json builtin_detailed_map=1 post_drain_before_this_job_trim=1 earlier_tail_FRAME_trim_not_excluded=1; Usage/Budget may be VMA estimates, not resident/mtrack'
+SAVE='\n[dm] Android background save asked=1 commits=2 froze=0 elapsed_ms=281.1'
 SUSP='\n[nvn] 图形挂起：在途 GPU 工作已清空'
 class Dev:
  def __init__(self,mode):self.mode=mode;self.requested=False;self.saved=False;self.events=[];self.command=['fake-owned-adb']
@@ -32,19 +33,19 @@ class Dev:
   if self.mode=='failed-boundary':done='\n[vulkan VMA dump] failed: completion/reset not drained; request consumed'
   if self.mode=='wrong-path':done=done.replace('/files/runtime/temp/vulkan-vma.json','/different.json')
   if self.mode=='missing-request':req=''
-  if self.mode=='out-of-order':return START+DONE+REQ+SUSP
+  if self.mode=='out-of-order':return START+DONE+REQ+SAVE+SUSP
   if self.mode=='timeout':return START+REQ
-  return START+req+done+SUSP
+  return START+req+done+SAVE+SUSP if self.mode=='wrong-pause'else START+req+SAVE+done+SUSP
 original_run=m.subprocess.run;original_showmap=m.showmap;original_clock=m.time.monotonic
 count=0
 try:
- for mode in ('ok','stale-json','stale-part','replacement','reset','rejected','duplicate','failed-output','failed-boundary','wrong-path','missing-request','out-of-order','timeout','changed-transfer'):
+ for mode in ('ok','stale-json','stale-part','replacement','reset','rejected','duplicate','failed-output','failed-boundary','wrong-path','missing-request','out-of-order','timeout','changed-transfer','wrong-pause'):
   with tempfile.TemporaryDirectory()as td:
    out=Path(td);d={'serial':'10.10.10.44:34455'};dev=Dev(mode)
    def invoke(label,argv,timeout):
     assert label=='fresh-save'and timeout==45 and not dev.saved
     dev.events.append(('save2',));dev.saved=True
-    Path(argv[argv.index('--report')+1]).write_text(json.dumps({'pid':101,'fresh_original_lifecycle_save':True,'save_commits':2}))
+    Path(argv[argv.index('--report')+1]).write_text(json.dumps({'pid':101,'fresh_original_lifecycle_save':True,'save_commits':2,'confirmation':SAVE.strip()}))
    def showmap(dev,pid,out):assert dev.saved;dev.events.append(('showmap',))
    def run(argv,**kw):
     assert argv==dev.command+['exec-out','run-as',m.PKG,'cat','files/runtime/temp/vulkan-vma.json']

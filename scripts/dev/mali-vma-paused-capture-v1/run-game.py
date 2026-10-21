@@ -73,6 +73,7 @@ def original_save(dev,pid,d,out,invoke):
  s=read(out/'fresh-save.json');require(s['pid']==pid and s['fresh_original_lifecycle_save']and s['save_commits']==2,'fresh original save2 required')
  require(dev.adb('shell','pidof '+PKG+' || true')==str(pid),'PID changed during save')
  d['fresh_save2_confirmed']=True
+ return s
 def vma_pause_capture(dev,pid,d,out,invoke):
  remote='files/runtime/temp/vulkan-vma.json';part=remote+'.part'
  d['actual_paused_VMA_capture_complete']=False
@@ -85,7 +86,9 @@ def vma_pause_capture(dev,pid,d,out,invoke):
  # Activity is already foreground. Only the one-shot extra is passed; no startup options, new job or GPU wait.
  reply=dev.adb('shell','am','start','-W','-n',PKG+'/.MainActivity','--ez','vma_dump_on_suspend','true')
  (out/'vma-request-am-start.txt').write_text(reply);same();d['vma_request_sent_once']=True
- original_save(dev,pid,d,out,invoke)
+ saved=original_save(dev,pid,d,out,invoke)
+ confirmation=saved['confirmation']
+ require(re.search(r'Android background save asked=1 commits=2(?:\s|$)',confirmation),'original fresh save2 confirmation malformed')
  # Observe existing lifecycle output only. No device timer/sampler or additional GPU synchronization.
  deadline=time.monotonic()+20
  while True:
@@ -101,6 +104,8 @@ def vma_pause_capture(dev,pid,d,out,invoke):
   if failed:raise RuntimeError('original VMA dump incomplete: '+failed.group(0))
   if completion:
    require(requests and requests[0].start()<completion.start(),'VMA completion precedes this explicit request')
+   save_at=tail.rfind(confirmation)
+   require(requests[0].end()<=save_at<completion.start(),'VMA completion does not follow this exact original save2 confirmation')
    require(completion.group(1)=='1'and completion.group(2)=='0','original VMA output failed: '+completion.group(0))
    require(completion.group(3).endswith('/files/runtime/temp/vulkan-vma.json'),'VMA fixed private path differs')
    if suspended>completion.end():break
