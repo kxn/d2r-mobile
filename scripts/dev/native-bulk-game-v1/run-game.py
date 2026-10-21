@@ -117,6 +117,19 @@ def native_table_gate(data, composition, driver_sha):
     return count
 
 
+def driver_span_policy(p, state=None, where='input'):
+    """Optional cold policy only; original constant caches and shader assets stay external."""
+    if 'driver_span_reference' not in p:
+        return None
+    value = p['driver_span_reference']
+    require(type(value) is int and value in (0, 1),
+            'driver_span_reference must be startup-only0/1')
+    if state is not None:
+        require(state.get('driver_constants', {}).get('span_reference') is bool(value),
+                'actual ' + where + ' driver_span_reference differs')
+    return bool(value)
+
+
 def proof(path, digest):
     require(re.fullmatch('[a-f0-9]{64}', digest or '') is not None,
             'explicit input SHA256 required')
@@ -135,6 +148,7 @@ def proof(path, digest):
     if 'shared_lazy_windows' in p:
         require(type(p['shared_lazy_windows']) is int and p['shared_lazy_windows'] in (0, 1),
                 'shared_lazy_windows must be startup-only0/1')
+    driver_span_policy(p)
     baseline = read(pinned(p['baseline']))
     require(baseline['game_PID_absent'] is True, 'baseline must be stopped')
     ready = read(pinned(p['canonical']))
@@ -332,6 +346,10 @@ def phase_game(dev, out, phase, p, token):
                '--fixed-3d', '--pool-copy-accounting', '--game-res', '2750x1260',
                '--timeout', '90', '--report', str(out / 'launch.json'),
                '--pool-window-bytes', str(p['pool_window_bytes']), '--expect-shared-import-windows']
+    if driver_span_policy(p):
+        command += ['--driver-span-reference']
+    if 'driver_span_reference' in p:
+        d['driver_span_reference_requested'] = driver_span_policy(p)
     if p.get('shared_image_raw_observe', 0):
         command += ['--shared-image-raw-observe']
     if 'shared_image_raw_observe' in p:
@@ -390,6 +408,7 @@ def phase_game(dev, out, phase, p, token):
                 and launch['actual_vulkan_provider'] == 'adreno'
                 and launch['requested_legacy_astc_copy'] is False, 'shared/provider contract mismatch')
         initial = read_state(dev, out, 'before-route')
+        driver_span_policy(p, initial, 'startup')
         if 'shared_image_raw_observe' in p:
             require(initial.get('shared_image_raw_observe', {}).get('enabled_policy') is bool(p['shared_image_raw_observe']),
                     'actual startup shared_image_raw_observe differs')
@@ -540,6 +559,10 @@ def phase_game(dev, out, phase, p, token):
                 == {'width': 2750, 'height': 1260}, 'fixed resolution mismatch')
         require(current['pool_windows']['window_bytes'] == p['pool_window_bytes']
                 and current['guest_heap']['shared'] is True, 'actual shared-window mismatch')
+        if 'driver_span_reference' in p:
+            final_policy_state = read_state(dev, out, 'after-span-policy')
+            driver_span_policy(p, final_policy_state, 'final')
+            d['driver_span_reference_observed'] = final_policy_state['driver_constants']['span_reference']
         native = dev.app('cat', 'files/runtime/native.log')
         (out / 'native.log').write_text(native)
         require('[vulkan] device=Turnip Adreno (TM) 735 ' in native and 'FATAL' not in native,
@@ -654,6 +677,9 @@ def main():
                 scope='Samebinary A/A and measurement disturbance; no new optimization or FPS gain claim')
             plan['scope'] = 'Same runtime originalgame/PID/camp:3x30s officialrecord and5x8s Perfetto; original save2/CAS'
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
+    if 'driver_span_reference' in p:
+        plan['driver_span_reference_requested'] = driver_span_policy(p)
+        plan['scope'] += '; cold span-only OFF/ON with identical APK/shader assets; shader deployment is external'
     if 'shared_image_raw_observe' in p:
         plan['shared_image_raw_observe_requested'] = bool(p['shared_image_raw_observe'])
         plan['scope'] += '; cold shared-image-raw-observe OFF/ON; separate launches, no hot switch'
