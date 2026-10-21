@@ -47,9 +47,10 @@ static void compressed_page_array_test(void) {
   vk_texture_shader_abandon();CHECK(old_view);
   vk_test_page_array_bc_restoration(t);CHECK(vk_test_page_array_state(t)==1);
   int incoming=0;NVNtexture source;int has_source=0;
-  if(!strcmp(trigger,"cpu")) {
+  if(!strcmp(trigger,"cpu") || !strcmp(trigger,"trace")) {
     // Same-value writes must revoke the representation and cached view too.
-    dm_guest_write_prepare(t->mem,t->L.size);t->mem[0]=t->mem[0];
+    if(!strcmp(trigger,"cpu")) {dm_guest_write_prepare(t->mem,t->L.size);t->mem[0]=t->mem[0];}
+    else CHECK(vk_trace_frame_active() && V.trace_directory);
     vk_texture_shader_begin();
     VkImageView now=vk_texture_view_binding(71,0,VK_SHADER_STAGE_FRAGMENT_BIT,NULL);
     vk_texture_shader_abandon();CHECK(now && now!=old_view);

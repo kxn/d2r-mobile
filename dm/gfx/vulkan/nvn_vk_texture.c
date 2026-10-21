@@ -2927,17 +2927,17 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   else
 #endif
   image_upload(i);
-  // A dirty optional array can restore its physical storage during upload.
-  // The old recipe remains alive for earlier commands, never for this binding.
-  if(cached && ci.image!=i->handle) {
-    cached=NULL;handle=VK_NULL_HANDLE;
-    ci=(VkImageViewCreateInfo){.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-  }
   const view_t *v=has_view?&view:NULL;
   if (vk_trace_frame_active() && V.trace_directory) {
     char trace_label[32];
     snprintf(trace_label, sizeof trace_label, "sampled-%d", id);
     vk_texture_trace(&i->tex, v, trace_label);
+  }
+  // A dirty optional array can restore its physical storage during upload or the existing trace readback.
+  // The old recipe remains alive for earlier commands, never for this binding.
+  if(cached && ci.image!=i->handle) {
+    cached=NULL;handle=VK_NULL_HANDLE;
+    ci=(VkImageViewCreateInfo){.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
   }
   if(!cached) {
     VkImageSubresourceRange r = range(i, v);

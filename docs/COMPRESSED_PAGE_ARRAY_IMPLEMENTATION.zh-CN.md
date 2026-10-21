@@ -45,3 +45,7 @@ attachment、raw escape、sRGB/serial 均通过；ASan 覆盖 CPUdirty 与 mixed
 6×6 合法边缘与内部整块分别检查。原 ASTC metadata 4661 检查通过。
 LVP 未提供实际 ASTC，本次 ASTC admission/采样/6×6 硬件 demote 均记 unsupported；
 旧 1a 的 42-layer 实机仅是适用性线索，不能代替此实验的硬件/游戏验收。
+
+初版9428cace及其归档保留。v2只把 cached physical-handle 重验移至 upload 与既有
+trace readback 两者之后，覆盖trace主动恢复RGBA的情况；原TRACE_FRAME/DIR有限
+功能测试验证旧recipe不用于本次binding。不新增捕获器、计时器或实际设备采集。
