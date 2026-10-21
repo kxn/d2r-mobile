@@ -36,7 +36,7 @@ static void pool_operation_unpin(pool_operation_plan *plan) {
 // The ONLY transition that exposes recording refs to completion. Run before
 // enqueue (also for internal/reentrant submits), never after a fence can drain
 // the borrowed refs. No live operation means no lock and no Pool walk.
-static void pool_operation_before_commit(void) {
+static __attribute__((noinline)) void pool_operation_before_commit(void) {
   int borrowed=0;
   for(unsigned d=0;d<pool_operation_depth;d++) {
     pool_operation_plan *plan=pool_operation_plans[d];
