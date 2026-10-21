@@ -14,6 +14,11 @@ typedef struct {
   vk_pool_requirement ranges[VK_POOL_RESERVE_MAX_REQUIREMENTS];
   pool *pins[VK_POOL_RESERVE_MAX_REQUIREMENTS];
   size_t count,pin_count;
+  // A current recording access already owns a real Pool reference. Borrow it
+  // only until commit upgrades live operations, before completion can see it.
+  uint64_t owned_pins[(VK_POOL_RESERVE_MAX_REQUIREMENTS+63)/64];
+  size_t owned_pin_count;
+  uint64_t borrowed_recording_serial;
   pool_operation_geometry *geometry;
   size_t geometry_capacity;
   uint64_t geometry_registry_epoch;
@@ -60,8 +65,8 @@ static void pool_operation_geometry_remember(pool_operation_plan *plan,size_t ro
   plan->geometry_slots[slot].row=(uint16_t)row;
 }
 // Called only after all reentrant mip/alias checks, on the recording owner.
-// Every pointer is protected by THIS operation's independent Pool pins, not
-// by a previous submission that completion could release after a reopen.
+// Every pointer has an operation lifetime: either an independent Pool pin or
+// a CURRENT recording ref upgraded before that recording can be completed.
 static int pool_operation_geometry_find(uint64_t address,uint64_t size,uint64_t epoch,
     pool **owner,pool_span_piece *span) {
   if(!pool_operation_depth || !size)return 0;
@@ -75,7 +80,7 @@ static int pool_operation_geometry_find(uint64_t address,uint64_t size,uint64_t 
   if(g->owner_index>=plan->pin_count)return 0;
   pool *p=plan->pins[g->owner_index];pool_backing_span *b=g->backing;
   // The exact key selects a resolution already checked at admission. The
-  // operation's independent pin prevents Pool destruction and backing
+  // operation's retained lifetime prevents Pool destruction and backing
   // replacement (including across completion/reopen); unchanged registry
   // epoch + generation retain that proof. guest/size/begin/end/buffer extent
   // and the saved offset cannot change under this pin, so do not redo their
@@ -95,4 +100,9 @@ int vk_test_pool_operation_geometry(uint64_t address,uint64_t size,vk_pool_span_
   return found;
 }
 uint64_t vk_test_pool_operation_geometry_uses(void) {return pool_operation_geometry_uses;}
+void vk_test_pool_operation_pin_counts(size_t *owned,size_t *borrowed) {
+  pool_operation_plan *plan=pool_operation_depth?pool_operation_plans[pool_operation_depth-1]:NULL;
+  *owned=plan?plan->owned_pin_count:0;
+  *borrowed=plan?plan->pin_count-plan->owned_pin_count:0;
+}
 #endif
