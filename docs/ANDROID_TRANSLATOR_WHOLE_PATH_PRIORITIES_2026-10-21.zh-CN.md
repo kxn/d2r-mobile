@@ -67,6 +67,18 @@ ON1在加载约16秒时触发 `image_bc_copy_decode` 的既有保护：`Mixed co
 
 只读证据：`.local/logs/nvn-adjacent-draw-existing-frame-v1/conclusion-and-budget.json`（SHA256 `19f85c46fff938bf378f788cbe0da60eb31895eed98f863a7e93ae2cc9f473c0`）、`.local/logs/nvn-resource-representation-a31-readonly-v1/research-conclusion.json`。前者保留原捕获、官方转换工具、shader反汇编与聚合输出指纹及所有资格限制；不是新增计时工具。
 
+### e0b实际加载：复制合同修好，空绑定语义仍须区分
+
+后继`e0b40235`恢复generic copy/dispatch准入，只有draw走按需准备；真正T2T collector还为registered UNBACKED目标建立完整范围，原观察函数不导入、不放宽scope/stamp/alias条件。8项必要host用例（7项正常及1项明确distinct Buffer别名重叠拒绝）完成，原Android canonical及三个原始NSO fresh rewrite/独立verify28完成。源码、编译选项、六库及原始产物的根审记录位于`.local/logs/shared-lazy-copy-e0b4023-root-canonical-raw-review.json`。
+
+新ON1原游戏实际运行已越过原mixed compressed copy，并记录原保留转换，但在进入场景时触发实验导入预算。事务终态1，原APK/资源恢复，cleanup为空、后核游戏PID为空，没有开始任何官方性能窗口；同包OFF1/OFF2/ON2因此不执行。此结果不能说明CPU/FPS收益，也不能以加载过程RSS代替稳态PSS。
+
+官方Android崩溃栈的新PID16945、NvN17012、ELF BuildID`98200357e17e545b0e2cf585c14b13bf981b8c23`与精确LLVM反汇编共同定位到indexed buffer绑定：`idx.count * element_size`传给`pool_address`。不能因为函数共用或源码行号模糊就把这次实际调用称为VBO。失败处ensure取整范围为`[0x0a700000,0x2c600000)`，543MiB超过512MiB单Pool累计导入上限；未在错误信息中直接保存的count仍不冒称实测值。
+
+源码合同揭示应修正的语义混用：原准入对empty indexed draw仅需1byte地址证明，执行绑定却可能传0；lazy通用解析把0解释为未知长度VBO并覆盖Pool尾。VS UBO/SSBO的非零地址、零长度同样应保留原descriptor零缓冲回退，不能制造整尾读取。最小后继在typed调用点区分空索引/零绑定和真正未知VBO，保留后者完整范围/RAW合同，保持预算上限；不通过抬高内存限额或缩小未知读取范围过关。机制仍只是约8%准入职责包络的实验，不宣称解决27→16.7ms差距。
+
+失败证据：`.local/logs/shared-lazy-copy-e0b4023-ON1-root-failure-review.json`，包括原事务、真实日志、含历史及当前PID的官方crash-logcat和LLVM source定位输出。源审及host通过仅证明相应用例，不代替Android原游戏验收。
+
 以下原实施顺序保留作历史记录，新的具体结构方案按上述完整路径继续调查：
 
 1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。宿主ThinLTO已完成相同资源的原游戏对照：整线程Running约27.36ms vs27.51ms、频率约1577 vs1583MHz，仍约30FPS。编译选项保留为默认关闭的实验入口，不继续以编译微调为主线。
