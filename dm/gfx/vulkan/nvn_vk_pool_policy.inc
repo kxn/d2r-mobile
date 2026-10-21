@@ -1,13 +1,6 @@
 // Canonical window allocation is selected once at startup. An operation first
 // describes ALL logical ranges, then reserves nodes, then borrows handles. Only
 // an explicit recording-owner maintenance boundary may replace old backings.
-enum { POOL_OPERATION_DEPTH=8 };
-typedef struct {
-  vk_pool_requirement ranges[VK_POOL_RESERVE_MAX_REQUIREMENTS];
-  pool *pins[VK_POOL_RESERVE_MAX_REQUIREMENTS];
-  size_t count,pin_count;
-} pool_operation_plan;
-static pool_operation_plan *pool_operation_plans[POOL_OPERATION_DEPTH];
 static uint64_t pool_operation_fallbacks;
 static int pool_operation_add(void *context,const vk_pool_requirement *range) {
   pool_operation_plan *plan=context;
@@ -84,6 +77,7 @@ static void pool_operation_bound_nodes(pool_operation_plan *plan) {
   pthread_mutex_unlock(&V.resources);
 }
 static int pool_operation_pin(pool_operation_plan *plan) {
+  pool_operation_geometry_begin(plan);
   int good=1,geometry_epoch_checked=0;pthread_mutex_lock(&V.resources);
   for(size_t k=0;k<plan->count;k++) {
     const vk_pool_requirement *r=&plan->ranges[k];pool *p=NULL;size_t j=0;
@@ -96,11 +90,13 @@ static int pool_operation_pin(pool_operation_plan *plan) {
           r->size<=known->size-(r->address-base)) {p=known;break;}
     }
     if(!p)p=pool_find(r->address,r->size);
-    pool_span_piece span;
-    if(!p || (!pool_native_requirement(p,r) &&
+    pool_span_piece span;int native=p && pool_native_requirement(p,r);
+    if(!p || (!native &&
         !pool_span_resolve_operation(p,r->address-(uintptr_t)p->guest,r->size,&span,&geometry_epoch_checked))) {good=0;break;}
     if(j==plan->pin_count) {p->references++;plan->pins[plan->pin_count++]=p;}
+    if(!native)pool_operation_geometry_remember(plan,k,j,&span);
   }
+  if(good)plan->geometry_registry_epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_relaxed);
   pthread_mutex_unlock(&V.resources);
   if(!good)pool_operation_unpin(plan);
   return good;

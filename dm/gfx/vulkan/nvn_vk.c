@@ -2113,6 +2113,7 @@ static int pool_span_resolve_operation(pool *p,uint64_t offset,uint64_t size,
       !pool_span_resolve(p,offset,size,out))return 0;
   p->locked_span_hint=out->backing;return 1;
 }
+#include "nvn_vk_pool_geometry.inc"
 #ifdef DM_VULKAN_TEST_EMBED
 // All idle owners have already completed effects and reset. Observe only
 // this contract, without selecting a resource owner or modifying its state.
@@ -2144,6 +2145,45 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
   submit_resources *r=recording_resources;
   if(r && len && !r->pool_lookup_reference) {
     pool_recording_hints_refresh(r);
+    pool *geometry_owner;pool_span_piece geometry;
+    if(pool_operation_geometry_find(addr,len,r->pool_lookup_epoch,&geometry_owner,&geometry)) {
+      pool_gpu_access *use=NULL;
+      for(unsigned k=0;k<r->pool_lookup_count;k++)
+        if(r->pool_lookups[k].owner==geometry_owner) {use=r->pool_lookups[k].use;break;}
+      if(use) {
+        pool_initialize_range(geometry_owner,geometry.logical,len);
+        *buf=&geometry.backing->buffer;*off=geometry.offset;
+        record_pool_range(use,geometry.logical,len,stages,initial_contents);
+        pool_lookup_hits++;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+        pool_operation_geometry_uses++;
+#endif
+        return 1;
+      }
+      // A reopen needs a NEW recording reference and page/stage ledger. The
+      // operation pin alone is never published as GPU access. Recheck the
+      // registry under its mutation lock before acquiring that current use.
+      pthread_mutex_lock(&V.resources);
+      int current=r==recording_resources && r->pool_lookup_epoch==
+          atomic_load_explicit(&pool_registry_epoch,memory_order_relaxed);
+      if(current) {
+        pool_materialize_metadata(geometry_owner);
+        pool_initialize_range(geometry_owner,geometry.logical,len);
+        use=record_pool_use(geometry_owner,geometry.logical,len,stages,initial_contents);
+        *buf=&geometry.backing->buffer;*off=geometry.offset;
+        unsigned k=r->pool_lookup_next++%8;
+        r->pool_lookups[k].owner=geometry_owner;r->pool_lookups[k].use=use;
+        r->pool_lookups[k].span_hint=geometry.backing;
+        if(r->pool_lookup_count<8)r->pool_lookup_count++;
+        pool_recording_span_remember(r,use,geometry.backing);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+        pool_operation_geometry_uses++;
+#endif
+      }
+      pthread_mutex_unlock(&V.resources);
+      if(current) {pool_lookup_hits++;return 1;}
+      pool_recording_hints_refresh(r);
+    }
     for(unsigned k=0;k<r->pool_lookup_count;k++) {
       pool *p=r->pool_lookups[k].owner;
       uint64_t base=(uintptr_t)p->guest;
