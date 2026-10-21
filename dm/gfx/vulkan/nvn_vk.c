@@ -59,6 +59,11 @@ typedef struct pool {
   pool_backing_span whole,*backings;
   // Only the registry-locked resolver may read/write this non-owning hint.
   pool_backing_span *locked_span_hint;
+  // Optional sorted lookup metadata, used ONLY while V.resources is held.
+  // Retained/unlocked readers keep the original immutable-node resolver.
+  pool_backing_span **locked_span_index;
+  uint64_t locked_span_index_generation;
+  unsigned locked_span_index_count,locked_span_index_capacity;
   uint64_t backing_generation;
   // Tracking starts with window-mode pool creation, before any buffer writer.
   // The legacy flag is only a fail-closed fallback for untracked migration/OOM.
@@ -2013,6 +2018,32 @@ int vk_pool_span_query(uint64_t addr,uint64_t size,vk_pool_span_info *out) {
   if(out)*out=value;
   return status;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Private topology parity oracle and optional metadata-allocation failure.
+// Never called by the app; no timers or runtime performance counters.
+int vk_test_pool_span_search(uint64_t base,uint64_t offset,uint64_t size,
+    unsigned reset,unsigned *count,uint64_t *bytes) {
+  pthread_mutex_lock(&V.resources);
+  pool *p=pool_find(base,1);
+  if(!p || (uintptr_t)p->guest!=base)die("Owned span search missing pool");
+  if(reset) {
+    free(p->locked_span_index);p->locked_span_index=NULL;
+    p->locked_span_index_generation=0;
+    p->locked_span_index_count=p->locked_span_index_capacity=0;
+  }
+  pool_span_piece linear={0},indexed={0};
+  int expected=pool_span_resolve(p,offset,size,&linear);
+  pool_span_index_test_oom=reset==1;
+  int result=pool_span_search_locked(p,offset,size,&indexed);
+  pool_span_index_test_oom=0;
+  if(result!=expected || (result && (linear.backing!=indexed.backing ||
+      linear.logical!=indexed.logical || linear.offset!=indexed.offset || linear.size!=indexed.size)))
+    die("Owned span search differs from original resolver");
+  *count=p->locked_span_index_count;
+  *bytes=p->locked_span_index_capacity*sizeof *p->locked_span_index;
+  pthread_mutex_unlock(&V.resources);return result;
+}
+#endif
 #include "nvn_vk_pool_windows.inc"
 #ifdef DM_VULKAN_TEST_EMBED
 // Only a fresh unused owned fixture pool may acquire two real immutable
@@ -2110,7 +2141,7 @@ static int pool_span_resolve_operation(pool *p,uint64_t offset,uint64_t size,
     pool_recording_hints_refresh(recording_resources);*epoch_checked=1;
   }
   if(!pool_recording_span_hint(recording_resources,p,offset,size,out) &&
-      !pool_span_resolve(p,offset,size,out))return 0;
+      !pool_span_search_locked(p,offset,size,out))return 0;
   p->locked_span_hint=out->backing;return 1;
 }
 #include "nvn_vk_pool_geometry.inc"
