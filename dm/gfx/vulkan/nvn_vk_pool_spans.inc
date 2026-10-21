@@ -63,6 +63,60 @@ static int pool_span_retained_hint(pool *p,pool_backing_span *b,
   }
   return 0;
 }
+// Sorted pointer metadata for the locked search MISS path. Physical ranges
+// are immutable; every append/replacement advances backing_generation under
+// V.resources. Rebuild only on that topology change, never on a CPU/GPU write.
+// An allocation failure or unusually large chain keeps the original resolver
+// for this generation rather than retrying allocation on every draw.
+enum { POOL_SPAN_INDEX_MAX=4096 };
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static int pool_span_index_test_oom;
+#endif
+static __attribute__((noinline)) void pool_span_index_build_locked(pool *p) {
+  p->locked_span_index_generation=p->backing_generation;
+  p->locked_span_index_count=0;
+  unsigned count=0;uint64_t previous_end=0;
+  for(pool_backing_span *b=p->backings;b;b=b->next) {
+    if(count==POOL_SPAN_INDEX_MAX || b->begin>=b->end || b->end>p->size ||
+        (count && b->begin<previous_end))return;
+    previous_end=b->end;count++;
+  }
+  if(count>p->locked_span_index_capacity) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(pool_span_index_test_oom)return;
+#endif
+    unsigned capacity=p->locked_span_index_capacity?p->locked_span_index_capacity:8;
+    while(capacity<count)capacity*=2;
+    pool_backing_span **index=realloc(p->locked_span_index,capacity*sizeof *index);
+    if(!index)return;
+    p->locked_span_index=index;p->locked_span_index_capacity=capacity;
+  }
+  unsigned at=0;
+  for(pool_backing_span *b=p->backings;b;b=b->next)p->locked_span_index[at++]=b;
+  p->locked_span_index_count=count;
+}
+// V.resources MUST be held. This searches physical topology only. It does not
+// admit a range, join adjacent backings, retain objects or publish GPU access.
+static int pool_span_search_locked(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
+  if(!size || !p->backings || !p->backings->next)
+    return pool_span_resolve(p,offset,size,out);
+  if(offset>p->size || size>p->size-offset)return 0;
+  if(p->locked_span_index_generation!=p->backing_generation)
+    pool_span_index_build_locked(p);
+  if(!p->locked_span_index_count)return pool_span_resolve(p,offset,size,out);
+  unsigned first=0,last=p->locked_span_index_count;
+  while(first<last) {
+    unsigned middle=first+(last-first)/2;
+    if(p->locked_span_index[middle]->begin<=offset)first=middle+1;
+    else last=middle;
+  }
+  if(!first)return 0;
+  pool_backing_span *b=p->locked_span_index[first-1];
+  if(offset>=b->end || size>b->end-offset || !b->buffer.handle || !b->generation ||
+      b->begin>=b->end || b->end>p->size || offset-b->begin>b->buffer.size ||
+      size>b->buffer.size-(offset-b->begin))return 0;
+  *out=(pool_span_piece){b,offset,offset-b->begin,size};return 1;
+}
 // V.resources MUST be held. Kept separate from the original retained-owner
 // resolver: completion/recording callers never read or write the hint. A hit
 // proves only the same physical mapping, never content freshness or visibility.
@@ -76,7 +130,7 @@ static int pool_span_resolve_locked(pool *p,uint64_t offset,uint64_t size,pool_s
       offset-b->begin<=b->buffer.size && size<=b->buffer.size-(offset-b->begin)) {
     *out=(pool_span_piece){b,offset,offset-b->begin,size};return 1;
   }
-  if(!pool_span_resolve(p,offset,size,out))return 0;
+  if(!pool_span_search_locked(p,offset,size,out))return 0;
   p->locked_span_hint=out->backing;return 1;
 }
 static pool_span_piece pool_span_require_locked(pool *p,uint64_t offset,uint64_t size) {
@@ -107,6 +161,9 @@ static void pool_span_create(pool *p,pool_backing_span *b,uint64_t begin,uint64_
 static void pool_span_chain_destroy(pool *p,pool_backing_span *b) {
   // Retirement is registry locked, including pool removal after its refs drain.
   p->locked_span_hint=NULL;
+  free(p->locked_span_index);p->locked_span_index=NULL;
+  p->locked_span_index_generation=0;
+  p->locked_span_index_count=p->locked_span_index_capacity=0;
   while(b) {
     pool_backing_span *next=b->next;vk_buffer_destroy(&b->buffer);
     if(b!=&p->whole)free(b);

@@ -471,6 +471,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_pool_policy.inc"
 #include "native_vulkan_pool_finite.inc"
 #include "native_vulkan_pool_geometry.inc"
+#include "native_vulkan_pool_span_index.inc"
 #include "native_vulkan_pool_cache.inc"
 #include "native_vulkan_pool_address.inc"
 #include "native_vulkan_pool_authority_batch.inc"
@@ -894,6 +895,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_POOL_SPAN_CACHE_FIXTURE")) {pool_span_cache_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-span-cache\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(getenv("DM_POOL_OPERATION_GEOMETRY_FIXTURE")) {pool_operation_geometry_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"operation-buffer-geometry\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;}
+  if(getenv("DM_POOL_SPAN_SEARCH_INDEX_FIXTURE")) {pool_span_search_index_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-span-search-index\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;}
 #endif
   if(getenv("DM_POOL_FINITE_FIXTURE")) {pool_finite_consolidation_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-finite\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_VERTEX_REQUIRE_FIXTURE")) {vertex_require_dedup_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"vertex-require\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
