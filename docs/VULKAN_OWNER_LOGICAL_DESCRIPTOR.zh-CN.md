@@ -12,4 +12,20 @@
 
 复用原有限 GPU fixture，补跨 Draw 同 ID 重注册的真实颜色、跨实际退休宽限与同地址新 serial、shutdown 后 ID0 refill，以及原真实 ghost 碰撞、STORAGE promotion、CPU/GPU 改写、mip feedback 和物理 context recycle。host-only cold getter 仅观察表槽/空表，另有 epoch 耗尽 death entry；两者受 `DM_VULKAN_TEST_EMBED && !DM_ANDROID_APP` 限制。missing-epoch fault 应命中跨 Draw 的实际像素断言，而不是依赖抽样命中或微秒计时。
 
-此阶段只执行 host Lavapipe/Core+SYNC 与 ASan，无 Android canonical、ADB 或真实游戏模块执行。旧 93% physical-recipe 命中不是新 logical 表命中率；不承诺 10ms、16.7ms、FPS 或功耗收益。冻结 Ready 给出精确命令、源码与每条输出哈希。
+源码候选阶段执行 host Lavapipe/Core+SYNC 与 ASan。随后 `98a534e` 已完成独立 canonical、原始三份 NSO 重建和 28 项部署文件验证，并在 Q735 上实际执行原游戏：营地三段原操作路线、正常生命周期两次存档、恢复原包及资源、退出。两张实际营地图像未见明显黑块或几何错误，不能据此保证所有场景。
+
+官方 Simpleperf/Perfetto 记录如下。各行是各自完整 Surface 间隔中的 CPU Running 平均工作量；历史窗口的绘制数量、PSO 和 CPU 核分布不同，**不是匹配的性能对照**。
+
+| 实际版本 | 完整翻译线程 CPU / Surface 间隔 | 回放 CPU / Surface 间隔 |
+| --- | ---: | ---: |
+| `633ea75` | 27.22ms | 26.08ms |
+| `846fb02` | 25.60ms | 24.57ms |
+| `98a534e` | 26.88ms | 25.81ms |
+
+`98a534e` 的 236 个完整 Surface 间隔均值为 33.09ms。呈现调用每次平均 wall 6.61ms、其中 CPU 0.56ms，不能把 wall 当作额外 CPU 时间；实际翻译 CPU 仍超过 16.7ms 预算约 10.18ms。描述符注册表锁的保留叶样本由历史 `846` 的 13/583 降至 2/604，但 TLS resolver 也有 5/604 个叶样本；不把采样比例直接换成每帧毫秒或声称已达到 60fps。
+
+新增 Draw wrapper 引起的编译器内联变化曾把两个可选前瞻分析中的大 `vk_state` 临时值并入热 Draw 栈。`98a534e` 只为 `bq_prove`、`pl_plan` 保留独立函数边界，最终完整 APP 的 Draw 帧恢复为 6,496B（wrapper 48B）；参见 `DRAW_LOOKUP_COLD_STACK_BOUNDARY.zh-CN.md`。原 16KiB Simpleperf 采集未扩大，`x_thread` 祖先覆盖由 `846` 的 101/583 恢复至 495/604。这证明了栈结构修正，不等于已测得净帧率提升。
+
+保留本优化的依据是有界内存、明确减少的注册表锁和复制，以及已通过的正确性检查；不以本轮即时涨帧为条件。旧 93% physical-recipe 命中不是新 logical 表命中率。后续仍需减少实际资源准备与依赖处理的重复工作，不能缓存掉真实 GPU 写入、CPU 发布、物理寿命或同步要求。
+
+本机证据：`.local/logs/native-candidate-cold-stack-98a-Q735-v1-root-actual-review.json`（SHA256 `cf807201bddb4938e7f218bfbeb3fb7a7e6e9a9bf19fdb12a41796ff4a0dccfb`），引用完整原厂工具输出、源码指纹、产物身份与清理记录。未证明持续游玩功耗改善或 6GB 长时间稳定运行。
