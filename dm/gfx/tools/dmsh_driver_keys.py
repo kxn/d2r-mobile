@@ -12,6 +12,8 @@ import tempfile
 from dmsh_uniform_predicates import _parse
 
 MAGIC = 0x314b4444
+SPAN_MAGIC = 0x31505344  # DSP1; independent of the unchanged DDK1 wire/schema
+SPAN_BYTES = 96
 MAX_WORDS = 32
 SUFFIXES = ('meta', 'spv', 'spec', 'pred', 'tssbo')
 
@@ -161,7 +163,7 @@ def reads(code, descriptor_set, binding):
     return offsets
 
 
-def build(blobs, alternate_proof=None):
+def build_with_spans(blobs, alternate_proof=None):
     stage, descriptor_set, bindings = metadata(blobs['meta'])
     modules = [blobs['spv']]
     if 'spec' in blobs:
@@ -181,15 +183,24 @@ def build(blobs, alternate_proof=None):
         except ValueError as error:
             module_error = str(error)
     result = bytearray(struct.pack('<4I',MAGIC,1,stage,descriptor_set)+fingerprint(blobs))
+    span = bytearray(struct.pack('<4I',SPAN_MAGIC,1,stage,descriptor_set)+fingerprint(blobs))
     report = {}
+    span_report = {}
     for slot in (0,2):
         matches = [b for b in bindings if b[0] == 1 and b[2] == slot]
         words = None; reason = 'absent/ambiguous driver binding'
+        end = 65536; span_reason = reason
         binding = matches[0][1] if len(matches) == 1 else 0xffffffff
+        span_valid = False
         if len(matches) == 1 and matches[0][5] == 1 and not module_error:
             try:
                 if not 0 <= binding < 128: raise ValueError('binding range')
                 offsets = set().union(*(reads(code,descriptor_set,binding) for code in modules))
+                # Full load width, including compact_word(None) zero-tail
+                # words. Dense varying keys do not invalidate a range proof.
+                end = max(offsets, default=-4)+4
+                span_reason = 'all modules/all functions/all branches exact byte end'
+                span_valid = True
                 words = sorted({word for offset in offsets if (word := compact_word(slot,stage,offset)) is not None})
                 full_words = 264 if slot == 2 else 96 if stage == 5 else 48
                 if len(words) > MAX_WORDS or len(words)*2 >= full_words:
@@ -197,14 +208,26 @@ def build(blobs, alternate_proof=None):
                 reason = 'all modules/all functions/all branches exact'
             except (ValueError, subprocess.CalledProcessError) as error:
                 reason = str(error); words = None
+                if not span_valid:
+                    end = 65536; span_reason = reason
         elif module_error:
             reason = module_error
+            span_reason = module_error
         result += struct.pack('<2I',binding,0xffffffff if words is None else len(words))
         if words is not None:
             result += struct.pack('<%dH'%len(words),*words)
             if len(words) % 2: result += bytes(2)
         report[str(slot)] = {'binding':binding,'words':words,'reason':reason}
-    return bytes(result)+hashlib.sha256(result).digest(), report
+        span += struct.pack('<2I',binding,end)
+        span_report[str(slot)] = {'binding':binding,'max_read_end':end,'reason':span_reason}
+    return (bytes(result)+hashlib.sha256(result).digest(), report,
+            bytes(span)+hashlib.sha256(span).digest(), span_report)
+
+
+def build(blobs, alternate_proof=None):
+    """Keep the original DDK1 API and exact bytes, including full-key fallback."""
+    key, proof, _, _ = build_with_spans(blobs, alternate_proof)
+    return key, proof
 
 
 def emit(root, key, reflection=None):
@@ -219,9 +242,35 @@ def emit(root, key, reflection=None):
     return {'sha256':hashlib.sha256(data).hexdigest(), 'proof':proof}
 
 
+def emit_with_spans(root, key, reflection=None):
+    """Optional companion: analyze once and emit old DDK1 plus fixed DSP1."""
+    root = Path(root)
+    blobs = {suffix:(root/(key+'.'+suffix)).read_bytes() for suffix in SUFFIXES
+             if (root/(key+'.'+suffix)).is_file()}
+    if reflection is None and (root/(key+'.json')).is_file():
+        import json
+        reflection = json.loads((root/(key+'.json')).read_text())
+    key_data, key_proof, span_data, span_proof = build_with_spans(
+        blobs,(reflection or {}).get('texel_storage_alternative'))
+    (root/(key+'.dkey')).write_bytes(key_data)
+    (root/(key+'.dspan')).write_bytes(span_data)
+    return {'driver_keys':{'sha256':hashlib.sha256(key_data).hexdigest(),'proof':key_proof},
+            'driver_spans':{'sha256':hashlib.sha256(span_data).hexdigest(),'proof':span_proof}}
+
+
 if __name__ == '__main__':
     import argparse
     p = argparse.ArgumentParser(description=__doc__);p.add_argument('root',type=Path);p.add_argument('keys',nargs='*')
+    p.add_argument('--spans',action='store_true',help='emit optional DSP1 and update existing reflection; preserve DDK1 bytes')
     a = p.parse_args()
-    for key in a.keys or sorted(v.stem for v in a.root.glob('*.spv')):
-        print(key, emit(a.root,key))
+    keys=a.keys or sorted(v.stem for v in a.root.glob('*.spv')
+                          if not a.spans or (a.root/(v.stem+'.json')).is_file())
+    for key in keys:
+        if a.spans:
+            import json
+            info=a.root/(key+'.json'); reflection=json.loads(info.read_text())
+            proof=emit_with_spans(a.root,key,reflection);reflection.update(proof)
+            info.write_text(json.dumps(reflection,ensure_ascii=False,indent=1))
+            print(key,proof)
+        else:
+            print(key, emit(a.root,key))
