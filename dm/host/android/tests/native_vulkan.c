@@ -1078,6 +1078,22 @@ int dm_vulkan_test_main(void) {
   for (int i = 0; i < 13; i++)
     memset(controls[i], i, sizeof controls[i]);
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_IMAGE_PHASE_ARTIFACT_FIXTURE")) {
+    extern unsigned vk_test_image_phase_artifact(void);
+    checks+=vk_test_image_phase_artifact();
+    pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);
+    recipe_reentrant_test(controls[12],controls[4]);
+    // image_dependency_test normally runs after main installed a full16x16
+    // scissor. The focused entry must establish that original precondition.
+    LOG("[image phase focused setup] prior scissor enabled=%d rect=%d/%d/%d/%d",S.has_scissor,S.scissor.x,S.scissor.y,S.scissor.w,S.scissor.h);
+    CALL(nvnCommandBufferBeginRecording,&cmd);CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);submit(end());
+    NVNprogram phase_fill;CHECK(CALL(nvnProgramInitialize,&phase_fill,&device));
+    NVNshaderData phase_sd={.control=controls[7]};
+    CHECK(CALL(nvnProgramSetShaders,&phase_fill,1,&phase_sd));
+    for(int hint=0;hint<2;hint++)for(int srgb=0;srgb<2;srgb++)image_dependency_test(&phase_fill,hint,srgb);
+    CALL(nvnProgramFinalize,&phase_fill);CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"operation-image-phase-artifact\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
   if(getenv("DM_POOL_GEOMETRY_POLICY_FIXTURE")) {
     pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);
     CHECK(vk_validation_error_count()==0);
