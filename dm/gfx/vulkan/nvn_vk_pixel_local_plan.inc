@@ -237,7 +237,8 @@ static int pl_clear(pl_candidate *p,const vk_state *s,const op_hdr *h,const uint
   for(unsigned k=0;k<4;k++)if(!isfinite(c->rgba[k]))return 0;
   p->clears[c->index]=1;memcpy(p->clear_values[c->index].color.float32,c->rgba,16);return 1;
 }
-static pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned width,unsigned height) {
+// Keep the large lookahead snapshot in the optional planner's own frame.
+static __attribute__((noinline)) pl_candidate *pl_plan(const p_draw *draw,const p_draw_idx *idx,unsigned width,unsigned height) {
   if(!vk_pixel_local_enabled() || !width || !height || !pl_no_writers(&S) || !vk_ghost_idle())return NULL;
   if(!pl_scratch)pl_scratch=calloc(1,sizeof *pl_scratch);
   if(!pl_scratch)return NULL;
