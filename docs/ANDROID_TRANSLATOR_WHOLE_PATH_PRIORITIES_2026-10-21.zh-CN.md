@@ -79,6 +79,27 @@ ON1在加载约16秒时触发 `image_bc_copy_decode` 的既有保护：`Mixed co
 
 失败证据：`.local/logs/shared-lazy-copy-e0b4023-ON1-root-failure-review.json`，包括原事务、真实日志、含历史及当前PID的官方crash-logcat和LLVM source定位输出。源审及host通过仅证明相应用例，不代替Android原游戏验收。
 
+### 533：四次原游戏通过，准入减少并未兑现成整线程提速
+
+`533820e6`在typed调用处区分空索引及可选零绑定，未知长度VBO和原导入上限不变。原host八例、独立源码审查、Android canonical及三个原始NSO fresh rebuild/独立verify28均完成。随后同一533 APK/f830/full2838/.60/1MiB，按ON1→OFF1→OFF2→ON2四次冷启动，各完成原三段跑动、官方3×30秒FP及5×8秒Perfetto、存档退出和原包恢复。根代理查看ON1前后截图，营地短测未见明显黑块或缺失几何；不外推全游戏。最终Q进程已停止，没有留游戏空跑。
+
+| 实际顺序 | 5个独立Perfetto窗的NvN Running/完整Surface间隔（ms） | 后续PSS快照（MiB） |
+|---|---|---:|
+| ON1 | 27.60 / 27.04 / 27.60 / 27.55 / 27.54 | 2000.8 |
+| OFF1 | 24.09 / 27.09 / 26.92 / 27.05 / 26.87 | 1931.3 |
+| OFF2 | 25.29 / 26.49 / 27.92 / 27.37 / 27.49 | 1929.7 |
+| ON2 | 25.75 / 25.30 / 27.83 / 27.78 / 27.85 | 2064.6 |
+
+12个FP窗合计27,306个NvN样本全部保留线程外层祖先；原官方图和时钟重叠验证通过，20个Perfetto窗无报告丢失/错误。**宏观职责结论可重复，但没有证明净CPU/FPS收益。** 全部窗口保留，不能删除OFF1的24ms或ON2的28ms来凑结论。运行核心分布会变化，特别是CPU7占比；只看MHz不能认为执行能力相同。各轮整数位置与NPC工作量也不完全一致，OFF1/OFF2/ON2首个FP窗的外围PSO bracket有增长，均明确标记。Surface均值仍约33ms。所有这些对照沿用公开performance_hint reference=true，不混称默认长期游玩测试。
+
+两次ON均复现职责转移：draw准入约0.04～0.26%用户态样本，而两次OFF为8.32～9.76%；但物理union覆盖证明self变成2.46～2.91%，OFF仅0.22～0.70%。实际Buffer消费的`pool_address` inclusive也升高，self范围却重叠，说明增加的是完整消费子链中的工作，不能只给lookup叶子贴“慢”标签。新增覆盖成本明确位于commit→sync_used_run→shared_pool_cache_locked；lazy分支每次推进union frontier都重新扫两条物理Buffer链。前置准入原来还提供可复用几何和引用，删去它并不是无成本删除8%计算。
+
+ON两次逻辑Buffer并集约363MB，累计import约600～610MB，后者包括重叠别名，不能当新增物理RAM。两次ON的报告PSS和Graphics/mtrack高于OFF；showmap的guest heap PSS大致相近，KGSL映射与mtrack仍须分别记录，不能用不同时间的snapshot强行对平。该资源成本与未完成的长时生命周期验收共同构成保持实验默认OFF的理由，不能仅用“没有即时涨帧”判定机制无效。
+
+下一项已授权为**真实物理Buffer覆盖索引**，独立后继实现，不再加命中预测缓存。复用已有AVL算法，在真实import/销毁边界维护typed Buffer索引；保留native import的alive树，用二者推进原覆盖证明，不改变single-Buffer解析、句柄、origin或在途寿命。预算只限上述约2.8% self中的一部分，低于1ms量级，不许诺10ms；代价为每span约64B及Pool根字段，当前338个Buffer约21KiB，另计内嵌whole节点成本。较大绑定表示改造的直接self只有约4.1%，仍需先证明真实状态变化和合法批量规模，不能再把整个22%绑定子树当可得收益。
+
+完整根审：`.local/logs/shared-lazy-empty-533820e-root-four-round-review.json`（SHA256 `0a7b142430431c6b195c43ab8f3c36fc34c2ecbff3a9937af54221641c50e8f5`）。四轮所有12窗调用链及20窗宏观表、内存分类与限制均由该档引用。高层状态表示的只读审计另见`.local/logs/nvn-resource-state-533-readonly-v1/conclusion.json`。仍未完成持续散热或6GB真机验收，不能宣称目标完成。
+
 以下原实施顺序保留作历史记录，新的具体结构方案按上述完整路径继续调查：
 
 1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。宿主ThinLTO已完成相同资源的原游戏对照：整线程Running约27.36ms vs27.51ms、频率约1577 vs1583MHz，仍约30FPS。编译选项保留为默认关闭的实验入口，不继续以编译微调为主线。
@@ -272,3 +293,24 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 后续组合74e4050独立构建：既有logical lookup锁内重核完整当前值后，只延续逻辑未变recipe的epoch；正常Android NVN入口移除共享诊断STADD，显式诊断仍走原计数入口。后者来自全PID已有27/1065入口叶样本及真实LLVM指令，不能全归因给原子写，也不能承诺相同比例提速。增加约16.3KiB静态text/table，新fast ELF符号隐藏；不改变游戏/绘制语义。
 
 证据：`.local/logs/native-preparation-2fc55c2-root-actual-review.json`；`.local/logs/native-preparation-2fc55c2-full2838-offline-analysis-v1/facts-and-evidence-agent.json`。
+
+
+## 533四轮对照：从局部去重转向减少整条路径工作
+
+同一533 APK完成ON1/OFF1/OFF2/ON2四次真实游戏事务、12个官方Simpleperf窗口和20个Perfetto窗口，均执行原三段移动、存档、停止和原包恢复。准入采样占比ON为0.04–0.26%，OFF为8.32–9.76%；覆盖检查self反而由OFF的0.22–0.70%增至ON的2.46–2.91%，实际消费地址解析的inclusive也上升。后续多数窗口的整NvN Running仍约27–28ms/Surface间隔，未证明净CPU或FPS收益。不能以一个调用子树消失宣称整线程减少9%。
+
+20个有效窗口全部保留，包含24ms和28ms附近的两端；核心驻留、频率、动态场景和首窗PSO增长分别记录。采样的cpu-clock:user职责比例与另一个8秒窗口的scheduler Running不能直接相乘成准确的职责毫秒。ON快照PSS相较OFF高约69–135MiB，导入字节又包含物理页重复映射，不能当新增等量DRAM。lazy仍为实验默认OFF，除了未证净收益，还存在实际资源代价和长期导入生命周期待验证。
+
+后续优先级及改动前预算：
+
+| 优先级 | 更高层次的问题 | 现有证据与预算 | 决策 |
+|---|---|---|---|
+| 1 | 为什么每次draw都要重建绑定表示 | 绑定inclusive约21–23%，包含必须保留的真实资源消费；表示构造self约4.1%，其中也有必要工作。全删的乐观量级约1ms，实际只能其中一部分；不能许诺省整个22% | 先用完整命令记录核实槽值、偏移和物理代数的实际变化，复用已有last-values，避免另造大型版本缓存 |
+| 2 | 物理覆盖证明的数据结构不适合重叠导入 | 每推进覆盖边界都扫描两条Buffer链，self约2.5–2.9%；改区间索引是同一职责更便宜，不是消除整轮职责。乐观量级不足1ms，非实测时间 | 独立4422候选已实现原AVL复用，64B/节点、72B/Pool，canonical/raw资格进行中，尚无真机收益 |
+| 3 | 每draw状态和命令数量是否可以成组表达 | 历史帧存在338个仅Buffer偏移变化的相邻draw，但严格全状态相同组为0；stride和偏移不能直接用firstVertex折叠。历史draw数量比例不是当前CPU占比 | 先补当前Q/f830完整帧证据，再决定通用数据表示/批量发射；未预支毫秒预算，不改游戏渲染顺序 |
+
+方向不是无止境地优化小函数，而是分清：哪些数据应在状态变化时构造、哪些物理拓扑应在导入时维护、哪些真实依赖只能在消费时执行。绑定时提前取得一个句柄不能替代draw时的CPU发布、GPU writer、layout和资源生命周期判断。现有缓存已相当多，新增一层缓存必须证明它消除的完整工作以及失效成本。
+
+27ms降至16.7ms需要约38%的CPU时间下降。当前没有证明一个可安全删除的38%重复块；上述局部预算不能相加成已经获得的10ms。以整条翻译线程Running、用户态职责、实际工作量和内存代价四个结果共同决定下一步。
+
+证据：`.local/logs/shared-lazy-empty-533820e-root-four-round-review.json`；`.local/logs/nvn-resource-state-533-readonly-v1/conclusion.json`；`.local/logs/nvn-adjacent-draw-existing-frame-v1/conclusion-and-budget.json`；`.local/logs/shared-lazy-buffer-index-4422f76-root-source-review.json`。
