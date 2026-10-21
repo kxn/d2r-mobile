@@ -285,17 +285,18 @@ THIN_LINK=['-flto=thin','-O3','-fuse-ld=lld','-Wl,--thinlto-jobs=2']
 
 
 def validate_compiler(p,pinned,read,require,resource_preparation=False):
-    """Fixed179 host experiment, with the same full2838 assets and raw modules.
+    """Reviewed source successor, retaining original179 build/assets/raw reference.
 
     The caller authenticates the complete inputs SHA, including root_review;
     source equivalence is the root's independent diff finding, not self-approval.
     """
     mode = ('native_host_experiment' if resource_preparation else 'native_compiler_experiment')
-    expected = ({'kind':'resource-preparation','base_runtime':POOL_RUNTIME} if resource_preparation
+    source_base = p[mode].get('base_runtime') if resource_preparation else POOL_RUNTIME
+    expected = ({'kind':'resource-preparation','base_runtime':source_base} if resource_preparation
                 else {'strategy':'thinlto','base_runtime':POOL_RUNTIME})
     require(p[mode]==expected
             and set(p['native_candidate_validation'])=={'root_review'}
-            and p['runtime_commit']!=POOL_RUNTIME, 'fixed179 ThinLTO compiler experiment only')
+            and source_base and p['runtime_commit']!=source_base, 'reviewed source parent / experiment mode differs')
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
             and (p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa'))) and p.get('performance_tools')
             and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
@@ -304,7 +305,7 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False):
     status = ('ROOT_REVIEWED_HOST_RESOURCE_PREPARATION_CANONICAL_AND_FRESH_RAW28' if resource_preparation
               else 'ROOT_REVIEWED_HOST_THINLTO_CANONICAL_AND_FRESH_RAW28')
     require(review['status']==status
-            and review['runtime']==p['runtime_commit'] and review['base']==POOL_RUNTIME
+            and review['runtime']==p['runtime_commit'] and review['base']==source_base
             and review['tool_ready'] is True and review['actual_device_evidence'] is False,
             'independently reviewed host experiment required')
     if resource_preparation:
@@ -315,7 +316,7 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False):
                 'independently reviewed compiler-only source diff required')
     canonical,raw=reviewed_artifacts(p,review,pinned,read,require)
     source=read(pinned(review['source_ready']))
-    require(source['commit']==p['runtime_commit'] and source['base']==POOL_RUNTIME,
+    require(source['commit']==p['runtime_commit'] and source['base']==source_base,
             'compiler source-ready revision/base differs')
     base_review=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/cpu-pool-pin-coherent-179c82d-root-canonical-raw-review.json',
                             'sha256':POOL_REVIEW}))

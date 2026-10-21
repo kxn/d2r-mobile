@@ -231,6 +231,63 @@ class Flow(unittest.TestCase):
             bad = copy.deepcopy(good); bad[option] = True
             with self.assertRaises(AssertionError): exec(code, {'p': bad, 'require': require})
 
+    def test_lazy_input_and_real_launch_command_blocks(self):
+        tree=ast.parse((D/'run-game.py').read_text())
+        proof=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='proof')
+        check=next(n for n in proof.body if isinstance(n,ast.If) and ast.unparse(n.test)=="'shared_lazy_windows' in p")
+        for value in (0,1):
+            exec(compile(ast.Module(body=[check],type_ignores=[]),'<actual-lazy-input>','exec'),
+                 {'p':{'shared_lazy_windows':value},'require':lambda v,m:self.assertTrue(v,m)})
+        for value in (True,False,'0','1',-1,2,None):
+            with self.subTest(value=value),self.assertRaises(AssertionError):
+                exec(compile(ast.Module(body=[check],type_ignores=[]),'<actual-lazy-input>','exec'),
+                     {'p':{'shared_lazy_windows':value},'require':lambda v,m:self.assertTrue(v,m)})
+        phase=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='phase_game')
+        command=next(n for n in phase.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='command' for t in n.targets))
+        add=next(n for n in phase.body if isinstance(n,ast.If) and ast.unparse(n.test)=="p.get('shared_lazy_windows', 0)")
+        for value in (None,0,1):
+            p={'serial':'HOST-FIXTURE','pool_window_bytes':1048576}
+            if value is not None:p['shared_lazy_windows']=value
+            scope={'sys':SimpleNamespace(executable='python'),'m':SimpleNamespace(SOURCE=Path('/tool')),'p':p,'out':Path('/report')}
+            exec(compile(ast.Module(body=[command,add],type_ignores=[]),'<actual-lazy-command>','exec'),scope)
+            self.assertEqual(scope['command'].count('--shared-lazy-windows'),int(value==1))
+        transport=next(n for n in ast.walk(phase) if isinstance(n,ast.If)
+            and ast.unparse(n.test)=="'shared_lazy_windows' in p"
+            and isinstance(n.body[0],ast.Expr) and '--expect-shared-lazy-windows' in ast.unparse(n.body[0]))
+        for value in (None,0,1):
+            config={} if value is None else {'shared_lazy_windows':value}
+            scope={'p':config,'command':['helper','original-args','fp']}
+            exec(compile(ast.Module(body=[transport],type_ignores=[]),'<actual-lazy-helper-transport>','exec'),scope)
+            self.assertEqual(scope['command'],['helper','original-args','fp']+
+                ([] if value is None else ['--expect-shared-lazy-windows',str(value)]))
+
+    def test_capture_lazy_arguments_and_actual_state(self):
+        helper=(D/'capture-official-cpu.py').read_text()
+        prefix=helper.split('# This receipt proves')[0]
+        endpoint=next(n for n in ast.parse(helper).body if isinstance(n,ast.FunctionDef) and n.name=='endpoint')
+        for expected in (None,0,1):
+            argv=['capture','10CG570J59001U1','12345','1','/home/dl/d2r-mobile/.local/logs/unused-fixture','1048576','1','0','fp']
+            if expected is not None:argv+=['--expect-shared-lazy-windows',str(expected)]
+            scope={}
+            with patch('sys.argv',argv):exec(compile(prefix,'<actual-capture-prefix>','exec'),scope)
+            self.assertEqual(scope['aa_callgraph'],'fp')
+            self.assertIs(scope['lazy_expected'],None if expected is None else bool(expected))
+            state={'valid':True,'world_input_ready':True,'area':1,'guest_heap':{'shared':True},'scale_3d':.60,
+                   'pool_windows':{'window_bytes':1048576},'game_output':{'width':2750,'height':1260},
+                   'surface_output':{'width':2750,'height':1260},'world_freeze':{'host_frozen':False},'runtime_extrap':{'enabled':False}}
+            if expected is not None:state['shared_lazy_windows']={'active':bool(expected)}
+            with tempfile.TemporaryDirectory() as tmp:
+                scope.update(D=Path(tmp),exact=lambda:None,app=lambda *a:json.dumps(state))
+                exec(compile(ast.Module(body=[endpoint],type_ignores=[]),'<actual-capture-endpoint>','exec'),scope)
+                scope['endpoint']('pass')
+                if expected is not None:
+                    self.assertIs(scope['phase']['shared_lazy_windows_actual'],bool(expected))
+                    for wrong in (not bool(expected),None,expected):
+                        state['shared_lazy_windows']={'active':wrong}
+                        with self.assertRaises(AssertionError):scope['endpoint']('refuse')
+                    state.pop('shared_lazy_windows')
+                    with self.assertRaises(AssertionError):scope['endpoint']('missing')
+
 
 if __name__ == '__main__':
     unittest.main()

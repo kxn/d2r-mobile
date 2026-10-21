@@ -29,6 +29,7 @@ present_modes.add_argument('--reference-present',dest='shader_present',action='s
 parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
+parser.add_argument('--shared-lazy-windows',action='store_true',help='cold experimental coherent userptr lazy windows; exact qualified provider only, default off')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
 parser.add_argument('--native-resource-table',help='cold experimental authenticated DMNTBL table; requires explicit shared heap and matching app-local Turnip')
 parser.add_argument('--native-resource-pack-sha256',help='complete native pack content SHA256; all native-resource options are required together')
@@ -162,6 +163,8 @@ if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
         (args.pool_window_bytes != 0 and (args.pool_window_bytes < 4096 or
          args.pool_window_bytes & (args.pool_window_bytes - 1)))):
     parser.error('--pool-window-bytes must be 0 or a power of two >= 4096, within signed 64-bit range')
+if args.shared_lazy_windows and (args.attach or args.shared_guest_heap is not True or not args.expect_shared_import_windows or not args.pool_window_bytes):
+    parser.error('--shared-lazy-windows requires cold --shared-guest-heap --expect-shared-import-windows and nonzero --pool-window-bytes')
 if args.expect_shared_import_windows and (args.attach or args.shared_guest_heap is not True or not args.pool_window_bytes):
     parser.error('--expect-shared-import-windows requires cold --shared-guest-heap and nonzero --pool-window-bytes')
 if args.external_profile and (args.gpu_profile or args.validate):
@@ -232,6 +235,8 @@ if not args.attach:
         launch += ['--es','native_resource_table',args.native_resource_table,
                    '--es','native_resource_pack_sha256',args.native_resource_pack_sha256,
                    '--es','native_resource_producer_sha256',args.native_resource_producer_sha256]
+    if args.shared_lazy_windows:
+        launch += ['--ez','shared_lazy_windows','true']
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     if args.pixel_local is not None:

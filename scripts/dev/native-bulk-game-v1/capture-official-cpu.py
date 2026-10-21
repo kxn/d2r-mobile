@@ -2,7 +2,13 @@
 """Reuse original joystick + official Simpleperf99/stat, optional existing Perfetto helper."""
 from pathlib import Path
 import subprocess as S,json,sys,shlex,hashlib,os,time
-R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport';serial,pid,mode,folder,window_arg,trace_arg=sys.argv[1:7];assert len(sys.argv)in(7,8,9);refill_arg=sys.argv[7]if len(sys.argv)>=8 else'0';aa_option=sys.argv[8]if len(sys.argv)==9 else None;aa_callgraph='fp'if aa_option=='fp'else'dwarf';aa_stack=int(aa_option)if aa_option is not None and aa_callgraph=='dwarf'else None;assert aa_stack in(None,49152);assert aa_option is None or(refill_arg=='0'and trace_arg=='1');assert refill_arg in('0','1');refill=refill_arg=='1';assert trace_arg in ('0','1');trace=trace_arg=='1';assert serial=='10CG570J59001U1'and pid.isdecimal()and mode in ('0','1');shared=mode=='1';window=int(window_arg);assert shared and window in (0,1048576,16777216);D=Path(folder).resolve();assert D.is_relative_to(R/'.local/logs');B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',serial];phase={'owned_PID':int(pid),'shared_requested':shared,'scope':'Official8s cpu-clock:user99Hz DWARF16384, originalgamejoystick, no kernel samples/no custom sampler/timer','stages':[],'pre_record_cache_states':[],'window_bytes':window,'wait_wall_not_measured':not trace}
+R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
+argv=sys.argv[1:];lazy_expected=None
+if len(argv)>=2 and argv[-2]=='--expect-shared-lazy-windows':
+ assert argv[-1] in ('0','1');lazy_expected=argv[-1]=='1';argv=argv[:-2]
+serial,pid,mode,folder,window_arg,trace_arg=argv[:6];assert len(argv)in(6,7,8)
+refill_arg=argv[6]if len(argv)>=7 else'0';aa_option=argv[7]if len(argv)==8 else None;aa_callgraph='fp'if aa_option=='fp'else'dwarf';aa_stack=int(aa_option)if aa_option is not None and aa_callgraph=='dwarf'else None;assert aa_stack in(None,49152);assert aa_option is None or(refill_arg=='0'and trace_arg=='1');assert refill_arg in('0','1');refill=refill_arg=='1';assert trace_arg in ('0','1');trace=trace_arg=='1';assert serial=='10CG570J59001U1'and pid.isdecimal()and mode in ('0','1');shared=mode=='1';window=int(window_arg);assert shared and window in (0,1048576,16777216);D=Path(folder).resolve();assert D.is_relative_to(R/'.local/logs');B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',serial];phase={'owned_PID':int(pid),'shared_requested':shared,'scope':'Official8s cpu-clock:user99Hz DWARF16384, originalgamejoystick, no kernel samples/no custom sampler/timer','stages':[],'pre_record_cache_states':[],'window_bytes':window,'wait_wall_not_measured':not trace}
+if lazy_expected is not None:phase['shared_lazy_windows_expected']=lazy_expected
 # This receipt proves sameUID event open/permission only, not sample attribution.
 if refill:
  probe=R/'.local/logs/q735-official-L1I-record-open-probe-v2/result.json';assert hashlib.sha256(probe.read_bytes()).hexdigest()=='b74438a5f5b66ebc914e2aec01991d4fa9fe20a80299b5a7f3d05fc3340e3808';opened=json.loads(probe.read_text());assert opened['sampling_event_open_returncode']==0 and opened['PERFILE2']and opened['bytes']>1024 and opened['perf_harden_before']==opened['perf_harden_after']
@@ -11,7 +17,11 @@ def ad(*a):return S.check_output(B+list(a),text=True,timeout=35).strip()
 def exact():assert ad('shell','pidof '+PKG+' || true')==pid,'not exact original owned PID'
 def app(*a):return ad('shell',shlex.join(['run-as',PKG,*a]))
 def endpoint(n):
- exact();v=json.loads(app('tail','-n','1','files/runtime/game-state.jsonl'));assert v['valid']and v['world_input_ready']and v['area']==1 and v['guest_heap']['shared']is shared and v['scale_3d']==.60 and v['pool_windows']['window_bytes']==window and v['game_output']==v['surface_output']=={'width':2750,'height':1260};assert not v['world_freeze']['host_frozen']and not v['runtime_extrap']['enabled'];(D/(n+'.json')).write_text(json.dumps(v,indent=2)+'\n');return v
+ exact();v=json.loads(app('tail','-n','1','files/runtime/game-state.jsonl'));assert v['valid']and v['world_input_ready']and v['area']==1 and v['guest_heap']['shared']is shared and v['scale_3d']==.60 and v['pool_windows']['window_bytes']==window and v['game_output']==v['surface_output']=={'width':2750,'height':1260};assert not v['world_freeze']['host_frozen']and not v['runtime_extrap']['enabled'];(D/(n+'.json')).write_text(json.dumps(v,indent=2)+'\n')
+ if lazy_expected is not None:
+  assert v.get('shared_lazy_windows',{}).get('active') is lazy_expected, 'actual startup shared_lazy_windows differs'
+  phase['shared_lazy_windows_actual']=lazy_expected
+ return v
 def save():(D/'official-cpu-capture.json').write_text(json.dumps(phase,indent=2)+'\n')
 def cpu_policy_snapshot(boundary):
  # One standard sysfs read at an existing boundary, outside every tool window.

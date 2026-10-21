@@ -130,6 +130,16 @@ class HostPreparation(unittest.TestCase):
                            host_only_changes=True,game_logic_unchanged=True)
     def test_host_mode_common_provenance_passes(self):
         self.assertEqual(self.invoke(),self.runtime)
+    def test_declared_source_parent_matches_review_and_ready(self):
+        parent='c'*40  # Synthetic parent, not a new approved runtime whitelist.
+        self.p['native_host_experiment']['base_runtime']=parent
+        self.review['base']=self.source['base']=parent
+        self.assertEqual(self.invoke(),self.runtime)
+        self.source['base']='d'*40
+        with self.assertRaises(RuntimeError):self.invoke()
+        self.source['base']=parent;self.review['base']='d'*40
+        with self.assertRaises(RuntimeError):self.invoke()
+
     def test_independent_host_review_required(self):
         for key in ('host_only_changes','game_logic_unchanged','raw28_hashes_verified'):
             self.review[key]=False

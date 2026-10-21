@@ -50,6 +50,19 @@ class PoolWindowLaunchTests(unittest.TestCase):
     def test_default_leaves_native_startup_default_unchanged(self):
         self.assertNotIn('pool_window_bytes', self.launch_command([]))
 
+    def test_shared_lazy_is_explicit_cold_launch_only(self):
+        self.assertNotIn('shared_lazy_windows',self.launch_command([]))
+        valid=['--shared-guest-heap','--expect-shared-import-windows','--pool-window-bytes','1048576']
+        command=self.launch_command(valid+['--shared-lazy-windows'])
+        i=command.index('shared_lazy_windows')
+        self.assertEqual(command[i-1:i+2],['--ez','shared_lazy_windows','true'])
+        for options in ([],['--shared-guest-heap'],valid+['--attach'],
+                        ['--shared-guest-heap','--expect-shared-import-windows','--pool-window-bytes','0']):
+            with self.subTest(options=options),patch('sys.argv',[str(LAUNCHER),*options,'--shared-lazy-windows']), \
+                 patch('subprocess.check_output') as adb,contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            adb.assert_not_called()
+
     def test_exact_long_extra_including_above_double_precision(self):
         for size in (0, 4096, 1 << 20, 1 << 62):
             with self.subTest(size=size):
