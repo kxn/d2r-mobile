@@ -9,7 +9,7 @@ A650 的原官方 Simpleperf 数据位于 `.local/logs/tablet-shared-633-f830-v1
 ## 改动与语义
 
 1. 退休的物理图像通过原有 `image_buckets[serial % 8192]` 查找。没有创建第二套 VkImage/物理资源缓存。原图像插入、销毁、promotion 和 O(1) 全链摘除不变。
-2. 为逻辑纹理注册维护独立的 serial 哈希反向链。ID 使用 `id+1` 作为 token；每个实际注册 ID 有 8 字节 prev/next，按 256 ID 页面懒分配。descriptor 快照及其 TLS cache 布局没有增加字段；实际 64 位宿主 DWARF 显示原 `texture_descriptor` 仍为 200 字节。
+2. 为逻辑纹理注册维护独立的 serial 哈希反向链。ID 使用 `id+1` 作为 token；每个实际注册 ID 有 8 字节 prev/next，按 256 ID 页面懒分配。descriptor 快照及其 TLS cache 布局没有增加字段；实际 64 位宿主 DWARF 显示 `texture_descriptor` 为 184 字节，包含它的 logical cache entry 为 200 字节；两者均未加字段。
 3. 同 ID 重注册时从原 serial 桶摘除、挂入新桶；相同 serial 且已在索引内可保留原链。新 view、valid 和原 descriptor epoch 仍按原方式发布。
 4. limit 缩小只改变可见性，不删除隐藏注册。退休遍历完整 serial 所在桶，只失效 full serial 匹配的 ID；哈希碰撞的其他 serial 不受影响。
 5. 已 invalid 的历史注册仍保留在链中。原实现对 stored serial 匹配的 invalid/隐藏 slot 也推进 epoch，本候选保留该行为。索引不因 valid 清零而丢掉记录，直到 ID 重注册替换它。
