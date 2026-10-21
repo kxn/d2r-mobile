@@ -39,7 +39,14 @@ typedef struct pool_backing_span {
   struct pool_backing_span *next;
   uint64_t begin,end,generation;
   vk_buffer buffer;
+#ifdef DM_VULKAN_SHARED_POOLS
+  // Physical coverage only; the original chains still choose actual buffers.
+  alias_range_node shared_coverage;
+#endif
 } pool_backing_span;
+#ifdef DM_VULKAN_SHARED_POOLS
+_Static_assert(sizeof(alias_range_node)==64,"Physical Buffer coverage metadata");
+#endif
 typedef struct legacy_encoding_range {struct legacy_encoding_range *next;uint64_t begin,end;} legacy_encoding_range;
 typedef struct pool {
   struct pool *next;
@@ -77,6 +84,7 @@ typedef struct pool {
   // covering aliases never replace an earlier VkBuffer or its local origin.
   int shared_lazy_eligible;
   pool_backing_span *shared_covers;
+  alias_range_node *shared_buffer_index;
   uint64_t shared_import_bytes,shared_unique_bytes;
   unsigned shared_import_nodes,shared_cover_nodes;
   VkMemoryPropertyFlags shared_properties;

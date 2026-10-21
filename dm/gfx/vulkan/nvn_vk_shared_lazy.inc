@@ -63,6 +63,7 @@ static pool_backing_span *shared_lazy_ensure_locked(pool *p,uint64_t offset,uint
     pool_backing_span **at=&p->backings;while(*at && (*at)->begin<begin)at=&(*at)->next;
     fresh->next=*at;*at=fresh;
   }
+  shared_buffer_index_add_locked(p,fresh);
   p->shared_properties=fresh->buffer.properties;
   p->shared_import_nodes++;p->shared_import_bytes+=length;p->shared_unique_bytes+=extra;
   atomic_fetch_add(&shared_lazy_import_nodes,1);

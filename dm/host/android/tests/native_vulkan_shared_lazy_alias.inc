@@ -149,6 +149,10 @@ static void shared_lazy_empty_binding_test(void) {
 
 static void shared_lazy_alias_gpu_test(void) {
   enum {W=65536,SIZE=64};
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  extern unsigned vk_test_shared_buffer_coverage_index(void);
+  checks+=vk_test_shared_buffer_coverage_index();
+#endif
   CHECK(vk_pool_shared_mode() && V.options.pool_window_bytes==W);
   CHECK(getenv("DM_SHARED_GUEST_HEAP_FIXTURE") && getenv("DM_VK_SHARED_LAZY_WINDOWS") &&
       !strcmp(getenv("DM_VK_SHARED_LAZY_WINDOWS"),"1"));
@@ -200,6 +204,11 @@ static void shared_lazy_alias_gpu_test(void) {
   CHECK(lazy_alias_collect_calls==1);
   CHECK(vk_pool_span_query(need.address,need.size,&prerequisite)==VK_POOL_SPAN_SINGLE);
   CHECK(vk_pool_shared_materialized(need.address,need.size));
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  extern int vk_test_native_import_coverage(uint64_t,uint64_t);
+  CHECK(vk_test_native_import_coverage((uintptr_t)bytes+4*W,2*W));
+  CHECK(!vk_test_native_import_coverage((uintptr_t)bytes+4*W-1,2));
+#endif
   CHECK(vk_pool_shared_cpu_observe_prepare(need.address,need.size));
   nvn_dirty_scope *observed_scope=nvn_dirty_scope_acquire((void *)(uintptr_t)need.address,need.size);
   CHECK(observed_scope);vk_shared_cpu_observation observation;
@@ -226,6 +235,10 @@ static void shared_lazy_alias_gpu_test(void) {
   }
   mtl_sub_begin();int live_operation=vk_pool_operation_begin_ranges(NULL,0);
   vk_buffer old=lazy_alias_resolve(address,SIZE,&old_offset);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  CHECK(vk_test_native_import_coverage((uintptr_t)bytes+W,W));
+  CHECK(!vk_test_native_import_coverage((uintptr_t)bytes,2*W));
+#endif
   size_t owned_pins,borrowed_pins;
   vk_test_pool_operation_pin_counts(&owned_pins,&borrowed_pins);
   CHECK(!owned_pins && borrowed_pins==1);
@@ -253,6 +266,10 @@ static void shared_lazy_alias_gpu_test(void) {
   lazy_alias_cover=cover.handle;CHECK(cover.handle!=old.handle);
   vk_pool_span_info range;CHECK(vk_pool_span_query((uintptr_t)bytes+W-64,192,&range)==VK_POOL_SPAN_SINGLE);
   CHECK(range.handle==cover.handle && range.logical_begin==0 && range.logical_end==2*W);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  CHECK(vk_test_native_import_coverage((uintptr_t)bytes,2*W));
+  CHECK(!vk_test_native_import_coverage((uintptr_t)bytes+2*W-1,2));
+#endif
   CHECK((uintptr_t)address>=(uintptr_t)bytes+range.logical_begin);
   cover_offset=(uintptr_t)address-((uintptr_t)bytes+range.logical_begin);
   CHECK(cover_offset<=cover.size && SIZE<=cover.size-cover_offset);
@@ -274,6 +291,10 @@ static void shared_lazy_alias_gpu_test(void) {
   vk_texture_lookup_scope_begin();int source=vk_shader_image_sources_begin();
   vk_texture_binding_scope_begin();vk_shader_operation_begin();vk_texture_shader_begin();
   vk_buffer ignored=lazy_alias_resolve(bytes+3*W+64,SIZE,&cross_offset);CHECK(ignored.handle);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  CHECK(vk_test_native_import_coverage((uintptr_t)bytes+3*W,3*W));
+  CHECK(!vk_test_native_import_coverage((uintptr_t)bytes+2*W,2*W));
+#endif
   lazy_alias_fill(old,old_offset,address,SIZE,0x25364758);
   vk_texture_shader_abandon();vk_shader_operation_abandon();vk_texture_binding_scope_end();
   vk_shader_image_sources_end(source);vk_texture_lookup_scope_end();
@@ -332,6 +353,10 @@ static void shared_lazy_alias_gpu_test(void) {
 #endif
   lazy_alias_read(tail,address_offset,bytes+3*W+128,SIZE,address_only_read);
   tail=lazy_alias_resolve(bytes+(4u<<20),0,&address_offset);CHECK(address_offset==tail.size);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  CHECK(vk_test_native_import_coverage((uintptr_t)bytes+3*W,(4u<<20)-3*W));
+  CHECK(!vk_test_native_import_coverage((uintptr_t)bytes+2*W-1,2));
+#endif
   vk_pool_operation_end(address_only);vk_internal_wait(vk_internal_commit());
   lazy_alias_words(address_only_read,SIZE,0x62738495);lazy_alias_words(bytes+3*W+128,SIZE,0x62738495);
   CHECK(!atomic_load(&lazy_alias_old_destroyed) && !atomic_load(&lazy_alias_cover_destroyed));
@@ -340,6 +365,9 @@ static void shared_lazy_alias_gpu_test(void) {
   vkCmdPipelineBarrier=lazy_alias_barrier_original;vkDestroyBuffer=lazy_alias_destroy_original;
   if(gate)vkDestroySemaphore(V.device,gate,NULL);
   CHECK(vk_pool_span_query((uintptr_t)address,SIZE,&range)==VK_POOL_SPAN_NONE);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  CHECK(!vk_test_native_import_coverage((uintptr_t)address,SIZE));
+#endif
   shared_lazy_empty_binding_test();
   CHECK(!vk_validation_error_count());
   printf("{\"test\":\"shared-lazy-coherent-alias\",\"checks\":%u,\"result\":\"passed\",\"T2T_unbacked_copy_collect_then_original_observation\":true,\"ASTC_metadata_only_not_GPU\":true,\"generic_admission_before_observation\":true,\"draw_only_demand_admission\":true,\"invalid_batch_unchanged_coverage\":true,\"actual_GPU_bidirectional_bytes\":true,\"warm_proof_global\":true,\"old_writer_pending_during_cover_import\":%s,\"unknown_visibility_fallback\":true,\"old_physical_writer_after_cover\":true,\"HOST_publication_bytes\":true,\"nested_logical_scopes\":true,\"address_only_remaining_extent_and_ledger\":true,\"address_only_RAW_precise_vertex_dependency\":true,\"old_buffers_retained_through_completion\":true,\"actual_borrow_to_commit_pin_upgrade\":true,\"pool_close_destroyed_once\":true,\"empty_index16_32_finite_address_proof\":true,\"zero_VS_UBO_SSBO_not_address_only_VBO\":true,\"empty_draw_GPU_target_preserved\":true,\"game_modules_executed\":false}\n",checks,pending_gate?"true":"false");

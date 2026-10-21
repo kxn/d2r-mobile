@@ -33,9 +33,8 @@ static int shared_pool_storage_covered_locked(pool *p,uint64_t offset,uint64_t b
   if(p->shared_lazy_eligible) {
     while(at<end) {
       uint64_t next=native_allocation_cover_end(p->native_allocation_index,at,at+1);
-      for(unsigned chain=0;chain<2;chain++)
-        for(pool_backing_span *span=chain?p->shared_covers:p->backings;span;span=span->next)
-          if(span->begin<=at && span->end>next)next=span->end;
+      uint64_t buffer_end=shared_buffer_cover_end(p->shared_buffer_index,at);
+      if(buffer_end>next)next=buffer_end;
       if(next==at)return 0;
       at=next;
     }
@@ -350,6 +349,74 @@ unsigned vk_test_native_import_index(void) {
   if(p.native_allocation_index || shared_pool_storage_covered_locked(&p,0,1))die("Native allocation index remained after release");checks++;
   return checks;
 }
+#if !defined(DM_ANDROID_APP)
+unsigned vk_test_shared_buffer_coverage_index(void) {
+  // Exact set oracle, independent of image recipes or CPU contents. Actual
+  // GPU imports/pixels and later Buffer unions are tested by native_lane.
+  enum {N=32,B=8};native_image_allocation a[N]={0};pool p={.size=4096};unsigned checks=0;
+  pool_backing_span buffers[B]={0};
+  const uint64_t bounds[B][2]={{0,32},{96,128},{192,256},{480,512},
+    {32,128},{100,224},{512,544},{192,240}};
+  for(unsigned k=0;k<N;k++) {
+    unsigned n=(k*13)%N;uint64_t first=(n%8)*32,length=(n/8+1)*24;
+    a[n].begin=first;a[n].end=first+length;
+    a[n].range=(alias_range_node){.start=first,.end=first+length,.max_end=first+length,.serial=n,.owner=&a[n],.height=1};
+    int inserted=0;p.native_allocation_index=alias_range_insert(p.native_allocation_index,&a[n].range,&inserted);
+    if(!inserted)die("Native allocation test index duplicate");checks++;
+  }
+  for(unsigned pass=0;pass<3;pass++) {
+    for(uint64_t first=0;first<608;first+=3)for(uint64_t length=1;length<65;length+=7) {
+      uint64_t next=first;int overlaps=0;
+      for(unsigned n=0;n<N;n++)if(!atomic_load(&a[n].released) && a[n].begin<first+1 && a[n].end>first) {
+        if(a[n].end>next)next=a[n].end;
+      }
+      for(unsigned n=0;n<N;n++)if(!atomic_load(&a[n].released) && a[n].begin<first+length && a[n].end>first)overlaps=1;
+      if(native_allocation_cover_end(p.native_allocation_index,first,first+1)!=next ||
+          native_allocation_overlaps_locked(&p,first,length)!=overlaps)die("Native allocation indexed point/overlap mismatch");checks++;
+      uint64_t at=first;
+      while(at<first+length) {
+        uint64_t end=at;
+        for(unsigned n=0;n<N;n++)if(!atomic_load(&a[n].released) && a[n].begin<=at && a[n].end>end)end=a[n].end;
+        for(unsigned chain=0;chain<2;chain++)
+          for(pool_backing_span *b=chain?p.shared_covers:p.backings;b;b=b->next)
+            if(b->begin<=at && b->end>end)end=b->end;
+        if(end==at)break;
+        at=end;
+      }
+      if(shared_pool_storage_covered_locked(&p,first,length)!=(at>=first+length))die("Native allocation union coverage mismatch");checks++;
+    }
+    if(pass==0) {
+      // Same typed index/query as successful real Buffer imports. Synthetic
+      // ranges prove holes, adjacency and nested/duplicate-start cover unions;
+      // actual Buffer handles and bidirectional bytes stay in the GPU fixture.
+      p.shared_lazy_eligible=1;
+      for(unsigned n=0;n<B;n++) {
+        pool_backing_span *b=&buffers[n];b->begin=bounds[n][0];b->end=bounds[n][1];b->generation=n+1;
+        pool_backing_span **chain=n<4?&p.backings:&p.shared_covers;
+        b->next=*chain;*chain=b;shared_buffer_index_add_locked(&p,b);checks++;
+      }
+      for(unsigned n=0;n<N;n+=2)atomic_store(&a[n].released,n%4?2:1);
+    }
+    if(pass==1)for(unsigned k=0;k<N/2;k++) {
+      unsigned n=(k*5)%16*2;int removed=0;
+      p.native_allocation_index=alias_range_remove(p.native_allocation_index,&a[n].range,&removed);
+      if(!removed)die("Native allocation test remove mismatch");checks++;
+    }
+  }
+  for(unsigned n=1;n<N;n+=2) {
+    atomic_store(&a[n].released,2);int removed=0;
+    p.native_allocation_index=alias_range_remove(p.native_allocation_index,&a[n].range,&removed);
+    if(!removed)die("Native allocation final retirement mismatch");checks++;
+  }
+  // Removal from this separate tree cannot revive a released native interval.
+  for(unsigned n=0;n<B;n++) {
+    int removed=0;p.shared_buffer_index=alias_range_remove(p.shared_buffer_index,&buffers[n].shared_coverage,&removed);
+    if(!removed)die("Shared Buffer coverage test removal mismatch");checks++;
+  }
+  if(p.native_allocation_index || p.shared_buffer_index || shared_pool_storage_covered_locked(&p,0,1))die("Native/Buffer allocation index remained after release");checks++;
+  return checks;
+}
+#endif
 int vk_test_native_import_coverage(uint64_t address,uint64_t bytes) {
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   int valid=p && p->shared && shared_pool_storage_covered_locked(p,address-(uintptr_t)p->guest,bytes);

@@ -9,6 +9,25 @@ typedef struct {
 } pool_span_piece;
 typedef struct { pool *owner;uint64_t at,end; } pool_span_iter;
 #ifdef DM_VULKAN_SHARED_POOLS
+// V.resources owns publication and teardown. Buffer imports remain immutable
+// until the original Pool/reference drain; native imports use their separate
+// index and release predicate. This tree never selects a VkBuffer or origin.
+static void shared_buffer_index_add_locked(pool *p,pool_backing_span *b) {
+  b->shared_coverage=(alias_range_node){.start=b->begin,.end=b->end,
+    .max_end=b->end,.serial=b->generation,.owner=b,.height=1};
+  int inserted=0;
+  p->shared_buffer_index=alias_range_insert(p->shared_buffer_index,&b->shared_coverage,&inserted);
+  if(!inserted)die("Shared Buffer coverage publication mismatch");
+}
+static uint64_t shared_buffer_cover_end(const alias_range_node *node,uint64_t at) {
+  if(!node || node->max_end<=at)return at;
+  uint64_t covered=shared_buffer_cover_end(node->left,at);
+  if(node->start>at)return covered;
+  const pool_backing_span *b=node->owner;
+  if(b->end>covered)covered=b->end;
+  uint64_t right=shared_buffer_cover_end(node->right,at);
+  return right>covered?right:covered;
+}
 static pool_backing_span *shared_lazy_cover(const pool *p,uint64_t offset,uint64_t size) {
   if(!p->shared_lazy_eligible || offset>p->size || size>p->size-offset)return NULL;
   for(pool_backing_span *b=p->shared_covers;b;b=b->next)
@@ -209,13 +228,24 @@ static void pool_span_chain_destroy(pool *p,pool_backing_span *b) {
   p->locked_span_index_generation=0;
   p->locked_span_index_count=p->locked_span_index_capacity=0;
   while(b) {
-    pool_backing_span *next=b->next;vk_buffer_destroy(&b->buffer);
+    pool_backing_span *next=b->next;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared_lazy_eligible) {
+      int removed=0;
+      p->shared_buffer_index=alias_range_remove(p->shared_buffer_index,&b->shared_coverage,&removed);
+      if(!removed)die("Shared Buffer coverage retirement mismatch");
+    }
+#endif
+    vk_buffer_destroy(&b->buffer);
     if(b!=&p->whole)free(b);
     b=next;
   }
 }
 static void pool_spans_destroy(pool *p) {
   pool_span_chain_destroy(p,p->backings);p->backings=NULL;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared_buffer_index)die("Shared Buffer coverage index outlived imports");
+#endif
 }
 // Caller preserves the original publication exclusion and GPU-access checks.
 static void pool_spans_copy_from_guest(pool *p,uint64_t offset,uint64_t size) {
