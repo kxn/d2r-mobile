@@ -4,9 +4,9 @@
 
 当前实施顺序：
 
-1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。下一轮单独试宿主ThinLTO，让编译器跨翻译单元处理整条路径；不叠加其他画质或游戏逻辑改动。
+1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。宿主ThinLTO已完成相同资源的原游戏对照：整线程Running约27.36ms vs27.51ms、频率约1577 vs1583MHz，仍约30FPS。编译选项保留为默认关闭的实验入口，不继续以编译微调为主线。
 2. 完整ASTC6混合包已进入原游戏并完成三段跑动、存档和恢复；全6217 native payload从443,588,608降到373,624,832B，减少66.72MiB。实际营地NvN Running约26.68ms/完整Surface间隔，出图约33.52ms，未证明净FPS或进程PSS下降。保留资源表示收益，继续测实际加载范围与持续成本，不把资源大小当DRAM或温度。
-3. 进一步评估是否能把Submission/可证明片段中的元数据和几何准入一次交付给多个draw。先查已有walk、source_flow、geometry和recipe边界，不盲加跨draw缓存；低覆盖的分类删除不足以将约27ms直接压到16.7ms。已有native GENERAL不变量的小候选f5e5fca单独保留，未插入179冻结。
+3. 进一步评估是否能把Submission/可证明片段中的元数据和几何准入一次交付给多个draw。先查已有walk、source_flow、geometry和recipe边界，不盲加跨draw缓存；低覆盖的分类删除不足以将约27ms直接压到16.7ms。native GENERAL小候选已独立源码审查及8项GPU/ASan内容测试，179后继43e856f正在canonical/raw构建；只减少准备和纯布局分类，仍执行全部真实消费/依赖，宽包络3.074%含大量保留工作，不是预期收益。
 4. A650独立查GPU故障，保留1MiB，不切回整池或随机改Shader。现有同run命令已完整解码，描述符范围和对齐未见明确错误；缺输入payload时不推断动态值。Mali依用户要求暂停，帧回调和翻译多线程暂不实施。
 
 整池实验的明确代价是额外739.78MiB PSS，NvN Running约25.75ms vs27.05ms，仍约30FPS；不能把约8%的准入子树视为无成本可删除，更不能作为6GB默认。以下保留各轮原始判断、实施和对照记录。
@@ -168,3 +168,18 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 - `.local/logs/submission-resource-admission-scope-readonly-v1/result.json`
 
 更大的前置资源计划尚未实施：当前walk只有路径/DS/query/store摘要，提前collect只是搬工作；提前reserve会导入后来被跳过操作的页面，native图像cold create还会实际acquire。只有已backed资源的lazy段lease可能在完整失效/生命周期合同下减少整轮工作，但还缺真实范围重复率与state generation。准入和索引的可见样本并集约12.97%，即便全部删除也不能单独把26～27ms降到16.7ms，不能许诺这一个改动解决60FPS。
+
+## ThinLTO原游戏对照与下一步取舍
+
+候选9225954只改宿主构建，运行时C/C++/ASM与179相同；1331个原动态导出、535个NVN/汇编入口均由实际LLVM符号表核对保留。原NSO重新加工及28产物独立验证完成，真实游戏三段移动、原生命周期save2、停止、原包和资源恢复通过。根代理已查看营地截图，未见明显黑块或几何丢失；这不代表全游戏验收。
+
+| 同full2838/f830/1MiB/.60 | 完整Surface间隔 | NvN Running/间隔 | 运行时加权频率 | 平均出图间隔 |
+|---|---:|---:|---:|---:|
+| 179 | 235 | 27.510981ms | 1583.28MHz | 33.097001ms |
+| 922 ThinLTO | 237 | 27.362077ms | 1577.00MHz | 33.025215ms |
+
+整CPU差约-0.54%、频率差约-0.40%，不能宣称净提速。对应官方8秒PMU窗口指令数约少1.5～1.9%，但core cycles增加2.07%、frontend stall增加5.94%，ITLB等亦有反向变化；不能挑一个计数器宣布收益。LTO会改变内联和物理符号，报告保留真实unwind与LLVM inline源行，不把调用树消失当成工作被删除。可选编译入口进入主线，默认不启用；没有改Shader、游戏逻辑或驱动。
+
+优先级继续聚焦绑定约20%和完整资源准备/依赖责任的批量重复工作。纯mtl_exec解释器self仅12/618≈1.94%，flatten会引入CALL-return/END/checkpoint语义维护，当前不实施。Allocator可归属样本也只约0.65%，不另造大内存池。下一轮优先找能够减少整轮工作、且失效条件可证明的实现，而不是继续调整小函数布局。
+
+证据：`.local/logs/host-thinlto-9225954-root-actual-review.json`；`.local/logs/host-thinlto-922-full2838-offline-analysis-v1/facts-and-evidence-agent.json`。设备已恢复原包并停止，Mali仍按用户要求暂停。
