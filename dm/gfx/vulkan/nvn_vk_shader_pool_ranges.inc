@@ -97,7 +97,7 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
     if(source_part) {
       for(unsigned j=0;j<source_part->count;j++) {
         image_source_entry *entry=&source_plan->entries[source_part->begin+j];
-        const tex_t *t=image_source_resolve(entry,state,stage);
+        const tex_t *t=image_source_resolve(source_plan,entry,state,stage);
         if(!t)return pool_range_fail("missing native candidate image descriptor");
         if(!vk_texture_native_pool_collect(t,producer_stage(stage),0,sink,context))return 0;
       }
@@ -206,8 +206,15 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
 #endif
       )return;
 #ifdef DM_VULKAN_NATIVE_RESOURCES
-  image_source_plan *source_plan=image_sources_start(list,state,compute);
+  uint64_t source_epoch=vk_texture_descriptor_epoch();
+  image_source_plan *source_plan=image_sources_cpu_empty(list,state,compute);
+  int cpu_empty=source_plan!=NULL;
+  if(!cpu_empty)source_plan=image_sources_start(list,state,compute);
   int source_complete=1;
+source_walk:
+#endif
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(!cpu_empty)
 #endif
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
@@ -226,7 +233,7 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
         // hand the same logical value to native admission after publication.
         image_source_entry *entry=&source_plan->entries[source_plan->count++];
         entry->reg=b->reg;source_part->count++;
-        const tex_t *t=image_source_resolve(entry,state,stage);
+        const tex_t *t=image_source_resolve(source_plan,entry,state,stage);
         if(t && (!packaged_only || (t->has_layout && t->mem && t->L.size)))vk_texture_cpu_preflight(t);
         continue;
       }
@@ -242,7 +249,14 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
     vk_texture_cpu_preflight(state->targets.depth);
   }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
-  image_sources_finish(source_plan,source_complete);
+  // Targets can publish CPU effects and re-enter descriptor registration or
+  // live S. The pre-target logical proof is not authority after a callback.
+  if(cpu_empty && image_sources_cpu_empty(list,state,compute)!=source_plan) {
+    cpu_empty=0;source_epoch=vk_texture_descriptor_epoch();
+    source_plan=image_sources_start(list,state,compute);goto source_walk;
+  }
+  if(cpu_empty)source_plan->valid=1;
+  else image_sources_finish(source_plan,source_complete,source_epoch);
 #endif
 }
 
