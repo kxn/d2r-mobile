@@ -184,8 +184,13 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
     CHECK(vk_texture_view(outer_id,0)==original);CHECK(vk_render_active());
     uint64_t draws=V.draws;
     dm_guest_write_prepare((void *)upload->mem,upload->L.size);memset((void *)upload->mem,0x33,upload->L.size);
-    // Force an outer preflight MISS; its by-value snapshot must survive the
-    // nested ghost's own prepare/bind scope and colliding physical recipe.
+    // Force an actual logical change then restore, so exact re-registration
+    // no-ops cannot erase this intended outer preflight MISS. Its by-value
+    // snapshot must survive the nested ghost's colliding physical recipe.
+#ifndef DM_ANDROID_APP
+    view_t forced_view={.set_levels=1,.base_level=0,.nlevels=1};
+    mtl_reg_tex(outer_id,upload,&forced_view);
+#endif
     mtl_reg_tex(outer_id,upload,NULL);
     // Keep the logical parent live across the real nested ghost as well:
     // the child may evict the shared slot, never the copied caller value.

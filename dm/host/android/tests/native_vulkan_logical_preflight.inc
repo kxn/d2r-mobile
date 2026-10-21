@@ -10,6 +10,49 @@ static void *lookup_producer_register(void *arg) {
   p->ok=vk_texture_descriptor(p->id,&value) && value.serial==p->texture->serial;
   return NULL;
 }
+#ifndef DM_ANDROID_APP
+// Exact registration identity is independent of physical readiness. These
+// are existing registry epochs and pixel oracles, not a new target counter.
+static void registration_identity_boundaries(int id,const tex_t *texture) {
+  tex_t observed;view_t view;int has_view;
+  // One identical registration must not invalidate every other live descriptor
+  // and its existing physical/source recipe through the global epoch.
+  enum { batch_first=320,batch_count=32 };
+  for(unsigned k=0;k<batch_count;k++)mtl_reg_tex(batch_first+k,texture,NULL);
+  vk_texture_lookup_scope_begin();
+  for(unsigned k=0;k<batch_count;k++)CHECK(vk_texture_descriptor(batch_first+k,&observed));
+  uint64_t epoch=vk_texture_descriptor_epoch();
+  for(unsigned k=0;k<batch_count;k++) {
+    mtl_reg_tex(batch_first+k,texture,NULL);
+    CHECK(vk_texture_descriptor_epoch()==epoch);
+    CHECK(vk_texture_descriptor(batch_first+k,&observed)&&!memcmp(&observed,texture,sizeof observed));
+  }
+  vk_texture_lookup_scope_end();
+  mtl_reg_tex(id,texture,NULL);epoch=vk_texture_descriptor_epoch();
+  mtl_reg_tex(id,texture,NULL);CHECK(vk_texture_descriptor_epoch()==epoch);
+  // A matching serial with changed descriptor bytes must invalidate. Restore
+  // before any physical consumer; NVN normally gives changed objects a serial.
+  tex_t changed=*texture;changed.L.size++;
+  mtl_reg_tex(id,&changed,NULL);CHECK(vk_texture_descriptor_epoch()!=epoch);
+  CHECK(vk_texture_descriptor(id,&observed)&&observed.L.size==changed.L.size);
+  mtl_reg_tex(id,texture,NULL);
+  const view_t mip0={.set_levels=1,.base_level=0,.nlevels=1};
+  epoch=vk_texture_descriptor_epoch();mtl_reg_tex(id,texture,&mip0);
+  CHECK(vk_texture_descriptor_epoch()!=epoch);epoch=vk_texture_descriptor_epoch();
+  mtl_reg_tex(id,texture,&mip0);CHECK(vk_texture_descriptor_epoch()==epoch);
+  CHECK(vk_texture_descriptor_view(id,&observed,&view,&has_view)&&has_view&&view.nlevels==1);
+  view_t changed_view=mip0;changed_view.nlevels=2;
+  mtl_reg_tex(id,texture,&changed_view);CHECK(vk_texture_descriptor_epoch()!=epoch);
+  epoch=vk_texture_descriptor_epoch();mtl_reg_tex(id,texture,NULL);
+  CHECK(vk_texture_descriptor_epoch()!=epoch);
+  CHECK(vk_texture_descriptor_view(id,&observed,&view,&has_view)&&!has_view);
+  mtl_set_tex_pool_n(id);epoch=vk_texture_descriptor_epoch();
+  mtl_reg_tex(id,texture,NULL);CHECK(vk_texture_descriptor_epoch()==epoch);
+  CHECK(!vk_texture_descriptor(id,&observed));
+  mtl_set_tex_pool_n(512);CHECK(vk_texture_descriptor_epoch()!=epoch);
+  CHECK(vk_texture_descriptor(id,&observed)&&!memcmp(&observed,texture,sizeof observed));
+}
+#endif
 static void logical_lookup_boundaries(int id,const tex_t *a,const tex_t *b) {
   tex_t value;view_t view;int has_view;
   vk_texture_lookup_scope_begin();CHECK(vk_texture_descriptor(id,&value));
@@ -107,6 +150,9 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     CHECK(CALL(nvnSamplerInitialize,&sampler,&sb));mtl_reg_samp(1,&((const samp_t *)&sampler)->p);
     enum { ordinary=37,collision=270 };mtl_set_tex_pool_n(512);
     mtl_reg_tex(ordinary,cpu,NULL);mtl_reg_tex(collision,(const tex_t *)&textures[2],NULL);
+#ifndef DM_ANDROID_APP
+    registration_identity_boundaries(ordinary,cpu);
+#endif
     S=(vk_state){.program=(const prog_t *)&program,.depth_range={0,1},.chmask={~0u}};
     S.poly=*(const poly_st *)&polygon;S.ds=*(const ds_st *)&ds;S.color=*(const color_st *)&color;S.ms=*(const ms_st *)&ms;
     S.attr[0]=*(const va_st *)&attr[0];S.attr[1]=*(const va_st *)&attr[1];S.stream[0]=*(const vs_st *)&stream;
@@ -119,12 +165,16 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     uint64_t prepares_before;int before_reference;vk_texture_binding_stats(&hits,&prepares_before,&misses,&before_reference);
     mtl_sub_begin();VkImageView before=vk_texture_view(ordinary,0);
     vk_texture_view(ordinary,1);vk_texture_prepare_binding(ordinary,0,VK_SHADER_STAGE_FRAGMENT_BIT);
+#ifndef DM_ANDROID_APP
+    uint64_t registration_epoch=vk_texture_descriptor_epoch();mtl_reg_tex(ordinary,cpu,NULL);
+    CHECK(vk_texture_descriptor_epoch()==registration_epoch);
+#endif
     VkImageView after=vk_texture_view(ordinary,0);CHECK(after!=before);
     vk_internal_wait(vk_internal_commit());
     int active_reference;vk_texture_binding_stats(&hits,&prepares,&misses,&active_reference);
     CHECK(active_reference==(int)reference);CHECK(prepares-prepares_before==(reference?0:1));
-    // Make the first real draw resolve its logical value instead of being
-    // satisfied solely by the physical recipe prepared above.
+    // Identical re-registration preserves only metadata. The following draw
+    // still consumes its actual physical resource, with either recipe policy.
     mtl_reg_tex(ordinary,cpu,NULL);
     mtl_sub_begin();logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());
     logical_preflight_pixels(&textures[0],(uint8_t[]){128,128,128,255},0);
@@ -138,10 +188,18 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     // GPU then CPU changes at the exact same logical descriptor must still
     // take the consumer's image ownership/dirty upload path on every draw.
     mtl_sub_begin();logical_preflight_clear(&textures[1],0,(float[]){0,1,0,1});
+#ifndef DM_ANDROID_APP
+    registration_epoch=vk_texture_descriptor_epoch();mtl_reg_tex(ordinary,cpu,NULL);
+    CHECK(vk_texture_descriptor_epoch()==registration_epoch);
+#endif
     logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());
     logical_preflight_pixels(&textures[0],(uint8_t[]){0,255,0,255},0);
     dm_guest_write_prepare((void *)cpu->mem,cpu->L.size);
     for(uint64_t n=0;n<cpu->L.size;n+=4)memcpy((uint8_t *)cpu->mem+n,(uint8_t[]){128,128,128,255},4);
+#ifndef DM_ANDROID_APP
+    registration_epoch=vk_texture_descriptor_epoch();mtl_reg_tex(ordinary,cpu,NULL);
+    CHECK(vk_texture_descriptor_epoch()==registration_epoch);
+#endif
     mtl_sub_begin();logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());
     logical_preflight_pixels(&textures[0],(uint8_t[]){128,128,128,255},0);
     // A colliding id and same-id retarget are different logical facts, not
@@ -185,6 +243,13 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     for(unsigned round=0;round<9;round++) {mtl_sub_begin();CHECK(mtl_wait(mtl_sub_commit(),UINT64_MAX));}
     vk_texture_end_submit();
     vk_texture_lookup_scope_begin();tex_t now;CHECK(!vk_texture_descriptor(ordinary,&now));vk_texture_lookup_scope_end();
+#ifndef DM_ANDROID_APP
+    // Even exact retained snapshot bytes must revive an invalid slot via the
+    // original publication path. No physical use of this retired value follows.
+    registration_epoch=vk_texture_descriptor_epoch();mtl_reg_tex(ordinary,&old,NULL);
+    CHECK(vk_texture_descriptor_epoch()!=registration_epoch);
+    CHECK(vk_texture_descriptor(ordinary,&now)&&now.serial==old.serial);
+#endif
     NVNtextureBuilder reb;CALL(nvnTextureBuilderSetDefaults,&reb);CALL(nvnTextureBuilderSetDevice,&reb,&device);
     CALL(nvnTextureBuilderSetWidth,&reb,16);CALL(nvnTextureBuilderSetHeight,&reb,16);
     CALL(nvnTextureBuilderSetFormat,&reb,NVN_FORMAT_RGBA8);CALL(nvnTextureBuilderSetStorage,&reb,&pool,2*65536);
