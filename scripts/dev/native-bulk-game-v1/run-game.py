@@ -557,6 +557,7 @@ def main():
     p = proof(args.inputs, args.inputs_sha256)
     out = args.report.parent.resolve()
     require(out.is_relative_to(R / '.local/logs'), 'private report directory required')
+    require(out == Path(p['output']).resolve(), 'report parent must equal the declared inputs.output directory')
     plan = {'offline': True, 'controller_sources': p['controller_sources'],
             'inputs_sha256': args.inputs_sha256, 'runtime': p['runtime_commit'],
             'phases': ['standard-ASTC4', 'native-ASTC4'], 'scale_3d': .60,
