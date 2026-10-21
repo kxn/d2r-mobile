@@ -122,8 +122,8 @@ def proof(path, digest):
             'explicit input SHA256 required')
     require(sha(path) == digest, 'input manifest changed')
     p = read(path)
-    require('native_compiler_experiment' not in p or 'native_candidate_validation' in p,
-            'compiler experiment must pass the reviewed candidate gate')
+    require(not any(k in p for k in ('native_compiler_experiment', 'native_host_experiment')) or
+            'native_candidate_validation' in p, 'host experiment must pass the reviewed candidate gate')
     require(p['schema'] == 1 and p['serial'] == '10CG570J59001U1', 'Q735 scope')
     p['pool_window_bytes'] = p.get('pool_window_bytes', 16777216)
     require(type(p['pool_window_bytes']) is int and
@@ -206,7 +206,7 @@ def proof(path, digest):
                 ('53c7d26628142a383c9c5f8d39a3edc23a1674c3',
                  'd14808f591b0de60c241340c3f5c5df708f4e36b',
                  '179c82dfa412153b6564974e29fc35036e0b3507') or
-                 'native_compiler_experiment' in p) and p.get('performance_tools'),
+                 any(k in p for k in ('native_compiler_experiment', 'native_host_experiment'))) and p.get('performance_tools'),
                 'independent raw-L1I record requires an exact reviewed runtime with official tools')
     if 'performance_tools' in p:
         tools = p['performance_tools']
@@ -615,6 +615,10 @@ def main():
     if p.get('native_compiler_experiment'):
         plan['native_compiler_experiment'] = {**p['native_compiler_experiment'],
             'runtime_source_semantics_changed': False, 'compiler_only_comparison': True,
+            'root_review': p['native_candidate_validation']['root_review']}
+    if p.get('native_host_experiment'):
+        plan['native_host_experiment'] = {**p['native_host_experiment'],
+            'game_logic_unchanged': True, 'compiler_policy': 'original179 O3 / no LTO',
             'root_review': p['native_candidate_validation']['root_review']}
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True

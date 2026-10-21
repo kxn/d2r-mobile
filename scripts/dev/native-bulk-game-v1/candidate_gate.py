@@ -223,6 +223,9 @@ def reviewed_artifacts(p, review, pinned, read, require):
 
 
 def validate(p,pinned,read,require):
+    if 'native_host_experiment' in p:
+        require('native_compiler_experiment' not in p, 'choose one reviewed experiment kind')
+        return validate_compiler(p,pinned,read,require,resource_preparation=True)
     if 'native_compiler_experiment' in p:
         return validate_compiler(p,pinned,read,require)
     if p['runtime_commit'] != POOL_RUNTIME:
@@ -281,13 +284,16 @@ THIN_COMPILE=['-flto=thin']
 THIN_LINK=['-flto=thin','-O3','-fuse-ld=lld','-Wl,--thinlto-jobs=2']
 
 
-def validate_compiler(p,pinned,read,require):
-    """Only a root-reviewed ThinLTO rebuild of 179, with the same full2838 assets.
+def validate_compiler(p,pinned,read,require,resource_preparation=False):
+    """Fixed179 host experiment, with the same full2838 assets and raw modules.
 
     The caller authenticates the complete inputs SHA, including root_review;
     source equivalence is the root's independent diff finding, not self-approval.
     """
-    require(p['native_compiler_experiment']=={'strategy':'thinlto','base_runtime':POOL_RUNTIME}
+    mode = ('native_host_experiment' if resource_preparation else 'native_compiler_experiment')
+    expected = ({'kind':'resource-preparation','base_runtime':POOL_RUNTIME} if resource_preparation
+                else {'strategy':'thinlto','base_runtime':POOL_RUNTIME})
+    require(p[mode]==expected
             and set(p['native_candidate_validation'])=={'root_review'}
             and p['runtime_commit']!=POOL_RUNTIME, 'fixed179 ThinLTO compiler experiment only')
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
@@ -295,11 +301,18 @@ def validate_compiler(p,pinned,read,require):
             and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
             'compiler experiment requires original f830/1MiB/full2838 and official tools')
     review=read(pinned(p['native_candidate_validation']['root_review']))
-    require(review['status']=='ROOT_REVIEWED_HOST_THINLTO_CANONICAL_AND_FRESH_RAW28'
+    status = ('ROOT_REVIEWED_HOST_RESOURCE_PREPARATION_CANONICAL_AND_FRESH_RAW28' if resource_preparation
+              else 'ROOT_REVIEWED_HOST_THINLTO_CANONICAL_AND_FRESH_RAW28')
+    require(review['status']==status
             and review['runtime']==p['runtime_commit'] and review['base']==POOL_RUNTIME
-            and review['tool_ready'] is True and review['actual_device_evidence'] is False
-            and review['compiler_only_changes'] is True and review['runtime_C_CPP_source_equal_base'] is True,
-            'independently reviewed compiler-only source diff required')
+            and review['tool_ready'] is True and review['actual_device_evidence'] is False,
+            'independently reviewed host experiment required')
+    if resource_preparation:
+        require(review['host_only_changes'] is True and review['game_logic_unchanged'] is True,
+                'independently reviewed host-only preparation source diff required')
+    else:
+        require(review['compiler_only_changes'] is True and review['runtime_C_CPP_source_equal_base'] is True,
+                'independently reviewed compiler-only source diff required')
     canonical,raw=reviewed_artifacts(p,review,pinned,read,require)
     source=read(pinned(review['source_ready']))
     require(source['commit']==p['runtime_commit'] and source['base']==POOL_RUNTIME,
@@ -322,13 +335,21 @@ def validate_compiler(p,pinned,read,require):
     for key in ('tlsdesc','shared_pools_compiled_default_OFF','shared_import_windows_compiled',
                 'native_resources_compiled','opt_level','NDK','API','ABI','jobs'):
         require(flags[key]==base['effective_build'][key], 'compiler experiment changed runtime build option '+key)
-    require(flags['host_compiler_strategy']=='thinlto' and flags['thinlto'] is True
-            and flags['thinlto_backend_jobs']==2 and flags['thinlto_compile_options']==THIN_COMPILE
-            and flags['thinlto_link_options']==THIN_LINK
-            and manifest['source_revision']==p['runtime_commit']
+    require(manifest['source_revision']==p['runtime_commit']
             and manifest['native_library_sha256']==canonical['canonical_native_library_sha256']
             and manifest['apk_sha256']==canonical['canonical_APK']['archive']['sha256']
-            and manifest['host_opt_level']=='3' and manifest['host_thinlto'] is True
+            and manifest['host_opt_level']=='3', 'canonical effective manifest differs')
+    if resource_preparation:
+        require(flags.get('host_compiler_strategy') in (None,'original-O3')
+                and flags.get('thinlto',False) is False and not flags.get('thinlto_compile_options')
+                and not flags.get('thinlto_link_options') and manifest.get('host_thinlto',False) is False
+                and not manifest.get('host_extra_compile_options') and not manifest.get('host_extra_link_options'),
+                'host preparation retains original179 O3 compiler policy without LTO or extra flags')
+    else:
+        require(flags['host_compiler_strategy']=='thinlto' and flags['thinlto'] is True
+            and flags['thinlto_backend_jobs']==2 and flags['thinlto_compile_options']==THIN_COMPILE
+            and flags['thinlto_link_options']==THIN_LINK
+            and manifest['host_thinlto'] is True
             and manifest['host_thinlto_backend_jobs']==2
             and manifest['host_extra_compile_options']==THIN_COMPILE and manifest['host_extra_link_options']==THIN_LINK,
             'canonical ThinLTO effective manifest/flags differ')

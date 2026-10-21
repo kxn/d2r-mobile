@@ -107,4 +107,48 @@ class Compiler(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'bounded asset'):
             a.validate(self.p,pinned,read,require)
 
+class HostPreparation(unittest.TestCase):
+    """Synthetic source mode using the same real179 artifact prerequisites."""
+    write=Compiler.write
+    invoke=Compiler.invoke
+    def setUp(self):
+        Compiler.setUp(self)
+        original=read(pinned(self.base_review['canonical_ready']))
+        self.can['effective_build']=copy.deepcopy(original['effective_build'])
+        self.manifest=read(pinned(original['canonical_build_manifest']))
+        self.manifest['source_revision']=self.runtime
+        self.p.pop('native_compiler_experiment')
+        self.p['native_host_experiment']={'kind':'resource-preparation','base_runtime':g.POOL_RUNTIME}
+        for key in ('compiler_only_changes','runtime_C_CPP_source_equal_base'):self.review.pop(key)
+        self.review.update(status='ROOT_REVIEWED_HOST_RESOURCE_PREPARATION_CANONICAL_AND_FRESH_RAW28',
+                           host_only_changes=True,game_logic_unchanged=True)
+    def test_host_mode_common_provenance_passes(self):
+        self.assertEqual(self.invoke(),self.runtime)
+    def test_independent_host_review_required(self):
+        for key in ('host_only_changes','game_logic_unchanged','raw28_hashes_verified'):
+            self.review[key]=False
+            with self.assertRaises(RuntimeError):self.invoke()
+            self.review[key]=True
+    def test_exact_kind_and_one_experiment(self):
+        self.p['native_host_experiment']['kind']='arbitrary'
+        with self.assertRaises(RuntimeError):self.invoke()
+        self.p['native_host_experiment']['kind']='resource-preparation'
+        self.p['native_compiler_experiment']={'strategy':'thinlto','base_runtime':g.POOL_RUNTIME}
+        with self.assertRaises(RuntimeError):self.invoke()
+    def test_original_compiler_policy_required(self):
+        for target,key,value in [(self.can['effective_build'],'thinlto',True),
+                                 (self.manifest,'host_thinlto',True),
+                                 (self.manifest,'host_extra_link_options',['-Wl,--icf=all'])]:
+            old=target.get(key);target[key]=value
+            with self.assertRaises(RuntimeError):self.invoke()
+            if old is None:target.pop(key)
+            else:target[key]=old
+    def test_raw_and_base_still_checked(self):
+        self.raw['28_deployment_file_hashes']['main.patched.bin']='0'*64
+        with self.assertRaises(RuntimeError):self.invoke()
+    def test_no_direct_asset_runtime_approval_from_input(self):
+        self.p['_validated_compiler_runtime']=self.runtime
+        self.p['qualified_native_asset_validation']['dual_NVN_review']={}
+        with self.assertRaises(RuntimeError):a.validate(self.p,pinned,read,require)
+
 if __name__=='__main__':unittest.main()
