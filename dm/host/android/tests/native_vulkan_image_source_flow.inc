@@ -69,6 +69,52 @@ static void image_source_value_boundaries(void) {
   vk_test_image_source_flow(1);S=saved;mtl_set_tex_pool_n(4);
   LOG("[image source value oracle] epoch/handle changes, limit rejection, nested and overflow isolation, operation end and native-OFF no-build passed");
 }
+static unsigned source_flow_native_requirements;
+static vk_pool_requirement source_flow_native_requirement;
+static int image_source_native_sink(void *context,const vk_pool_requirement *range) {
+  (void)context;source_flow_native_requirements++;source_flow_native_requirement=*range;return 1;
+}
+static void image_source_native_table_metadata(void) {
+  const char *path=getenv("DM_IMAGE_SOURCE_FLOW_NATIVE_TABLE"),*payload=getenv("DM_IMAGE_SOURCE_FLOW_NATIVE_PAYLOAD");
+  CHECK(path && payload);FILE *file=fopen(path,"rb");CHECK(file);
+  CHECK(!fseek(file,0,SEEK_END));long size=ftell(file);CHECK(size>0 && size<1048576);rewind(file);
+  nvn_native_table *table=malloc(size);CHECK(table && fread(table,1,size,file)==(size_t)size);CHECK(!fclose(file));
+  CHECK(table->file_bytes==(uint64_t)size && table->count==1);
+  const nvn_native_entry *entry=(const void *)(table+1);nvn_native_identity identity={0};
+  memcpy(identity.layout,entry->recipe.layout_uuid,16);memcpy(identity.device,entry->recipe.device_uuid,16);
+  memcpy(identity.driver,entry->recipe.driver_uuid,16);memcpy(identity.driver_sha256,table->driver_sha256,32);
+  memcpy(identity.producer_sha256,table->producer_sha256,32);
+  // Original table validator; this is a metadata test using an already baked
+  // f830 resource, not an assertion that Lavapipe is the baked driver.
+  CHECK(nvn_native_table_install(table,size,table->pack_sha256,&identity));
+  uint64_t bytes_count=(entry->recipe.image_size+65535)&~UINT64_C(65535);uint8_t *data;
+  CHECK(entry->recipe.image_alignment<=65536 && !posix_memalign((void **)&data,65536,bytes_count));
+  file=fopen(payload,"rb");CHECK(file && fread(data,1,entry->recipe.image_size,file)==entry->recipe.image_size);
+  CHECK(fgetc(file)==EOF);CHECK(!fclose(file));
+  NVNmemoryPoolBuilder pb;NVNmemoryPool pool;CALL(nvnMemoryPoolBuilderSetDefaults,&pb);
+  CALL(nvnMemoryPoolBuilderSetDevice,&pb,&device);CALL(nvnMemoryPoolBuilderSetStorage,&pb,data,bytes_count);
+  CALL(nvnMemoryPoolBuilderSetFlags,&pb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&pool,&pb));
+  NVNtextureBuilder tb;NVNtexture texture;CALL(nvnTextureBuilderSetDefaults,&tb);CALL(nvnTextureBuilderSetDevice,&tb,&device);
+  CALL(nvnTextureBuilderSetWidth,&tb,entry->description.width);CALL(nvnTextureBuilderSetHeight,&tb,entry->description.height);
+  CALL(nvnTextureBuilderSetLevels,&tb,entry->description.levels);CALL(nvnTextureBuilderSetFormat,&tb,entry->description.format);
+  NVNpackagedTextureLayout layout={{'D','M','N',0,1,0,0,0}};layout.layout[3]=table->version;
+  CALL(nvnTextureBuilderSetPackagedTextureLayout,&tb,&layout);CALL(nvnTextureBuilderSetStorage,&tb,&pool,0);
+  CHECK(CALL(nvnTextureBuilderGetStorageSize,&tb)==entry->recipe.image_size);
+  CHECK(CALL(nvnTextureInitialize,&texture,&tb));
+  vk_state saved=S;S.targets=(p_set_rt){0};S.tex[1][0]=39;mtl_set_tex_pool_n(64);mtl_reg_tex(39,(const tex_t *)&texture,NULL);
+  vk_binding binding={.kind=6,.count=1,.reg=0};vk_shader shader={.stage=1,.nb=1,.bindings=&binding,.pool_binding_mask_ready=1};
+  vk_shader *list[6]={NULL,&shader};vk_test_shader_image_binding_mask_build(&shader);
+  int token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);const tex_t *source=source_flow_last_cpu;
+  unsigned before=source_flow_native_calls;CHECK(vk_shader_pool_ranges_state(list,&S,0,image_source_native_sink,NULL));
+  CHECK(source_flow_native_calls==before+1 && source_flow_last_native==source && source_flow_native_requirements==1);
+  CHECK(source_flow_native_requirement.address==(uintptr_t)data && source_flow_native_requirement.size==entry->recipe.image_size);
+  CHECK(source_flow_native_requirement.binding_kind==VK_POOL_REQUIRE_NATIVE_IMAGE && !source_flow_native_requirement.writable);
+  CHECK(source_flow_native_requirement.stages==VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  vk_shader_image_sources_end(token);S=saved;mtl_set_tex_pool_n(4);
+  CALL(nvnTextureFinalize,&texture);CALL(nvnMemoryPoolFinalize,&pool);free(data);free(table);
+  LOG("[image source native metadata] original baked table/opaque bytes -> original Builder -> CPU source -> original collector -> nonempty native range passed; no ASTC GPU execution");
+}
 static void image_source_flow_check(void) {
   CHECK(source_flow_cpu_calls>0 && source_flow_native_calls>0);
   CHECK(!vk_test_image_source_live());
@@ -81,7 +127,7 @@ static void image_source_flow_test(void) {
   vk_test_image_source_flow(1);source_flow_observe=1;image_source_value_boundaries();
   logical_preflight_test(controls[3],controls[4]);
   recipe_reentrant_test(controls[12],controls[4]);
-  image_source_flow_check();
+  image_source_native_table_metadata();image_source_flow_check();
   source_flow_observe=0;vk_test_image_source_flow(0);
 }
 #else
