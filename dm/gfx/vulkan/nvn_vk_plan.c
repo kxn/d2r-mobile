@@ -61,6 +61,7 @@ typedef struct {
   uint64_t slots[6][160];
   uint8_t known_zero[6];
 } store_build_context;
+_Static_assert(sizeof(store_build_context)<=8192,"Submission store context remains bounded");
 static void store_index_begin(store_build_context *ctx);
 static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode,const void *a,unsigned size);
 static void store_index_finish(void);
@@ -91,7 +92,7 @@ static int walk(const uint8_t *p, unsigned depth,store_build_context *store) {
     planned_op *o=&plan[count++];
     // Only forward inputs need initialization here. After a successful walk,
     // the complete reverse loop overwrites need/sample_live/writes for EVERY
-    // node before any store-index/replay consumer. A failed walk invalidates
+    // node before any reverse-output/replay consumer. A failed walk invalidates
     // the plan. Do not initialize those reverse outputs twice.
     o->op=p;
     const uint8_t forward[4]={0,0,(uint8_t)h.op,0};
