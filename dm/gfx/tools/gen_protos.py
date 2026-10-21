@@ -71,13 +71,13 @@ for i, n in enumerate(names):
 # Diagnostic and Apple entry points remain the original counted thunks above.
 S += ['#ifdef DM_ANDROID_APP']
 for i, n in enumerate(names):
-    S += [f'    .globl NVN_C(nvnth_fast_{i})', f'NVN_C(nvnth_fast_{i}):',
+    S += [f'    .globl NVN_C(nvnth_fast_{i})', f'    .hidden NVN_C(nvnth_fast_{i})', f'NVN_C(nvnth_fast_{i}):',
           '    NVN_ADDR(x16, nvn_slot)',
           f'    mov x17, #{i * 16}', '    add x16, x16, x17',
           '    ldr x17, [x16, #8]', '    br x17']
 S += ['#endif']
 S += ['    .data', '    .p2align 3', '    .globl NVN_C(nvn_thunk)', 'NVN_C(nvn_thunk):'] + [f'    .quad NVN_C(nvnth_{i})' for i in range(len(names))]
-S += ['#ifdef DM_ANDROID_APP', '    .globl NVN_C(nvn_thunk_fast)', 'NVN_C(nvn_thunk_fast):'] + [f'    .quad NVN_C(nvnth_fast_{i})' for i in range(len(names))] + ['#endif']
+S += ['#ifdef DM_ANDROID_APP', '    .globl NVN_C(nvn_thunk_fast)', '    .hidden NVN_C(nvn_thunk_fast)', 'NVN_C(nvn_thunk_fast):'] + [f'    .quad NVN_C(nvnth_fast_{i})' for i in range(len(names))] + ['#endif']
 S += ['    .globl NVN_C(nvn_names)', 'NVN_C(nvn_names):'] + [f'    .quad Ln{i}' for i in range(len(names))]
 S += ['#ifdef __APPLE__', '    .cstring', '#else', '    .section .rodata', '#endif'] + [f'Ln{i}: .asciz "{n}"' for i, n in enumerate(names)]
 S += ['#ifndef __APPLE__', '    .section .note.GNU-stack,"",%progbits', '#endif']
