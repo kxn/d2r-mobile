@@ -94,6 +94,9 @@ typedef struct image {
   // writer revokes the proof, even if its result happens to equal guest bytes.
   int cpu_rebuildable, external_access;
   int astc_ldr_proven;
+  // 0 original, 1 optional ASTC canonical, 2 permanently restored decoded BC3.
+  int compressed_page_array;
+  uint64_t compressed_page_stamp;
   uint32_t zero_mips;
   VkImageLayout layout;
   VkPipelineStageFlags layout_scope;
@@ -106,6 +109,11 @@ typedef struct image {
   unsigned read_proof_next;
   unsigned physical_traits;
 } image;
+// Separate experimental policy: the upstream legacy ASTC-copy switch is unchanged.
+static int compressed_page_arrays;
+static void image_page_demote(image *i);
+static void image_page_cpu_check(image *i);
+static int image_page_source_format(VkFormat format);
 // Physical VMA allocations only: imported native pages are already the guest
 // Pool, not a second private texture allocation. Completion can free promoted
 // storage while the recording owner manages the live candidate cursor.
@@ -708,17 +716,23 @@ static VkFormat decoded_format(int f) {
     return VK_FORMAT_R8G8B8A8_SRGB;
   return VK_FORMAT_R8G8B8A8_UNORM;
 }
-static void image_allocate(image *i) {
-  // These physical properties are immutable until a new allocation. Cache
-  // the predicate here, including after storage/mutable-format promotion.
-  i->physical_traits=image_physical_traits(i);
+// An optional representation must fail without destroying its original storage.
+// Nothing in i or the command stream changes before both allocations succeed.
+static VkResult image_try_allocate(image *i) {
   size_t cells=(size_t)i->levels*i->layers*3;
-  if(!cells || cells>SIZE_MAX/sizeof *i->access) die("Vulkan image access capacity");
-  i->access=calloc(cells,sizeof *i->access);
-  if(!i->access) die("Vulkan image access allocation");
-  i->access_generation++;
-  VK_CHECK(vkCreateImage(V.device, &i->description, NULL, &i->handle));
-  VK_CHECK(vk_memory_image(i->handle, &i->memory, &i->allocation));
+  if(!cells || cells>SIZE_MAX/sizeof *i->access)return VK_ERROR_OUT_OF_HOST_MEMORY;
+  image_access *access=calloc(cells,sizeof *access);
+  if(!access)return VK_ERROR_OUT_OF_HOST_MEMORY;
+  VkImage handle=VK_NULL_HANDLE;VkDeviceMemory memory=VK_NULL_HANDLE;void *allocation=NULL;
+  VkResult result=vkCreateImage(V.device,&i->description,NULL,&handle);
+  if(result!=VK_SUCCESS) {free(access);return result;}
+  result=vk_memory_image(handle,&memory,&allocation);
+  if(result!=VK_SUCCESS) {
+    vkDestroyImage(V.device,handle,NULL);free(access);return result;
+  }
+  i->physical_traits=image_physical_traits(i);
+  i->access=access;i->access_generation++;
+  i->handle=handle;i->memory=memory;i->allocation=allocation;
   i->allocation_bytes=vk_memory_allocation_bytes(i->allocation);
   if(!i->allocation_bytes)die("Private image allocation size");
   uint64_t prior=atomic_fetch_add(&private_image_bytes,i->allocation_bytes);
@@ -739,7 +753,9 @@ static void image_allocate(image *i) {
   i->layout_scope=0;
   if(image_mip_tracked(i)) for(unsigned level=0;level<i->levels;level++)
     image_cell(i,0,level,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
+  return VK_SUCCESS;
 }
+static void image_allocate(image *i) { VK_CHECK(image_try_allocate(i)); }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 #include "nvn_vk_native_image.inc"
 #ifdef DM_VULKAN_TEST_EMBED
@@ -875,6 +891,8 @@ static void image_promote(image *i, VkImageCreateFlags flags, VkImageUsageFlags 
 static void image_astc_copy_check(image *i);
 static VkFormat image_astc_copy_view_format(image *i,int nvn_format);
 static VkFormat image_binding_format(image *i,const view_t *v,int storage) {
+  if(i->compressed_page_array==1 && (storage || (v && v->set_format && v->format!=i->tex.d.format)))
+    image_page_demote(i);
   if(i->bc_copy_decoded) {
     image_astc_copy_check(i);
     if(storage || (v && v->set_format && v->format!=0x44 && v->format!=0x48))
@@ -969,9 +987,11 @@ static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
     die("Vulkan image access outside a submission");
   for (image *i = image_buckets[t->serial % 8192]; i; i = i->hash_next)
     if (i->tex.serial == t->serial) {
+      i->last_use = vk_recording_serial();
+      image_page_cpu_check(i);
+      if(required)image_page_demote(i);
       image_astc_copy_check(i);
       if((i->astc_copy_encoding || i->bc_copy_decoded) && required)die("ASTC propagated copy cannot acquire logical BC3 writer usage");
-      i->last_use = vk_recording_serial();
       if(required && (required&~i->description.usage)) {
         image_upload(i);
         VkImageCreateFlags flags=i->description.imageType==VK_IMAGE_TYPE_3D?
@@ -1202,9 +1222,9 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
   uint64_t stamp = nvn_dirty_now();
   // OFF/unsupported paths never scan. Only whole native 2D, one-layer uploads
   // can establish this certificate; sRGB already has its own 8-bit decode.
-  int ldr=V.astc_decode_mode && !i->external_access && !i->decoded &&
-      astc_unorm_format(i->format) && i->description.imageType==VK_IMAGE_TYPE_2D &&
-      i->layers==1 && i->extent.depth==1;
+  int ldr=!i->external_access && !i->decoded && i->description.imageType==VK_IMAGE_TYPE_2D &&
+      i->extent.depth==1 && ((V.astc_decode_mode && astc_unorm_format(i->format) && i->layers==1) ||
+      (compressed_page_arrays && image_page_source_format(i->format)));
   image_astc_proof(i,0);
   for (uint32_t layer = 0; layer < i->layers; layer++)
     for (uint32_t level = 0; level < i->levels; level++) {
@@ -1270,7 +1290,9 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
 }
 static VkImageSubresourceRange range(image *i,const view_t *v);
 #include "nvn_vk_astc_copy_compat.inc"
+#include "nvn_vk_compressed_page_array.inc"
 static void image_upload(image *i) {
+  image_page_cpu_check(i);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(i->native_entry) {native_image_use(i);return;}
 #endif
@@ -1524,6 +1546,7 @@ void vk_target_clear_depth(const p_set_rt *rt, const p_scissor *sc,
 void vk_texture_clear(const p_clear_tex *p) {
   vk_mip_clear_drain();vk_texture_cpu_preflight(p->tex);
   image *i = image_get(p->tex);
+  image_page_demote(i);
   if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot accept logical BC3 texture clear");
   int is3d = i->description.imageType == VK_IMAGE_TYPE_3D;
   view_t view = p->has_view ? p->view : (view_t){0};
@@ -1694,6 +1717,7 @@ void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   shared_copy_backing canonical=image_retile_prepare(p->tex);
 #endif
   image *i = image_get(p->tex);
+  image_page_demote(i);
   if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot consume untyped logical BC3 Buffer bytes");
   image_upload(i);
   VkBufferImageCopy c = copy_region(i, p, row, img);
@@ -1770,6 +1794,7 @@ void vk_texture_copy_t2b(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   int operation=copy_pool_operation(p,row,img,1);
   vk_mip_clear_drain();
   image *i = image_get(p->tex);
+  image_page_demote(i);
   if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot export logical BC3 Buffer bytes");
   if (i->decoded)
     die("Vulkan decoded BC recompression pending");
@@ -1831,6 +1856,7 @@ void vk_texture_copy_t2t(const p_copy_t2t *p) {
   // and consume its dirty stamp before GPU writes so a later fetch cannot
   // upload older CPU data over this copy.
   image_upload(d);
+  image_page_copy_prepare(s,d,p);
   image_astc_copy_propagate(s,d,p,&astc_observation);
   if (p->flags &
       ~(NVN_COPY_FLAGS_ENGINE_2D_BIT | NVN_COPY_FLAGS_LINEAR_FILTER_BIT))
@@ -1975,6 +2001,7 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer,
   int native_operation=native_pool_operation(t,VK_PIPELINE_STAGE_TRANSFER_BIT,0);
 #endif
   image *i = image_get(t);
+  image_page_demote(i);
   if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated copy cannot ReadTexels as logical BC3 bytes");
   image_upload(i);
   p_copy_b2t p = {.tex = t,
@@ -2346,6 +2373,12 @@ vk_texture_submission *vk_texture_begin(vk_texture_submission *state) {
   sampler_lookup_reference=atomic_load(&sampler_lookup_requested);
   atomic_store(&sampler_lookup_active,sampler_lookup_reference);
   texture_dirty_mode_begin();
+  static int page_mode_initialized;
+  if(!page_mode_initialized) {
+    const char *v=getenv("DM_VULKAN_COMPRESSED_PAGE_ARRAYS");
+    if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_COMPRESSED_PAGE_ARRAYS expects 0 or 1");
+    compressed_page_arrays=v && !strcmp(v,"1");page_mode_initialized=1;
+  }
   depth_layout_init();
   compute_layout_init();
   if (texture_state) die("Vulkan nested texture recording");
@@ -2821,6 +2854,7 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
       t->L.layers==1 && t->d.samples<=1 && sampled_target_alias(t,v);
   if(!storage && !mutable && !alias) return;
   image *i=known?known:image_get(t);
+  if(i->compressed_page_array==1 && (storage || mutable))image_page_demote(i);
   if((storage && !(i->description.usage & VK_IMAGE_USAGE_STORAGE_BIT)) ||
       (mutable && !(i->description.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT))) {
     image_upload(i);
@@ -2893,6 +2927,12 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   else
 #endif
   image_upload(i);
+  // A dirty optional array can restore its physical storage during upload.
+  // The old recipe remains alive for earlier commands, never for this binding.
+  if(cached && ci.image!=i->handle) {
+    cached=NULL;handle=VK_NULL_HANDLE;
+    ci=(VkImageViewCreateInfo){.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  }
   const view_t *v=has_view?&view:NULL;
   if (vk_trace_frame_active() && V.trace_directory) {
     char trace_label[32];
@@ -3340,6 +3380,7 @@ int vk_texture_pixel_local_depth_loaded(const tex_t *t,const view_t *v,
 static void attachment_access(const tex_t *t,const view_t *v,VkImageAspectFlags aspect,int writable,int collect) {
   vk_mip_clear_texture_access(t,v,1);
   image *i=image_get(t);
+  image_page_demote(i);
   VkImageSubresourceRange r=attachment_range(i,v);
   if(aspect) r.aspectMask&=aspect;
   if(!r.aspectMask) return;
@@ -3418,6 +3459,7 @@ VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlag
 VkImage vk_texture_native(const tex_t *t) {
   vk_mip_clear_drain();vk_texture_cpu_preflight(t);
   image *i = image_get(t);
+  image_page_demote(i);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(i->native_entry)die("Native resource raw image escape has no tracked writer contract");
 #endif
@@ -3429,6 +3471,7 @@ VkImage vk_texture_native(const tex_t *t) {
 VkImage vk_texture_present_source(const tex_t *t,VkImageLayout *layout) {
   vk_mip_clear_drain();vk_texture_cpu_preflight(t);
   image *i=image_get(t);
+  image_page_demote(i);
   image_upload(i);image_use(i,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   image_transfer(i,(VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1},0);
   *layout=i->layout;
@@ -3513,6 +3556,7 @@ void vk_texture_trace(const tex_t *texture, const view_t *view,
   if (!root || !vk_trace_frame_active())
     return;
   image *i = image_get(texture);
+  image_page_demote(i);
   if (i->format != VK_FORMAT_R8G8B8A8_UNORM &&
       i->format != VK_FORMAT_R8G8B8A8_SRGB)
     return;

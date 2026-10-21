@@ -806,6 +806,9 @@ int dm_vulkan_test_main(void) {
     int astc_gpu=V.features.textureCompressionASTC_LDR && V.props.deviceType!=VK_PHYSICAL_DEVICE_TYPE_CPU;
     printf("{\"test\":\"legacy-ASTC-copy-encoding\",\"checks\":%u,\"result\":\"%s\",\"actual_ASTC_GPU\":%s,\"CPU_phase_result\":\"passed\",\"game_modules_executed\":false}\n",checks,astc_gpu?"passed":"unsupported",astc_gpu?"true":"false");return 0;
   }
+#ifndef DM_ANDROID_APP
+  if(getenv("DM_COMPRESSED_PAGE_ARRAY_FIXTURE")) {compressed_page_array_test();return 0;}
+#endif
   if(getenv("DM_MIXED_COMPRESSED_COPY_FIXTURE")) {mixed_compressed_copy_test();return 0;}
   if(getenv("DM_SHARED_WINDOW_STARTUP_FALLBACK_FIXTURE")) {shared_window_startup_fallback_test();return 0;}
   if(getenv("DM_SHARED_IMPORT_WINDOW_FIXTURE")) {shared_import_windows_test();return 0;}
