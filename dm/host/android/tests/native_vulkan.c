@@ -576,8 +576,63 @@ static void review_generic_cpu_write(void *destination) {
   dm_guest_write_prepare(destination,sizeof(uint32_t));
   __atomic_store_n((uint32_t *)destination,7,__ATOMIC_RELEASE);
 }
+// Real GPU publication held pending by the existing completion callback gate.
+// CPU begin either observes disjoint bytes safely or rejects a true dependency;
+// no sleeps, elapsed measurements, completion spoofing or game code.
+static void shared_image_observe_dependency_test(const char *mode) {
+  int cpu=!strcmp(mode,"image-observe-cpu"),same=!strcmp(mode,"image-observe-same"),
+      cache=!strcmp(mode,"image-observe-cache");
+  CHECK(cpu || same || cache || !strcmp(mode,"image-observe-neighbor"));
+  CHECK(V.timeline_semaphore && vk_async_submissions());
+  int on=V.options.shared_image_raw_observe;
+  CHECK(!setenv("DM_VK_SHARED_IMAGE_RAW_OBSERVE",on?"0":"1",1));
+  CHECK(V.options.shared_image_raw_observe==on); // cold selection never re-reads env
+  uint32_t *a=(void *)(bytes+(3u<<20)),*b=same?a:a+64,*c=a+128;
+  *a=0;*b=0x55;*c=0;
+  // Import real coherent Buffer storage before acquiring its CPU image scope.
+  mtl_sub_begin();review_fill_shared(c,3);vk_internal_wait(vk_internal_commit());
+  nvn_dirty_scope *scope=nvn_dirty_scope_acquire(b,4);CHECK(scope);
+  if(cache) {extern void vk_test_shared_dependency_arm(int);vk_test_shared_dependency_arm(1);}
+  extern int vk_test_shared_image_raw_scope(uint64_t,uint64_t,int);
+  int allow=vk_test_shared_image_raw_scope((uintptr_t)b,4,0);
+  CHECK(allow==(on && !cache && !getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE")));
+  for(int edge=1;edge<=4;edge++)CHECK(!vk_test_shared_image_raw_scope((uintptr_t)b,4,edge));
+  mtl_sub_begin();if(!cpu)review_fill_shared(a,7);
+  vk_completion(review_effect_gate,NULL);
+  if(cpu)vk_completion_write(review_generic_cpu_write,a,a,sizeof *a);
+  uint64_t first=vk_internal_commit();
+  pthread_mutex_lock(&review_effect_mu);
+  while(!review_effect_entered)pthread_cond_wait(&review_effect_cv,&review_effect_mu);
+  pthread_mutex_unlock(&review_effect_mu);
+  // This old raw query may cache a negative. It cannot suppress the larger
+  // CPU-effect page query in the split-scope prepare/begin below.
+  mtl_sub_begin();CHECK(vk_pool_pending_writes((uintptr_t)b,4)==same);
+  int current_gpu=!cpu && !cache && !getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE");
+  if(current_gpu)review_fill_shared(c,9);uint64_t recording=vk_recording_serial();VkCommandBuffer command=V.cmd;
+  vk_shared_cpu_observation token={0};
+  if(allow && !cpu && !same) {
+    CHECK(vk_pool_shared_cpu_observe_prepare((uintptr_t)b,4));
+    CHECK(vk_recording_serial()==recording && V.cmd==command); // no neighbor-only forced submit
+    CHECK(vk_pool_shared_cpu_observe_begin((uintptr_t)b,4,&token));
+    CHECK(*b==0x55);vk_pool_shared_cpu_observe_end(&token);
+    pthread_mutex_lock(&review_effect_mu);CHECK(!review_effect_release);pthread_mutex_unlock(&review_effect_mu);
+  } else CHECK(!vk_pool_shared_cpu_observe_begin((uintptr_t)b,4,&token));
+  pthread_mutex_lock(&review_effect_mu);review_effect_release=1;
+  pthread_cond_broadcast(&review_effect_cv);pthread_mutex_unlock(&review_effect_mu);
+  vk_internal_wait(first);vk_internal_wait(vk_internal_commit());
+  CHECK(*a==7 && *b==(same?7u:0x55u) && *c==(current_gpu?9u:3u));
+  // True producer completion now makes the same real image source readable.
+  CHECK(vk_pool_shared_cpu_observe_prepare((uintptr_t)b,4));
+  CHECK(vk_pool_shared_cpu_observe_begin((uintptr_t)b,4,&token));
+  CHECK(*b==(same?7u:0x55u));vk_pool_shared_cpu_observe_end(&token);
+  uint32_t gpu_read=0;mtl_sub_begin();pool_window_read((uint8_t *)b,4,(uint8_t *)&gpu_read);
+  vk_internal_wait(vk_internal_commit());CHECK(gpu_read==(same?7u:0x55u));
+  nvn_dirty_scope_release(scope);
+  printf("{\"test_details\":\"shared-image-byte-observation\",\"mode\":\"%s\",\"startup_raw\":%d,\"actual_GPU_bytes\":true,\"CPU_page_preserved\":true,\"raw_negative_cache_not_page_proof\":true,\"guard_metadata_edges_not_NC_hardware\":true}\n",mode,on);
+}
 static void fixed_shared_dependency_test(void) {
   const char *mode=getenv("DM_FIXED_SHARED_DEPENDENCY_TEST");
+  if(!strncmp(mode,"image-observe-",14)) {shared_image_observe_dependency_test(mode);return;}
   int separate=!strcmp(mode,"disjoint"),cache=!strcmp(mode,"cache-phase"),page=!strcmp(mode,"page-effect") || !strcmp(mode,"page-effect-roi-negative");
   int gpu_only=!strcmp(mode,"gpu-only");
   CHECK(separate || cache || page || gpu_only || !strcmp(mode,"cpu-effect") || !strcmp(mode,"same-recording"));

@@ -55,6 +55,7 @@ typedef struct {
   int pool_mirror_reference;
   int pool_copy_accounting;
   int pool_defer_publication;
+  int shared_image_raw_observe; // experimental CPU-image source observation only, startup OFF
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
@@ -396,6 +397,9 @@ void vk_mip_clear_stats(uint64_t *admitted,uint64_t *materialized,uint64_t *cont
                         uint64_t *rejected,int *enabled);
 
 int vk_ghost_replaying(void);
+
+// Startup policy enabled; NOT proof that a particular range qualifies.
+int vk_pool_shared_image_raw_observe_mode(void);
 
 #ifdef DM_VULKAN_SHARED_POOLS
 int vk_pool_shared_mode(void);
