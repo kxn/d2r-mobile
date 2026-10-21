@@ -101,6 +101,40 @@ static int pool_operation_pin(pool_operation_plan *plan) {
   if(!good)pool_operation_unpin(plan);
   return good;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Exercise the real admission resolver before any consumer can borrow its
+// output. Faults are confined to a fresh, unused owned fixture Pool; restore
+// the real node before releasing even this temporary admission's refs.
+int vk_test_pool_admission_proof(uint64_t address,uint64_t size,unsigned fault) {
+  pool_operation_plan *plan=calloc(1,sizeof *plan);
+  if(!plan)die("Owned admission proof allocation");
+  plan->count=1;plan->ranges[0]=(vk_pool_requirement){address,size,0,
+    VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,0,VK_POOL_REQUIRE_VERTEX};
+  pool_backing_span *changed=NULL,saved={0};
+  if(fault) {
+    pthread_mutex_lock(&V.resources);pool *p=pool_find(address,size);pool_span_piece span;
+    if(!p || p->references || atomic_load(&p->initialized_bytes) ||
+        !pool_span_resolve_locked(p,address-(uintptr_t)p->guest,size,&span))
+      die("Owned admission proof requires unused backed range");
+    changed=span.backing;saved=*changed;
+    switch(fault) {
+    case 1:changed->generation=0;break;
+    case 2:changed->buffer.handle=VK_NULL_HANDLE;break;
+    case 3:changed->buffer.size=span.offset+size-1;break;
+    case 4:changed->begin=changed->end;break;
+    case 5:changed->end=p->size+1;break;
+    default:die("Owned admission proof fault");
+    }
+    pthread_mutex_unlock(&V.resources);
+  }
+  int admitted=pool_operation_pin(plan);
+  if(changed) {pthread_mutex_lock(&V.resources);*changed=saved;pthread_mutex_unlock(&V.resources);}
+  if(admitted)pool_operation_unpin(plan);
+  else if(plan->pin_count || plan->geometry_registry_epoch)
+    die("Owned rejected admission retained proof");
+  free(plan->geometry);free(plan);return admitted;
+}
+#endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 static int pool_operation_retains_locked(const pool *p) {
   for(unsigned d=0;d<pool_operation_depth;d++) {

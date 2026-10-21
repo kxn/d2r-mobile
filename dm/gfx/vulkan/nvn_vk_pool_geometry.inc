@@ -43,16 +43,15 @@ static void pool_operation_geometry_remember(pool_operation_plan *plan,size_t ro
     size_t owner_index,const pool_span_piece *span) {
   if(row>=plan->count || owner_index>=plan->pin_count || row>UINT16_MAX)
     die("Vulkan operation geometry bounds");
-  // Validate the complete resolution ONCE when admitting this operation,
-  // under V.resources, rather than rechecking immutable extents at each use.
-  pool *p=plan->pins[owner_index];pool_backing_span *b=span->backing;
-  const vk_pool_requirement *r=&plan->ranges[row];uint64_t base=(uintptr_t)p->guest;
-  if(r->address<base || r->address-base>p->size || r->size>p->size-(r->address-base) ||
-      span->logical!=r->address-base || span->size!=r->size ||
-      !b || !b->generation || !b->buffer.handle || b->begin>=b->end || b->end>p->size ||
-      span->logical<b->begin || span->logical>=b->end || r->size>b->end-span->logical ||
-      span->offset!=span->logical-b->begin || span->offset>b->buffer.size ||
-      r->size>b->buffer.size-span->offset)die("Vulkan operation geometry admission proof");
+  // Sole caller: pool_operation_pin, immediately after a successful
+  // pool_span_resolve_operation while holding the SAME V.resources lock.
+  // The owner was already checked by pool_find or the pinned-owner bounds;
+  // every resolver branch checks handle/generation, Pool and VkBuffer extent
+  // and constructs {backing, requested logical, logical-begin, requested size}.
+  // No callback or mutation occurs before this copy. Repeating those exact
+  // checks here proves nothing further; retain the table-index guard above.
+  // This geometry still carries no CPU readiness or GPU access/visibility.
+  pool_backing_span *b=span->backing;
   plan->geometry[row]=(pool_operation_geometry){.backing=b,
     .offset=span->offset,.generation=b->generation,.owner_index=(uint16_t)owner_index};
   unsigned slot=pool_geometry_slot(plan->ranges[row].address,plan->ranges[row].size);

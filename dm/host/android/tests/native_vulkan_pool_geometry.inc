@@ -3,6 +3,7 @@
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 extern int vk_test_pool_operation_geometry(uint64_t,uint64_t,vk_pool_span_info *);
 extern uint64_t vk_test_pool_operation_geometry_uses(void);
+extern int vk_test_pool_admission_proof(uint64_t,uint64_t,unsigned);
 static void pool_operation_geometry_test(void) {
   enum {W=65536,SIZE=6*W+193};uint8_t *storage,*other;
   CHECK(!posix_memalign((void **)&storage,W,SIZE));CHECK(!posix_memalign((void **)&other,W,W));
@@ -16,6 +17,17 @@ static void pool_operation_geometry_test(void) {
   vk_pool_requirement needs[]={pool_window_need(storage+W+64,16,2,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,0),
     pool_window_need(storage+2*W+128,16,VK_POOL_REQUIRE_INDEX,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,0)};
   vk_pool_span_info a,b,q;uint8_t first[16],second[16],later[16];
+  // Reserve through the original API, then prove invalid physical metadata
+  // and hole/overflow requests still fail the REAL pin/resolver admission.
+  // No failed result is installed as an operation or submitted to the GPU.
+  vk_pool_reserve_result proof_reserve;
+  CHECK(vk_pool_reserve_ranges(needs,2,W,&proof_reserve)==VK_POOL_RESERVE_OK);
+  for(unsigned fault=1;fault<=5;fault++)
+    CHECK(!vk_test_pool_admission_proof(needs[0].address,16,fault));
+  CHECK(!vk_test_pool_admission_proof((uintptr_t)storage+2*W-1,2,0));
+  CHECK(!vk_test_pool_admission_proof((uintptr_t)storage+SIZE,1,0));
+  CHECK(!vk_test_pool_admission_proof(UINT64_MAX-7,16,0));
+  CHECK(vk_test_pool_admission_proof(needs[0].address,16,0));
   CHECK(!vk_test_pool_operation_geometry(needs[0].address,16,&q));
   uint64_t initialized=vk_pool_initialized_bytes();mtl_sub_begin();int parent=vk_pool_operation_begin_ranges(needs,2);CHECK(parent);
   CHECK(vk_pool_initialized_bytes()==initialized);CHECK(!vk_test_pool_reserve_metadata((uintptr_t)storage));
