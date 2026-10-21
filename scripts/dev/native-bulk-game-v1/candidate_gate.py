@@ -298,8 +298,8 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False):
             and set(p['native_candidate_validation'])=={'root_review'}
             and source_base and p['runtime_commit']!=source_base, 'reviewed source parent / experiment mode differs')
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
-            and (p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa')) or bool(p.get('official_api_frame')))
-            and (p.get('performance_tools') or bool(p.get('official_api_frame')))
+            and (p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa')) or bool(p.get('official_api_frame')) or bool(p.get('official_wait_identity')))
+            and (p.get('performance_tools') or bool(p.get('official_api_frame')) or bool(p.get('official_wait_identity')))
             and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
             'compiler experiment requires original f830/1MiB/full2838 and official tools')
     review=read(pinned(p['native_candidate_validation']['root_review']))

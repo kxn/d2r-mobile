@@ -43,7 +43,7 @@ class Flow(unittest.TestCase):
  def setup_capture(self,root):
   def pin(p):return {'path':str(p),'sha256':api.sha(p)}
   p={'runtime_commit':'533820e6d3a76325f93b08e123a0118f00098c31','pool_window_bytes':1048576,'new_elf':'a'*64,'driver':{'sha256':'b'*64},'native_host_experiment':True,'native_candidate_validation':True,'official_api_frame':{'tool':'gfxreconstruct','frames':1,'timeout_seconds':90,'memory_tracking_mode':'assisted','layer_apk':pin(api.LAYER_APK),'info':pin(api.INFO),'convert':pin(api.CONVERT)}}
-  p['_official_api_frame']=api.validate(p,lambda r:Path(r['path']));dev=Device();cap=api.Capture(dev,root,p,'a'*32,dev.pid,lambda:None);dev.prefix=cap.prefix;return dev,cap,p
+  p['_official_observation']=api.validate(p,lambda r:Path(r['path']));dev=Device();cap=api.Capture(dev,root,p,'a'*32,dev.pid,lambda:None);dev.prefix=cap.prefix;return dev,cap,p
  def test_complete_closed_then_save_stop_pull_export(self):
   with tempfile.TemporaryDirectory()as t:
    d,c,p=self.setup_capture(Path(t));original=copy.deepcopy((d.settings,d.props));c.configure();self.assertEqual(d.props['debug.gfxrecon.memory_tracking_mode'],'assisted');d.current='12345';c.trigger('12345');c.restore();self.assertEqual((d.settings,d.props),original)

@@ -211,9 +211,9 @@ def proof(path, digest):
                  '179c82dfa412153b6564974e29fc35036e0b3507') or
                  any(k in p for k in ('native_compiler_experiment', 'native_host_experiment'))) and p.get('performance_tools'),
                 'independent raw-L1I record requires an exact reviewed runtime with official tools')
-    if 'official_api_frame' in p:
+    if 'official_api_frame' in p or 'official_wait_identity' in p:
         api = module('source_pinned_official_api_frame', HERE / 'official_api_frame.py')
-        p['_official_api_frame'] = api.validate(p, pinned)
+        p['_official_observation'] = api.validate(p, pinned)
     if 'performance_tools' in p:
         tools = p['performance_tools']
         require(set(tools) == {'cpu_helper', 'scheduler_helper'}, 'performance tools fields differ')
@@ -271,9 +271,9 @@ def proof(path, digest):
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
                                 R / 'scripts/dev/android-game-walk-to.py']}
-    if p.get('official_api_frame'):
+    if p.get('official_api_frame') or p.get('official_wait_identity'):
         p['controller_sources'][str(HERE / 'official_api_frame.py')] = sha(HERE / 'official_api_frame.py')
-        p['controller_sources'][p['_official_api_frame']['existing_controller']['path']] = p['_official_api_frame']['existing_controller']['sha256']
+        p['controller_sources'][p['_official_observation']['existing_controller']['path']] = p['_official_observation']['existing_controller']['sha256']
     if p.get('official_cpu_aa'):
         p['controller_sources'][str(HERE / 'official_cpu_aa.py')] = sha(HERE / 'official_cpu_aa.py')
     p['_execution_phases'] = p['phases']
@@ -367,10 +367,10 @@ def phase_game(dev, out, phase, p, token):
         return now
 
     try:
-        if p.get('official_api_frame'):
+        if p.get('official_api_frame') or p.get('official_wait_identity'):
             api = module('source_pinned_official_api_frame_run', HERE / 'official_api_frame.py')
-            api_frame = api.Capture(dev, out, p, token, pid, save)
-            d['official_api_frame_report'] = str(api_frame.report)
+            api_frame = (api.WaitIdentity if p.get('official_wait_identity') else api.Capture)(dev, out, p, token, pid, save)
+            d['official_wait_identity_report' if p.get('official_wait_identity') else 'official_api_frame_report'] = str(api_frame.report)
             api_frame.configure()
         with (out / 'launch.log').open('w') as f:
             launcher = subprocess.Popen(command, stdout=f, stderr=subprocess.STDOUT, cwd=R)
@@ -606,8 +606,8 @@ def phase_game(dev, out, phase, p, token):
                 api_frame.restore()
     if api_frame is not None:
         api_frame.export_after_stop()
-        d['official_api_frame_complete'] = True
-        d['scope'] = p['_official_api_frame']['scope']
+        d['official_wait_identity_complete' if p.get('official_wait_identity') else 'official_api_frame_complete'] = True
+        d['scope'] = p['_official_observation']['scope']
         save()
     return d
 
@@ -696,9 +696,9 @@ def main():
         plan['native_host_experiment'] = {**p['native_host_experiment'],
             'game_logic_unchanged': True, 'compiler_policy': 'original179 O3 / no LTO',
             'root_review': p['native_candidate_validation']['root_review']}
-    if p.get('official_api_frame'):
-        plan.update(official_api_frame=p['_official_api_frame'], profiling=False,
-                    scope=p['_official_api_frame']['scope'])
+    if p.get('official_api_frame') or p.get('official_wait_identity'):
+        plan.update(**{'official_wait_identity' if p.get('official_wait_identity') else 'official_api_frame':p['_official_observation']}, profiling=False,
+                    scope=p['_official_observation']['scope'])
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -741,7 +741,7 @@ def main():
             p['_operator_stop_requested'] = True
         signal.signal(signal.SIGTERM, request_stop)
         signal.signal(signal.SIGINT, request_stop)
-    if p.get('official_cpu_aa') or p.get('official_api_frame'):
+    if p.get('official_cpu_aa') or p.get('official_api_frame') or p.get('official_wait_identity'):
         def cancel_AA(signum, frame):
             raise KeyboardInterrupt('A/A cancelled; close owned capture before original save2/CAS')
         signal.signal(signal.SIGTERM, cancel_AA)
@@ -765,8 +765,9 @@ def main():
                     tar.add(Path(phase['overlay_root']) / n, arcname='overlay/' + n, recursive=False)
                 if name == 'native':
                     tar.add(phase['native_table']['path'], arcname='native/native-layouts.bin', recursive=False)
-                if p.get('counter_snapshot'):
-                    tar.add(p['counter_snapshot']['server']['path'], arcname='temp/d2r-lldb-server', recursive=False)
+                if p.get('counter_snapshot') or p.get('official_wait_identity'):
+                    server = p.get('counter_snapshot') or p['official_wait_identity']
+                    tar.add(server['server']['path'], arcname='temp/d2r-lldb-server', recursive=False)
                 for label, _ in DIRS:
                     tar.add(owner, arcname=label + '/' + m.OWNER, recursive=False)
             remote = '/data/local/tmp/d2r-native-bulk-' + token + '-' + name + '.tar'
@@ -776,7 +777,7 @@ def main():
             require(dev.digest(remote) == sha(payload), 'resource transfer changed')
             dev.app('mkdir', incoming)
             dev.app('tar', 'xf', remote, '-C', incoming)
-            if p.get('counter_snapshot'):
+            if p.get('counter_snapshot') or p.get('official_wait_identity'):
                 dev.app('chmod', '700', incoming + '/temp/d2r-lldb-server')
             if phase_index == 0:
                 for label, target in DIRS:

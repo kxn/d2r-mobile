@@ -361,3 +361,33 @@ Optional `official_memory_map: {"tool": "/system/bin/showmap", "format": "json"}
 
 
 Exact8480 identity reuse keeps native6217/f830/fixed.60/1MiB, original threewalk, source/resource proof, official CPU windows and freshsave/six-directory CAS unchanged. Only gate/tests/this note differ from84b1345; its optional official_memory_map one-shot /system/bin/showmap JSON after CPU windows is used unchanged. No sampler, timer or APP probe is added. Actualebe is functional/tool qualification, not matched CPU/FPS/heat baseline. Rootartifact review must pin the actual complete canonical/raw before executableROOT input; DRAFT remainsfalse.
+
+`official_wait_identity` is an alternative, default-OFF official LLDB19 one-stop
+observation in the same tool hook as `official_api_frame`. It requires the existing
+root-reviewed exact4422 APK/raw28/assets and unstripped host BuildID
+`b68b362a5bd53a568911497e73106741e86841d9`; all original candidate/artifact checks
+remain. Its input fields are `tool: "lldb19-one-stop"`, `timeout_seconds: 20..90`,
+and pinned `host_lldb`, `server`, `elf`. No performance tools, GPU layers, SDP or
+other debugger mode may be combined. It stages only the official NDK server in
+the original transaction-owned temp directory. Root supplies the ordinary full
+input manifest and uses the unchanged `run-game.py` CLI (`--execute` remains opt-in).
+
+After the original three walks and four distinct stable PSO/camp ticks, it checks
+actual clean maps and module hashes and attaches to that same owned PID. The only
+breakpoint is exact ELF fileVA`0x33e9b8`, one-shot, after nonzero queue serial and a
+real incomplete queue completion test. The existing host library paths/forward/
+server protocol are reused. LLDB's process events have a bounded tool timeout;
+this is not a target/GPU timer. A no-hit result is explicitly unknown, not an
+identity success; there is no automatic retry/relaunch. On hit it reads only typed
+resource metadata and immutable pending CPU-write snapshots, then detaches before
+the parent original save2/stop/CAS. It never reads payload, SMAPS or `s->effects`.
+Original SIGSEGV/SIGBUS dirty handlers remain passed through.
+
+The unwound caller's image register is an **entry candidate, not a current lifetime
+proof**: a recorded-write commit can physically replace it. Candidate read errors
+are reported UNKNOWN; readable handle/stamp values must not be promoted to owner
+proof. CPU-effect prefix vs GPU-publication suffix and raw vs host-page overlap
+are retained independently. Capturing one resource does not establish that it is
+the prior9ms/Surface stall or identify a historical dirty-publication ack failure.
+Host tests exercise policy, timeout/unexpected-stop detach and processless failure;
+none qualifies the new readout against a real game stop.
