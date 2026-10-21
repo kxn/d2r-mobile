@@ -1,3 +1,7 @@
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+extern uintptr_t vk_test_texture_lookup_entry(int);
+extern void vk_test_texture_descriptor_epoch_exhaustion(void);
+#endif
 // Producer registration remains outside the recording owner's TLS scope.
 typedef struct { int id; const tex_t *texture; int ok; } lookup_producer;
 static void *lookup_producer_register(void *arg) {
@@ -8,11 +12,21 @@ static void *lookup_producer_register(void *arg) {
 }
 static void logical_lookup_boundaries(int id,const tex_t *a,const tex_t *b) {
   tex_t value;view_t view;int has_view;
+  vk_texture_lookup_scope_begin();CHECK(vk_texture_descriptor(id,&value));
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uintptr_t retained=vk_test_texture_lookup_entry(id);CHECK(retained);
+#endif
+  vk_texture_lookup_scope_end();
+  vk_texture_lookup_scope_begin();CHECK(vk_texture_descriptor(id,&value));
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  CHECK(vk_test_texture_lookup_entry(id)==retained);
+#endif
+  vk_texture_lookup_scope_end();
   vk_texture_lookup_scope_begin();
   mtl_reg_tex(id,a,NULL);CHECK(vk_texture_descriptor(id,&value)&&value.serial==a->serial);
   vk_texture_footprint footprint;CHECK(vk_texture_descriptor_footprint(id,&footprint));
   CHECK(footprint.serial==a->serial && footprint.base==(uintptr_t)a->mem);
-  // Nested ghost/retry tables cannot overwrite the parent; registry growth,
+  // Nested ghost/retry collisions cannot invalidate copied values; registry growth,
   // replacement and a limit change must invalidate every depth immediately.
   for(unsigned n=0;n<9;n++)vk_texture_lookup_scope_begin();
   mtl_set_tex_pool_n(4096);mtl_reg_tex(2048,b,NULL);
@@ -27,7 +41,7 @@ static void logical_lookup_boundaries(int id,const tex_t *a,const tex_t *b) {
   CHECK(vk_texture_descriptor(id,&value)&&value.serial==a->serial);
   mtl_set_tex_pool_n(id);CHECK(!vk_texture_descriptor(id,&value));
   vk_texture_lookup_scope_end();
-  // Reusing the same stack depth cannot reuse an old scope's descriptor.
+  // Across a new scope, a changed epoch must replace the persistent value.
   mtl_set_tex_pool_n(512);mtl_reg_tex(id,b,NULL);
   vk_texture_lookup_scope_begin();CHECK(vk_texture_descriptor(id,&value)&&value.serial==b->serial);
   vk_texture_lookup_scope_end();
@@ -53,6 +67,9 @@ static void logical_preflight_draw(NVNtexture *target,int id) {
   const p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3};vk_draw(&draw,NULL);
 }
 static void logical_preflight_test(const void *vertex,const void *fragment) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_TEXTURE_LOOKUP_EPOCH_EXHAUSTION"))vk_test_texture_descriptor_epoch_exhaustion();
+#endif
   vk_state saved=S;uint64_t hits,prepares,misses;int saved_reference;
   vk_texture_binding_stats(&hits,&prepares,&misses,&saved_reference);
   for(unsigned reference=0;reference<2;reference++) {
@@ -90,7 +107,6 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     CHECK(CALL(nvnSamplerInitialize,&sampler,&sb));mtl_reg_samp(1,&((const samp_t *)&sampler)->p);
     enum { ordinary=37,collision=270 };mtl_set_tex_pool_n(512);
     mtl_reg_tex(ordinary,cpu,NULL);mtl_reg_tex(collision,(const tex_t *)&textures[2],NULL);
-    logical_lookup_boundaries(ordinary,cpu,(const tex_t *)&textures[2]);
     S=(vk_state){.program=(const prog_t *)&program,.depth_range={0,1},.chmask={~0u}};
     S.poly=*(const poly_st *)&polygon;S.ds=*(const ds_st *)&ds;S.color=*(const color_st *)&color;S.ms=*(const ms_st *)&ms;
     S.attr[0]=*(const va_st *)&attr[0];S.attr[1]=*(const va_st *)&attr[1];S.stream[0]=*(const vs_st *)&stream;
@@ -112,6 +128,13 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     mtl_reg_tex(ordinary,cpu,NULL);
     mtl_sub_begin();logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());
     logical_preflight_pixels(&textures[0],(uint8_t[]){128,128,128,255},0);
+    // A new draw/scope may reuse logical values, but registration must replace
+    // them even across scopes. A missing epoch guard reaches this GPU oracle.
+    mtl_sub_begin();logical_preflight_clear(&textures[2],0,(float[]){1,0,0,1});
+    mtl_reg_tex(ordinary,(const tex_t *)&textures[2],NULL);
+    logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());
+    logical_preflight_pixels(&textures[0],(uint8_t[]){255,0,0,255},0);
+    logical_lookup_boundaries(ordinary,cpu,(const tex_t *)&textures[2]);
     // GPU then CPU changes at the exact same logical descriptor must still
     // take the consumer's image ownership/dirty upload path on every draw.
     mtl_sub_begin();logical_preflight_clear(&textures[1],0,(float[]){0,1,0,1});
@@ -155,7 +178,31 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
       logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());mtl_finish();
       logical_preflight_pixels(&textures[0],round&1?(uint8_t[]){0,255,0,255}:(uint8_t[]){0,0,255,255},0);
     }
+    // A persistent logical hit cannot keep a truly retired serial valid.
+    mtl_reg_tex(ordinary,(const tex_t *)&textures[2],NULL);
+    vk_texture_lookup_scope_begin();tex_t old;CHECK(vk_texture_descriptor(ordinary,&old));vk_texture_lookup_scope_end();
+    CALL(nvnTextureFinalize,&textures[2]);
+    for(unsigned round=0;round<9;round++) {mtl_sub_begin();CHECK(mtl_wait(mtl_sub_commit(),UINT64_MAX));}
+    vk_texture_end_submit();
+    vk_texture_lookup_scope_begin();tex_t now;CHECK(!vk_texture_descriptor(ordinary,&now));vk_texture_lookup_scope_end();
+    NVNtextureBuilder reb;CALL(nvnTextureBuilderSetDefaults,&reb);CALL(nvnTextureBuilderSetDevice,&reb,&device);
+    CALL(nvnTextureBuilderSetWidth,&reb,16);CALL(nvnTextureBuilderSetHeight,&reb,16);
+    CALL(nvnTextureBuilderSetFormat,&reb,NVN_FORMAT_RGBA8);CALL(nvnTextureBuilderSetStorage,&reb,&pool,2*65536);
+    CHECK(CALL(nvnTextureInitialize,&textures[2],&reb));CHECK(((const tex_t *)&textures[2])->serial!=old.serial);
+    mtl_reg_tex(ordinary,(const tex_t *)&textures[2],NULL);
+    mtl_sub_begin();logical_preflight_clear(&textures[2],0,(float[]){1,0,0,1});
+    logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());
+    logical_preflight_pixels(&textures[0],(uint8_t[]){255,0,0,255},0);
     S=saved;vk_pipeline_state_changed();CALL(nvnSamplerFinalize,&sampler);CALL(nvnProgramFinalize,&program);
+    mtl_finish();vk_texture_shutdown();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    CHECK(!vk_test_texture_lookup_entry(ordinary));
+#endif
+    // Registry remains live across shutdown; the next scope must allocate an
+    // empty table and refill its valid/invalid values, including id0.
+    mtl_reg_tex(0,cpu,NULL);vk_texture_lookup_scope_begin();
+    CHECK(vk_texture_descriptor(0,&now)&&now.serial==cpu->serial);
+    vk_texture_lookup_scope_end();
     for(unsigned n=0;n<4;n++)CALL(nvnTextureFinalize,&textures[n]);
     CALL(nvnMemoryPoolFinalize,&pool);free(storage);
   }
