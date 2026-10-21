@@ -4336,7 +4336,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
   // Covering imports can give overlapping logical bytes different handles.
   // Preserve the original refusal by payload rather than physical identity.
   if(shared_lazy_active && range_overlap(src,size,dst,size))
-    die("Vulkan overlapping buffer copy");
+    die("Vulkan overlapping buffer copy (lazy logical range, distinct_buffers=%d)",s!=d);
 #endif
   if (s == d && so < doff + size && doff < so + size)
     die("Vulkan overlapping buffer copy");

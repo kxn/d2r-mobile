@@ -1681,6 +1681,28 @@ static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int
 #endif
   return vk_pool_operation_begin(copy_pool_collect,&plan);
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && defined(DM_VULKAN_SHARED_POOLS)
+// Metadata/observation contract only: no ASTC VkImage is created or sampled.
+// Use the ACTUAL copy collector and original protected observation phase.
+void vk_test_astc_copy_cold_admission(const p_copy_t2t *p) {
+  vk_pool_span_info span;
+  if(vk_pool_span_query((uintptr_t)p->dst->mem,p->dst->L.size,&span)!=VK_POOL_SPAN_UNBACKED ||
+      !image_astc_copy_needs_span(p))die("Cold copy must request its unbacked registered destination");
+  tex_t absent=*p->dst;absent.mem=(void *)(UINTPTR_MAX-(1u<<20));
+  p_copy_t2t invalid=*p;invalid.dst=&absent;
+  if(image_astc_copy_needs_span(&invalid))die("Cold copy must not admit an unregistered destination");
+  copy_pool_plan plan={.retile=p->dst,.astc=p};
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  plan.native_source=p->src;plan.native_destination=p->dst;
+#endif
+  int operation=vk_pool_operation_begin(copy_pool_collect,&plan);
+  if(vk_pool_span_query((uintptr_t)p->dst->mem,p->dst->L.size,&span)!=VK_POOL_SPAN_SINGLE)
+    die("Cold copy admission must precede observation");
+  astc_copy_observation observed=image_astc_copy_preflight(p);
+  if(!observed.scope || !observed.stamp)die("Cold copy original observation refused");
+  astc_copy_observation_release(&observed);vk_pool_operation_end(operation);
+}
+#endif
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   // Copy needs an ended pass anyway. End/replay it before the final CPU
   // visibility proof, while no physical image or retile buffer is borrowed.

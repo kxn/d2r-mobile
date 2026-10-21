@@ -78,6 +78,25 @@ static void shared_lazy_alias_gpu_test(void) {
   CALL(nvnMemoryPoolBuilderSetStorage,&builder,bytes,4u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&builder,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&owned,&builder));
+  // No physical ASTC is requested on the host. Real NVN Builder descriptors
+  // and Pool provenance exercise the actual T2T collector/observation path.
+  // This Pool has never had a Buffer, not merely a hole beside another span.
+  NVNtexture cold_source,cold_destination;NVNtextureBuilder texture_builder;
+  for(unsigned n=0;n<2;n++) {
+    CALL(nvnTextureBuilderSetDefaults,&texture_builder);
+    CALL(nvnTextureBuilderSetDevice,&texture_builder,&device);
+    CALL(nvnTextureBuilderSetWidth,&texture_builder,16);CALL(nvnTextureBuilderSetHeight,&texture_builder,16);
+    CALL(nvnTextureBuilderSetFormat,&texture_builder,n?NVN_FORMAT_RGBA_DXT5:NVN_FORMAT_RGBA_ASTC_4x4);
+    CALL(nvnTextureBuilderSetStorage,&texture_builder,&owned,n?W:0);
+    CHECK(CALL(nvnTextureInitialize,n?&cold_destination:&cold_source,&texture_builder));
+  }
+  p_copy_t2t cold={.src=(const tex_t *)&cold_source,.dst=(const tex_t *)&cold_destination,
+    .sr={0,0,0,16,16,1},.dr={0,0,0,16,16,1}};
+  extern void vk_test_astc_copy_cold_admission(const p_copy_t2t *);
+  vk_test_astc_copy_cold_admission(&cold);
+  CALL(nvnTextureFinalize,&cold_source);CALL(nvnTextureFinalize,&cold_destination);
+  CALL(nvnMemoryPoolFinalize,&owned);
+  CHECK(CALL(nvnMemoryPoolInitialize,&owned,&builder));
   // Actual copy/dispatch admission must establish full backing BEFORE an
   // observation; draw alone is allowed to leave the same untouched range cold.
   vk_pool_requirement need={(uintptr_t)bytes+5*W-64,192,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0};
@@ -145,6 +164,12 @@ static void shared_lazy_alias_gpu_test(void) {
   vk_test_pool_operation_pin_counts(&owned_pins,&borrowed_pins);
   CHECK(owned_pins==1 && !borrowed_pins); // original commit upgrades before publication
   mtl_sub_begin();
+  if(getenv("DM_SHARED_LAZY_ALIAS_NEGATIVE")) {
+    // Establish a real old source hint in THIS recording before publishing
+    // its crossing alias; otherwise only the new cover has a current hint.
+    vk_buffer warm_old=lazy_alias_resolve(bytes+W+64,192,&cross_offset);
+    CHECK(warm_old.handle==old.handle);
+  }
   vk_buffer cover=lazy_alias_resolve(bytes+W-64,192,&cross_offset);
   lazy_alias_cover=cover.handle;CHECK(cover.handle!=old.handle);
   vk_pool_span_info range;CHECK(vk_pool_span_query((uintptr_t)bytes+W-64,192,&range)==VK_POOL_SPAN_SINGLE);
@@ -237,6 +262,6 @@ static void shared_lazy_alias_gpu_test(void) {
   if(gate)vkDestroySemaphore(V.device,gate,NULL);
   CHECK(vk_pool_span_query((uintptr_t)address,SIZE,&range)==VK_POOL_SPAN_NONE);
   CHECK(!vk_validation_error_count());
-  printf("{\"test\":\"shared-lazy-coherent-alias\",\"checks\":%u,\"result\":\"passed\",\"generic_admission_before_observation\":true,\"draw_only_demand_admission\":true,\"invalid_batch_unchanged_coverage\":true,\"actual_GPU_bidirectional_bytes\":true,\"warm_proof_global\":true,\"old_writer_pending_during_cover_import\":%s,\"unknown_visibility_fallback\":true,\"old_physical_writer_after_cover\":true,\"HOST_publication_bytes\":true,\"nested_logical_scopes\":true,\"address_only_remaining_extent_and_ledger\":true,\"address_only_RAW_precise_vertex_dependency\":true,\"old_buffers_retained_through_completion\":true,\"actual_borrow_to_commit_pin_upgrade\":true,\"pool_close_destroyed_once\":true,\"game_modules_executed\":false}\n",checks,pending_gate?"true":"false");
+  printf("{\"test\":\"shared-lazy-coherent-alias\",\"checks\":%u,\"result\":\"passed\",\"T2T_unbacked_copy_collect_then_original_observation\":true,\"ASTC_metadata_only_not_GPU\":true,\"generic_admission_before_observation\":true,\"draw_only_demand_admission\":true,\"invalid_batch_unchanged_coverage\":true,\"actual_GPU_bidirectional_bytes\":true,\"warm_proof_global\":true,\"old_writer_pending_during_cover_import\":%s,\"unknown_visibility_fallback\":true,\"old_physical_writer_after_cover\":true,\"HOST_publication_bytes\":true,\"nested_logical_scopes\":true,\"address_only_remaining_extent_and_ledger\":true,\"address_only_RAW_precise_vertex_dependency\":true,\"old_buffers_retained_through_completion\":true,\"actual_borrow_to_commit_pin_upgrade\":true,\"pool_close_destroyed_once\":true,\"game_modules_executed\":false}\n",checks,pending_gate?"true":"false");
 }
 #endif

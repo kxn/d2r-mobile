@@ -89,7 +89,10 @@ static int image_astc_copy_needs_span(const p_copy_t2t *p) {
   if(source!=astc_copy_format(p->dst->d.format) || (d && (d->astc_copy_encoding || (d->initialized && !astc_copy_mixed_target(d)))))return 0;
   vk_pool_span_info span;
   int status=vk_pool_span_query((uintptr_t)p->dst->mem,p->dst->L.size,&span);
-  return status==VK_POOL_SPAN_SINGLE || status==VK_POOL_SPAN_CROSSING;
+  // The actual copy consumer owns admission, including a registered Pool
+  // whose private image has never needed a Buffer. Observation below must
+  // still refuse missing backing rather than importing while borrowing it.
+  return status==VK_POOL_SPAN_UNBACKED || status==VK_POOL_SPAN_SINGLE || status==VK_POOL_SPAN_CROSSING;
 #else
   (void)p;return 0;
 #endif
@@ -196,7 +199,8 @@ static int astc_copy_no_defined_alias(const image *d) {
 static void image_bc_copy_decode(image *d,VkFormat incoming,astc_copy_observation *o) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(!o->scope || !o->stamp || !astc_copy_mixed_target(d) || !astc_copy_no_defined_alias(d))
-    die("Mixed compressed copy requires observed BC3 storage with no defined alias");
+    die("Mixed compressed copy requires observed BC3 storage with no defined alias (scope=%u stamp=%llu mixed=%d no_defined_alias=%d)",
+        !!o->scope,(unsigned long long)o->stamp,astc_copy_mixed_target(d),astc_copy_no_defined_alias(d));
   VkFormat decoded=decoded_format(d->tex.d.format);
   VkFormatProperties old_properties,incoming_properties,out_properties;
   vk_format_properties(d->format,&old_properties);vk_format_properties(incoming,&incoming_properties);
