@@ -37,7 +37,7 @@ static void command_reset_pixels(const uint8_t *data,unsigned slots,uint32_t bas
   for(unsigned n=0;n<64;n++)CHECK(data[4096+slots*64+n]==0xa5);
 }
 static void command_pool_reset_test(void) {
-  enum { context_limit = 2 };
+  enum { context_limit = 3 };
   CHECK(V.cmd==VK_NULL_HANDLE);
   mtl_finish();
   uint8_t *data;CHECK(!posix_memalign((void **)&data,65536,65536));
@@ -70,7 +70,7 @@ static void command_pool_reset_test(void) {
   CHECK(done==serial&&ready==serial&&sets<=context_limit);
 
   if(vk_async_submissions()) {
-    // Consume both bounded contexts while the first completed pool remains
+    // Consume all three bounded contexts while the first completed pool remains
     // inside the reset gate. The next begin must wait the ready predicate, not
     // queue completion or an empty pending list. Only the fixture helper
     // releases the gate after observing that actual cap wait.
@@ -103,7 +103,7 @@ static void command_pool_reset_test(void) {
     CHECK(value==UINT32_C(0x5b4a3021));
   }
   CALL(nvnMemoryPoolFinalize,&pool);free(data);
-  LOG("[vulkan command reset fixture] GPU/effects visible before reset, Finish waits ready, bounded cap2 ownership gap and subsequent GPU bytes passed: async=%d",vk_async_submissions());
+  LOG("[vulkan command reset fixture] GPU/effects visible before reset, Finish waits ready, bounded cap3 ownership gap and subsequent GPU bytes passed: async=%d",vk_async_submissions());
 }
 #else
 static void command_pool_reset_test(void) {

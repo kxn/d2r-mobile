@@ -3775,9 +3775,9 @@ static void begin_submission(int pool_migration) {
   if (recording_resources)
     die("Vulkan resource ownership overlaps submissions");
   // Diagnostic small residency budget: retain asynchronous recording/GPU
-  // overlap, but allow only two independently owned submission contexts.
+  // overlap, but allow only three independently owned submission contexts.
   // Completion/effects/reset readiness remains the existing reuse predicate.
-  if (!available_resources && resource_sets >= 2) {
+  if (!available_resources && resource_sets >= 3) {
     pthread_mutex_lock(&completion_mu);
     int pressure_trace=vk_system_trace_begin("Vulkan in-flight resource pressure");
     // The worker may already have published queue completion and removed the
