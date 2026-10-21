@@ -26,6 +26,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean readbackBatch);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
+    private static native void nativeVmaMemoryDumpRequest();
     private static native void nativeThermalLimit(int limit);
     private static native void nativeSurface(Surface surface, float refresh);
     private static native void nativeBack();
@@ -435,6 +436,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("display_refresh_hz")) {
             getIntent().putExtra("display_refresh_hz", intent.getFloatExtra("display_refresh_hz", 0));
             requestDisplayRefresh(surfaceHolder == null ? null : surfaceHolder.getSurface());
+        }
+        if (intent.getBooleanExtra("vma_dump_on_suspend", false)) {
+            nativeVmaMemoryDumpRequest();
+            intent.removeExtra("vma_dump_on_suspend"); // one explicit request, not a preference
         }
         if (intent.getBooleanExtra("renderdoc_capture", false)) {
             File directory = new File(getFilesDir(), "runtime/profiles/renderdoc");

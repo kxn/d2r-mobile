@@ -91,3 +91,13 @@ void vk_memory_stats(uint32_t *blocks, uint32_t *allocations, uint64_t *bytes) {
   *allocations = stats.total.statistics.allocationCount;
   *bytes = stats.total.statistics.allocationBytes;
 }
+
+// Original VMA JSON, including its detailed map; no duplicate statistics.
+char *vk_memory_build_stats_string(void) {
+  char *json=nullptr;
+  if(allocator)vmaBuildStatsString(allocator,&json,VK_TRUE);
+  return json;
+}
+void vk_memory_free_stats_string(char *data) {
+  if(data)vmaFreeStatsString(allocator,data);
+}

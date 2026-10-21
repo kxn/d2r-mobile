@@ -69,6 +69,15 @@ static void x_cpu_exposure(uint64_t address,uint64_t size);
 static void x_trim_after_suspend(void);
 // Low-memory callbacks never initialize GPU, acquire backend locks or wait.
 static _Atomic int g_idle_trim_requested;
+// Explicit diagnostic request only: no work, waits or allocator access on UI.
+static _Atomic int g_vma_dump_requested;
+int dm_gfx_vma_dump_request(void) {
+    int empty=0;return atomic_compare_exchange_strong_explicit(&g_vma_dump_requested,&empty,1,memory_order_release,memory_order_relaxed);
+}
+#ifdef DM_VULKAN_TEST_EMBED
+int nvn_test_vma_dump_pending(void) {return atomic_load_explicit(&g_vma_dump_requested,memory_order_acquire);}
+#endif
+
 void dm_gfx_trim_memory_request(void) {
     atomic_store_explicit(&g_idle_trim_requested,1,memory_order_release);
 }
@@ -1087,6 +1096,11 @@ static void x_run(const xjob *j, uint64_t job) {
     int prior_owner=g_x_owner;g_x_owner=1;
     // Legacy inline reference can run on different guest threads (including
     // tail FRAME outside the suspend API gate). Never trim on that path.
+    // This existing lifecycle-only job is queued AFTER original CPU effects,
+    // GPU fences and command-pool reset drain, before original idle trim.
+    if(j->kind==XJ_IDLE_TRIM && !g_x_sync &&
+       atomic_exchange_explicit(&g_vma_dump_requested,0,memory_order_acq_rel))
+        mtl_memory_dump();
     if(!g_x_sync)x_trim_idle_requested();
     if(j->kind==XJ_IDLE_TRIM) {g_x_owner=prior_owner;return;}
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -1197,7 +1211,11 @@ static void x_trim_after_suspend(void) {
     // has no dedicated owner; leave the request pending without changing its
     // legacy scheduling. Async tail FRAME jobs share this same worker queue.
     dm_gfx_trim_memory_request();
-    if(!atomic_load_explicit(&g_x_started,memory_order_acquire) || g_x_sync)return;
+    if(!atomic_load_explicit(&g_x_started,memory_order_acquire) || g_x_sync) {
+        if(atomic_exchange_explicit(&g_vma_dump_requested,0,memory_order_acq_rel))
+            LOG("[vulkan VMA dump] failed: dedicated translation owner unavailable; request consumed");
+        return;
+    }
     pthread_mutex_lock(&g_susp_mu);
     int exclusive=g_susp && !g_inflight_api;pthread_mutex_unlock(&g_susp_mu);
     if(!exclusive)die("NVN lifecycle trim lacks suspend exclusion");

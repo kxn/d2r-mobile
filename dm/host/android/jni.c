@@ -29,6 +29,11 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRenderdo
   LOG("[renderdoc] capture request accepted=%d", accepted);
   (*env)->ReleaseStringUTFChars(env, directory, path);
 }
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeVmaMemoryDumpRequest(
+    JNIEnv *env,jclass klass) {
+  (void)env;(void)klass;extern int dm_gfx_vma_dump_request(void);
+  LOG("[vulkan VMA dump] explicit request accepted=%d; consumes at next normal suspend",dm_gfx_vma_dump_request());
+}
 extern void vk_graphics_byte_hash(int legacy);
 extern void vk_graphics_prepare_mode(int mode);
 extern void vk_readback_coherent_reference(int reference);

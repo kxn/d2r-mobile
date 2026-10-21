@@ -1,6 +1,7 @@
 #ifdef DM_VULKAN_TEST_EMBED
 extern void dm_gfx_trim_memory_request(void),dm_gfx_suspend(int);
 extern int nvn_test_idle_trim_pending(void),nvn_test_idle_trim_supported(void);
+extern int dm_gfx_vma_dump_request(void),nvn_test_vma_dump_pending(void);
 extern void vk_test_idle_temporaries(uint64_t *,unsigned *);
 extern unsigned vk_test_idle_driver_arenas(void);
 extern void vk_test_idle_driver_store(const uint8_t *,size_t,vk_buffer *,uint64_t *);
@@ -47,7 +48,14 @@ static VKAPI_ATTR VkResult VKAPI_CALL idle_trim_allocate(VkDevice d,const VkDesc
   }
   return result;
 }
+static void idle_vma_completed(void *context) {*(unsigned *)context=1;}
 static void idle_cache_trim_test(void) {
+  const char *dump_root=getenv("DM_TEMP");CHECK(dump_root&&dump_root[0]=='/');
+  char dump_path[1024],part_path[1056],saved_path[1056];
+  CHECK(snprintf(dump_path,sizeof dump_path,"%s/vulkan-vma.json",dump_root)<(int)sizeof dump_path);
+  snprintf(part_path,sizeof part_path,"%s.part",dump_path);snprintf(saved_path,sizeof saved_path,"%s.success",dump_path);
+  CHECK(access(dump_path,F_OK)!=0 && access(part_path,F_OK)!=0);
+
   // The actual HLE control queue consumes an early request, not the UI thread.
   dm_gfx_trim_memory_request();dm_gfx_trim_memory_request();
   CHECK(nvn_test_idle_trim_pending());
@@ -108,9 +116,16 @@ static void idle_cache_trim_test(void) {
     int gated=vk_async_submissions()&&V.timeline_semaphore;
     VkSemaphore gate=VK_NULL_HANDLE;
     if(gated) {gate=pool_copy_gate();vk_command_reset_test_gate(1);}
+    unsigned vma_cpu_effect_complete=0;
+    if(round && supported) {
+      vk_completion(idle_vma_completed,&vma_cpu_effect_complete);
+      CHECK(dm_gfx_vma_dump_request());CHECK(!dm_gfx_vma_dump_request());
+      CHECK(nvn_test_vma_dump_pending());CHECK(access(dump_path,F_OK)!=0);
+    }
     uint64_t serial=vk_internal_commit();
     if(gated) {
       CHECK(vk_completed_serial()<serial);CHECK(mtl_trim_idle_resources());
+      if(round && supported) {CHECK(!mtl_memory_dump());CHECK(nvn_test_vma_dump_pending());CHECK(access(dump_path,F_OK)!=0);}
       // GPU is still blocked: descriptor pools and data must remain live.
       if(supported)CHECK(!idle_trim_pools[descriptor_pool-1].destroyed);
       CHECK(!memcmp(temp->map,expected,sizeof expected));
@@ -118,6 +133,7 @@ static void idle_cache_trim_test(void) {
       pool_copy_signal(&gate);CHECK(vk_command_reset_test_wait_blocked(serial)>=serial);
       uint64_t done,ready;unsigned sets;vk_command_reset_test_snapshot(&done,&ready,&sets);
       CHECK(done>=serial && ready<serial);CHECK(mtl_trim_idle_resources());
+      if(round && supported) {CHECK(!mtl_memory_dump());CHECK(nvn_test_vma_dump_pending());CHECK(access(dump_path,F_OK)!=0);CHECK(vma_cpu_effect_complete);}
       if(supported)CHECK(!idle_trim_pools[descriptor_pool-1].destroyed);
       vk_test_idle_temporaries(&idle,&count);CHECK(!idle&&!count);
       CHECK(!vk_test_idle_driver_arenas());
@@ -141,7 +157,12 @@ static void idle_cache_trim_test(void) {
       CALL(nvnQueueSubmitCommands,&queue,0,NULL);CALL(nvnQueueFinish,&queue);
       CHECK(!nvn_test_idle_trim_pending());
     } else {
-      dm_gfx_suspend(1);CHECK(nvn_test_idle_trim_pending()==!supported);dm_gfx_suspend(0);
+      dm_gfx_suspend(1);CHECK(nvn_test_idle_trim_pending()==!supported);
+      if(round && supported) {
+        CHECK(!nvn_test_vma_dump_pending());CHECK(access(dump_path,F_OK)==0);CHECK(vma_cpu_effect_complete);
+        LOG("[VMA dump fixture] pre-trim allocation_count=%u allocation_bytes=%llu",allocs0,(unsigned long long)bytes0);
+      }
+      dm_gfx_suspend(0);
     }
     vk_memory_stats(&blocks1,&allocs1,&bytes1);
     if(supported) {
@@ -159,6 +180,16 @@ static void idle_cache_trim_test(void) {
     CHECK(!memcmp(output.map,expected,sizeof expected));
     for(unsigned k=0;k<sizeof expected;k++)expected[k]^=0x5a;
   }
+  if(supported) {
+    // Preserve the untouched builtin JSON for the host's standard JSON parser.
+    CHECK(!rename(dump_path,saved_path));
+    CHECK(!mkdir(part_path,0700)); // fixed-output failure, never retry implicitly
+    CHECK(dm_gfx_vma_dump_request());dm_gfx_trim_memory_request();
+    dm_gfx_suspend(1);CHECK(!nvn_test_vma_dump_pending());CHECK(!nvn_test_idle_trim_pending());dm_gfx_suspend(0);
+    CHECK(access(dump_path,F_OK)!=0);CHECK(!rmdir(part_path));
+    dm_gfx_suspend(1);dm_gfx_suspend(0);CHECK(access(dump_path,F_OK)!=0);
+    LOG("[VMA dump fixture] existing post-drain owner, no pre-pause dump, failure consumed without retry; original trim and pixels retained");
+  }
   vkCreateDescriptorPool=idle_trim_create_pool;vkDestroyDescriptorPool=idle_trim_destroy_pool;
   vkAllocateDescriptorSets=idle_trim_allocate_sets;
   CALL(nvnProgramFinalize,&program);CALL(nvnMemoryPoolFinalize,&pool);free(storage);
@@ -166,5 +197,12 @@ static void idle_cache_trim_test(void) {
   vk_buffer_destroy(&output);CHECK(vk_validation_error_count()==0);
 }
 #else
-static void idle_cache_trim_test(void) {}
+static void idle_vma_completed(void *context) {*(unsigned *)context=1;}
+static void idle_cache_trim_test(void) {
+  const char *dump_root=getenv("DM_TEMP");CHECK(dump_root&&dump_root[0]=='/');
+  char dump_path[1024],part_path[1056],saved_path[1056];
+  CHECK(snprintf(dump_path,sizeof dump_path,"%s/vulkan-vma.json",dump_root)<(int)sizeof dump_path);
+  snprintf(part_path,sizeof part_path,"%s.part",dump_path);snprintf(saved_path,sizeof saved_path,"%s.success",dump_path);
+  CHECK(access(dump_path,F_OK)!=0 && access(part_path,F_OK)!=0);
+}
 #endif
