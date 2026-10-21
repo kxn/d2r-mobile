@@ -189,8 +189,12 @@ static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode
     ctx->rt=*(const p_set_rt *)a;if(ctx->rt.n<0||ctx->rt.n>8) index_valid=0;
     for(unsigned k=0;k<9;k++) ctx->target_buckets[k]=-1;
     break;
-  case OP_SCISSOR:if(size<8+sizeof(p_scissor)) { index_valid=0;return; }ctx->sc=*(const p_scissor *)a;ctx->has_sc=1;break;
-  case OP_BIND_PROGRAM:if(size<8+sizeof(p_bind_program)) { index_valid=0;return; }ctx->program=((const p_bind_program *)a)->prog;break;
+  case OP_SCISSOR:
+    if(size<8+sizeof(p_scissor)) { index_valid=0;return; }
+    ctx->sc=*(const p_scissor *)a;ctx->has_sc=1;break;
+  case OP_BIND_PROGRAM:
+    if(size<8+sizeof(p_bind_program)) { index_valid=0;return; }
+    ctx->program=((const p_bind_program *)a)->prog;break;
   case OP_BIND_TEX:case OP_BIND_IMG: {
     if(size<8+offsetof(p_bind_handles,h)) { index_valid=0;return; }
     const p_bind_handles *b=a;int base=opcode==OP_BIND_IMG?128:0,limit=opcode==OP_BIND_IMG?32:128;
