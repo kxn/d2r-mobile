@@ -56,3 +56,24 @@
 前一版 `4eb7c1b` 的 Android 链接确实失败：APP 包含的旧测试入口仍调用新宿主测试 helper。`09a9ad0` 只为该调用补齐 APP 排除，不改变生产依赖逻辑；失败源码与日志保留，没有用失败产物部署。
 
 源审：`.local/logs/shared-image-observe-09a9ad0-root-source-review.json`。实际产物根审：`.local/logs/shared-image-observe-09a9ad0-root-canonical-raw-review.json`（SHA256 `048904cd572229059b6b54df464a5418f5f4f5b7d905eaab0fd986a0867ab56a`）。后续在同一 APK 内固定 f830、完整 2,838 项 ASTC6 资源、0.60 比例、1MiB 窗口与 lazy ON，只切换本项冷启动政策；沿用原三段移动、官方 Simpleperf／Perfetto、存档两次、退出及原包恢复。所有独立窗口须保留，不将一次调试命中外推为每帧等待。
+
+## 四次原游戏对照：尚无稳定整线程收益
+
+已按 OFF1 → ON1 → OFF2 → ON2 完成同 APK 冷启动。四次都实际执行原游戏模块，完成三段原输入移动、存档两次、退出及原包／资源恢复，cleanup 为空。根代理查看前两轮前后截图和后两轮移动后截图，营地短测没有观察到明显黑块或缺失几何；最终独立核实游戏 PID 为空、原 APK 哈希恢复。这不是战斗、地牢、长时热稳定或 6GB 设备验收。
+
+原官方工具保留 12 个独立 30 秒 FP 图、20 个独立 8 秒 Perfetto 窗口，共 27,392 个 NvN 用户态样本；每窗保留完整线程外层祖先，时钟重叠验证通过。宿主与 f830 精确符号匹配；两个 vendor EGL 库缺少符号的警告原样保留，不补造调用归属。以下每个 CPU 数字是对应 Perfetto 窗口的整线程 Running／完整 Surface 间隔，不是把 30 秒采样百分比乘另一个窗口的时间：
+
+| 轮次 | 三个采样并行窗的 NvN Running（ms／次出图） | 五窗 Surface 均值范围（ms） | 后续 meminfo PSS（MiB） |
+|---|---|---|---:|
+| OFF1 | 27.347 / 27.261 / 27.530 | 32.815～32.960 | 1950.5 |
+| ON1 | 25.980 / 27.793 / 27.281 | 33.137～33.141 | 2034.4 |
+| OFF2 | 24.519 / 27.429 / 27.450 | 33.048～33.188 | 2033.3 |
+| ON2 | 27.528 / 27.614 / 27.797 | 33.472～33.617 | 2010.3 |
+
+19／20 个 trace 没有翻译线程 queue-completion 等待 marker；唯一 OFF1 尾窗有 29 次、约 1.015ms／次出图。两次 OFF 没有复现此前约 9ms 的慢状态，所以本轮不能证明已省 9ms，也不能用 ON 的零等待宣称已解决常态 27ms CPU 工作。内部提交／guest 提交仍约 7，未观察到可归因于本候选的稳定 CPU 或出图改善。OFF1 首个 30 秒窗口 PSO 增长、OFF2 首个 8 秒窗口的变化，以及频率、CPU 核分布和少量场景差异全部保留；不挑首窗低值，不将小幅差异宣称净回退。
+
+ON1 比 OFF1 高约 84MiB 的 PSS 没有重复：OFF2 已接近 ON1，ON2 反而较低。四轮 private image 分配均为 344,166,400 字节；但 ON 的 driver arena live 为 22,020,096 字节，OFF 两轮为 20,447,232／20,971,520 字节。当前原状态没有在途 context 或临时 Buffer 驻留峰值字段，不能据此宣称零资源成本。meminfo 与 showmap 为不同快照；不把 TOTAL 与映射行重复累加，不将重叠 import 计数当物理 RAM。
+
+本项机制保留在独立候选，不因暂未涨帧删除；目前仍默认关闭。它针对已证实的整页假依赖，不再作为常态 CPU 大幅提速的主要预算。下一步重心是完整逐 Draw 资源消费／表示路径，必须先证明能删掉哪些整段职责及其实际预算。ADPF 普通启动／控制采集同为默认 reference OFF-session；旧高通已有有效启用对照亦未证明净收益，不因默认差异假设重复采集。
+
+原游戏根审：`.local/logs/shared-image-observe-09a9ad0-Q735-four-round-root-functional-review.json`（SHA256 `782a9bc7551249c1dd8d289f507058da2f1765e50c2978620ef40f77a67f5941`）。完整官方结果：`.local/logs/shared-image-observe-09a9ad0-analysis-v1/result.json`（SHA256 `ce6b1aae451bcc65383bab6cf4d4caa5d53ea4718d6b79f48d62b040d8a7d081`），其中引用全部窗口、调用职责、原数据及边界。ADPF 只读审查：`.local/logs/adpf-profile-policy-readonly-v1/facts.json`。
