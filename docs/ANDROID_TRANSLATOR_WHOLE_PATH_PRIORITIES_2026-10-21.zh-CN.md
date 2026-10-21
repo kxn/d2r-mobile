@@ -118,3 +118,20 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 - `.local/logs/pool-admission-consumer-2327201-root-canonical-raw-review.json`
 - `.local/logs/native-qualified-astc6-game-d148-Q735-v1-root-actual-review.json`
 - `.local/logs/native-qualified-astc6-full2838-root-actual-review.json`
+
+## 整池导入对照与按内存属性消除无效维护
+
+原 `d14808f`、f830、原6217 ASTC4、0.60和同一官方工具的整池共享实验已完成真实游戏三段跑动、原生命周期存档及原包恢复。与前述1MiB对照相邻比较：完整Surface内NvN Running/间隔25.75059ms vs27.05099ms，约低4.81%；运行时加权频率1545.52 vs1609.12MHz，约低3.95%；平均出图间隔33.09361 vs33.13389ms，仍约30FPS。一次顺序实验和不同核心/频率不能建立净因果收益。
+
+内存代价：同口径dumpsys TOTAL PSS为2,703,265 vs1,945,728KiB，多757,537KiB（739.78MiB）；Buffer backed bytes从369,098,752升到1,167,065,088，private image cache两侧同为344,166,400B。整池省掉了准入枚举，但失去operation geometry，pool_address/record_pool_range的样本占比和slow lookup也增加。**保留1MiB默认，不把整池作为6GB或省内存优化。** 下一步只借用已经保有的实际生命周期引用，降低有限窗口的重复pin/unpin，不能跳过实际消费者或制造ready证明。
+
+候选 `5669c44` 减少的工作来自完整调用路径 `commit → sync_used_run → shared_pool_cache_locked → native_allocation_cache_visit`。原代码遍历native分配AVL后，对每个相交分配调用shared_cache；HOST_COHERENT分配每次都立即返回。两个import发布入口本来就持有resources锁，强制同Pool全部live Buffer/native import的propertyFlags一致。现在利用同一个Pool属性在native cache遍历入口提前返回。非coherent路径完全保留；逻辑范围验证、完整物理覆盖证明、Buffer维护、资源引用、CPU发布和GPU数据依赖均未省略。不新增缓存、失效协议、常驻RAM或游戏逻辑。
+
+5组现有Core/SYNC Lavapipe原GPU内容验证通过：驻留资源串行/异步/参考布局，有限窗口串行/异步，覆盖同值/无Flush CPU发布、三次无显式hostwait提交、先前GPU写入、Image→Buffer完整payload、native-only后首次Buffer及窗口合并/最终释放。每组5356或10873个原检查无验证错误；这是RGBA语义验证，不能称Android ASTC或真实游戏验收。首次host链接缺少DM_GUEST_HEAP_GPU_TESTS=ON的错误保留；补齐既有选项后构建通过，没有改运行时代码绕过。
+
+实际53c CPU窗口的native cache visit叶子占1.28%，共享缓存职责inclusive约2.24%，两者嵌套；只省其中coherent遍历，不预报整个比例或FPS。候选原游戏构建及实际效果仍待统一版本验证。
+
+- `.local/logs/shared-whole-d148-policy-probe-Q735-v1/result.json`
+- `.local/logs/shared-whole-d148-offline-analysis-v1/whole0-control1MiB-facts-agent.json`
+- `.local/logs/coherent-native-cache-v1-tests/result.json`
+- `.local/logs/native-qualified-astc6-full2838-root-asset-review.json`
