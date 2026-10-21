@@ -2471,6 +2471,23 @@ static const texture_descriptor *texture_descriptor_lookup(int id,
   pthread_mutex_lock(&V.resources);
   int valid=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
   uint64_t observed=slot || epoch?atomic_load(&descriptor_epoch):0;
+  // This lookup already holds the original registry lock. Before replacing
+  // its old exact value, preserve recipes with unchanged logical input.
+  // id+old epoch ties each recipe to this snapshot's complete logical input;
+  // no owner pointer or serial-only equality is authority here. Physical
+  // lifetime/handle checks and every actual resource consumer remain live.
+  if(valid && slot && slot->id==id && slot->descriptor.valid &&
+      !texture_binding_reference && texture_state && V.cmd &&
+      slot->descriptor.has_view==texture_descriptors[id].has_view &&
+      !memcmp(&slot->descriptor.texture,&texture_descriptors[id].texture,sizeof(tex_t)) &&
+      (!slot->descriptor.has_view ||
+       !memcmp(&slot->descriptor.view,&texture_descriptors[id].view,sizeof(view_t)))) {
+    for(unsigned storage=0;storage<2;storage++) {
+      texture_binding_recipe *recipe=&texture_state->bindings[texture_binding_slot(id,storage)];
+      if(recipe->id==id && recipe->storage==(int)storage && recipe->epoch==slot->epoch)
+        recipe->epoch=observed;
+    }
+  }
   texture_descriptor *out=slot?&slot->descriptor:fallback;
   if(valid)*out=texture_descriptors[id];else out->valid=0;
   if(slot) {slot->epoch=observed;slot->id=id;}
