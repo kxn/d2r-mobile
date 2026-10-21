@@ -75,7 +75,16 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
 #ifdef DM_VULKAN_NATIVE_RESOURCES
     // Image schemas use their existing immutable image iterator, independent
     // of the buffer-only mask. Native payloads retain their logical Pool; immutable image imports are separate from real Buffer admission.
-    if(vk_native_resources_active())for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
+    image_source_plan *source_plan=image_sources_current();
+    image_source_stage *source_part=image_sources_stage(source_plan,s,state,stage,compute);
+    if(source_part) {
+      for(unsigned j=0;j<source_part->count;j++) {
+        image_source_entry *entry=&source_plan->entries[source_part->begin+j];
+        const tex_t *t=image_source_resolve(entry,state,stage);
+        if(!t)return pool_range_fail("missing native candidate image descriptor");
+        if(!vk_texture_native_pool_collect(t,producer_stage(stage),0,sink,context))return 0;
+      }
+    } else if(vk_native_resources_active())for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
       unsigned k;if(!vk_image_binding_next(s,&it,&k))break;
       const vk_binding *b=&s->bindings[k];
       if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
@@ -179,8 +188,22 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
       && !shared && !vk_legacy_astc_copy_mode()
 #endif
       )return;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  image_source_plan *source_plan=image_sources_build(list,state,compute);
+#endif
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    image_source_stage *source_part=image_sources_stage(source_plan,s,state,stage,compute);
+    if(source_part) {
+      for(unsigned j=0;j<source_part->count;j++) {
+        image_source_entry *entry=&source_plan->entries[source_part->begin+j];
+        const tex_t *t=image_source_resolve(entry,state,stage);
+        if(t && (!packaged_only || (t->has_layout && t->mem && t->L.size)))vk_texture_cpu_preflight(t);
+      }
+      continue;
+    }
+#endif
     for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
       unsigned k;if(!vk_image_binding_next(s,&it,&k))break;
       const vk_binding *b=&s->bindings[k];

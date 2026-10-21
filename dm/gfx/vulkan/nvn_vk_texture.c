@@ -2812,6 +2812,15 @@ static VkImageViewType view_type(int target) {
     return VK_IMAGE_VIEW_TYPE_2D;
   }
 }
+const tex_t *vk_texture_source_resolve(vk_texture_source_value *value,int id) {
+  if(value->id!=id || value->epoch!=atomic_load(&descriptor_epoch)) {
+    texture_descriptor local;uint64_t epoch;
+    const texture_descriptor *d=texture_descriptor_lookup(id,&local,&epoch);
+    value->id=id;value->epoch=epoch;value->valid=d!=NULL;
+    if(d)value->texture=d->texture;
+  }
+  return value->valid?&value->texture:NULL;
+}
 int vk_texture_descriptor(int id,tex_t *out) {
   if(texture_lookup_current) {
     texture_descriptor local;

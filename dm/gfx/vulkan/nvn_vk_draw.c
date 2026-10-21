@@ -971,9 +971,9 @@ static int draw_pool_collect(void *context,vk_pool_requirement_sink sink,void *o
 }
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
 static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
-  vk_texture_lookup_scope_begin();
+  vk_texture_lookup_scope_begin();int source_operation=vk_shader_image_sources_begin();
   vk_draw_record_impl(draw,idx,disable_local_plan);
-  vk_texture_lookup_scope_end();
+  vk_shader_image_sources_end(source_operation);vk_texture_lookup_scope_end();
 }
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   // A state change outside the complete planned sequence cannot enable

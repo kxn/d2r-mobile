@@ -465,6 +465,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_vertex_binding.inc"
 #include "native_vulkan_vertex_require.inc"
 #include "native_vulkan_logical_preflight.inc"
+#include "native_vulkan_image_source_flow.inc"
 #include "native_vulkan_deferred_mip_clear.inc"
 #include "native_vulkan_pending_read.inc"
 #include "native_vulkan_prewarm.inc"
@@ -769,6 +770,13 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){vk_test_image_source_flow(1);source_flow_observe=1;}
+  if(getenv("DM_IMAGE_SOURCE_FLOW_FIXTURE")) {
+    image_source_flow_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"operation-image-source-flow\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   if(getenv("DM_TEXTURE_LOOKUP_FIXTURE")) {
     uint8_t controls[13][0x880];for(unsigned n=0;n<13;n++)memset(controls[n],n,sizeof controls[n]);
     logical_preflight_test(controls[3],controls[4]);
@@ -821,7 +829,11 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_SHARED_IMAGE_NC_GATE_FIXTURE"))return shared_image_nc_gate_test();
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(getenv("DM_NATIVE_RETIREMENT_FIXTURE")) {native_retirement_gpu_test();return 0;}
-  if(getenv("DM_NATIVE_ACQUIRE_SCOPE_FIXTURE")) {native_acquire_scope_gpu_test();return 0;}
+  if(getenv("DM_NATIVE_ACQUIRE_SCOPE_FIXTURE")) {native_acquire_scope_gpu_test();
+#ifndef DM_ANDROID_APP
+    if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE"))image_source_flow_check();
+#endif
+    return 0;}
   if(getenv("DM_NATIVE_LANE_WINDOW_FIXTURE")) {native_lane_gpu_test();return 0;}
   const char *native_fixture=getenv("DM_NATIVE_RESOURCE_NVN_FIXTURE");
   if(native_fixture)return native_resource_gpu_test(native_fixture);
