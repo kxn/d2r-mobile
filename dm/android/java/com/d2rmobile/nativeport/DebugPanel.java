@@ -100,7 +100,7 @@ final class DebugPanel extends FrameLayout {
         String[] names = {"无", "轻度", "中度", "严重", "危急", "紧急", "关机"};
         String status = thermal >= 0 && thermal < names.length ? names[thermal] + " (" + thermal + ")" : "不可读取";
         String value = String.format(Locale.ROOT,
-                "实测 FPS：%s\n%s · 系统热状态：%s\n游戏请求：%.0f · 有效目标：%.0f FPS\n应用上限：手动 %s / 热 %s\n游戏输出：%.0f × %.0f\nSurface：%.0f × %.0f\n实际 3D 比例：%.2f",
+                "实测 FPS：%s\n%s · 系统热状态：%s\n原始目标（含启动覆盖）：%.0f\n有效目标：%.0f FPS\n应用上限：手动 %s / 热 %s\n游戏输出：%.0f × %.0f\nSurface：%.0f × %.0f\n实际 3D 比例：%.2f",
                 fps > 0 ? String.format(Locale.ROOT, "%.1f", fps) : "--", battery, status,
                 state[0], state[1], limit(state[3]), limit(state[2]),
                 state[4], state[5], state[6], state[7], state[8]);

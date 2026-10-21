@@ -635,9 +635,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
         if (debugPanelVisible()) {
-            if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK && event.getAction() == android.view.KeyEvent.ACTION_UP)
-                showDebugPanel(false);
-            return true;
+            if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == android.view.KeyEvent.ACTION_UP) showDebugPanel(false);
+                return true;
+            }
+            // Skip GameInput, but retain platform volume keys and widget navigation.
+            return super.dispatchKeyEvent(event);
         }
         return started && GameInput.key(event) || super.dispatchKeyEvent(event);
     }

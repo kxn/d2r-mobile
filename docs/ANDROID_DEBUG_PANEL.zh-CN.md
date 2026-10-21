@@ -8,6 +8,6 @@
 
 “应用热限帧／热降分辨率”关闭时沿既有 JNI 同时清除渲染热 cap 与 `dm_android_3d_thermal_limit`，不混入手动 cap。两项热策略独立：关闭自动热暂停会撤销原 severe deadline，已出队旧 callback 也不能暂停；重新开启按当前公开热状态重新计时，CRITICAL 则执行原立即存档暂停。固定 3D 比例仍保留原固定语义。
 
-展开先给原触点发送 CANCEL 并清除原桥接状态，而不是 UP，不释放技能或世界点击；摇杆、多个触点均取消。面板覆盖层消费所有面板/空白事件；收起后残留 MOVE/UP/CANCEL 被吞掉，直到下一次新 DOWN。Back 先收起，键盘/手柄输入在面板开启时不进入游戏。原 UI、素材、手势和游戏逻辑未改。
+展开先给原触点发送 CANCEL 并清除原桥接状态，而不是 UP，不释放技能或世界点击；摇杆、多个触点均取消。面板覆盖层消费所有面板/空白事件；收起后残留 MOVE/UP/CANCEL 被吞掉，直到下一次新 DOWN。Back 先收起，键盘/手柄输入在面板开启时不进入 GameInput，系统音量键和子控件键盘导航仍由原 Activity 分发。原 UI、素材、手势和游戏逻辑未改。
 
 源码验收包括全 Java API 编译、原 ThermalPolicy 12 项加 3 项开关/deadline 回归、触点序列门的多点/Back/CANCEL 回归、原 C 手势 47 案 1599 检查、原生产 pace 在无/30/60 启动覆盖下的 cap 与 60/90/120 Hz 对照，以及编辑 JNI 的实际 NDK 源码编译检查。未构建 canonical APK、未执行真实游戏或 Android View 输入自动化；真机布局、触摸与系统暂停体验待 root 审核后验证。
