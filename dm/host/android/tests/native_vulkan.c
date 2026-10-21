@@ -1307,6 +1307,16 @@ int dm_vulkan_test_main(void) {
   CHECK(driver_misses_after>driver_misses_before);
   CHECK(driver_final_reference==1);
   vk_driver_constant_reference(driver_original_reference);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_COLD_PHASE_FIXTURE")) {
+    // Reuse the actual read-only alignment GPU-update checks and driver
+    // last/content/MISS pixel assertions above, then the existing full/sparse
+    // key fixtures. No implementation-shaped oracle or target statistic.
+    driver_compact_key_test();CHECK(vk_validation_error_count()==0);
+    CALL(nvnProgramFinalize,&storage_graphics);CALL(nvnProgramFinalize,&driver_graphics);
+    printf("{\"test\":\"cold-phase-content\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   uint8_t *upload = bytes + (3 << 20) + 262144;
   for (int y = 0; y < 16; y++)
     for (int x = 0; x < 16; x++) {

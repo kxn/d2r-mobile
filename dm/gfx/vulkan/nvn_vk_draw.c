@@ -1,3 +1,4 @@
+#include "nvn_vk_phase_layout.h"
 // 原 NVN 绘制状态映射到 Vulkan 渲染通道与管线；保守保留附件内容与命令次序。
 // Map original NVN draw state to Vulkan render passes and pipelines,
 // conservatively preserving attachments and command ordering.
@@ -969,6 +970,301 @@ static int draw_pool_collect(void *context,vk_pool_requirement_sink sink,void *o
   vk_program_shaders(S.program,list);list[5]=NULL;
   return vk_graphics_pool_admission(list,&S,plan->indexed,sink,out);
 }
+// Created only behind the existing preparation-miss/check guard. All borrows
+// are synchronous, with the same resource work and retry cleanup as before.
+// No large key or Vk creation arrays are built/copied on a context reuse.
+typedef struct {
+  vk_shader **list;
+  const p_draw *draw;const p_draw_idx *idx;
+  vk_buffer **expanded;const uint32_t *expanded_stride;
+  int dynamic_uniforms,physical_depth,original_specialized,hybrid_selected;
+  uint32_t na;VkSampleCountFlagBits samples;
+  const VkPipelineDepthStencilStateCreateInfo *ds;
+  const VkAttachmentDescription *descriptions;
+  const VkAttachmentReference *color;VkAttachmentReference pipeline_depth;
+  VkShaderModule fragment_module;
+  uint32_t *specialization_words;VkSpecializationInfo *specialization_info;
+  render_job *job;const vk_pixel_local_proof *local_consumer;
+  pipeline_context *context;
+  VkRenderPass local_pass;unsigned local_subpass;
+  int reuse,prepare_mode;
+} pipeline_prepare_input;
+static VK_COLD_PHASE cached_pipeline *draw_pipeline_prepare(
+    const pipeline_prepare_input *input,uint32_t *out_streams,int *retry) {
+  vk_shader **list=input->list;
+  const p_draw *draw=input->draw;const p_draw_idx *idx=input->idx;
+  vk_buffer **expanded=input->expanded;const uint32_t *expanded_stride=input->expanded_stride;
+  int dynamic_uniforms=input->dynamic_uniforms,physical_depth=input->physical_depth;
+  int original_specialized=input->original_specialized,hybrid_selected=input->hybrid_selected;
+  uint32_t na=input->na;VkSampleCountFlagBits samples=input->samples;
+  const VkPipelineDepthStencilStateCreateInfo *ds=input->ds;
+  const VkAttachmentDescription *descriptions=input->descriptions;
+  const VkAttachmentReference *color=input->color;VkAttachmentReference pipeline_depth=input->pipeline_depth;
+  VkShaderModule fragment_module=input->fragment_module;
+  uint32_t *specialization_words=input->specialization_words;
+  VkSpecializationInfo *specialization_info=input->specialization_info;
+  render_job *j=input->job;const vk_pixel_local_proof *local_consumer=input->local_consumer;
+  pipeline_context *context=input->context;
+  VkRenderPass local_pass=input->local_pass;unsigned local_subpass=input->local_subpass;
+  int reuse=input->reuse,prepare_mode=input->prepare_mode;
+  uint32_t streams=0;
+  cached_pipeline *cached;
+  VkVertexInputBindingDescription vb[16];
+  VkVertexInputBindingDivisorDescriptionEXT divisors[16];
+  unsigned divisor_count = 0;
+  VkVertexInputAttributeDescription va[16];
+  uint32_t nb = 0, nattr = 0;
+  for (int i = 0; i < 16; i++)
+    if ((list[0]->input_mask & (1u << i)) && S.attr[i].fmt) {
+      va_st a = S.attr[i];
+      if (a.stream >= 16)
+        die("Vulkan vertex stream %u", a.stream);
+      VkFormat format = vk_nvn_format(a.fmt);
+      VkFormatProperties prop;
+      vk_format_properties(format, &prop);
+      if (!(prop.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT))
+        die("Vulkan vertex format unsupported: %#x", a.fmt);
+      va[nattr++] =
+          (VkVertexInputAttributeDescription){i, a.stream, format, a.offset};
+      streams |= 1u << a.stream;
+    }
+  for (int i = 0; i < 16; i++)
+    if (streams & (1u << i)) {
+      if (!expanded[i] && S.stream[i].divisor > 1 && S.stream[i].stride) {
+        if (S.stream[i].divisor > V.max_vertex_divisor)
+          die("Vulkan vertex instance divisor %u exceeds device limit %u",
+              S.stream[i].divisor, V.max_vertex_divisor);
+        divisors[divisor_count++] = (VkVertexInputBindingDivisorDescriptionEXT){
+            .binding = i, .divisor = S.stream[i].divisor};
+      }
+      vb[nb++] = (VkVertexInputBindingDescription){
+          i, expanded[i] ? expanded_stride[i] : S.stream[i].stride,
+          S.stream[i].divisor ? VK_VERTEX_INPUT_RATE_INSTANCE
+                              : VK_VERTEX_INPUT_RATE_VERTEX};
+    }
+  VkPipelineVertexInputDivisorStateCreateInfoEXT divisor_info = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT,
+      .vertexBindingDivisorCount = divisor_count,
+      .pVertexBindingDivisors = divisors};
+  VkPipelineVertexInputStateCreateInfo vi = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+      .pNext = divisor_count ? &divisor_info : NULL,
+      .vertexBindingDescriptionCount = nb,
+      .pVertexBindingDescriptions = vb,
+      .vertexAttributeDescriptionCount = nattr,
+      .pVertexAttributeDescriptions = va};
+  VkPipelineInputAssemblyStateCreateInfo ia = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+      .topology = topology(idx ? idx->prim : draw->prim)};
+  VkPipelineViewportStateCreateInfo vp = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+      .viewportCount = 1,
+      .scissorCount = 1};
+  VkPolygonMode mode = S.poly.mode == 2   ? VK_POLYGON_MODE_FILL
+                       : S.poly.mode == 1 ? VK_POLYGON_MODE_LINE
+                                          : VK_POLYGON_MODE_POINT;
+  if(list[1] && list[1]->quad_transfer) {
+    const char *error=vk_shader_quad_transfer_error(list[1],samples,ia.topology,mode);
+    if(error)die("Vulkan quad transfer contract: %s (%s)",error,list[1]->key);
+  }
+  if (mode != VK_POLYGON_MODE_FILL && !V.features.fillModeNonSolid)
+    die("Vulkan non-solid polygon unsupported");
+  VkPipelineRasterizationStateCreateInfo raster = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+      .polygonMode = mode,
+      .cullMode = S.poly.cull == 1   ? VK_CULL_MODE_FRONT_BIT
+                  : S.poly.cull == 2 ? VK_CULL_MODE_BACK_BIT
+                  : S.poly.cull == 3 ? VK_CULL_MODE_FRONT_AND_BACK
+                                     : VK_CULL_MODE_NONE,
+      .frontFace = S.poly.front ? VK_FRONT_FACE_COUNTER_CLOCKWISE
+                                : VK_FRONT_FACE_CLOCKWISE,
+      .depthBiasEnable = S.poly.offset_en != 0,
+      .lineWidth = 1};
+  VkPipelineMultisampleStateCreateInfo ms = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+      .rasterizationSamples = samples,
+      .alphaToCoverageEnable = S.ms.a2c != 0};
+  VkPipelineColorBlendAttachmentState blends[8];
+  for (int i = 0; i < S.targets.n; i++) {
+    blend_st b = S.blend[i];
+    blends[i] = (VkPipelineColorBlendAttachmentState){
+        .blendEnable = (S.color.blend_en >> i) & 1,
+        .srcColorBlendFactor =
+            b.src_rgb ? blend_factor(b.src_rgb) : VK_BLEND_FACTOR_ONE,
+        .dstColorBlendFactor =
+            b.dst_rgb ? blend_factor(b.dst_rgb) : VK_BLEND_FACTOR_ZERO,
+        .colorBlendOp = b.eq_rgb ? b.eq_rgb - 1 : VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor =
+            b.src_a ? blend_factor(b.src_a) : VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor =
+            b.dst_a ? blend_factor(b.dst_a) : VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = b.eq_a ? b.eq_a - 1 : VK_BLEND_OP_ADD,
+        .colorWriteMask = (S.chmask.mask >> (i * 4)) & 15};
+  }
+  if (S.color.logic_op != NVN_LOGIC_OP_COPY && !V.features.logicOp)
+    die("Vulkan logic op unsupported");
+  VkPipelineColorBlendStateCreateInfo blend = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+      .logicOpEnable = S.color.logic_op != NVN_LOGIC_OP_COPY,
+      .logicOp = S.color.logic_op,
+      .attachmentCount = S.targets.n,
+      .pAttachments = blends};
+  memcpy(blend.blendConstants, S.blend_color, 16);
+  const VkDynamicState dynamic[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                    VK_DYNAMIC_STATE_SCISSOR,
+                                    VK_DYNAMIC_STATE_DEPTH_BIAS};
+  VkPipelineDynamicStateCreateInfo dyn = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+      .dynamicStateCount = 3,
+      .pDynamicStates = dynamic};
+  VkGraphicsPipelineCreateInfo ci = {
+      .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+      .pVertexInputState = &vi,
+      .pInputAssemblyState = &ia,
+      .pViewportState = &vp,
+      .pRasterizationState = &raster,
+      .pMultisampleState = &ms,
+      .pDepthStencilState = ds,
+      .pColorBlendState = &blend,
+      .pDynamicState = &dyn,
+      .renderPass = j->pass,.subpass=local_subpass};
+  pipeline_key key;
+  memset(&key, 0, sizeof key);
+  key.specialization_word=specialization_words[0];key.specialization_mask=specialization_words[1];
+  key.dynamic_uniforms=dynamic_uniforms;
+  for (int i = 0; i < 5; i++)
+    key.modules[i] = i==1?fragment_module:list[i] ? list[i]->module : VK_NULL_HANDLE;
+  for (unsigned i = 0; i < na; i++)
+    key.formats[i] = descriptions[i].format;
+  memcpy(key.colors, color, S.targets.n * sizeof *color);
+  key.depth = pipeline_depth;
+  memcpy(key.streams, vb, nb * sizeof *vb);
+  // stepRate 是管线状态；漏掉它会把 divisor=3 的绘制复用成 divisor=2。
+  // stepRate is pipeline state: omitting it would reuse divisor=2 for a
+  // divisor=3 draw.
+  for (unsigned i = 0; i < divisor_count; ++i)
+    key.divisors[divisors[i].binding] = divisors[i].divisor;
+  memcpy(key.attributes, va, nattr * sizeof *va);
+  pipeline_raster_key(&key.raster,&raster);
+  pipeline_multisample_key(&key.multisample,&ms);
+  pipeline_depth_key(&key.depth_stencil,ds);
+  memcpy(key.blends, blends, S.targets.n * sizeof *blends);
+  memcpy(key.blend_constants, S.blend_color, sizeof key.blend_constants);
+  key.targets = S.targets.n;
+  key.attachments = na;
+  key.streams_count = nb;
+  key.attributes_count = nattr;
+  key.topology = ia.topology;
+  key.has_depth = physical_depth;
+  key.logic_enable = blend.logicOpEnable;
+  key.logic_op = blend.logicOp;
+  if(reuse&&prepare_mode==2) {
+    draw_recorded.prepare_checks++;
+    if(memcmp(&key,&prepared_pipeline->key,sizeof key)) {
+      unsigned logged=0;
+      for(size_t i=0;i<sizeof key&&logged<12;i++) if(((const uint8_t *)&key)[i]!=((const uint8_t *)&prepared_pipeline->key)[i]) {
+        LOG("[vulkan pipeline proof] byte=%zu current=%u cached=%u epoch=%llu",i,
+          ((const uint8_t *)&key)[i],((const uint8_t *)&prepared_pipeline->key)[i],(unsigned long long)context->epoch);logged++;
+      }
+      die("Vulkan pipeline preparation proof mismatch");
+    }
+  }
+  draw_recorded.prepare_lookups++;
+  int legacy=atomic_load_explicit(&pipeline_byte_hash,memory_order_relaxed);
+  for(;;) {
+  unsigned bucket=pipeline_bucket(&key,legacy);
+  for (cached = pipelines[legacy][bucket]; cached; cached = cached->next[legacy])
+    if (cached->local_pass==local_pass && cached->subpass==local_subpass && !memcmp(&key, &cached->key, sizeof key))
+      break;
+  if (!cached) {
+    cached = calloc(1, sizeof *cached);
+    if (!cached)
+      die("Vulkan pipeline cache allocation");
+    cached->key = key;cached->local_pass=local_pass;cached->subpass=local_subpass;
+    if(local_pass) {
+      cached->local_object=j->pass_object;
+      pthread_mutex_lock(&render_object_mu);cached->local_object->references++;pthread_mutex_unlock(&render_object_mu);
+    }
+    cached->layout = vk_program_layout_mode(list,dynamic_uniforms);
+    ci.layout = cached->layout;
+    // Stage create-info is consumed only by the actual driver MISS. Keep all
+    // per-draw resource work above; cached pipelines need no Vulkan creation
+    // representation. Rebuild from the current module/tuple on each retry.
+    VkPipelineShaderStageCreateInfo stages[5];
+    uint32_t ns=0;
+    for(unsigned i=0;i<5;i++) if(list[i])
+      stages[ns++]=(VkPipelineShaderStageCreateInfo){
+        .sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage=vk_stage(i),.module=i==1?fragment_module:list[i]->module,
+        .pSpecializationInfo=i==1 && original_specialized?specialization_info:NULL,
+        .pName="main"};
+    ci.stageCount=ns;ci.pStages=stages;
+    int compile_trace=vk_system_trace_begin("Vulkan graphics PSO creation");
+    vk_pipeline_cache_begin();
+    VkResult compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
+    vk_pipeline_cache_end(compiled==VK_SUCCESS);
+    vk_system_trace_end(compile_trace);
+    if(compiled!=VK_SUCCESS && j->local && !local_consumer &&
+        j->local->shared_first_depth && !j->local->subpass &&
+        ((!j->secondary && !active_job) || active_job==j)) {
+      // This current producer draw was not issued. A fresh job has no secondary
+      // to end; a previously recorded one must STORE its earlier real draws.
+      // Neither path replays those draws or consumes a future clear command.
+      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
+      render_pass_release(cached->local_object);free(cached);
+      vk_texture_shader_abandon();vk_shader_operation_abandon();
+      if(!j->secondary) {
+        // Only release this job's references, not shared cached/in-flight FB/RP.
+        if(graphics_state->jobs!=j)die("Vulkan unrecorded pixel-local job order");
+        graphics_state->jobs=j->next;
+        framebuffer_release(j->framebuffer_object);render_pass_release(j->pass_object);
+        free(j->local);free(j);draw_recorded.pixel_local_plans--;
+      } else vk_render_end();
+      *retry=1;return NULL;
+    }
+    if(compiled!=VK_SUCCESS && local_consumer) {
+      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
+      render_pass_release(cached->local_object);free(cached);
+      vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
+      *retry=2;return NULL;
+    }
+    if(compiled==VK_ERROR_UNKNOWN && list[1] &&
+        (fragment_module==list[1]->specialization_module || hybrid_selected)) {
+      // Optional hybrid -> original exact-word specialization -> base. Each
+      // retry updates the complete module/tuple key; no failed PSO is cached.
+      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
+      render_pass_release(cached->local_object);free(cached);cached=NULL;
+      if(hybrid_selected) {
+        fragment_module=vk_uniform_predicate_rejected(list[1],specialization_words);
+        hybrid_selected=0;specialization_info->mapEntryCount=1;specialization_info->dataSize=4;
+        LOG("[vulkan Uniform predicate] driver rejected variant for %s; retain original specialization",list[1]->key);
+      } else {
+        list[1]->specialization_disabled=1;fragment_module=list[1]->module;
+        specialization_words[0]=specialization_words[1]=0;
+        LOG("[vulkan Uniform specialization] driver rejected variant for %s; retain original module",list[1]->key);
+      }
+      context->fragment_module=fragment_module;context->specialization_word=specialization_words[0];
+      context->specialization_mask=specialization_words[1];
+      key.modules[1]=fragment_module;key.specialization_word=specialization_words[0];key.specialization_mask=specialization_words[1];
+      original_specialized=fragment_module==list[1]->specialization_module;
+      continue;
+    }
+    VK_CHECK(compiled);
+    // 两种查找共享已编译管线；切换对照开关不能引入重编译或改变资源寿命。
+    // Both indexes share compiled pipelines: A/B switching cannot recompile
+    // a previously cached pipeline or change resource lifetime.
+    for(int mode=0;mode<2;mode++) {
+      unsigned b=mode==legacy?bucket:pipeline_bucket(&key,mode);
+      cached->next[mode]=pipelines[mode][b];pipelines[mode][b]=cached;
+    }
+    pipeline_count++;
+    if(!local_pass)pipeline_recipe_record(&key,list);
+  }
+  break;
+  }
+  prepared_pipeline=cached;prepared_context=*context;prepared_streams=streams;
+  *out_streams=streams;return cached;
+}
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
 static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   vk_texture_lookup_scope_begin();int source_operation=vk_shader_image_sources_begin();
@@ -1459,262 +1755,21 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   // stencil context match: no pipeline-key construction or hash on this path.
   if(reuse&&prepare_mode!=1) draw_recorded.prepare_reuses++;
   if(!reuse||prepare_mode) {
-  streams=0;
-  VkVertexInputBindingDescription vb[16];
-  VkVertexInputBindingDivisorDescriptionEXT divisors[16];
-  unsigned divisor_count = 0;
-  VkVertexInputAttributeDescription va[16];
-  uint32_t nb = 0, nattr = 0;
-  for (int i = 0; i < 16; i++)
-    if ((list[0]->input_mask & (1u << i)) && S.attr[i].fmt) {
-      va_st a = S.attr[i];
-      if (a.stream >= 16)
-        die("Vulkan vertex stream %u", a.stream);
-      VkFormat format = vk_nvn_format(a.fmt);
-      VkFormatProperties prop;
-      vk_format_properties(format, &prop);
-      if (!(prop.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT))
-        die("Vulkan vertex format unsupported: %#x", a.fmt);
-      va[nattr++] =
-          (VkVertexInputAttributeDescription){i, a.stream, format, a.offset};
-      streams |= 1u << a.stream;
-    }
-  for (int i = 0; i < 16; i++)
-    if (streams & (1u << i)) {
-      if (!expanded[i] && S.stream[i].divisor > 1 && S.stream[i].stride) {
-        if (S.stream[i].divisor > V.max_vertex_divisor)
-          die("Vulkan vertex instance divisor %u exceeds device limit %u",
-              S.stream[i].divisor, V.max_vertex_divisor);
-        divisors[divisor_count++] = (VkVertexInputBindingDivisorDescriptionEXT){
-            .binding = i, .divisor = S.stream[i].divisor};
-      }
-      vb[nb++] = (VkVertexInputBindingDescription){
-          i, expanded[i] ? expanded_stride[i] : S.stream[i].stride,
-          S.stream[i].divisor ? VK_VERTEX_INPUT_RATE_INSTANCE
-                              : VK_VERTEX_INPUT_RATE_VERTEX};
-    }
-  VkPipelineVertexInputDivisorStateCreateInfoEXT divisor_info = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT,
-      .vertexBindingDivisorCount = divisor_count,
-      .pVertexBindingDivisors = divisors};
-  VkPipelineVertexInputStateCreateInfo vi = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-      .pNext = divisor_count ? &divisor_info : NULL,
-      .vertexBindingDescriptionCount = nb,
-      .pVertexBindingDescriptions = vb,
-      .vertexAttributeDescriptionCount = nattr,
-      .pVertexAttributeDescriptions = va};
-  VkPipelineInputAssemblyStateCreateInfo ia = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-      .topology = topology(idx ? idx->prim : draw->prim)};
-  VkPipelineViewportStateCreateInfo vp = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-      .viewportCount = 1,
-      .scissorCount = 1};
-  VkPolygonMode mode = S.poly.mode == 2   ? VK_POLYGON_MODE_FILL
-                       : S.poly.mode == 1 ? VK_POLYGON_MODE_LINE
-                                          : VK_POLYGON_MODE_POINT;
-  if(list[1] && list[1]->quad_transfer) {
-    const char *error=vk_shader_quad_transfer_error(list[1],samples,ia.topology,mode);
-    if(error)die("Vulkan quad transfer contract: %s (%s)",error,list[1]->key);
+  pipeline_prepare_input preparation={.list=list,.draw=draw,.idx=idx,
+    .expanded=expanded,.expanded_stride=expanded_stride,.dynamic_uniforms=dynamic_uniforms,
+    .physical_depth=physical_depth,.original_specialized=original_specialized,.hybrid_selected=hybrid_selected,
+    .na=na,.samples=samples,.ds=&ds,.descriptions=descriptions,.color=color,.pipeline_depth=pipeline_depth,
+    .fragment_module=fragment_module,.specialization_words=specialization_words,.specialization_info=&specialization_info,
+    .job=j,.local_consumer=local_consumer,.context=&context,.local_pass=local_pass,.local_subpass=local_subpass,
+    .reuse=reuse,.prepare_mode=prepare_mode};
+  int retry=0;
+  cached=draw_pipeline_prepare(&preparation,&streams,&retry);
+  if(!cached) {
+    // The failed unissued draw has already abandoned its shader/job effects.
+    // End THIS operation before the original recursive replay entry.
+    vk_pool_operation_end(pool_operation);
+    vk_draw_record(draw,idx,retry==1?1:disable_local_plan);return;
   }
-  if (mode != VK_POLYGON_MODE_FILL && !V.features.fillModeNonSolid)
-    die("Vulkan non-solid polygon unsupported");
-  VkPipelineRasterizationStateCreateInfo raster = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-      .polygonMode = mode,
-      .cullMode = S.poly.cull == 1   ? VK_CULL_MODE_FRONT_BIT
-                  : S.poly.cull == 2 ? VK_CULL_MODE_BACK_BIT
-                  : S.poly.cull == 3 ? VK_CULL_MODE_FRONT_AND_BACK
-                                     : VK_CULL_MODE_NONE,
-      .frontFace = S.poly.front ? VK_FRONT_FACE_COUNTER_CLOCKWISE
-                                : VK_FRONT_FACE_CLOCKWISE,
-      .depthBiasEnable = S.poly.offset_en != 0,
-      .lineWidth = 1};
-  VkPipelineMultisampleStateCreateInfo ms = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-      .rasterizationSamples = samples,
-      .alphaToCoverageEnable = S.ms.a2c != 0};
-  VkPipelineColorBlendAttachmentState blends[8];
-  for (int i = 0; i < S.targets.n; i++) {
-    blend_st b = S.blend[i];
-    blends[i] = (VkPipelineColorBlendAttachmentState){
-        .blendEnable = (S.color.blend_en >> i) & 1,
-        .srcColorBlendFactor =
-            b.src_rgb ? blend_factor(b.src_rgb) : VK_BLEND_FACTOR_ONE,
-        .dstColorBlendFactor =
-            b.dst_rgb ? blend_factor(b.dst_rgb) : VK_BLEND_FACTOR_ZERO,
-        .colorBlendOp = b.eq_rgb ? b.eq_rgb - 1 : VK_BLEND_OP_ADD,
-        .srcAlphaBlendFactor =
-            b.src_a ? blend_factor(b.src_a) : VK_BLEND_FACTOR_ONE,
-        .dstAlphaBlendFactor =
-            b.dst_a ? blend_factor(b.dst_a) : VK_BLEND_FACTOR_ZERO,
-        .alphaBlendOp = b.eq_a ? b.eq_a - 1 : VK_BLEND_OP_ADD,
-        .colorWriteMask = (S.chmask.mask >> (i * 4)) & 15};
-  }
-  if (S.color.logic_op != NVN_LOGIC_OP_COPY && !V.features.logicOp)
-    die("Vulkan logic op unsupported");
-  VkPipelineColorBlendStateCreateInfo blend = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-      .logicOpEnable = S.color.logic_op != NVN_LOGIC_OP_COPY,
-      .logicOp = S.color.logic_op,
-      .attachmentCount = S.targets.n,
-      .pAttachments = blends};
-  memcpy(blend.blendConstants, S.blend_color, 16);
-  const VkDynamicState dynamic[] = {VK_DYNAMIC_STATE_VIEWPORT,
-                                    VK_DYNAMIC_STATE_SCISSOR,
-                                    VK_DYNAMIC_STATE_DEPTH_BIAS};
-  VkPipelineDynamicStateCreateInfo dyn = {
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-      .dynamicStateCount = 3,
-      .pDynamicStates = dynamic};
-  VkGraphicsPipelineCreateInfo ci = {
-      .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-      .pVertexInputState = &vi,
-      .pInputAssemblyState = &ia,
-      .pViewportState = &vp,
-      .pRasterizationState = &raster,
-      .pMultisampleState = &ms,
-      .pDepthStencilState = &ds,
-      .pColorBlendState = &blend,
-      .pDynamicState = &dyn,
-      .renderPass = j->pass,.subpass=local_subpass};
-  pipeline_key key;
-  memset(&key, 0, sizeof key);
-  key.specialization_word=specialization_words[0];key.specialization_mask=specialization_words[1];
-  key.dynamic_uniforms=dynamic_uniforms;
-  for (int i = 0; i < 5; i++)
-    key.modules[i] = i==1?fragment_module:list[i] ? list[i]->module : VK_NULL_HANDLE;
-  for (unsigned i = 0; i < na; i++)
-    key.formats[i] = descriptions[i].format;
-  memcpy(key.colors, color, S.targets.n * sizeof *color);
-  key.depth = pipeline_depth;
-  memcpy(key.streams, vb, nb * sizeof *vb);
-  // stepRate 是管线状态；漏掉它会把 divisor=3 的绘制复用成 divisor=2。
-  // stepRate is pipeline state: omitting it would reuse divisor=2 for a
-  // divisor=3 draw.
-  for (unsigned i = 0; i < divisor_count; ++i)
-    key.divisors[divisors[i].binding] = divisors[i].divisor;
-  memcpy(key.attributes, va, nattr * sizeof *va);
-  pipeline_raster_key(&key.raster,&raster);
-  pipeline_multisample_key(&key.multisample,&ms);
-  pipeline_depth_key(&key.depth_stencil,&ds);
-  memcpy(key.blends, blends, S.targets.n * sizeof *blends);
-  memcpy(key.blend_constants, S.blend_color, sizeof key.blend_constants);
-  key.targets = S.targets.n;
-  key.attachments = na;
-  key.streams_count = nb;
-  key.attributes_count = nattr;
-  key.topology = ia.topology;
-  key.has_depth = physical_depth;
-  key.logic_enable = blend.logicOpEnable;
-  key.logic_op = blend.logicOp;
-  if(reuse&&prepare_mode==2) {
-    draw_recorded.prepare_checks++;
-    if(memcmp(&key,&prepared_pipeline->key,sizeof key)) {
-      unsigned logged=0;
-      for(size_t i=0;i<sizeof key&&logged<12;i++) if(((const uint8_t *)&key)[i]!=((const uint8_t *)&prepared_pipeline->key)[i]) {
-        LOG("[vulkan pipeline proof] byte=%zu current=%u cached=%u epoch=%llu",i,
-          ((const uint8_t *)&key)[i],((const uint8_t *)&prepared_pipeline->key)[i],(unsigned long long)context.epoch);logged++;
-      }
-      die("Vulkan pipeline preparation proof mismatch");
-    }
-  }
-  draw_recorded.prepare_lookups++;
-  int legacy=atomic_load_explicit(&pipeline_byte_hash,memory_order_relaxed);
-  for(;;) {
-  unsigned bucket=pipeline_bucket(&key,legacy);
-  for (cached = pipelines[legacy][bucket]; cached; cached = cached->next[legacy])
-    if (cached->local_pass==local_pass && cached->subpass==local_subpass && !memcmp(&key, &cached->key, sizeof key))
-      break;
-  if (!cached) {
-    cached = calloc(1, sizeof *cached);
-    if (!cached)
-      die("Vulkan pipeline cache allocation");
-    cached->key = key;cached->local_pass=local_pass;cached->subpass=local_subpass;
-    if(local_pass) {
-      cached->local_object=j->pass_object;
-      pthread_mutex_lock(&render_object_mu);cached->local_object->references++;pthread_mutex_unlock(&render_object_mu);
-    }
-    cached->layout = vk_program_layout_mode(list,dynamic_uniforms);
-    ci.layout = cached->layout;
-    // Stage create-info is consumed only by the actual driver MISS. Keep all
-    // per-draw resource work above; cached pipelines need no Vulkan creation
-    // representation. Rebuild from the current module/tuple on each retry.
-    VkPipelineShaderStageCreateInfo stages[5];
-    uint32_t ns=0;
-    for(unsigned i=0;i<5;i++) if(list[i])
-      stages[ns++]=(VkPipelineShaderStageCreateInfo){
-        .sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage=vk_stage(i),.module=i==1?fragment_module:list[i]->module,
-        .pSpecializationInfo=i==1 && original_specialized?&specialization_info:NULL,
-        .pName="main"};
-    ci.stageCount=ns;ci.pStages=stages;
-    int compile_trace=vk_system_trace_begin("Vulkan graphics PSO creation");
-    vk_pipeline_cache_begin();
-    VkResult compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
-    vk_pipeline_cache_end(compiled==VK_SUCCESS);
-    vk_system_trace_end(compile_trace);
-    if(compiled!=VK_SUCCESS && j->local && !local_consumer &&
-        j->local->shared_first_depth && !j->local->subpass &&
-        ((!j->secondary && !active_job) || active_job==j)) {
-      // This current producer draw was not issued. A fresh job has no secondary
-      // to end; a previously recorded one must STORE its earlier real draws.
-      // Neither path replays those draws or consumes a future clear command.
-      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
-      render_pass_release(cached->local_object);free(cached);
-      vk_texture_shader_abandon();vk_shader_operation_abandon();
-      if(!j->secondary) {
-        // Only release this job's references, not shared cached/in-flight FB/RP.
-        if(graphics_state->jobs!=j)die("Vulkan unrecorded pixel-local job order");
-        graphics_state->jobs=j->next;
-        framebuffer_release(j->framebuffer_object);render_pass_release(j->pass_object);
-        free(j->local);free(j);draw_recorded.pixel_local_plans--;
-      } else vk_render_end();
-      vk_pool_operation_end(pool_operation);
-      vk_draw_record(draw,idx,1);return;
-    }
-    if(compiled!=VK_SUCCESS && local_consumer) {
-      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
-      render_pass_release(cached->local_object);free(cached);
-      vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
-      vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
-    }
-    if(compiled==VK_ERROR_UNKNOWN && list[1] &&
-        (fragment_module==list[1]->specialization_module || hybrid_selected)) {
-      // Optional hybrid -> original exact-word specialization -> base. Each
-      // retry updates the complete module/tuple key; no failed PSO is cached.
-      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
-      render_pass_release(cached->local_object);free(cached);cached=NULL;
-      if(hybrid_selected) {
-        fragment_module=vk_uniform_predicate_rejected(list[1],specialization_words);
-        hybrid_selected=0;specialization_info.mapEntryCount=1;specialization_info.dataSize=4;
-        LOG("[vulkan Uniform predicate] driver rejected variant for %s; retain original specialization",list[1]->key);
-      } else {
-        list[1]->specialization_disabled=1;fragment_module=list[1]->module;
-        specialization_words[0]=specialization_words[1]=0;
-        LOG("[vulkan Uniform specialization] driver rejected variant for %s; retain original module",list[1]->key);
-      }
-      context.fragment_module=fragment_module;context.specialization_word=specialization_words[0];
-      context.specialization_mask=specialization_words[1];
-      key.modules[1]=fragment_module;key.specialization_word=specialization_words[0];key.specialization_mask=specialization_words[1];
-      original_specialized=fragment_module==list[1]->specialization_module;
-      continue;
-    }
-    VK_CHECK(compiled);
-    // 两种查找共享已编译管线；切换对照开关不能引入重编译或改变资源寿命。
-    // Both indexes share compiled pipelines: A/B switching cannot recompile
-    // a previously cached pipeline or change resource lifetime.
-    for(int mode=0;mode<2;mode++) {
-      unsigned b=mode==legacy?bucket:pipeline_bucket(&key,mode);
-      cached->next[mode]=pipelines[mode][b];pipelines[mode][b]=cached;
-    }
-    pipeline_count++;
-    if(!local_pass)pipeline_recipe_record(&key,list);
-  }
-  break;
-  }
-  prepared_pipeline=cached;prepared_context=context;prepared_streams=streams;
   }
   j->pipeline = cached->pipeline;
   if(cached->warm_origin==1){cached->warm_origin=2;vk_prewarm_note_hit();}
