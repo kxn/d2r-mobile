@@ -353,3 +353,24 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 更简单的indexed候选也有实际数据：仅放松IBO offset、其他记录状态保持，79个>=2组覆盖253draw、最大8；最多省174次入口只是算术资格，不能乘indexed63%换算CPU收益。各组均TRIANGLE_LIST、无restart、相同IBO/type及其他绑定，实际index区间顺序首尾相接，counts均3的倍数、无active query。部分shader具有subgroup/storage等行为，不能全部盲合。下一步优先核原NVN replay中是否真正相邻、能否在完整setup前合并，维持effects/CPUpublication/alias/lifetime/查询与早提交边界；只在已录好的secondary末尾合并GPU命令，省不到之前已经做完的NVN准备。
 
 证据：`.local/logs/q735-f830-official-api-frame-d8f7bb9-root-actual-review.json`；`.local/logs/q735-f830-533-official-api-frame-short-path-v3-analysis/analysis.json`；`.local/logs/nonindexed-parent-envelope-533-4422-readonly-v1/result.json`。
+
+## 09a9 四轮后的高层判断与改前预算
+
+本节取代把“继续找重复小调用”作为主线的理解。09a9 同一 APK 四轮共12个独立官方 FP 窗口、20个 Perfetto 窗口均已完成；19个窗口没有 NvN queue-completion wait，普通窗口的翻译线程仍约27ms CPU/Surface。此前实际发现的 false-page dependency 有语义修正价值，但本轮未重现旧约9ms等待，也未证明稳定整线程/FPS收益，不能继续拿旧等待作为当前优化预算。
+
+先区分三种不同的改法：取消没有职责的整段处理；改变数据表示/生产时机，使必要工作变便宜；减少进入完整绘制流程的次数。查找重复函数只是其中一种手段。当前优先级如下，所有采样占比均为职责上限，不能与另一个8秒窗口相乘成精确毫秒，也不能彼此相加成已得收益。
+
+| 优先级 | 高层改法 | 改动前证据、预算与成本 | 本轮决定 |
+| --- | --- | --- | --- |
+| 1 | 已可证明没有CPU读取的图像，不再每draw完成整轮CPU源预检 | 12个当前FP窗口中 `vk_shader_cpu_sources` inclusive为4.27–5.39%。驱动原生marker和部分无packaged CPU源图像按原函数直接返回；只有这部分有资格。实际省量小于整项，还需比较真实绑定、注册epoch，并保留RT预检；缓存建立/失效和前后重核有新增成本 | 独立窄候选正在实现。复用现有source plan，只保存逻辑空预检证明，不缓存GPU ready，不跳上传、真实consumer或引用 |
+| 2 | 长寿命资源表示与每draw变化参数分离 | 更早6个独立FP窗口的相关宽包络约7.04–8.29%，其中包含必要工作；不是整个binding的21–23%。现有dynamic UBO、schema、recipe、source flow和descriptor历史已覆盖部分效果。新shader ABI/资源表会增加GPU读取、失效与生命周期成本 | 继续研究尚未覆盖的表示变化，尚不启动大规模bindless改写，不预支10ms |
+| 3 | 合法相邻draw在完整setup之前合并 | 当前Q完整API帧2312draw，严格相同状态连续组为0；仅放松IBO偏移有79组/253draw，理论最多少174入口。原NVN邻接、shader副作用、CPU发布及alias等资格尚未全部成立 | 保留高层方向；draw数量不是CPU占比，未给出合法覆盖量前不实施。不能只合并最后的Vulkan命令，留下前面全部准备 |
+| 小修并行 | 按真实完成谓词通知guest waiter | 20个原trace中整个guest wait循环实跑仅0.308–0.403ms/Surface；一个237次guest等待窗口内有2363次记录到的唤醒。仅guest序号推进才需要通知guest，internal queue/reset通知仍有其他职责 | 独立候选44f2d98已通过11项host GPU/同步验证；保留同一mutex/CPU effects发布/有限与无限等待。增加一个CV，不新增线程；尚无Android原游戏收益结论 |
+
+另一个“同pass重复纯采样合并”大方案被否决：现有page/stage/read并集、image read proof、native stage ledger和submission引用已完成主要归并。剩余native use/lifetime元数据宽并集仅0.44–0.91%用户CPU，还包含必要首次使用与重入保活。不能再将7–8%真实view消费当作可整段删除的重复工作。
+
+全应用也已复核，避免只盯翻译线程叶子：其他线程累计25.48–31.19ms CPU/Surface，其中原游戏入口与guest worker占20.90–25.12ms，约80–82%；这是跨核累计CPU，不可加到27ms作为帧关键路径，也不能擅自改游戏算法。dirty/signal/CPU-write-lease用户栈并集最多0.0264%全应用用户CPU，现有数据不支持把mprotect异常重写列为大头；现有trace没有内核缺页/系统调用归因，不能据此说其成本为零。
+
+27ms降到16.7ms需要约38%减少。当前没有证据证明还藏着一个可以安全删除的38%重复块。以上分别说明可触及范围、实际必须保留的工作和新增成本；候选完成后仍用原工具复查整线程CPU和各独立调用树，不以某个旧符号消失作为成功。
+
+证据：`.local/logs/shared-image-observe-09a9ad0-analysis-v1/result.json`；`.local/logs/shared-image-observe-09a9ad0-whole-app-readonly-v1/result.json`；`.local/logs/read-only-consumer-scope-readonly-v1/result.json`；`.local/logs/long-lived-binding-representation-readonly-v2/result.json`；`.local/logs/guest-fence-notify-44f2d98-root-source-review.json`。Mali保持用户暂停；A650不新增设备实验。以上不是持续温度或6GB设备验收。
