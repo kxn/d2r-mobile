@@ -188,7 +188,7 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
     // nested ghost's own prepare/bind scope and colliding physical recipe.
     mtl_reg_tex(outer_id,upload,NULL);
     // Keep the logical parent live across the real nested ghost as well:
-    // neither its slot nor the copied caller value may borrow child storage.
+    // the child may evict the shared slot, never the copied caller value.
     vk_texture_lookup_scope_begin();
     tex_t logical;CHECK(vk_texture_descriptor(outer_id,&logical));CHECK(logical.serial==upload->serial);
     vk_texture_binding_scope_begin();
