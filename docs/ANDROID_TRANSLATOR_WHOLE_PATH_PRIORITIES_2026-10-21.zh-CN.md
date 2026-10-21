@@ -338,3 +338,18 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 正向GPU解排布的合同复核还须避免反向推理：旧CPU staging测试保证观察结束后的CPU改写不会改变本次独立staging快照；它应继续检验CPU fallback。原MetalGPU解排布和当前coherent Buffer/native image本就执行时读源，未同步CPU覆盖属于原资源同步合同，不能据CPU实现附带的快照行为强加新的长期CPU读锁。真正需要保留的是配对FS lease/PG_BUSY完成、不能吞掉后续写的代际与原GPU读依赖，以及真实CPU effect写的完成，而不是对全部纯GPU writer强制CPU等待。
 
 证据更新：`.local/logs/shared-lazy-buffer-index-4422f76-macro-v1/533-ON1-ON2-4422-ON1-533-ON3-4422-ON2-completed-facts.json`；`.local/logs/shared-gpu-deswizzle-readonly-v1/findings-corrected-gpu-read-contract.json`。当前单独的官方API帧事务使用显式assisted避免工具shadow替换导入指针，只分析结构/状态，不作为普通性能数据或正确回放证明。
+
+
+## 当前Q/f830完整API帧补足高层预算
+
+官方GFXReconstruct现已在真实533/f830/shared/nativefull2838/.60配置取得frame1049：一非blank帧，assisted由启动属性、官方层日志及捕获annotation共同确认。原三段移动、稳定准入、存档退出、9属性/5设置及原包/资源恢复全部完成。原始文件501,120,859B已在停止游戏后传回并重核哈希；它不是普通FPS数据，也不证明coherent/noFlush的HOSTPTR payload可重放。
+
+原parser明确剔除initial-state里的2312个旧draw定义和2次重建submit，只按边界后8次真实submit及secondary执行序列枚举。本帧实际2312draw，其中749非indexed、1563indexed，执行50个renderpass。最终输出2750×1260，主3D renderArea1650×756。不能将整个JSONL的4624个draw定义直接当成本帧绘制量。
+
+严格保持所记录全部状态的连续组仍为单draw；只放松Buffer偏移后最大342组是4vertex TRIANGLE_STRIP，stride20而offset步长256。它处于748draw的同一pass内（前148、后258），存在原secondary→primary延迟出pass机制，但不能直接firstVertex重基或把提前copy越过更早writer。shader静态属性和源生命周期仍须证明。
+
+进一步用现有FP真实mtl_exec两个BL位置区分父职责：全部nonindexed仅占NvN用户采样8.18–9.13%，indexed约62.8–64.8%。因此342组即便资格成立，也不能用342/2312当CPU份额，更不能扛整个draw70%的预算。
+
+更简单的indexed候选也有实际数据：仅放松IBO offset、其他记录状态保持，79个>=2组覆盖253draw、最大8；最多省174次入口只是算术资格，不能乘indexed63%换算CPU收益。各组均TRIANGLE_LIST、无restart、相同IBO/type及其他绑定，实际index区间顺序首尾相接，counts均3的倍数、无active query。部分shader具有subgroup/storage等行为，不能全部盲合。下一步优先核原NVN replay中是否真正相邻、能否在完整setup前合并，维持effects/CPUpublication/alias/lifetime/查询与早提交边界；只在已录好的secondary末尾合并GPU命令，省不到之前已经做完的NVN准备。
+
+证据：`.local/logs/q735-f830-official-api-frame-d8f7bb9-root-actual-review.json`；`.local/logs/q735-f830-533-official-api-frame-short-path-v3-analysis/analysis.json`；`.local/logs/nonindexed-parent-envelope-533-4422-readonly-v1/result.json`。
