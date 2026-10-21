@@ -33,4 +33,12 @@ A650 的原官方 Simpleperf 数据位于 `.local/logs/tablet-shared-633-f830-v1
 
 有限故障注入使用独立源码/二进制：省略反向注册发布、忽略完整 serial 碰撞判断、物理 image 退休使用错误 hash 桶，必须被原有完整性/epoch/真实 GPU 退休断言拒绝。源数据、测试命令、真实二进制与日志哈希在 source-ready 归档列出。第一次负控工具复制二进制时漏 executable mode，尚未运行测试即 PermissionError；该记录保留，后继改用保留文件模式的复制后才取得实际负例，未改任何运行时断言。
 
-尚未 Android canonical 构建或真机部署，没有新的帧率/CPU 时间实测。后续应使用现成官方 CPU 工具，在同资源/分辨率/加载阶段核查退休叶成本和新增注册成本；不需要另写计时器。
+## Android 与主线高通短测
+
+精确 `716cd6c` 已完成原 Android 构建入口、6 个宿主库、原始 3 个 NSO 重新加工和独立 28 文件验证。最终 APP 不含新索引 oracle 或 fixture 开关，原编译选项、HUD、VMA 配置不变。
+
+Q735 的真实游戏完成三点摇杆移动、原生命周期两次存档、原包与六目录恢复，测试后确认进程已退出。营地截图未见明显黑块或几何异常；这不代表全部场景、战斗或长时间验证。
+
+官方 Perfetto 的同一 235 个完整 Surface 间隔平均 33.235 ms；翻译线程 Running 为 6416.676 ms，即每间隔约 27.305 ms，其中 replay CPU 为 26.221 ms。这个稳定营地窗口没有 `vk_texture_end_submit` 自身采样，不能用于证明 A650 加载热点的收益。独立 Simpleperf record 窗口 PSO 从 176 增至 183，variant 从 31 增至 33，不能声称所有窗口缓存均稳定，也不能把本次与历史 848 的 CPU 差值解释成因果收益或回归。
+
+单次官方 meminfo 末端 PSS 为 2,024,792 KiB、RSS 为 2,463,960 KiB、SwapPSS 为 6,805 KiB；不是峰值、匹配内存收益或 6GB 持续游玩的证明。完整结果及工具边界见 `.local/logs/native-candidate-retirement-716-Q735-v1-analysis/actual716-official-summary-root.json`。加载阶段的退休成本及新增注册成本仍需在对应工具窗口核验，不增加自定义计时器。
