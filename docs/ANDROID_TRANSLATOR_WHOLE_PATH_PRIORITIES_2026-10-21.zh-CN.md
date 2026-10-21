@@ -314,3 +314,27 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 27ms降至16.7ms需要约38%的CPU时间下降。当前没有证明一个可安全删除的38%重复块；上述局部预算不能相加成已经获得的10ms。以整条翻译线程Running、用户态职责、实际工作量和内存代价四个结果共同决定下一步。
 
 证据：`.local/logs/shared-lazy-empty-533820e-root-four-round-review.json`；`.local/logs/nvn-resource-state-533-readonly-v1/conclusion.json`；`.local/logs/nvn-adjacent-draw-existing-frame-v1/conclusion-and-budget.json`；`.local/logs/shared-lazy-buffer-index-4422f76-root-source-review.json`。
+
+
+## 4422覆盖索引：局部下降与不利整线程结果并列
+
+4422已通过原Android构建、原NSO fresh rewrite/独立28产物验证，并完成真实游戏原三段移动、3×30秒官方FP和5×8秒Perfetto、原存档及恢复。根审实际查看营地画面，未见明显缺失；没有长期游玩、温度或6GB验收。
+
+完整覆盖成本族（旧函数、新Buffer树函数、native查询及实际LLVM内联来源去重）占NvN用户态采样，从533六窗3.83–4.13%降至4422三窗1.34–1.71%。这支持减少局部查询工作；不能因旧符号self归零称全部消除，也不能直接换算另一个scheduler窗口的准确毫秒。
+
+不利整帧结果必须保留：4422首轮五窗NvN Running34.7–35.9ms/Surface，Surface43.4–44.8ms。紧邻相同旧533ON3回到26.0–27.8ms/33.1–33.6ms。4422主要运行1.34–1.38GHz、CPU7约0–1.1%，533ON3约1.56–1.60GHz、CPU7约7–31%；这不能用MHz线性校正，也暂不作单一索引因果归因。后继同4422重复事务已启动，用原工具判定运行相位的可重复性，不因一次坏结果改掉代码或筛除样本。
+
+4422首次每Surface约有8.7–9.1ms队列完成等待；FP真实保留的父链为draw→shader_cpu_sources→texture_cpu_preflight→shared_cpu_observe_prepare→internal_wait。marker墙钟含GPU执行、驱动、worker和CPU唤醒，不是纯GPU时间。它是后续高优先级的数据依赖调查入口，先确认具体资源及CPU读的必要性，而非先删除等待。实际CPU image upload调用子树只占约0.09–0.28%，不能把约9ms等待全部预支给GPU解排布。
+
+上游Metal已存在nvn_deswz_gpu_encode/encode_m4；Vulkan目前只有反向retile，缺对应正向GPU解排布。候选方向是共享NVN源→GPU线性临时Buffer→原CopyBufferToImage，保持原纹理格式/mip和通用语义。仍需证明该等待的具体源属于此路径；真实queued CPU effect、CPU写的排他/发布和dirty stamp不可用GPU barrier代替，新增dispatch/临时存储/带宽也必须计入。
+
+内存另有独立约束：lazy每个未被单VkBuffer完整覆盖的请求都可新建重叠Buffer/Memory，旧句柄保到原Pool关闭。533 ON1在unique不变时仍新增5covers/10MiB累计导入，ON2新增3covers/6MiB；这是实际对象增长，累计导入不是同量新增DRAM。4422的64B/span索引不改变此机制。几何增长cover或完整退休合同需要实际请求序列和生命周期证据，单加一个VkDeviceMemory arena包装不会省掉原本已可复用的allocation。默认仍保留已测常驻更低的非lazy有限窗口，不用整池额外约740MiB PSS换取省准入。
+
+证据：`.local/logs/shared-lazy-buffer-index-4422f76-root-canonical-raw-review.json`；`.local/logs/shared-lazy-buffer-index-4422f76-ON1-root-functional-review.json`；`.local/logs/shared-lazy-buffer-index-4422f76-ON1-FP-Q735-v1-analysis/coverage-family-comparison.json`；`.local/logs/shared-lazy-buffer-index-4422f76-macro-v1/533-ON1-ON2-4422-ON1-533-ON3-completed-facts.json`；`.local/logs/shared-lazy-import-residency-readonly-v1/findings.json`。
+
+
+4422第二轮已完成，同APK没有重现慢相位：五窗NvN Running27.6–28.0ms/Surface、Surface33.2–33.7ms，queue-completion wait均0；CPU约1.55–1.57GHz。覆盖查询族第二轮仍低于紧邻533ON3。这证明“局部工作减少”与“第一次35ms慢相位”必须分开，不能把第一轮全部归因于固定索引成本，也不能删去该不利运行。全部25个宏窗口和15个官方FP窗口保留；尚未证明净CPU/FPS/温度收益。
+
+正向GPU解排布的合同复核还须避免反向推理：旧CPU staging测试保证观察结束后的CPU改写不会改变本次独立staging快照；它应继续检验CPU fallback。原MetalGPU解排布和当前coherent Buffer/native image本就执行时读源，未同步CPU覆盖属于原资源同步合同，不能据CPU实现附带的快照行为强加新的长期CPU读锁。真正需要保留的是配对FS lease/PG_BUSY完成、不能吞掉后续写的代际与原GPU读依赖，以及真实CPU effect写的完成，而不是对全部纯GPU writer强制CPU等待。
+
+证据更新：`.local/logs/shared-lazy-buffer-index-4422f76-macro-v1/533-ON1-ON2-4422-ON1-533-ON3-4422-ON2-completed-facts.json`；`.local/logs/shared-gpu-deswizzle-readonly-v1/findings-corrected-gpu-read-contract.json`。当前单独的官方API帧事务使用显式assisted避免工具shadow替换导入指针，只分析结构/状态，不作为普通性能数据或正确回放证明。
