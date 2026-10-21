@@ -361,3 +361,14 @@ Optional `official_memory_map: {"tool": "/system/bin/showmap", "format": "json"}
 
 
 Exact8480 identity reuse keeps native6217/f830/fixed.60/1MiB, original threewalk, source/resource proof, official CPU windows and freshsave/six-directory CAS unchanged. Only gate/tests/this note differ from84b1345; its optional official_memory_map one-shot /system/bin/showmap JSON after CPU windows is used unchanged. No sampler, timer or APP probe is added. Actualebe is functional/tool qualification, not matched CPU/FPS/heat baseline. Rootartifact review must pin the actual complete canonical/raw before executableROOT input; DRAFT remainsfalse.
+
+Cold shared-image raw observation (tools only): optional input
+`shared_image_raw_observe` is strictly integer `0`/`1`, default OFF. Only `1`
+adds `--shared-image-raw-observe`; the launcher requires a cold explicit shared
+heap and sends the same-name boolean MainActivity extra. Explicit `0`/`1`
+requires the initial game-state `shared_image_raw_observe.enabled_policy` to
+be the matching boolean before the route. Missing input retains the original
+launcher and state contract. This is not an image-data correctness proof.
+FP collection, routes, fresh save2 and CAS restoration remain unchanged;
+new runtime canonical/raw artifacts and the existing reviewed input are still
+required before execution. No executable candidate identity is supplied here.

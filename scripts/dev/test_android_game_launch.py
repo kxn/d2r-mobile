@@ -50,6 +50,17 @@ class PoolWindowLaunchTests(unittest.TestCase):
     def test_default_leaves_native_startup_default_unchanged(self):
         self.assertNotIn('pool_window_bytes', self.launch_command([]))
 
+    def test_shared_image_raw_observe_is_explicit_cold_shared_only(self):
+        self.assertNotIn('shared_image_raw_observe',self.launch_command([]))
+        command=self.launch_command(['--shared-guest-heap','--shared-image-raw-observe'])
+        i=command.index('shared_image_raw_observe')
+        self.assertEqual(command[i-1:i+2],['--ez','shared_image_raw_observe','true'])
+        for options in ([],['--no-shared-guest-heap'],['--shared-guest-heap','--attach']):
+            with self.subTest(options=options),patch('sys.argv',[str(LAUNCHER),*options,'--shared-image-raw-observe']), \
+                 patch('subprocess.check_output') as adb,contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            adb.assert_not_called()
+
     def test_shared_lazy_is_explicit_cold_launch_only(self):
         self.assertNotIn('shared_lazy_windows',self.launch_command([]))
         valid=['--shared-guest-heap','--expect-shared-import-windows','--pool-window-bytes','1048576']

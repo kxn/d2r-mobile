@@ -129,6 +129,9 @@ def proof(path, digest):
     require(type(p['pool_window_bytes']) is int and
             p['pool_window_bytes'] in (1048576, 16777216),
             'reviewed finite shared-window size required')
+    if 'shared_image_raw_observe' in p:
+        require(type(p['shared_image_raw_observe']) is int and p['shared_image_raw_observe'] in (0, 1),
+                'shared_image_raw_observe must be startup-only0/1')
     if 'shared_lazy_windows' in p:
         require(type(p['shared_lazy_windows']) is int and p['shared_lazy_windows'] in (0, 1),
                 'shared_lazy_windows must be startup-only0/1')
@@ -329,6 +332,10 @@ def phase_game(dev, out, phase, p, token):
                '--fixed-3d', '--pool-copy-accounting', '--game-res', '2750x1260',
                '--timeout', '90', '--report', str(out / 'launch.json'),
                '--pool-window-bytes', str(p['pool_window_bytes']), '--expect-shared-import-windows']
+    if p.get('shared_image_raw_observe', 0):
+        command += ['--shared-image-raw-observe']
+    if 'shared_image_raw_observe' in p:
+        d['shared_image_raw_observe_requested'] = bool(p['shared_image_raw_observe'])
     if p.get('shared_lazy_windows', 0):
         command += ['--shared-lazy-windows']
     if 'shared_lazy_windows' in p:
@@ -383,6 +390,9 @@ def phase_game(dev, out, phase, p, token):
                 and launch['actual_vulkan_provider'] == 'adreno'
                 and launch['requested_legacy_astc_copy'] is False, 'shared/provider contract mismatch')
         initial = read_state(dev, out, 'before-route')
+        if 'shared_image_raw_observe' in p:
+            require(initial.get('shared_image_raw_observe', {}).get('enabled_policy') is bool(p['shared_image_raw_observe']),
+                    'actual startup shared_image_raw_observe differs')
         if 'shared_lazy_windows' in p:
             require(initial.get('shared_lazy_windows', {}).get('active') is bool(p['shared_lazy_windows']),
                     'actual startup shared_lazy_windows differs')
@@ -644,6 +654,9 @@ def main():
                 scope='Samebinary A/A and measurement disturbance; no new optimization or FPS gain claim')
             plan['scope'] = 'Same runtime originalgame/PID/camp:3x30s officialrecord and5x8s Perfetto; original save2/CAS'
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
+    if 'shared_image_raw_observe' in p:
+        plan['shared_image_raw_observe_requested'] = bool(p['shared_image_raw_observe'])
+        plan['scope'] += '; cold shared-image-raw-observe OFF/ON; separate launches, no hot switch'
     if 'shared_lazy_windows' in p:
         plan['shared_lazy_windows_requested'] = bool(p['shared_lazy_windows'])
         plan['scope'] += '; cold shared-lazy-windows OFF/ON source experiment; separate launches, no hot switch or old74 control relabelling'

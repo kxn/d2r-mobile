@@ -261,6 +261,38 @@ class Flow(unittest.TestCase):
             self.assertEqual(scope['command'],['helper','original-args','fp']+
                 ([] if value is None else ['--expect-shared-lazy-windows',str(value)]))
 
+    def test_raw_observe_input_launch_and_initial_policy(self):
+        tree=ast.parse((D/'run-game.py').read_text())
+        proof=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='proof')
+        check=next(n for n in proof.body if isinstance(n,ast.If) and ast.unparse(n.test)=="'shared_image_raw_observe' in p")
+        require=lambda v,m:self.assertTrue(v,m)
+        for value in (0,1):
+            exec(compile(ast.Module(body=[check],type_ignores=[]),'<actual-raw-input>','exec'),
+                 {'p':{'shared_image_raw_observe':value},'require':require})
+        for value in (True,False,'0','1',-1,2,None):
+            with self.subTest(value=value),self.assertRaises(AssertionError):
+                exec(compile(ast.Module(body=[check],type_ignores=[]),'<actual-raw-input>','exec'),
+                     {'p':{'shared_image_raw_observe':value},'require':require})
+        phase=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='phase_game')
+        command=next(n for n in phase.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='command' for t in n.targets))
+        add=next(n for n in phase.body if isinstance(n,ast.If) and ast.unparse(n.test)=="p.get('shared_image_raw_observe', 0)")
+        policy=next(n for n in ast.walk(phase) if isinstance(n,ast.If)
+                    and ast.unparse(n.test)=="'shared_image_raw_observe' in p" and 'enabled_policy' in ast.unparse(n))
+        for value in (None,0,1):
+            p={'serial':'HOST-FIXTURE','pool_window_bytes':1048576}
+            if value is not None:p['shared_image_raw_observe']=value
+            scope={'sys':SimpleNamespace(executable='python'),'m':SimpleNamespace(SOURCE=Path('/tool')),'p':p,'out':Path('/report')}
+            exec(compile(ast.Module(body=[command,add],type_ignores=[]),'<actual-raw-command>','exec'),scope)
+            self.assertEqual(scope['command'].count('--shared-image-raw-observe'),int(value==1))
+            self.assertIn('--shared-guest-heap',scope['command'])
+            run=lambda state:exec(compile(ast.Module(body=[policy],type_ignores=[]),'<actual-raw-policy>','exec'),
+                                  {'p':p,'initial':state,'require':require})
+            run({} if value is None else {'shared_image_raw_observe':{'enabled_policy':bool(value)}})
+            if value is not None:
+                for state in ({},{'shared_image_raw_observe':{}},
+                              *({'shared_image_raw_observe':{'enabled_policy':v}} for v in (None,value,not bool(value)))):
+                    with self.subTest(value=value,state=state),self.assertRaises(AssertionError):run(state)
+
     def test_capture_lazy_arguments_and_actual_state(self):
         helper=(D/'capture-official-cpu.py').read_text()
         prefix=helper.split('# This receipt proves')[0]
