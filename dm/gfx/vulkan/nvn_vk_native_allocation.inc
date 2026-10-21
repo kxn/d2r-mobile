@@ -41,6 +41,13 @@ static int shared_pool_storage_covered_locked(pool *p,uint64_t offset,uint64_t b
   return 1;
 }
 static void native_allocation_collect_locked(pool *p) {
+  // All live imports can remain resident for many submissions. No release
+  // notification means no node can be reclaimable; avoid scanning them all.
+  // Keep the original list/index consistency check even on this empty path.
+  if(!atomic_load_explicit(&p->native_retire_pending,memory_order_acquire)) {
+    if(!p->native_allocations && p->native_allocation_index)die("Native allocation index outlived imports");
+    return;
+  }
   native_image_allocation **at=&p->native_allocations;
   while(*at) {
     native_image_allocation *a=*at;
@@ -48,6 +55,10 @@ static void native_allocation_collect_locked(pool *p) {
     *at=a->next;
     int removed=0;p->native_allocation_index=alias_range_remove(p->native_allocation_index,&a->range,&removed);
     if(!removed)die("Native allocation index retirement mismatch");
+    // A publisher paused in released=1 keeps its notification. Never reset
+    // a pending flag after a scan: released=2 may be published concurrently.
+    if(!atomic_fetch_sub_explicit(&p->native_retire_pending,1,memory_order_acq_rel))
+      die("Native allocation retirement notification underflow");
     atomic_fetch_sub(&native_allocation_count,1);
     atomic_fetch_sub(&native_allocation_bytes,a->end-a->begin);
     vk_buffer_destroy(&a->storage);free(a);
@@ -214,13 +225,38 @@ int vk_pool_native_image_write_ready(void *token) {
   if(!a || atomic_load(&a->released))return 0;
   return (a->storage.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || vk_pool_shared_gpu_gate_mode();
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Owned handshake only. Set with an idle recorder before starting a releaser;
+// clear after it joins/completes. It is absent from every Android APP build.
+static void (*native_retire_test_pause)(void *,void *);
+static void *native_retire_test_context;
+void vk_test_native_retire_pause(void (*pause)(void *,void *),void *context) {
+  native_retire_test_pause=pause;native_retire_test_context=context;
+}
+void vk_test_native_retire_state(uint64_t address,uint64_t *pending,unsigned *live,unsigned *nodes) {
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,1);
+  if(!p)die("Native retirement test Pool missing");
+  *pending=atomic_load(&p->native_retire_pending);*live=atomic_load(&p->native_image_references);*nodes=0;
+  for(native_image_allocation *a=p->native_allocations;a;a=a->next)(*nodes)++;
+  pthread_mutex_unlock(&V.resources);
+}
+#endif
 void vk_pool_native_image_release(void *token) {
   // Can be called while resources is held or by the completion worker. Never
   // acquire it here: original physical image/scope retirement has completed.
   native_image_allocation *a=token;
   if(!a || atomic_exchange_explicit(&a->released,1,memory_order_release))
     die("Native image allocation release mismatch");
-  if(!atomic_fetch_sub(&a->owner->native_image_references,1))die("Native image Pool reference underflow");
+  // Register before dropping the Pool's last live image reference and before
+  // the final publication. The collector may free a immediately after 2; no
+  // access to a or its Pool is permitted after that final store.
+  pool *p=a->owner;
+  if(atomic_fetch_add_explicit(&p->native_retire_pending,1,memory_order_release)==UINT64_MAX)
+    die("Native allocation retirement notification overflow");
+  if(!atomic_fetch_sub(&p->native_image_references,1))die("Native image Pool reference underflow");
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(native_retire_test_pause)native_retire_test_pause(a,native_retire_test_context);
+#endif
   atomic_store_explicit(&a->released,2,memory_order_release);
   // Last access above publishes reclaimability; collector cannot free midway.
   // Owner maintenance/Pool close collects the released token. No extra waits.

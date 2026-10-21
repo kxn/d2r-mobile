@@ -67,6 +67,9 @@ typedef struct pool {
   VkMemoryPropertyFlags shared_properties;
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   _Atomic unsigned native_image_references;
+  // Release notifications, including an in-progress released=1 publisher.
+  // Only actually collected released=2 nodes discharge a notification.
+  _Atomic uint64_t native_retire_pending;
   struct native_image_allocation *native_allocations;
   alias_range_node *native_allocation_index;
 #endif
