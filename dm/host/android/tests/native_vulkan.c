@@ -832,7 +832,16 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
 #ifdef DM_VULKAN_NATIVE_RESOURCES
-  if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){vk_test_image_source_flow(1);source_flow_observe=1;}
+#ifdef DM_VULKAN_IMAGE_SOURCE_WRAP
+  if(getenv("DM_IMAGE_SOURCE_EMPTY_FIXTURE")) {
+    mtl_init();vk_test_image_source_flow(1);source_flow_observe=1;image_source_empty_boundaries();
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"image-source-empty-CPU-proof\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
+  if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){
+    vk_test_image_source_flow(1);source_flow_observe=1;mtl_init();image_source_empty_boundaries();
+  }
   if(getenv("DM_IMAGE_SOURCE_FLOW_FIXTURE")) {
     image_source_flow_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"operation-image-source-flow\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
