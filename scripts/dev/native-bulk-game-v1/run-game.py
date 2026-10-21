@@ -202,8 +202,9 @@ def proof(path, digest):
     if 'official_l1i_record' in p:
         require(p['official_l1i_record'] is True and p['runtime_commit'] in
                 ('53c7d26628142a383c9c5f8d39a3edc23a1674c3',
-                 'd14808f591b0de60c241340c3f5c5df708f4e36b') and p.get('performance_tools'),
-                'independent raw-L1I record requires exact53c or d148 with official tools')
+                 'd14808f591b0de60c241340c3f5c5df708f4e36b',
+                 '179c82dfa412153b6564974e29fc35036e0b3507') and p.get('performance_tools'),
+                'independent raw-L1I record requires an exact reviewed runtime with official tools')
     if 'performance_tools' in p:
         tools = p['performance_tools']
         require(set(tools) == {'cpu_helper', 'scheduler_helper'}, 'performance tools fields differ')
@@ -600,6 +601,12 @@ def main():
         plan.update(phases=[f"native6217-with{p['_asset_validation']['replacements']}-qualified-ASTC6-replacements"],
                     qualified_native_asset_validation=p['_asset_validation'],
                     scope=p['_asset_validation']['scope'])
+    if p['runtime_commit'] == '179c82dfa412153b6564974e29fc35036e0b3507':
+        plan['combined_CPU_validation'] = {'runtime': p['runtime_commit'],
+            'components': ['consumer-schema-admission', 'coherent-native-cache-walk', 'recording-Pool-pin-borrow'],
+            'full2838_assets_independently_qualified': True, 'single_component_CPU_AB': False,
+            'scope': 'Combined runtime plus full2838 resources; prior d148 full-resource window is a qualified comparison, not isolated component benefit'}
+        plan['scope'] += '; combined CPU179c82d; independent additional raw-L1I window retained; no individual component benefit claim'
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))

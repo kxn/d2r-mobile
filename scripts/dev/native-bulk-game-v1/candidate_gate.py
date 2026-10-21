@@ -142,7 +142,7 @@ STORE_CANONICAL='1b69f1455e775f42eb95833bb21ad4fbd3c35d059f791abbafbb1939dbf4c09
 STORE_RAW='225361b17da1deadc9f5b14d41a3c61c24b1ec41655b1b7fc54d02cdf053ca9c'
 
 
-def validate(p,pinned,read,require):
+def validate_store(p,pinned,read,require):
     if p['runtime_commit']!=STORE_RUNTIME:
         return validate_959(p,pinned,read,require)
     import copy
@@ -182,3 +182,83 @@ def validate(p,pinned,read,require):
     control['runtime_commit']=COMBINED_RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
     control['native_candidate_validation']['root_review']=old_root
     validate_959(control,pinned,read,require)
+
+
+# New runtime qualification is independent of the full2838 asset review.
+POOL_RUNTIME='179c82dfa412153b6564974e29fc35036e0b3507'
+POOL_REVIEW='c7486cae980b5872811f5706cd4a977d30fd7e6fcd555234ae0be6630e3a2395'
+POOL_CANONICAL='51206ac64c1819ad759caf2e8c5e6bbc1f5a85a98d8596ea815ecf05778bb89c'
+POOL_RAW='842ac52d3902c8173151af0f07bb55ea52760080e3bf07cf584225f28dc78af2'
+POOL_SOURCE='cc87e79cbe7cf5573980ab6d8d5a902add232c82cbf3987a478290b2f3acba63'
+POOL_ASSETS='c10b5a4977d46fc3c946c739f344dfc5167f52a7f6d15f494de303ad12bf5713'
+
+
+def validate(p,pinned,read,require):
+    if p['runtime_commit'] != POOL_RUNTIME:
+        return validate_store(p,pinned,read,require)
+    import copy
+    c=p['native_candidate_validation']
+    require(set(c)=={'root_review','qualified_base_pair','qualified_predecessor_short'},
+            'exact pool combined gate fields')
+    require(len(POOL_REVIEW)==64 and c['root_review']['sha256']==POOL_REVIEW,
+            'exact179c82d actual root artifact review remains pending or differs')
+    require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
+            and p.get('official_l1i_record') is True and p.get('performance_tools'),
+            'pool combined exact f830/1MiB only')
+    require(p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
+            'pool combined requires independent full2838 asset review')
+    review=read(pinned(c['root_review']))
+    require(review['status']=='ROOT_REVIEWED_179C82D_CANONICAL_AND_FRESH_RAW28'
+            and review['runtime']==POOL_RUNTIME
+            and review['base']=='53c7d26628142a383c9c5f8d39a3edc23a1674c3'
+            and review['tool_ready'] is True and review['actual_device_evidence'] is False,
+            'pool combined source review differs')
+    require(p['canonical']['sha256']==POOL_CANONICAL and p['raw']['sha256']==POOL_RAW
+            and review['canonical_ready']==p['canonical'] and review['raw_ready']==p['raw'],
+            'pool combined reviewed canonical/raw differs')
+    canonical=read(pinned(p['canonical']));raw=read(pinned(p['raw']))
+    require(canonical['commit']==raw['source_commit']==POOL_RUNTIME
+            and review['APK']==canonical['canonical_APK']['archive']
+            and review['host_ELF_SHA256']==canonical['canonical_native_library_sha256']['libdmhost_android.so']
+            and review['host_ELF_BuildID']==canonical['canonical_host_ELF_build_id']
+            and len(canonical['canonical_native_library_sha256'])==6
+            and len(raw['28_deployment_file_hashes'])==28
+            and len(raw['raw_original_inputs'])==3
+            and raw['all_23_module_rule_artifact_bytes_equal_53c'] is True
+            and raw['executables_equal_53c'] is True and raw['revision_provenance_fresh'] is True,
+            'pool combined actual APK/raw provenance differs')
+    flags=canonical['effective_build']
+    require(flags['cold_phase_compile_reference'] is False
+            and flags['cold_phase_default_outline'] is True
+            and flags['pool_pin_compile_reference'] is False
+            and flags['pool_pin_default_borrow'] is True
+            and 'vk_test_pool_operation_pin_counts' in canonical['new_APP_fixture_exclusion']['symbols_absent']
+            and canonical['source_only_candidate']['sha256']==POOL_SOURCE
+            and review['source_ready']['sha256']==POOL_SOURCE
+            and str(pinned(review['source_ready']))==str(pinned(canonical['source_only_candidate']))
+            and pinned(canonical['source_only_candidate']).stat().st_size==canonical['source_only_candidate']['bytes'],
+            'pool combined effective flags/fixture APP closure/sourcechain differs')
+    require(review['actual_APP_preprocessed_units']==6, 'pool combined six actual APP closures required')
+    for key in ('raw28_hashes_verified','six_APK_libraries_verified','new_fixture_symbols_absent_APP',
+                'compile_reference_OFF'):
+        require(review[key] is True,'pool combined root closure absent '+key)
+    pinned(review['source_ready']);pinned(review['APK'])
+    require(len(review['component_source_reviews'])==2, 'pool combined component root reviews required')
+    for row in review['component_source_reviews']:pinned(row)
+    full=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/native-qualified-astc6-full-game-d148-root-actual-review.json',
+                      'sha256':'446ba9c8f18d8f94cc4d8a680e75a3531bb0582e3ebe24d32e9c6fc3ae767779'}))
+    require(full['status']=='ROOT_REVIEWED_ACTUAL_FULL2838_ORIGINAL_GAME_SHORT_QUALIFICATION'
+            and full['game_modules_executed'] is True and full['original_three_routes_complete'] is True
+            and full['fresh_save2_then_stopped'] is True and full['original_restored'] is True
+            and full['cleanup_complete'] is True and full['cleanup_errors']==[]
+            and full['visual_root_actually_viewed_before_after'] is True,
+            'actual full2838 d148 resource/game/restore prerequisite incomplete')
+    for key in ('facts','result','source'):pinned(full[key])
+    # Original runtime/provider prerequisites remain independently authenticated.
+    # This is a surrogate prerequisite check, never a run or source relabelling.
+    old_root={'path':'/home/dl/d2r-mobile/.local/logs/cpu-store-phase-combined-d14808f-root-canonical-raw-review.json',
+              'sha256':STORE_REVIEW}
+    old=read(pinned(old_root));control=copy.deepcopy(p)
+    control['runtime_commit']=STORE_RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
+    control['native_candidate_validation']['root_review']=old_root
+    validate_store(control,pinned,read,require)

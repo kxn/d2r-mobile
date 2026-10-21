@@ -7,6 +7,8 @@ from pathlib import Path
 import struct
 
 RUNTIME = 'd14808f591b0de60c241340c3f5c5df708f4e36b'
+COMBINED_RUNTIME = '179c82dfa412153b6564974e29fc35036e0b3507'
+COMBINED_REVIEW = 'c7486cae980b5872811f5706cd4a977d30fd7e6fcd555234ae0be6630e3a2395'
 ASSET_REVIEW = 'e2cb6ad4fcc8b45eb379aac8e7ce4236abcbfe57de17d547e8c805ad01a8ef1c'
 DUAL_REVIEW = '9a510e8ffcb211c7c4227a69fffb7661a20c48c939ecbcc2cd8e071e32982c1b'
 COMPOSITION = '8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3'
@@ -73,9 +75,14 @@ def validate_membership(old, new, old_table, new_table, changed, require, expect
 def validate(p, pinned, read, require):
     mode = p['qualified_native_asset_validation']
     require(set(mode) == {'root_asset_review', 'dual_NVN_review'} and
-            p.get('native_candidate_validation') and p['runtime_commit'] == RUNTIME and
+            p.get('native_candidate_validation') and p['runtime_commit'] in (RUNTIME, COMBINED_RUNTIME) and
             'sustained_play' not in p and 'official_gpu_tools' not in p and
             'counter_snapshot' not in p, 'exact d148 bounded asset experiment only')
+    if p['runtime_commit'] == COMBINED_RUNTIME:
+        require(len(COMBINED_REVIEW) == 64 and
+                p['native_candidate_validation']['root_review']['sha256'] == COMBINED_REVIEW and
+                mode['root_asset_review']['sha256'] == FULL_ASSET_REVIEW,
+                'exact combined runtime review and independent full2838 assets required')
     profile = asset_profile(mode['root_asset_review']['sha256'], require)
     require(mode['dual_NVN_review']['sha256'] == DUAL_REVIEW,
             'actual root asset and dual-format reviews required')
