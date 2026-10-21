@@ -190,6 +190,13 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
 #ifndef DM_ANDROID_APP
     view_t forced_view={.set_levels=1,.base_level=0,.nlevels=1};
     mtl_reg_tex(outer_id,upload,&forced_view);
+    // Observe the genuinely different logical value before restore. An old
+    // matching snapshot must not be used to revalidate the original recipe.
+    tex_t forced_texture;view_t forced_observed;int forced_has_view;
+    vk_texture_lookup_scope_begin();
+    CHECK(vk_texture_descriptor_view(outer_id,&forced_texture,&forced_observed,&forced_has_view));
+    CHECK(forced_has_view && forced_observed.nlevels==1);
+    vk_texture_lookup_scope_end();
 #endif
     mtl_reg_tex(outer_id,upload,NULL);
     // Keep the logical parent live across the real nested ghost as well:
