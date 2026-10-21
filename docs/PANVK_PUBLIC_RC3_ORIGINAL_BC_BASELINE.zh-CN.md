@@ -14,10 +14,12 @@ ELF 无 libhardware 依赖；七个依赖与此前 PHP110 实际可加载的 df9
 
 默认仅输出离线计划。sourceReady中的执行命令是 DRAFT，待root审核并串行分配Mali后才可执行。不得访问设备；由root验收HUD55并提供当前基线后串行执行。
 
-## HUD55 后继（尚缺实际基线）
+## HUD55 后继（root实际基线已绑定）
 
-旧081d66e及其DRAFT原样保留。当前后继测试和恢复都使用55a1112宿主，不切换旧022 APK或NSO；只driver/temp/cache/overlay四目录按原CAS临时发布。源码、启动器、APK/ELF已pin55；原BC composition41ce与公开RC3 b46原字节保持。原35只是待root实际快照确认的清单长度，不能用旧022 map补齐。
+旧081d66e及其DRAFT原样保留。当前后继测试和恢复都使用55a1112宿主，不切换旧022 APK或NSO；只driver/temp/cache/overlay四目录按原CAS临时发布。源码、启动器、APK/ELF已pin55；原BC composition41ce与公开RC3 b46原字节保持。root实际selected35包含本次28个模块产物和原资源/私有driver7项；不是完整目录清单。原四目录仍现场完整inventory/CAS，不用旧022 map补齐。
 
-`--baseline-ready`及`--baseline-ready-sha256`绑定root当前快照，字段为`source_revision/APK/ELF/selected_module_resource_hashes/shader_chain/root_actual_receipt/execution_ready/root_actual_complete`。最终root实际receipt SHA尚未可用，`BASELINE_ROOT_SHA=None`使execute无条件拒绝，不能仅自填布尔值开执行。缺参数仅输出明确DRAFT。serial不再默认旧端口。
+`--baseline-ready`及`--baseline-ready-sha256`绑定root当前真实schema，SHA为`54f8ddb73fc2392a88eb678a44acdf289d4763c1f205419224ccb64ddff4b77c`；完整核source_revision、original_APK/ELF、original_modules_resources_private_driver_hashes、shaderchain、processabsent及root_actual_review。实际回执SHA `cc1ee119ab43cdfd694fc94617e469de7c6deb2cbc0f2bc04e5fe8c008f73852`明确原世界执行、save2、图形drain和stopped。两层SHA固定，不能用自报布尔或新文件替代；serial必须与实际快照相同。缺参数仅输出DRAFT，--execute仍拒绝。旧330099f缺pin版本/Ready保留。
+
+最终离线plan为execution_ready=true，只表示来源门闭合，不代表本工具已实际运行。测试/恢复都保持55宿主和当前NSO，当前原BC/sharedOFF/固定.60输出2772×1240；与HUD55固定.75功能验收不同，不作性能比较。公开RC3字节不变，未修改driver选项或默认BC策略。
 
 55源码保留同一if(dm_ingame_now())条件save分支及无条件结果LOG先于图形suspend，diag的unbuffered stderr源码与022相同；实际菜单退出仍必须本次同PID新增GPU-drain完成、没有save结果LOG且Activity STOPPED。旧022实际冷暂停记录只是历史依据，不是55真机结果。

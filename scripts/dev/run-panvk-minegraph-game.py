@@ -15,7 +15,9 @@ DRIVER_SHA='b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445'
 SOURCE=R/'.local/worktrees/debug-overlay-panel-v1'
 SOURCE_COMMIT='55a11129069bb0145414804eccb9787900264e4a'
 APK='bcfdd9a495988caacdacd07627b87c237fa78cfea5798de09311d2422f44d05a';ELF='5ed7df9d4cd28ec0972e414ee9d584bd1dda394ad71bbe43899efbe258d64757'
-BASELINE_ROOT_SHA=None # Final HUD55 actual receipt is not yet available; execute is blocked.
+BASELINE_ROOT_SHA='cc1ee119ab43cdfd694fc94617e469de7c6deb2cbc0f2bc04e5fe8c008f73852'
+BASELINE_READY=R/'.local/logs/mali-HUD55-public-RC3-selected35-baseline-root.json'
+BASELINE_READY_SHA='54f8ddb73fc2392a88eb678a44acdf289d4763c1f205419224ccb64ddff4b77c'
 CANONICAL_APK=R/'.local/build/debug-overlay-scale-55a1112-canonical-source-final/canonical.apk'
 LIFECYCLE_SOURCE_HASHES={'dm/host/android/jni.c': '149b7543f47ecd9c74b08014816f1841e72ca3a14636205d6b5f7432e3c0a825', 'dm/host/diag.c': '1f3bec4bfb2380e77024500f5d6259e5850d44fa70afba721e234b1b90b7a4e4', 'dm/host/dm.h': 'e71013417b320fc1714c55266cd8fe24dee8d3f95e00d5d99ff1c40c6a8c8a42', 'dm/gfx/nvn/hle_nvn.c': '8d378bce01788b270e60354143bdde16e3b6997e765e74619a7cf077d558b9e3', 'scripts/dev/android-game-launch.py': 'f424840a0b4138a624ffc16919b9218b7ee6547d7c319fbbc6815dcad626458d'}
 LOCK='files/runtime/.astc6-full-controller-lock'
@@ -67,14 +69,15 @@ def proof():
  return d
 
 def baseline_proof(row,execute=False):
- require(row is not None,'HUD55 actual receipt and selected baseline pending; DRAFT only')
- require(sha(row['path'])==row['sha256'],'HUD55 baseline Ready changed');p=read(row['path'])
- require(p['source_revision']==SOURCE_COMMIT and p['APK']==APK and p['ELF']==ELF,'HUD55 baseline identity mismatch')
- expected=p['selected_module_resource_hashes']
+ require(row is not None,'HUD55 actual receipt and selected baseline required')
+ require(row['sha256']==BASELINE_READY_SHA and sha(row['path'])==BASELINE_READY_SHA,'HUD55 baseline Ready changed');p=read(row['path'])
+ require(p['schema']==1 and p['status']=='ROOT_ACTUAL_STOPPED_HUD55_SELECTED35_BASELINE_FOR_PUBLIC_RC3_CONTROL','wrong HUD55 root baseline')
+ require(p['source_revision']==SOURCE_COMMIT and p['original_APK']==APK and p['original_ELF']==ELF,'HUD55 baseline identity mismatch')
+ expected=p['original_modules_resources_private_driver_hashes']
  require(isinstance(expected,dict) and len(expected)==35 and all(re.fullmatch('[a-f0-9]{64}',h) and n.startswith('files/runtime/') and '..'not in Path(n).parts for n,h in expected.items()),'HUD55 selected35 invalid')
- require(p['shader_chain']==CHAIN,'HUD55 baseline shader chain changed')
- actual=p['root_actual_receipt'];require(sha(actual['path'])==actual['sha256'],'HUD55 actual receipt changed')
- if execute:require(BASELINE_ROOT_SHA is not None and actual['sha256']==BASELINE_ROOT_SHA and p['execution_ready']is True and p['root_actual_complete']is True,'HUD55 actual baseline not approved')
+ require(p['shaderchain']==CHAIN and p['original_game_process_absent']is True,'HUD55 baseline shader/process mismatch')
+ actual=p['root_actual_review'];require(actual['sha256']==BASELINE_ROOT_SHA and sha(actual['path'])==BASELINE_ROOT_SHA,'HUD55 actual receipt changed');q=read(actual['path'])
+ require(q['status']=='ROOT_ACTUAL_55A1112_SCALE_SELECTOR_PASS_SAVED_STOPPED' and q['runtime']==SOURCE_COMMIT and q['APK_persisted']==APK and q['host_ELF']==ELF and q['actual_original_game']is True and q['original_save2']is True and q['original_graphics_suspend']is True and q['stopped']is True,'HUD55 actual baseline not approved')
  return expected
 
 def resource_proof():
@@ -254,8 +257,9 @@ def main():
  require(bool(a.baseline_ready)==bool(a.baseline_ready_sha256),'baseline path/hash must be supplied together')
  baseline_row={'path':str(a.baseline_ready.resolve()),'sha256':a.baseline_ready_sha256} if a.baseline_ready else None
  expected=baseline_proof(baseline_row,a.execute) if baseline_row else None
+ if baseline_row:require(read(baseline_row['path'])['serial']==a.serial,'HUD55 baseline serial mismatch')
  if a.execute:require(expected is not None,'DRAFT: HUD55 actual receipt/selected35 missing')
- plan={'scope':'ONE unmodified PUBLIC RC3 HUD55 original-BC/current-identical-upstreamUI compatibility baseline; no TRACE/DUMP/debug properties, oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'baseline_ready':baseline_row,'execution_ready':bool(expected and a.execute),'missing_inputs':[]if expected else['HUD55 root actual receipt + selected35 baseline Ready'],'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'ONE unmodified PUBLIC RC3 HUD55 original-BC/current-identical-upstreamUI compatibility baseline; no TRACE/DUMP/debug properties, oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'baseline_ready':baseline_row,'execution_ready':expected is not None,'missing_inputs':[]if expected else['HUD55 root actual receipt + selected35 baseline Ready'],'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);claimed=False
