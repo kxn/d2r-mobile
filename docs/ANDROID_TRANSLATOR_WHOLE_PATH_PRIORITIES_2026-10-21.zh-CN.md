@@ -362,7 +362,7 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 
 | 优先级 | 高层改法 | 改动前证据、预算与成本 | 本轮决定 |
 | --- | --- | --- | --- |
-| 1 | 已可证明没有CPU读取的图像，不再每draw完成整轮CPU源预检 | 12个当前FP窗口中 `vk_shader_cpu_sources` inclusive为4.27–5.39%。驱动原生marker和部分无packaged CPU源图像按原函数直接返回；只有这部分有资格。实际省量小于整项，还需比较真实绑定、注册epoch，并保留RT预检；缓存建立/失效和前后重核有新增成本 | 独立窄候选正在实现。复用现有source plan，只保存逻辑空预检证明，不缓存GPU ready，不跳上传、真实consumer或引用 |
+| 1 | 已可证明没有CPU读取的图像，不再每draw完成整轮CPU源预检 | 12个当前FP窗口中 `vk_shader_cpu_sources` inclusive为4.27–5.39%。驱动原生marker和部分无packaged CPU源图像按原函数直接返回；只有这部分有资格。实际省量小于整项，还需比较真实绑定、注册epoch，并保留RT预检；缓存建立/失效和前后重核有新增成本 | bf351f8已通过host验证，并与通知修改组合为e2d24a7完成Android/原NSO构建；真机对照进行中。复用现有source plan，只保存逻辑空预检证明，不缓存GPU ready，不跳上传、真实consumer或引用 |
 | 2 | 长寿命资源表示与每draw变化参数分离 | 更早6个独立FP窗口的相关宽包络约7.04–8.29%，其中包含必要工作；不是整个binding的21–23%。现有dynamic UBO、schema、recipe、source flow和descriptor历史已覆盖部分效果。新shader ABI/资源表会增加GPU读取、失效与生命周期成本 | 继续研究尚未覆盖的表示变化，尚不启动大规模bindless改写，不预支10ms |
 | 3 | 合法相邻draw在完整setup之前合并 | 当前Q完整API帧2312draw，严格相同状态连续组为0；仅放松IBO偏移有79组/253draw，理论最多少174入口。原NVN邻接、shader副作用、CPU发布及alias等资格尚未全部成立 | 保留高层方向；draw数量不是CPU占比，未给出合法覆盖量前不实施。不能只合并最后的Vulkan命令，留下前面全部准备 |
 | 小修并行 | 按真实完成谓词通知guest waiter | 20个原trace中整个guest wait循环实跑仅0.308–0.403ms/Surface；一个237次guest等待窗口内有2363次记录到的唤醒。仅guest序号推进才需要通知guest，internal queue/reset通知仍有其他职责 | 独立候选44f2d98已通过11项host GPU/同步验证；保留同一mutex/CPU effects发布/有限与无限等待。增加一个CV，不新增线程；尚无Android原游戏收益结论 |
@@ -374,3 +374,13 @@ ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；�
 27ms降到16.7ms需要约38%减少。当前没有证据证明还藏着一个可以安全删除的38%重复块。以上分别说明可触及范围、实际必须保留的工作和新增成本；候选完成后仍用原工具复查整线程CPU和各独立调用树，不以某个旧符号消失作为成功。
 
 证据：`.local/logs/shared-image-observe-09a9ad0-analysis-v1/result.json`；`.local/logs/shared-image-observe-09a9ad0-whole-app-readonly-v1/result.json`；`.local/logs/read-only-consumer-scope-readonly-v1/result.json`；`.local/logs/long-lived-binding-representation-readonly-v2/result.json`；`.local/logs/guest-fence-notify-44f2d98-root-source-review.json`。Mali保持用户暂停；A650不新增设备实验。以上不是持续温度或6GB设备验收。
+
+### e2d24a7：实现成本与当前验收边界
+
+CPU预检候选成功时省去完整binding iterator、plan重建和逐源resolver/preflight调用；原resolver在ID/epoch未变时本来就不查registry、不复制tex_t，不能再把这些算为新收益。新路径在RT预检前后各比较一次6阶段及真实ID；失效路径仍走原遍历，并增加短路的空预检证明扫描。后续consumer若把槽刷新为另一已注册ID，即使全局epoch没变，也会撤销旧证明。普通有CPU源的packaged图像、Storage/array/不完整schema和deferred-publication均保留原路径；真正上传、alias、layout、GPU引用及CPU effects未删除。
+
+两候选合并后，normal及ASan/UBSan共10项组合GPU/同步案例通过，覆盖同epoch换成真实CPU源、RT重入、上传/回读、有限/无限guest等待、CPU effects发布及command reset；各候选自己的必要验证也保留。此前把新GPU回读案例放进旧native-scope同进程夹具引起的unknown-transfer断言失败保留，新案例改为独立进程，原断言及生产同步没有放宽。
+
+原Android入口构建、535入口/524隐藏fast符号、1333导出与09a9严格相同、原UI/签名/16KiB对齐以及原6+新增1个实际APP预处理闭包均已核验。三个原NSO重新加工并独立verify28，23项稳定模块/规则产物字节与09a9一致。根独立核对5,699项哈希；实际Android ELF确认新增64B逻辑元数据和48B条件变量，无新增GPU缓冲或线程。Q已进入真实游戏营地并开始原工具对照，尚未形成整轮CPU/FPS/内存或持续温度结论；Mali和A650不操作。
+
+证据：`.local/logs/cpu-source-completion-e2d24a7-source-ready-agent.json`、`cpu-source-completion-e2d24a7-root-canonical-raw-review.json`、`cpu-source-completion-e2d24a7-combined-tests/results.json`（后两项同位于`.local/logs/`）。实现备份分支为`codex/cpu-source-completion-combined-v1`，尚未合入稳定运行时。
