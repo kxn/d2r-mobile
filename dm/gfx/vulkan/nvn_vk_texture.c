@@ -2747,6 +2747,14 @@ void mtl_reg_tex(int id, const tex_t *t, const view_t *v) {
     texture_capacity = n;
   }
   texture_descriptor *d = &texture_descriptors[id];
+  // Exact logical re-registration changes no registry fact. Keep existing
+  // physical recipes and source snapshots valid; their actual consumers still
+  // check lifetime, uploads, layouts and hazards independently. Padding may
+  // conservatively miss, but serial alone must never prove descriptor equality.
+  if(d->valid && d->has_view==!!v && !memcmp(&d->texture,t,sizeof *t) &&
+      (!v || !memcmp(&d->view,v,sizeof *v))) {
+    pthread_mutex_unlock(&V.resources);return;
+  }
   texture_registration_replace(id,d->texture.serial,t->serial);
   d->texture = *t;
   d->valid = 1;
