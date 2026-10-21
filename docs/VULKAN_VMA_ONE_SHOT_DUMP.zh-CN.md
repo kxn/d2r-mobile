@@ -13,3 +13,22 @@ Android 仅在已有 Activity 收到显式 `vma_dump_on_suspend=true` Intent 时
 当前 allocator 未打开 VMA 的 EXT_MEMORY_BUDGET flag，原生 JSON 的 Budget/Usage 会采用 heap 80% 与 VMA BlockBytes 等估值，绝不能冒充实际 GL mtrack 或 RAM/PSS。这里是原生命周期 post-drain、本 IDLE_TRIM 任务 trim 调用前的分配快照；此前 tail FRAME 可能已执行原 trim，不能称首次 trim 前，与前台 meminfo 为不同阶段；它可以解释分配/分块空隙，不能强求数值精确等于另一时刻的 GL mtrack。非 VMA 的 swapchain、驱动 PSO/descriptor/command 内存，以及直接外部共享导入都不在 VMA BlockBytes 中。
 
 复用原 idle-cache-trim GPU 用例：请求发生时仍在记录/真实 GPU gate 和 completion reset gate 均不输出；原暂停后才得到有效 JSON，随后原释放行为和像素不变。固定 `.part` 被占用的失败会清请求，原 trim 完成，下一次无新请求不重试。宿主只用标准 JSON 解析器校验原报告与 dump 当刻、同一 resources 锁及静默条件下既有 VMA stats API 的返回分配数量/字节/块数，不另造统计器。Lavapipe 测试不等于 Android 原生游戏验收。
+
+
+## Android 真实游戏验证及首次报告
+
+`7225d7f7ca6d435d59a3cfb102eabbc59a619592` 已完整 canonical 构建及从原始三份 NSO 重新生成并独立核验 28 个产物。APK SHA256 `866a9161952e88af1de34e5b138efd8092911d00715c682172a0ab71892dbaff`，宿主 Build ID `706ece49777e6146819ae2d8b0c8a414ccd0d6c9`。实际 APP 同时定义 EMBED 与 APP；仅 official stats observer 由 `!DM_ANDROID_APP` 排除，不泛称所有测试 getter 都不存在。
+
+在已运行、支持此接口的真实游戏上使用：
+
+```sh
+python3 scripts/dev/android-game-background-save.py --serial DEVICE --report NEW_REPORT.json --vma-dump-on-suspend
+```
+
+该选项默认关闭。请求只随原工具的单次 foreground Intent 发送；在原 fresh log offset/HOME 前确认本 PID 的新 `accepted=1`。原普通保存及 `--resume` 的命令序列、报告不变。单独发送请求后再由旧工具拉前台，会因 onNewIntent 异步交付造成暂停轮次错配；前两次实际失败记录保留，不能当成采集成功。工具返回 save2 也不代表 VMA/图形挂起已经完成：取文件前仍须确认本次请求、确切 save2、VMA complete=1 和其后的原图形挂起标记，且 PID 不变。
+
+Mali PHP110 的实际 PID 20005 完成真实游戏模块、两段原营地步行、本次原 save2/图形暂停、完整 JSON 和暂停阶段系统 meminfo/showmap。JSON 433,399 字节，SHA256 `5b20dc3b8819c175ff921e237d70a9f846dd8c83542dcaa262a0e1553a112dac`；停止后原022 APK、模块、资源、缓存与驱动恢复，清理错误为空。玩家之前进度先通过原生命周期保存，无存档回滚。实际 HUD 可见角色、建筑与原界面，原绿色地面斑点仍在，不声明全场景正确。
+
+原生 `Total` 报告 BlockCount=40、BlockBytes=1,255,370,752、AllocationCount=2,995、AllocationBytes=999,156,948、UnusedRangeCount=2,560。两字节量差约 244.34 MiB，说明持有块与有效分配之间有可调查空间；并不说明这些分散空洞都能立即归还、都已驻留，或整体 PSS 能下降同样多。Budget/Usage 仍是 VMA 估算，不是系统内存报告。该 JSON 位于本暂停 job trim 前，官方 meminfo/showmap 是原挂起完成后的 post-trim，不能当同一瞬间精确相减；更不能把本轮当作降温或 6 GB 游玩验收。
+
+本地证据：`.local/logs/mali-vma-paused-7225d7f-Mali-v4-root-actual-review.json`；原始 JSON 和官方输出位于 `.local/logs/mali-vma-paused-7225d7f-Mali-v4/`。生产默认不导出，未增加周期扫描。
