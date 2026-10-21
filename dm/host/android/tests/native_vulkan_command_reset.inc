@@ -37,6 +37,7 @@ static void command_reset_pixels(const uint8_t *data,unsigned slots,uint32_t bas
   for(unsigned n=0;n<64;n++)CHECK(data[4096+slots*64+n]==0xa5);
 }
 static void command_pool_reset_test(void) {
+  enum { context_limit = 2 };
   CHECK(V.cmd==VK_NULL_HANDLE);
   mtl_finish();
   uint8_t *data;CHECK(!posix_memalign((void **)&data,65536,65536));
@@ -59,24 +60,24 @@ static void command_pool_reset_test(void) {
   CHECK(vk_command_reset_test_wait_blocked(serial)==serial);
   uint64_t done,ready;unsigned sets;
   vk_command_reset_test_snapshot(&done,&ready,&sets);
-  CHECK(done==serial&&ready<serial&&sets<=16);
+  CHECK(done==serial&&ready<serial&&sets<=context_limit);
   command_reset_pixels(data,1,UINT32_C(0x91ab1234));
   command_reset_release release={0};pthread_t helper;
   CHECK(!pthread_create(&helper,NULL,command_reset_release_waiter,&release));
   mtl_finish();
   CHECK(!pthread_join(helper,NULL));CHECK(release.observed==serial);
   vk_command_reset_test_snapshot(&done,&ready,&sets);
-  CHECK(done==serial&&ready==serial&&sets<=16);
+  CHECK(done==serial&&ready==serial&&sets<=context_limit);
 
   if(vk_async_submissions()) {
-    // Consume all 16 bounded contexts while the first completed pool remains
-    // inside the reset gate. The 17th begin must wait the ready predicate, not
+    // Consume both bounded contexts while the first completed pool remains
+    // inside the reset gate. The next begin must wait the ready predicate, not
     // queue completion or an empty pending list. Only the fixture helper
     // releases the gate after observing that actual cap wait.
     vk_command_reset_test_gate(1);
     const uint32_t base=UINT32_C(0x6ac30000);
     uint64_t first=0,last=0;
-    for(unsigned slot=0;slot<16;slot++) {
+    for(unsigned slot=0;slot<context_limit;slot++) {
       command_reset_fill(data,slot,base+slot,&last);
       if(!slot) {
         first=last;
@@ -84,15 +85,15 @@ static void command_pool_reset_test(void) {
       }
     }
     vk_command_reset_test_snapshot(&done,&ready,&sets);
-    CHECK(done==first&&ready<first&&sets==16);
+    CHECK(done==first&&ready<first&&sets==context_limit);
     release=(command_reset_release){.pressure=1};
     CHECK(!pthread_create(&helper,NULL,command_reset_release_waiter,&release));
-    guest=command_reset_fill(data,16,base+16,&last);
+    guest=command_reset_fill(data,context_limit,base+context_limit,&last);
     CHECK(!pthread_join(helper,NULL));CHECK(release.observed==first);
     CHECK(mtl_wait(guest,UINT64_MAX));mtl_finish();
     vk_command_reset_test_snapshot(&done,&ready,&sets);
-    CHECK(done==last&&ready==last&&sets==16);
-    command_reset_pixels(data,17,base);
+    CHECK(done==last&&ready==last&&sets==context_limit);
+    command_reset_pixels(data,context_limit+1,base);
   }
   // Subsequent recording must use properly reset primary/secondary ownership;
   // actual GPU bytes and untouched neighbors stay valid through pool teardown.
@@ -102,7 +103,7 @@ static void command_pool_reset_test(void) {
     CHECK(value==UINT32_C(0x5b4a3021));
   }
   CALL(nvnMemoryPoolFinalize,&pool);free(data);
-  LOG("[vulkan command reset fixture] GPU/effects visible before reset, Finish waits ready, bounded cap16 ownership gap and subsequent GPU bytes passed: async=%d",vk_async_submissions());
+  LOG("[vulkan command reset fixture] GPU/effects visible before reset, Finish waits ready, bounded cap2 ownership gap and subsequent GPU bytes passed: async=%d",vk_async_submissions());
 }
 #else
 static void command_pool_reset_test(void) {
