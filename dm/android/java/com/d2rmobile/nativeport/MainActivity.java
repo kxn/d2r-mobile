@@ -54,6 +54,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativeSharedGuestHeap(boolean enabled);
     private static native void nativeSharedLazyWindows(boolean enabled);
+    private static native void nativeSharedImageRawObserve(boolean enabled);
     private static native void nativeLegacyAstcCopy(boolean enabled, boolean fixture);
     private static native void nativeNativeResources(String table, String packSha256, String producerSha256, String fixtureDirectory, boolean validation);
     private static native void nativePoolDeferPublication(boolean enabled);
@@ -215,6 +216,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!hostStarted) {
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
+            nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));
             nativeLegacyAstcCopy(getIntent().getBooleanExtra("legacy_astc_copy", false),
                     getIntent().getBooleanExtra("run_vulkan_tests", false) &&
                     getIntent().getBooleanExtra("legacy_astc_copy_test", false));
@@ -442,6 +444,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("shared_lazy_windows")) {
             android.util.Log.w("D2RPool", "shared_lazy_windows is startup-only; cold restart required");
             intent.removeExtra("shared_lazy_windows");
+        }
+        if (intent.hasExtra("shared_image_raw_observe")) {
+            android.util.Log.w("D2RPool", "shared_image_raw_observe is startup-only; cold restart required");
+            intent.removeExtra("shared_image_raw_observe");
         }
         if (intent.hasExtra("shared_guest_heap")) {
             android.util.Log.w("D2RPool", "shared_guest_heap is startup-only; cold restart required");

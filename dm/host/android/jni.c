@@ -363,6 +363,7 @@ static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int shared_guest_heap_startup;
 static int shared_lazy_windows_startup;
+static int shared_image_raw_observe_startup;
 extern int vk_loader_is_initialized(void);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 static int native_resource_fixture_validation=1;
@@ -448,6 +449,18 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedLa
     return;
   }
   shared_lazy_windows_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSharedImageRawObserve(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"shared_image_raw_observe is fixed before native startup");
+    return;
+  }
+  shared_image_raw_observe_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
 static int legacy_astc_startup,legacy_astc_fixture,legacy_astc_configured;
@@ -668,6 +681,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
   if(setenv("DM_VK_SHARED_LAZY_WINDOWS",shared_lazy_windows_startup?"1":"0",1) ||
+      setenv("DM_VK_SHARED_IMAGE_RAW_OBSERVE",shared_image_raw_observe_startup?"1":"0",1) ||
       setenv("DM_GUEST_HEAP_SHARED",shared_guest_heap_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SHARED_POOLS",shared_guest_heap_startup?"1":"0",1) ||
       setenv("PANVK_DM_HOST_IMPORT",shared_guest_heap_startup?"true":"false",1) ||

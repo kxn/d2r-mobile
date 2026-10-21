@@ -505,6 +505,10 @@ static void observe_tick(const uint64_t *registers) {
     void vk_pool_lazy_window_stats(int *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
     int lazy_active;uint64_t lazy_unique,lazy_mapped,lazy_nodes,lazy_covers;
     vk_pool_lazy_window_stats(&lazy_active,&lazy_unique,&lazy_mapped,&lazy_nodes,&lazy_covers);
+    int vk_pool_shared_image_raw_observe_mode(void);
+    // Enabled policy only: each observation still proves its Pool/page eligibility.
+    fprintf(state_log, ",\"shared_image_raw_observe\":{\"experimental\":true,\"enabled_policy\":%s}",
+      vk_pool_shared_image_raw_observe_mode()?"true":"false");
     fprintf(state_log, ",\"shared_lazy_windows\":{\"experimental\":true,\"active\":%s,\"logical_unique_bytes\":%llu,\"import_allocation_bytes\":%llu,\"import_nodes\":%llu,\"cover_nodes\":%llu}",
       lazy_active?"true":"false",(unsigned long long)lazy_unique,(unsigned long long)lazy_mapped,
       (unsigned long long)lazy_nodes,(unsigned long long)lazy_covers);
