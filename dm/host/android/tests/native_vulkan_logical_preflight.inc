@@ -1,3 +1,38 @@
+// Producer registration remains outside the recording owner's TLS scope.
+typedef struct { int id; const tex_t *texture; int ok; } lookup_producer;
+static void *lookup_producer_register(void *arg) {
+  lookup_producer *p=arg;tex_t value;
+  mtl_reg_tex(p->id,p->texture,NULL);
+  p->ok=vk_texture_descriptor(p->id,&value) && value.serial==p->texture->serial;
+  return NULL;
+}
+static void logical_lookup_boundaries(int id,const tex_t *a,const tex_t *b) {
+  tex_t value;view_t view;int has_view;
+  vk_texture_lookup_scope_begin();
+  mtl_reg_tex(id,a,NULL);CHECK(vk_texture_descriptor(id,&value)&&value.serial==a->serial);
+  vk_texture_footprint footprint;CHECK(vk_texture_descriptor_footprint(id,&footprint));
+  CHECK(footprint.serial==a->serial && footprint.base==(uintptr_t)a->mem);
+  // Nested ghost/retry tables cannot overwrite the parent; registry growth,
+  // replacement and a limit change must invalidate every depth immediately.
+  for(unsigned n=0;n<9;n++)vk_texture_lookup_scope_begin();
+  mtl_set_tex_pool_n(4096);mtl_reg_tex(2048,b,NULL);
+  const view_t srgb={.set_format=1,.format=NVN_FORMAT_RGBA8_SRGB};mtl_reg_tex(id,b,&srgb);
+  CHECK(vk_texture_descriptor_view(id,&value,&view,&has_view));
+  CHECK(value.serial==b->serial && has_view && view.format==NVN_FORMAT_RGBA8_SRGB);
+  for(unsigned n=0;n<9;n++)vk_texture_lookup_scope_end();
+  CHECK(vk_texture_descriptor(id,&value)&&value.serial==b->serial);
+  lookup_producer producer={id,a,0};pthread_t thread;
+  CHECK(!pthread_create(&thread,NULL,lookup_producer_register,&producer));
+  CHECK(!pthread_join(thread,NULL));CHECK(producer.ok);
+  CHECK(vk_texture_descriptor(id,&value)&&value.serial==a->serial);
+  mtl_set_tex_pool_n(id);CHECK(!vk_texture_descriptor(id,&value));
+  vk_texture_lookup_scope_end();
+  // Reusing the same stack depth cannot reuse an old scope's descriptor.
+  mtl_set_tex_pool_n(512);mtl_reg_tex(id,b,NULL);
+  vk_texture_lookup_scope_begin();CHECK(vk_texture_descriptor(id,&value)&&value.serial==b->serial);
+  vk_texture_lookup_scope_end();
+  mtl_reg_tex(id,a,NULL);
+}
 // Consumer pixels remain the oracle: logical no-op preparation must never
 // cache uploaded bytes, a physical image/view, a layout or a resource hazard.
 static void logical_preflight_pixels(const NVNtexture *texture,const uint8_t color[4],unsigned tolerance) {
@@ -55,6 +90,7 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     CHECK(CALL(nvnSamplerInitialize,&sampler,&sb));mtl_reg_samp(1,&((const samp_t *)&sampler)->p);
     enum { ordinary=37,collision=270 };mtl_set_tex_pool_n(512);
     mtl_reg_tex(ordinary,cpu,NULL);mtl_reg_tex(collision,(const tex_t *)&textures[2],NULL);
+    logical_lookup_boundaries(ordinary,cpu,(const tex_t *)&textures[2]);
     S=(vk_state){.program=(const prog_t *)&program,.depth_range={0,1},.chmask={~0u}};
     S.poly=*(const poly_st *)&polygon;S.ds=*(const ds_st *)&ds;S.color=*(const color_st *)&color;S.ms=*(const ms_st *)&ms;
     S.attr[0]=*(const va_st *)&attr[0];S.attr[1]=*(const va_st *)&attr[1];S.stream[0]=*(const vs_st *)&stream;

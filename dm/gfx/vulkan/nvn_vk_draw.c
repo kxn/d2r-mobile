@@ -969,7 +969,13 @@ static int draw_pool_collect(void *context,vk_pool_requirement_sink sink,void *o
   vk_program_shaders(S.program,list);list[5]=NULL;
   return vk_graphics_pool_admission(list,&S,plan->indexed,sink,out);
 }
-static void vk_draw_record(const p_draw *draw, const p_draw_idx *idx,int disable_local_plan) {
+static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
+static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
+  vk_texture_lookup_scope_begin();
+  vk_draw_record_impl(draw,idx,disable_local_plan);
+  vk_texture_lookup_scope_end();
+}
+static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   // A state change outside the complete planned sequence cannot enable
   // format-dependent bias inside a synthetic no-DS producer pass.
   if(active_job && active_job->local && !active_job->local->subpass &&
