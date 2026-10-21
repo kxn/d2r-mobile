@@ -93,15 +93,36 @@ def inherit_overlay(dev,d,p):
 def snapshot(dev,pid,path):
  require(dev.adb('shell','pidof '+PKG+' || true')==str(pid),'first PID changed')
  d=json.loads(dev.app('tail','-n','1','files/runtime/game-state.jsonl'));require(d['valid']and d['world_input_ready']and .5<=d['scale_3d']<=.75 and not d['guest_heap']['shared']and d['game_output']==d['surface_output']=={'width':2772,'height':1240}and not d['world_freeze']['host_frozen']and not d['runtime_extrap']['enabled'],'stock scene/mode changed');path.write_text(json.dumps(d,indent=2)+'\n');return d
+def capture_screen(dev,pid,out,label,result):
+ # The original standard screencap, now also retained at route failure points.
+ # Screenshot failures are auxiliary, never an alternate route/visual success.
+ row={'label':label,'path':str(out/(label+'.png')),'PID':pid,'capture_complete':False}
+ result.setdefault('screenshots',[]).append(row)
+ try:
+  require(dev.adb('shell','pidof '+PKG+' || true')==str(pid),'screenshot first PID changed')
+  q=subprocess.run(dev.command+['exec-out','screencap','-p'],capture_output=True,check=True,timeout=15)
+  require(q.stdout.startswith(b'\x89PNG\r\n\x1a\n'),'screenshot notPNG')
+  with(out/(label+'.png')).open('xb')as f:f.write(q.stdout)
+  row.update(capture_complete=True,sha256=sha(out/(label+'.png')),bytes=len(q.stdout),visual_review_pending=True)
+ except Exception as e:
+  # Preserve the existing signal handler's cooperative stop rather than
+  # swallowing a cancellation that happened during this auxiliary command.
+  if isinstance(e,RuntimeError)and str(e).startswith('cooperative owner cancellation:'):raise
+  row['error']=repr(e);result.setdefault('screenshot_errors',[]).append({'label':label,'error':repr(e)})
+ return row
+
 def walk_reported_exit(dev,pid,out,serial):
  before=snapshot(dev,pid,out/'before-exit.json')
  require(before['area']==1 and before['near_area']==2 and abs(before['x']-5225)<=24 and abs(before['y']-6289)<=24,'outside actual known camp-to-field route admission')
  result={'before_area':before['area'],'before_xy':[before['x'],before['y']],'reported_near_reference':[before['near_area'],before['near_x'],before['near_y']],'scope':'two historically successful original joystick legs, no combat/teleport/world writes','legs':[],'actual_area_transition_accepted':False}
  try:
+  capture_screen(dev,pid,out,'before-exit',result)
   for name,x,y,radius in [('east',5265,6288,'4'),('gate',5267,6275,'.5')]:
    command=[sys.executable,str(HERE/'walk-reported-exit.py'),str(x),str(y),'--until-area','2','--expect-pid',str(pid),'--stop-on-area-change','--radius',radius,'--timeout','15','--ready-timeout','3','--serial',serial]
    row={'leg':name,'target':[x,y],'command':command};result['legs'].append(row)
-   with(out/('walk-historical-'+name+'.log')).open('x')as f:q=subprocess.run(command,stdout=f,stderr=subprocess.STDOUT,timeout=40)
+   with(out/('walk-historical-'+name+'.log')).open('x')as f:
+    try:q=subprocess.run(command,stdout=f,stderr=subprocess.STDOUT,timeout=40)
+    finally:capture_screen(dev,pid,out,'after-'+name,result)
    row['tool_returncode']=q.returncode;after=snapshot(dev,pid,out/('after-'+name+'.json'));row['after_area']=after['area'];row['after_xy']=[after['x'],after['y']]
    require(q.returncode==0 and after['area']in(1,2),'normal historical route failed or unexpected area')
    if after['area']==2:
@@ -147,8 +168,8 @@ def launch(dev,d,p,out):
   snapshot(dev,own,out/'after-route.json');walk_reported_exit(dev,own,out,d['serial']);d['historical_original_input_exit_passed']=True;env=os.environ.copy();env['PATH']=str(R/'.local/android-sdk/platform-tools')+':'+env['PATH']
   # Resource correctness/memory only; no repeat bandwidth/CPU baseline.
   same();(out/'official-dumpsys-meminfo.txt').write_text(dev.adb('shell','dumpsys','meminfo',str(own)));showmap(dev,own,out);snapshot(dev,own,out/'after-tools.json')
-  q=subprocess.run(dev.command+['exec-out','screencap','-p'],capture_output=True,check=True,timeout=15);require(q.stdout.startswith(b'\x89PNG\r\n\x1a\n'),'screenshot notPNG');(out/'HUD.png').write_bytes(q.stdout)
-  d['actual_HUD_and_short_official_capture_complete']=True;d['visual_review_pending']=True
+  shot=capture_screen(dev,own,out,'HUD',d)
+  d['actual_HUD_and_short_official_capture_complete']=shot['capture_complete'];d['visual_review_pending']=shot['capture_complete']
  finally:
   if client and client.poll()is None:client.terminate();client.wait(timeout=10)
   for remote,local in [('files/runtime/native.log','native.log'),('files/runtime/game-state.jsonl','game-state.jsonl')]:

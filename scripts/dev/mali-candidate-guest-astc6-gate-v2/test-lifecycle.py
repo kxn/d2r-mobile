@@ -28,25 +28,30 @@ class Dev:
   raise AssertionError('unexpected app '+str(a))
 count=0
 try:
- for mode in ('normal','exited','replacement','save-failed'):
+ for mode in ('normal','exited','replacement','save-failed','route-failed-shots-failed'):
   with tempfile.TemporaryDirectory()as td:
    out=Path(td);dev=Dev(mode);d={'serial':'10.10.10.44:34455'}
    def run(argv,**kw):
-    if any('walk-reported-exit.py'in str(x)for x in argv):dev.state['area']=2;return subprocess.CompletedProcess(argv,0)
+    if any('walk-reported-exit.py'in str(x)for x in argv):dev.state['area']=2;return subprocess.CompletedProcess(argv,2 if mode=='route-failed-shots-failed'else 0)
     if any('walk-to.py'in str(x)for x in argv):return subprocess.CompletedProcess(argv,0)
     if any('capture-official-cpu.py'in str(x)for x in argv):raise AssertionError('should not repeat CPU profile')
     if any('background-save.py'in str(x)for x in argv):
      dev.saves+=1;p=Path(argv[argv.index('--report')+1]);p.write_text(json.dumps({'pid':101,'fresh_original_lifecycle_save':mode!='save-failed','save_commits':2}));return subprocess.CompletedProcess(argv,0)
+    if argv[:1]==['fake-owned-adb']:raise subprocess.TimeoutExpired(argv,15)
     raise AssertionError('unexpected subprocess '+str(argv))
    m.subprocess.run=run;m.subprocess.Popen=Client
    try:m.launch(dev,d,{},out)
-   except RuntimeError:pass
+   except RuntimeError as error:
+    if mode=='route-failed-shots-failed':assert str(error)=='normal historical route failed or unexpected area'
    else:raise AssertionError('official failure misreported as success')
    assert d['first_PID']==101
-   if mode=='normal':assert dev.saves==1 and dev.force_stops==1 and d['fresh_save2_then_stopped']
+   if mode in ('normal','route-failed-shots-failed'):assert dev.saves==1 and dev.force_stops==1 and d['fresh_save2_then_stopped']
    elif mode=='exited':assert dev.saves==0 and dev.force_stops==0 and d['already_exited_no_save_restart']
    elif mode=='replacement':assert dev.saves==0 and dev.force_stops==0
    else:assert dev.saves==1 and dev.force_stops==0
+   if mode=='route-failed-shots-failed':
+    r=json.loads((out/'reported-exit-result.json').read_text());assert len(r['screenshot_errors'])==2 and not r['actual_area_transition_accepted']
+    assert not d.get('actual_HUD_and_short_official_capture_complete')
    count+=1
 finally:m.subprocess.run=realrun;m.subprocess.Popen=realpopen
 print(json.dumps({'passed':True,'cases':count,'actual_launch_finally':'original lifecycle save2 before force-stop; no restart on exitedPID; no save/kill replacement; failed save preserves running owner','device_access':False}))
