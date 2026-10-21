@@ -261,6 +261,7 @@ static _Atomic int pool_mirror_requested=-1;
 static _Atomic uint64_t pool_window_requested=UINT64_MAX;
 static _Atomic int pool_options_initialized;
 static unsigned pool_operation_depth,pool_maintenance;
+static void pool_operation_before_commit(void);
 static uint64_t pool_window_admissions,pool_window_added_bytes,pool_window_added_spans,pool_window_promotions;
 static _Atomic uint64_t published_window_admissions,published_window_added_bytes,published_window_added_spans,published_window_promotions;
 static _Atomic uint64_t published_window_fallbacks;
@@ -4291,6 +4292,7 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
                        VkSemaphore signal) {
   if (!V.cmd)
     die("Vulkan commit without begin");
+  if(pool_operation_depth)pool_operation_before_commit();
   vk_mip_clear_drain();
   vk_counter_flush();
   if(recording_resources->submission_barrier_reference) vk_barrier();

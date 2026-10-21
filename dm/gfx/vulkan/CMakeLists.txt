@@ -96,3 +96,8 @@ option(DM_VULKAN_COLD_PHASE_REFERENCE "Inline complete Vulkan construction phase
 if(DM_VULKAN_COLD_PHASE_REFERENCE)
   target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_COLD_PHASE_REFERENCE=1)
 endif()
+
+option(DM_VULKAN_POOL_PIN_REFERENCE "Acquire independent operation pins even for current recording owners" OFF)
+if(DM_VULKAN_POOL_PIN_REFERENCE)
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_POOL_PIN_REFERENCE=1)
+endif()

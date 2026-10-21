@@ -3,6 +3,7 @@
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 extern int vk_test_pool_operation_geometry(uint64_t,uint64_t,vk_pool_span_info *);
 extern uint64_t vk_test_pool_operation_geometry_uses(void);
+extern void vk_test_pool_operation_pin_counts(size_t *,size_t *);
 static void pool_operation_geometry_test(void) {
   enum {W=65536,SIZE=6*W+193};uint8_t *storage,*other;
   CHECK(!posix_memalign((void **)&storage,W,SIZE));CHECK(!posix_memalign((void **)&other,W,W));
@@ -76,6 +77,52 @@ static void pool_operation_geometry_test(void) {
   pool_window_read((void *)(uintptr_t)needs[0].address,16,first);
   for(unsigned d=8;d;d--)vk_pool_operation_end(tokens[d-1]);
   vk_internal_wait(vk_internal_commit());for(unsigned i=0;i<16;i++)CHECK(first[i]==0x31);
+  // A real prior consumer owns this recording's Pool ref. New operations
+  // borrow it without weakening the token's lifetime across an internal
+  // commit: upgrade before completion, then consume again on a fresh owner.
+  mtl_sub_begin();int prime=vk_pool_operation_begin_ranges(needs,2);CHECK(prime);
+  size_t owned,borrowed;vk_test_pool_operation_pin_counts(&owned,&borrowed);CHECK(owned==1&&borrowed==0);
+  pool_window_read((void *)(uintptr_t)needs[0].address,16,first);vk_pool_operation_end(prime);
+  int borrowed_token=vk_pool_operation_begin_ranges(needs,2);CHECK(borrowed_token);
+  vk_test_pool_operation_pin_counts(&owned,&borrowed);
+#ifdef DM_VULKAN_POOL_PIN_REFERENCE
+  CHECK(owned==1&&borrowed==0);
+#else
+  CHECK(owned==0&&borrowed==1);
+#endif
+  CHECK(vk_test_pool_operation_geometry(needs[0].address,16,&a));
+  vk_internal_wait(vk_internal_commit());
+  vk_test_pool_operation_pin_counts(&owned,&borrowed);CHECK(owned==1&&borrowed==0);
+  CHECK(vk_test_pool_operation_geometry(needs[0].address,16,&q)&&q.handle==a.handle);
+  mtl_sub_begin();pool_window_read((void *)(uintptr_t)needs[0].address,16,first);
+  int borrowed_child=vk_pool_operation_begin_ranges(needs+1,1);CHECK(borrowed_child==borrowed_token+1);
+  vk_test_pool_operation_pin_counts(&owned,&borrowed);
+#ifdef DM_VULKAN_POOL_PIN_REFERENCE
+  CHECK(owned==1&&borrowed==0);
+#else
+  CHECK(owned==0&&borrowed==1);
+#endif
+  pool_window_read((void *)(uintptr_t)needs[1].address,16,second);
+  vk_internal_wait(vk_internal_commit());vk_test_pool_operation_pin_counts(&owned,&borrowed);CHECK(owned==1&&borrowed==0);
+  vk_pool_operation_end(borrowed_child);vk_pool_operation_end(borrowed_token);
+  for(unsigned i=0;i<16;i++)CHECK(first[i]==0x31);
+  for(unsigned i=0;i<4;i++)CHECK(!memcmp(second+4*i,(uint32_t[]){0x98765432u},4));
+  // Mixed owners and a failed first pin attempt: the old Pool borrows a real
+  // current access; the new Pool must reserve storage and acquire its own pin.
+  mtl_pool_add(other,W);mtl_sub_begin();prime=vk_pool_operation_begin_ranges(needs,1);
+  pool_window_read((void *)(uintptr_t)needs[0].address,16,first);vk_pool_operation_end(prime);
+  vk_pool_requirement mixed[]={needs[0],pool_window_need(other+64,16,2,VK_PIPELINE_STAGE_TRANSFER_BIT,1)};
+  borrowed_token=vk_pool_operation_begin_ranges(mixed,2);CHECK(borrowed_token);
+  vk_test_pool_operation_pin_counts(&owned,&borrowed);
+#ifdef DM_VULKAN_POOL_PIN_REFERENCE
+  CHECK(owned==2&&borrowed==0);
+#else
+  CHECK(owned==1&&borrowed==1);
+#endif
+  pool_window_fill(other+64,16,0x12345678u);pool_window_read(other+64,16,second);
+  vk_pool_operation_end(borrowed_token);vk_internal_wait(vk_internal_commit());
+  for(unsigned i=0;i<4;i++)CHECK(!memcmp(second+4*i,(uint32_t[]){0x12345678u},4));
+  mtl_pool_del(other);
   // Pool removal/re-registration at the SAME guest address cannot resurrect
   // the old parent's geometry. Deletion really blocks on its independent pin.
   mtl_sub_begin();parent=vk_pool_operation_begin_ranges(needs,1);CHECK(parent);
