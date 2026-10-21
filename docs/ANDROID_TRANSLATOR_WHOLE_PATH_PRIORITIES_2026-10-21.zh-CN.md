@@ -53,6 +53,20 @@ ON1在加载约16秒时触发 `image_bc_copy_decode` 的既有保护：`Mixed co
 
 本机证据：`shared-lazy-a31a0f0-OFF1-FP-Q735-v1-analysis/wholepath/source-review.json`、`shared-lazy-a31a0f0-OFF-ON-macro-v1/OFF1/run-facts.json`、`shared-lazy-a31a0f0-ON1-root-failure-review.json`（均位于`.local/logs/`）。
 
+### 更高层次：先量化数据表示与合批规模
+
+用户要求改前给预算，而不继续以叶子调用次数决定优先级。当前准入候选消除的是每draw完整资源枚举这一阶段，不是再套查找缓存；覆盖约8%的用户态样本是整个职责的包络，实际消费者、引用和同步仍要执行。绑定约21～22%也不是可删除的重复工作。仅替换descriptor更新API触及约1.1%的driver update self；即便乐观地把绑定self、descriptor构造及相关驱动交付都视为目标，预算也只有约7～8%，不是已经测得可省同等时间。
+
+比减少函数调用更大的方向，是分离长寿命的资源表示与每draw变化的参数，让一段合法绘制共享资源解析/状态交付；实际GPU依赖仍按读写发生处维护。现有dynamic UBO、schema、descriptor history、source_flow及recipe已经解决其中一部分，不能重新把它们当缺失能力。是否需要进一步改变shader输入/每draw数据表，应由真实连续组及新增GPU访存、参数构造、生命周期成本决定。
+
+已用既有完整GFXReconstruct捕获及官方JSONL检查历史Mali两个独立帧，没有新增设备采集。2425draw帧中，完整记录绑定状态严格相同的连续组为0；仅忽略Buffer偏移有134个长度至少2的候选组，覆盖1028draw，最长338。另一2351draw帧同样严格组为0，忽略偏移后154组、最长327。这只是改变数据表示后的结构包络，不是合法可合并数，更不是当前Q线程时间比例。
+
+最长338组在同Pass/PSO/descriptor/动态状态下只变VBO偏移，但256B分配步距与20B顶点stride不整除，不能直接用firstVertex替代重绑定。通用vertex pulling/每draw base表或紧凑顶点表示才可能处理，均有新增GPU读取或拷贝成本；triangle strip边界、实例/builtin、CPU发布与alias依赖必须保留。338/2425约14%仅是绘制数量，不能预估省14%CPU或10ms。优先补齐当前Q候选组证据，再决定这种较大改造；不凭历史Mali计数开写大方案。
+
+等待不是当前已证实的大头：NvN实际Running约27ms/Surface间隔，ready仅约0.2ms；present/fence跨度不能与Running或彼此相加。先减少同一工作量的整线程Running，不能靠隐藏线程、强制升频或更换计时口径宣称优化。按需窗口仍默认关闭；先修实际拷贝准入缺失，再做同APK开关对照，不能拿失败ON结果评价性能。
+
+只读证据：`.local/logs/nvn-adjacent-draw-existing-frame-v1/conclusion-and-budget.json`（SHA256 `19f85c46fff938bf378f788cbe0da60eb31895eed98f863a7e93ae2cc9f473c0`）、`.local/logs/nvn-resource-representation-a31-readonly-v1/research-conclusion.json`。前者保留原捕获、官方转换工具、shader反汇编与聚合输出指纹及所有资格限制；不是新增计时工具。
+
 以下原实施顺序保留作历史记录，新的具体结构方案按上述完整路径继续调查：
 
 1. 保持1MiB有限窗口，缩减每draw真实资源准入和消费的重复工作。统一版本179c82d复用固定绑定元数据、跳过coherent native分配的无效cache遍历、借用当前recording已有的Pool引用；跨commit前升级独立pin，保留全部物理覆盖与数据依赖。host内容/重入/异步/负控、canonical/fresh raw28及实际游戏短测均完成，未证明净CPU/FPS收益。宿主ThinLTO已完成相同资源的原游戏对照：整线程Running约27.36ms vs27.51ms、频率约1577 vs1583MHz，仍约30FPS。编译选项保留为默认关闭的实验入口，不继续以编译微调为主线。
