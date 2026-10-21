@@ -403,3 +403,20 @@ CPU预检候选成功时省去完整binding iterator、plan重建和逐源resolv
 保留通知修改的机制和局部实跑收益；空预检候选的正确性合同、实现及新增成本保留，不继续扩大到普通CPU源。下一轮将空预检从主要提速方向降级，回到真实绑定/消费的数据表示和跨层职责预算；当前约24%的binding子树依然含必要资源操作，不能承诺整段可删。当前没有稳定FPS、内存或持续温度改善结论，也没有6GB设备验收。Q已停，Mali仍暂停，A650不新增测试。
 
 证据：`.local/logs/cpu-source-completion-e2d24a7-analysis-v1/result.json`、`.local/logs/cpu-source-completion-e2d24a7-root-official-analysis-review.json`、`.local/logs/cpu-source-completion-e2d24a7-Q735-two-round-root-functional-review.json`。
+
+
+## 2026-10-22：改动前预算与当前落实
+
+用户要求先给完整职责占比、可删除工作与新增成本，再修改；高频叶函数不能独立决定优先级。最新 BASE1 三窗绑定职责为 23.45–24.09% NvN 用户采样；逐层互斥分解后，表示本体、descriptor 构造与独立 driver set bind 的过宽包络只有 7.55–8.99%，还包括必要的 Buffer、动态 offset 和常量工作。本体中已有 0.91–1.24% 可明确归于内联常量／键构造。原 descriptor 命中约 92.15%、View recipe 约 93.1%，已有 last/history/template/retained set、动态 UBO、source-flow 和 schema 不重复提案。
+
+长寿命 typed image/sampler 表能让不同组合的数据交付更便宜，属于数据表示变化；但新 shader ABI、共同低 set、物理版本退休、参数 ring 和 GPU 索引读取都有成本。当前没有足够工作集／版本变化／能力证据证明净预算，暂不进行大规模改写，不能承诺消除整段 24%。完整只读事实见 `.local/logs/long-lived-binding-representation-BASE1-readonly-v3/{recommendation.txt,facts.json}`。
+
+同时重新整理全部翻译线程，而非只看 draw 内部：已有官方 ReportLib 三窗中，提交规划 `mtl_sub_index` 为 5.18/6.26/6.76%；回放下直接 `stream_flush` 为 4.19/4.50/4.55%。后者包含 commit、结束 Pass 等职责，不能再与子树相加。其中明确物理联合覆盖检查为 1.11/1.80/1.26%，不是整段提交工作都能省。规划首轮与 store index 融合已实现，不再把它当新方案。只读完整父链分区保存在 `.local/logs/cpu-source-completion-e2d24a7-analysis-v1/BASE1/whole-thread-phase-partition.json`，没有新采样、计时或符号解释器；这是用户态权重，不是 GPU／等待墙钟。
+
+独立 guest fence 通知的稳定基线移植 `2ee5e96` 已保留到主线。原同条件真机实验中，guest wait CPU 从约 0.30–0.35ms 降到 0.08–0.10ms／Surface 间隔，显式唤醒约 2500 次降到 250–300 次；这是局部工作减少，未证明整 NvN 或 FPS 改善。未将未证明净 CPU 改善的空来源预检继续扩大到普通 CPU 源。
+
+内存方向的 driver Uniform span 候选已实现并完成原 host GPU 内容／异步验证。原约 20MiB arena 类存储只有在全部实际读取者证明 <=4KiB 时才具有约 1.25MiB 的理想预算；静态 3023 槽／2926 shader 合格不是运行时命中权重，不称 PSS/FPS/CPU 收益。证据与机制见独立候选 `5a5571d` 的 `docs/ANDROID_DRIVER_UNIFORM_SPANS_2026-10-22.zh-CN.md`。
+
+真机候选后继 `dd4c694` 保留当前 Q `09a9` 的 lazy/coverage/JNI/UI 闭包，仅继承稳定 CV、span 及 main 的显式可选 ThinLTO 政策，不含 e2d 空预检。新增启动期 span-only reference，使同一 APK、同一完整 shader 资产只切换 4KiB／64KiB 范围；其他常量键、缓存、arena、依赖和分辨率保持。默认及 reference 的原 Uniform GPU 数值、串行／异步 arena 生命周期和 guest fence/reset 共 10 例已通过，尚待 Android 原游戏对照。新 shader 原入口自然生成的 DPL 版本与旧 950 不同，因此不能直接把换整库前后差值归因于 span。
+
+此阶段没有新的已证整帧提速、持续温度下降或 6GB 设备启动结论。Mali 按用户暂停，6GB 平板不新增设备实验；上机只在产物与原始 NSO 记录完整后进行。
