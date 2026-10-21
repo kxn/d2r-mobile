@@ -63,6 +63,7 @@ static void native_allocation_collect_locked(pool *p) {
     atomic_fetch_sub(&native_allocation_bytes,a->end-a->begin);
     vk_buffer_destroy(&a->storage);free(a);
   }
+  atomic_store(&p->native_retire_pending,0); // Owned fault: forget publisher still in released=1.
   if(!p->native_allocations && p->native_allocation_index)die("Native allocation index outlived imports");
 }
 static int native_allocation_overlaps_locked(pool *p,uint64_t offset,uint64_t bytes) {
@@ -251,7 +252,7 @@ void vk_pool_native_image_release(void *token) {
   // the final publication. The collector may free a immediately after 2; no
   // access to a or its Pool is permitted after that final store.
   pool *p=a->owner;
-  if(0 && atomic_fetch_add_explicit(&p->native_retire_pending,1,memory_order_release)==UINT64_MAX) // Owned fault: omit notification
+  if(atomic_fetch_add_explicit(&p->native_retire_pending,1,memory_order_release)==UINT64_MAX)
     die("Native allocation retirement notification overflow");
   if(!atomic_fetch_sub(&p->native_image_references,1))die("Native image Pool reference underflow");
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
