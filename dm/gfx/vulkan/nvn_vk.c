@@ -3776,7 +3776,7 @@ static int shared_image_raw_observe_locked(pool *p,uint64_t address,uint64_t byt
   // The CPU-only image source does not itself need a VkBuffer/import window.
   (void)address;(void)bytes;return 1;
 }
-#ifdef DM_VULKAN_TEST_EMBED
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 // Boundary qualification only. Synthetic absent/NC/cross-Pool metadata is not
 // claimed as actual noncoherent hardware; separate fixture checks real GPU bytes.
 int vk_test_shared_image_raw_scope(uint64_t address,uint64_t bytes,int edge) {

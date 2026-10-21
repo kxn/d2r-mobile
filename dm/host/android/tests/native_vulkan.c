@@ -576,6 +576,7 @@ static void review_generic_cpu_write(void *destination) {
   dm_guest_write_prepare(destination,sizeof(uint32_t));
   __atomic_store_n((uint32_t *)destination,7,__ATOMIC_RELEASE);
 }
+#ifndef DM_ANDROID_APP
 // Real GPU publication held pending by the existing completion callback gate.
 // CPU begin either observes disjoint bytes safely or rejects a true dependency;
 // no sleeps, elapsed measurements, completion spoofing or game code.
@@ -630,9 +631,12 @@ static void shared_image_observe_dependency_test(const char *mode) {
   nvn_dirty_scope_release(scope);
   printf("{\"test_details\":\"shared-image-byte-observation\",\"mode\":\"%s\",\"startup_raw\":%d,\"actual_GPU_bytes\":true,\"CPU_page_preserved\":true,\"raw_negative_cache_not_page_proof\":true,\"guard_metadata_edges_not_NC_hardware\":true}\n",mode,on);
 }
+#endif
 static void fixed_shared_dependency_test(void) {
   const char *mode=getenv("DM_FIXED_SHARED_DEPENDENCY_TEST");
+#ifndef DM_ANDROID_APP
   if(!strncmp(mode,"image-observe-",14)) {shared_image_observe_dependency_test(mode);return;}
+#endif
   int separate=!strcmp(mode,"disjoint"),cache=!strcmp(mode,"cache-phase"),page=!strcmp(mode,"page-effect") || !strcmp(mode,"page-effect-roi-negative");
   int gpu_only=!strcmp(mode,"gpu-only");
   CHECK(separate || cache || page || gpu_only || !strcmp(mode,"cpu-effect") || !strcmp(mode,"same-recording"));
