@@ -11,7 +11,15 @@ typedef struct {
   VkAccessFlags access;
   int attachment;
 } image_request;
-typedef struct { image_request *requests;size_t count,capacity; } image_batch;
+typedef struct {
+  image_request *requests;size_t count,capacity;
+  // An operation result, not a cross-draw cache: original request order is
+  // readonly prefix then writer suffix until an actual later read disproves
+  // it. Promotions change owners, never request access flags or ordinals.
+  size_t writer_begin;
+  int writer_suffix;
+} image_batch;
+_Static_assert(sizeof(image_batch)==40,"Image phase artifact:16 additional bytes per owned batch");
 // Original drag-follow rendering can replay a draw while ending another
 // operation's previous pass. Preserve the outer descriptor batch across it.
 static image_batch image_batches[8];
@@ -315,6 +323,7 @@ void vk_texture_shader_begin(void) {
   if(image_binding_active==sizeof image_batches/sizeof *image_batches) die("Vulkan image operation nesting");
   image_binding_active++;
   if(image_binding_count) die("Vulkan unfinished image operation");
+  image_batch_current.writer_begin=SIZE_MAX;image_batch_current.writer_suffix=1;
 }
 // Only immutable physical-view recipes may bypass normalization here. The
 // stored access range is separate from the VkImageView's range: coupled DS
@@ -330,7 +339,11 @@ static void image_request_add_normalized(image *i,VkImageSubresourceRange r,
   }
   // Construct the final slot directly; normalization still performs every
   // aspect/topology/range check, without packing a second 40-byte request.
-  image_request *request=&image_bindings[image_binding_count++];
+  size_t ordinal=image_binding_count++;
+  if(image_writes(access)) {
+    if(image_batch_current.writer_begin==SIZE_MAX)image_batch_current.writer_begin=ordinal;
+  } else if(image_batch_current.writer_begin!=SIZE_MAX)image_batch_current.writer_suffix=0;
+  image_request *request=&image_bindings[ordinal];
   request->owner=i;
   request->range=r;
   request->stages=stages;request->access=access;request->attachment=0;
@@ -399,20 +412,33 @@ void vk_texture_shader_record(void) {
   // Clear old histories of written cells once, then union all simultaneous
   // readers/writers, including one image bound to several shader stages.
   image_record_raster=0;
-  for(size_t k=0;k<image_binding_count;k++) {
+  int partition=image_batch_current.writer_suffix;
+  size_t writer_begin=image_batch_current.writer_begin;
+  if(writer_begin==SIZE_MAX)writer_begin=image_binding_count;
+  // Consume the phase artifact produced with the real requests. The proved
+  // suffix needs neither a whole-batch writer search nor per-request filters.
+  // Interleaved storage/read cases retain the complete original algorithm.
+  for(size_t k=partition?writer_begin:0;k<image_binding_count;k++) {
     image_request *q=&image_bindings[k];
-    if(image_writes(q->access)) image_record_normalized(q->owner,q->range,0,q->access,0);
+    if(partition || image_writes(q->access))image_record_normalized(q->owner,q->range,0,q->access,0);
   }
   image_record_merging=1;
-  for(unsigned writing=0;writing<2;writing++)
-    for(size_t k=0;k<image_binding_count;k++) {
+  for(unsigned writing=0;writing<2;writing++) {
+    size_t first=partition && writing?writer_begin:0;
+    size_t end=partition && !writing?writer_begin:image_binding_count;
+    for(size_t k=first;k<end;k++) {
       image_request *q=&image_bindings[k];
-      if(!!image_writes(q->access)==writing) {
+      if(partition || !!image_writes(q->access)==writing) {
         image_record_raster=q->attachment && vk_render_active()?V.passes:0;
         image_record_normalized(q->owner,q->range,q->stages,q->access,1);
       }
     }
+  }
   image_binding_count=0;image_binding_active--;
   image_record_merging=0;
   image_record_raster=0;
 }
+
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+#include "nvn_vk_image_phase_fixture.inc"
+#endif

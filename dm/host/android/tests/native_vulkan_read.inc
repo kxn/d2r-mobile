@@ -273,7 +273,12 @@ static void image_dependency_test(NVNprogram *fill,int image_hint,int srgb) {
     const uint8_t *expected=level==1 && layer==(t?0:1)?
         (t?(const uint8_t[]){255,128,128,255}:(const uint8_t[]){0,255,0,255}):
         (const uint8_t[]){0,0,0,255};
-    for(unsigned p=0;p<(unsigned)(r.width*r.height);p++) CHECK(!memcmp(pixels+p*4,expected,4));
+    for(unsigned p=0;p<(unsigned)(r.width*r.height);p++) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      if(memcmp(pixels+p*4,expected,4))LOG("[image dependency mismatch] hint=%d srgb=%d texture=%u level=%u layer=%u pixel=%u got=%u/%u/%u/%u expected=%u/%u/%u/%u",image_hint,srgb,t,level,layer,p,pixels[p*4],pixels[p*4+1],pixels[p*4+2],pixels[p*4+3],expected[0],expected[1],expected[2],expected[3]);
+#endif
+      CHECK(!memcmp(pixels+p*4,expected,4));
+    }
   }
   CALL(nvnProgramFinalize,&increment);
   for(unsigned t=0;t<2;t++) CALL(nvnTextureFinalize,&textures[t]);
