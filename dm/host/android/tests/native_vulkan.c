@@ -482,6 +482,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_upload_page_span.inc"
 #include "native_vulkan_scan_pairs.inc"
 #include "native_vulkan_idle_trim.inc"
+#include "native_vulkan_driver_span.inc"
 #include "native_vulkan_pool_access_cache.inc"
 #include "native_vulkan_temp_age.inc"
 #include "native_vulkan_image_trim.inc"
@@ -911,6 +912,9 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_UPLOAD_PAGE_SPAN_FIXTURE")) {upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-page-span\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_ACCESS_CACHE_FIXTURE")) {pool_access_cache_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-access-cache\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {idle_cache_trim_test();printf("{\"test\":\"idle-cache-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_DRIVER_SPAN_FIXTURE")) {driver_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"driver-span\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;}
+#endif
   if(getenv("DM_TEMP_CACHE_AGE_FIXTURE")) {temporary_cache_age_test();printf("{\"test\":\"temporary-cache-age\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_PUBLICATION_FIXTURE")) {pool_publication_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-publication\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_BINDING_MASK_FIXTURE")) {shader_pool_ranges_test();pool_binding_mask_gpu_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-binding-mask\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
