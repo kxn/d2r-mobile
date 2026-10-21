@@ -187,12 +187,18 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
     // Force an outer preflight MISS; its by-value snapshot must survive the
     // nested ghost's own prepare/bind scope and colliding physical recipe.
     mtl_reg_tex(outer_id,upload,NULL);
+    // Keep the logical parent live across the real nested ghost as well:
+    // neither its slot nor the copied caller value may borrow child storage.
+    vk_texture_lookup_scope_begin();
+    tex_t logical;CHECK(vk_texture_descriptor(outer_id,&logical));CHECK(logical.serial==upload->serial);
     vk_texture_binding_scope_begin();
     vk_texture_prepare_binding(outer_id,0,VK_SHADER_STAGE_FRAGMENT_BIT);
     // CPU reupload ends the pass and actually replays the original ghost;
     // that nested shader resolves inner_id, replacing the outer cached slot.
     CHECK(vk_texture_view(outer_id,0)==original);CHECK(V.draws==draws+1);
     vk_texture_binding_scope_end();
+    CHECK(vk_texture_descriptor(outer_id,&logical));CHECK(logical.serial==upload->serial);
+    vk_texture_lookup_scope_end();
     CHECK(vk_texture_view(outer_id,0)==original);CHECK(vk_texture_view(outer_id,0)==original);
     float rect[4];CHECK(mtl_ui_ghost_rect(rect));mtl_ui_ghost(0,0,0,NULL,0,0);
     vk_internal_wait(vk_internal_commit());
