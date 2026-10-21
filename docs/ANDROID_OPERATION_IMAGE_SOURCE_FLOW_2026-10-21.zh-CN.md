@@ -10,6 +10,8 @@ CPU source 原必需的 image iterator 单遍直接产出每项168B operation-ow
 
 8层有界owner scope；每层至多640项，按实际count懒分配、保留容量、不按draw分配。生产plan128B，全部最大861184B（约841KiB）；nested/ghost有独立slot，root退出清valid，overflow原路径。无Vk资源引用、额外GPU等待或完成回调。分配失败当代保留原路径且不每draw重试增长。
 
-最终host验证：Core/SYNC Lavapipe与ASan/UBSan共8正例，覆盖原graphics/compute/promotion/ghost、CPU同值/无Flush、原native coherent RGBA FS/CS/transfer与Image→Buffer真实GPU字节；3个变异负例分别去epoch、冻结handle、nested覆盖parent，必须由原oracle拒绝。另复用已真机烘焙f830的1216B表+94208B opaque payload，经原NVN Builder/CPU source/collector得到非空native range；这一项是metadata接入证据，不称Lavapipe执行了ASTC或f830。未执行真实游戏、未构建Android、未访问设备。
+最终host验证：Core/SYNC Lavapipe与ASan/UBSan共8正例，覆盖原graphics/compute/promotion/ghost、CPU同值/无Flush、原native coherent RGBA FS/CS/transfer与Image→Buffer真实GPU字节；3个变异负例分别去epoch、冻结handle、nested覆盖parent，必须由原oracle拒绝。另复用已真机烘焙f830的1216B表+94208B opaque payload，经原NVN Builder/CPU source/collector得到非空native range；这一项是metadata接入证据，不称Lavapipe执行了ASTC或f830。该独立host资格没有执行真实游戏。
 
 证据：`.local/logs/operation-image-source-flow-v1-final-tests-v3/results.json`、`operation-image-source-flow-v1-negative-tests-v3/results.json`；之前f5/165版本、原shared模式fixture同样失败的716对照及初始失败记录均保留。
+
+与 span 索引合并为 `ebe0d0e` 后，14 组相关正常及 ASan/UBSan Core/SYNC 用例通过，Android canonical/原始NSO重建校验完成。Q735 已执行真实游戏、三段原输入路线和原生命周期存档并退出，所见营地截图无明显缺图。官方 Perfetto 同 235 个完整 Surface 间隔内，NvN Running 为 26.584 ms/呈现，平均间隔 33.140 ms；这是短测资格，不能与旧窗口相减归功于本 handoff。Simpleperf 中新 `vk_texture_source_resolve` 自身仍占 2.58%，说明逻辑解析仍有成本；当前未证明整帧、持续温度或内存净收益。实际资格和分析见 `.local/logs/native-candidate-source-span-ebe-Q735-v1-root-actual-review.json`。

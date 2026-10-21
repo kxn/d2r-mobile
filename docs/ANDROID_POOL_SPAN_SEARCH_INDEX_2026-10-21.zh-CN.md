@@ -22,4 +22,10 @@
 
 两个必要负控也已完成：将二分的起始边界判断改错，以及在追加节点后故意保留旧 generation，均被原逐范围解析器 oracle 拒绝。负控独立工作树和失败日志保留，未改变生产源码。另一代理只读审查了原锁、generation 发布、migration、销毁与回退路径，未发现源码阻断；它没有重复测试或声称性能收益。
 
-尚未 Android 构建、真机性能或持续散热验收。该候选不能宣称解决 6GB 平板超时，也不能将局部查找工作减少写成整帧收益。
+上述独立候选阶段尚未完成 Android 验收，后续合并短测如下。该候选不能宣称解决 6GB 平板超时，也不能将局部查找工作减少写成整帧收益。
+
+## 合并后的 Android 短测
+
+`ebe0d0e` 已将本索引与 operation image source handoff 一起构建，原始 3 个 NSO 重新生成并独立校验，随后在 Q735/f830/native6217、固定 0.60、1 MiB window 执行真实游戏。三段原摇杆路线完成，营地截图未见明显缺图，原生命周期存档后退出并恢复原包和数据。完整记录为 `.local/logs/native-candidate-source-span-ebe-Q735-v1-root-actual-review.json`。
+
+官方 Simpleperf 本次 NvN 用户态 621 个样本、无丢失；`pool_span_search_locked` 的 self period 占比约 0.16%，旧 `716cd6c` 的 `pool_span_resolve` 为 2.67%（636 个 NvN 样本）。这是两个独立窗口的热点变化，不是匹配对照净收益。Perfetto 在同一段 235 个完整游戏 Surface 间隔内，NvN Running 为 26.584 ms/次呈现，平均呈现间隔 33.140 ms。PSO 在独立工具窗口间仍有增长，不能根据旧 27.305 ms 与当前数值相减宣称提速；尚未证明持续散热或 6GB 稳定游玩改善。
