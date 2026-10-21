@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 import native_static_selection as selection_policy
+import native_astc6_selection as astc6_policy
 
 _spec=importlib.util.spec_from_file_location('prepare_native_resource',Path(__file__).with_name('prepare-native-image-resource.py'))
 resource=importlib.util.module_from_spec(_spec)
@@ -52,7 +53,14 @@ def run(a):
     if not any(r['archive']['sha256']==provenance['pack_verification']['sha256'] for r in context.common['verified_archives'].values()):
         raise ValueError('Source archive differs from original ASTC audit')
     explicit_path=getattr(a,'logical_manifest',None)
-    if explicit_path:
+    astc6_path=getattr(a,'astc6_replacement_manifest',None)
+    if astc6_path:
+        if explicit_path or getattr(a,'logical_manifest_sha256',None):raise ValueError('ASTC4 and ASTC6 selections are mutually exclusive')
+        names,explicit_selection=astc6_policy.select(astc6_path,a.astc6_replacement_sha256,context,arrays,a.composition_report)
+        explicit_selection['policy_tool']=resource.record(astc6_policy.__file__)
+        context.common['qualified_ASTC6_source']={k:v for k,v in explicit_selection.items()if k!='quality_item_proofs'}
+        choices=[(name,context.entries[name]) for name in names]
+    elif explicit_path:
         names,explicit_selection=selection_policy.explicit(explicit_path,a.logical_manifest_sha256,context,arrays)
         quality=selection_policy.quality_gate(provenance,names,getattr(a,'artifact_root',resource.ROOT))
         explicit_selection['original_quality']=quality
@@ -60,6 +68,7 @@ def run(a):
         explicit_selection['artifact_root']=str(getattr(a,'artifact_root',resource.ROOT).resolve())
         choices=[(name,context.entries[name]) for name in names]
     else:
+        if getattr(a,'astc6_replacement_sha256',None):raise ValueError('ASTC6 hash requires a replacement manifest')
         if getattr(a,'logical_manifest_sha256',None):raise ValueError('Logical hash requires a manifest')
         choices=sorted((k,v) for k,v in context.entries.items() if selected(k,v,arrays))
     if len(choices)!=a.expected_count:raise ValueError(f'Selection count changed: {len(choices)} != {a.expected_count}')
@@ -86,7 +95,7 @@ def run(a):
               'static_only':True,'thumbnail_tail_distinguishable':True,'unknown_runtime_array_uses_not_proven':True},
               'batch_max_entries':MAX_BATCH_ENTRIES,'entries':rows,'batches':[],
               'tool':resource.record(__file__),'encoder_used':False,'device_or_game_executed':False}
-    if explicit_path:
+    if explicit_path or astc6_path:
         manifest['selection']={**manifest['selection'],**explicit_selection}
         manifest['selection'].pop('logical_whitelist')
     # Checkpoint rows are useful evidence only; complete appears exclusively after all entries.
@@ -129,6 +138,7 @@ def parser():
     p.add_argument('--full-astc-provenance',type=Path,required=True);p.add_argument('--full-astc-provenance-sha256',required=True)
     p.add_argument('--artifact-root',type=Path,default=resource.ROOT)
     p.add_argument('--logical-manifest',type=Path);p.add_argument('--logical-manifest-sha256')
+    p.add_argument('--astc6-replacement-manifest',type=Path);p.add_argument('--astc6-replacement-sha256')
     p.add_argument('--expected-count',type=int,required=True);p.add_argument('--output',type=Path,required=True)
     return p
 
