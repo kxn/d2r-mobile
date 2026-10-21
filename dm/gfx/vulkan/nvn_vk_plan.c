@@ -9,10 +9,16 @@
 #include <stdatomic.h>
 typedef struct {
   const uint8_t *op;
-  uint8_t draw,need,sample_live,drawing_writes,writes,opcode,sample_counter;
+  // The first four bytes are written by walk; reverse-only outputs follow.
+  uint8_t draw,drawing_writes,opcode,sample_counter;
+  uint8_t need,sample_live,writes;
 } planned_op;
 _Static_assert(OP_COUNT_<=256,"Vulkan planned opcode width");
 _Static_assert(sizeof(planned_op)==16,"Vulkan planned opcode uses existing padding");
+_Static_assert(offsetof(planned_op,drawing_writes)==offsetof(planned_op,draw)+1 &&
+    offsetof(planned_op,opcode)==offsetof(planned_op,draw)+2 &&
+    offsetof(planned_op,sample_counter)==offsetof(planned_op,draw)+3,
+    "Vulkan forward plan bytes must remain contiguous");
 static planned_op *plan;
 static unsigned count, capacity, replay;
 static int valid,done,store_valid;
@@ -67,7 +73,14 @@ static int walk(const uint8_t *p, unsigned depth) {
       if(!grown) return 0;
       plan=grown;capacity=next;
     }
-    planned_op *o=&plan[count++];*o=(planned_op){.op=p,.opcode=h.op};
+    planned_op *o=&plan[count++];
+    // Only forward inputs need initialization here. After a successful walk,
+    // the complete reverse loop overwrites need/sample_live/writes for EVERY
+    // node before any store-index/replay consumer. A failed walk invalidates
+    // the plan. Do not initialize those reverse outputs twice.
+    o->op=p;
+    const uint8_t forward[4]={0,0,(uint8_t)h.op,0};
+    memcpy((uint8_t *)o+offsetof(planned_op,draw),forward,sizeof forward);
     // The flattened snapshot is immutable until replay retires. Retain the
     // already validated opcode instead of chasing its raw header in each
     // later planning pass. Invalid/short counters retain the old live tail.
@@ -328,3 +341,7 @@ static int store_scan(const tex_t *target,const view_t *view,VkImageAspectFlagBi
 #include "nvn_vk_store_index.inc"
 
 #include "nvn_vk_mip_clear_plan.inc"
+
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+#include "tests/planned_forward.inc"
+#endif

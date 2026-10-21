@@ -91,7 +91,10 @@ static void ds_plane_store_variant(const void *vertex,const void *fragment,int f
   for(unsigned optimized=0;optimized<2;optimized++) {
     V.load_store_op_none=optimized?support:0;
     CALL(nvnCommandBufferBeginRecording,&local);
-    CALL(nvnCommandBufferBindVertexAttribState,&local,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&local,0,NULL);
+    // Keep the existing zero-count operation while supplying C-valid sources
+    // to the original HLE's unconditional zero-length memcpy under UBSan.
+    CALL(nvnCommandBufferBindVertexAttribState,&local,0,&(NVNvertexAttribState){0});
+    CALL(nvnCommandBufferBindVertexStreamState,&local,0,&(NVNvertexStreamState){0});
     CALL(nvnCommandBufferSetViewports,&local,0,1,viewport);CALL(nvnCommandBufferSetDepthRange,&local,0,1);
     CALL(nvnCommandBufferSetScissor,&local,0,0,16,16);CALL(nvnCommandBufferBindPolygonState,&local,&polygon);
     CALL(nvnCommandBufferBindColorState,&local,&cs);CALL(nvnCommandBufferBindChannelMaskState,&local,&channels);
