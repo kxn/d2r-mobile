@@ -46,7 +46,7 @@ class Flow(unittest.TestCase):
   p['_official_api_frame']=api.validate(p,lambda r:Path(r['path']));dev=Device();cap=api.Capture(dev,root,p,'a'*32,dev.pid,lambda:None);dev.prefix=cap.prefix;return dev,cap,p
  def test_complete_closed_then_save_stop_pull_export(self):
   with tempfile.TemporaryDirectory()as t:
-   d,c,p=self.setup_capture(Path(t));original=copy.deepcopy((d.settings,d.props));c.configure();self.assertEqual(d.props['debug.gfxrecon.memory_tracking_mode'],'assisted');d.current='12345';c.trigger('12345');c.restore();self.assertEqual((d.settings,d.props),original)
+   d,c,p=self.setup_capture(Path(t));self.assertEqual(c.prefix,'f-'+'a'*24);self.assertEqual(c.r['token'],'a'*32);self.assertLess(len(c.props_new['debug.gfxrecon.capture_file'].encode('utf-8')),92);original=copy.deepcopy((d.settings,d.props));c.configure();self.assertEqual(d.props['debug.gfxrecon.memory_tracking_mode'],'assisted');d.current='12345';c.trigger('12345');c.restore();self.assertEqual((d.settings,d.props),original)
    with self.assertRaisesRegex(RuntimeError,'already stopped'):c.export_after_stop()
    d.current=''
    def official(argv,**kw):

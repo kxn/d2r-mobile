@@ -42,7 +42,7 @@ def validate(p,pinned):
 class Capture:
  def __init__(self,dev,out,p,token,pid,save):
   self.dev,self.p,self.pid,self.save=dev,p,pid,save;self.out=out/'official-api-frame';self.out.mkdir()
-  self.prefix='q735-f830-api-'+token;self.report=self.out/'capture.json';self.own=None
+  self.prefix='f-'+token[:24];self.report=self.out/'capture.json';self.own=None
   self.settings={};self.props={};self.touched=False
   self.props_new={'debug.gfxrecon.memory_tracking_mode':'assisted',
    'debug.gfxrecon.capture_process_name':PKG,
@@ -50,6 +50,7 @@ class Capture:
    'debug.gfxrecon.capture_frames':'','debug.gfxrecon.capture_file_timestamp':'false',
    'debug.gfxrecon.capture_file_flush':'true','debug.gfxrecon.capture_android_trigger':'false',
    'debug.gfxrecon.capture_trigger_frames':'1','debug.gfxrecon.quit_after_capture_frames':'false'}
+  require(len(self.props_new['debug.gfxrecon.capture_file'].encode('utf-8'))<92,'capture_file exceeds Android property value limit')
   spec=importlib.util.spec_from_file_location('existing_single_frame_primitives',OLD)
   self.old=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.old)
   self.r={'stage':'prepared','capture_completed':False,'cleanup_errors':[],
