@@ -14,7 +14,7 @@
 
 每 range 增加 32 字节几何；每个曾使用的 depth 增加固定 256 槽、2 KiB direct-map。scratch 按高水位惰性增长，最多 4096 range × 8 depth，几何上限 1 MiB、槽表 16 KiB，另少量 plan 字段和分配器元数据；原 ranges/pins 不重复复制。每次准入仍保存每个普通 Buffer 的几何并写一个哈希槽。32 位 stamp 避免每 draw 清 2 KiB，只有回绕时清表。
 
-消费增加一次哈希及精确/epoch/extent/generation 校验，减少再次判断多个 Pool 区间及解析同一 window。当前 recording 已有 owner lookup 时仍最多遍历原 8 个 owner 槽以取得该 recording 自己的 use。未命中多付一次有限探测，然后原路径照常执行。它不消除 CPU 脏页工作、GPU barrier 或整体 operation 收集。当前 profile 的 inclusive 父函数百分比不能当作可回收时间；真实净 CPU 成本需后续现成 Simpleperf/Perfetto 验证。
+后继消费增加一次哈希及精确/epoch/generation 校验，完整 Pool/physical extent/offset 一致性在每次准入保存几何时验证一次，减少再次判断多个 Pool 区间及解析同一 window。当前 recording 已有 owner lookup 时仍最多遍历原 8 个 owner 槽以取得该 recording 自己的 use。未命中多付一次有限探测，然后原路径照常执行。它不消除 CPU 脏页工作、GPU barrier 或整体 operation 收集。当前 profile 的 inclusive 父函数百分比不能当作可回收时间；真实净 CPU 成本需后续现成 Simpleperf/Perfetto 验证。
 
 ## 验证范围
 
@@ -25,3 +25,14 @@
 组合 UBSan policy 在原 HLE `nvnCommandBufferBindVertexAttribState(0,NULL)` 的零长度 memcpy nonnull 合同处中止（`hle_nvn.c:842`），初次失败原样保留。随后纳入上面的独立已审 HLE 保护，以完整 ASan+UBSan 重建并复测原 oracle；最终 source-ready 仅据真实新结果记录资格，不把原失败改为成功。
 
 尚缺 Android 实际构建/栈和真实游戏功能/CPU 对照。本次没有执行真实游戏模块，也不将软件 GPU oracle 当作 Android 原生游戏进展。
+
+
+## 后继：把不可变范围证明留在准入（e0 保持冻结）
+
+初版 e0 在 exact-key 命中后又重做 Pool 和 physical extent 的约十余项检查，再查原 8 owner 槽；在旧 retained-span hint 正常命中时，这可能比旧路径更贵，路径覆盖计数不能证明节省 CPU。后继只把这些完整范围一致性校验移至准入记表，不删除 pins、epoch 或 backing generation。
+
+旧 `pool_address` 常见命中先逐 owner 检查三项 Pool coverage，再由 `pool_span_retained_hint` 检查 span 是否部分窗口、四周范围、generation/handle、physical extent，计算 offset。后继新增 direct-map 哈希、stamp/row、exact address/size、plan epoch、owner index 和 generation 检查；然后只按 owner 指针相等取得当前 recording 的 use，复用已保存 offset。它减少重复区间计算，但仍有表维护和探测开销、首次 recording use 仍需锁，未命中时还会回退原路径。它不是必然更快的证明，需同条件官方 CPU 结果判断净成本。
+
+可转移的证明：成功准入已精确解析此 `(address,size)`；row/key 与独立 pin 绑定同一 Pool/backing。Pool 删除先移出 registry/推进 epoch，然后等待全部 references 归零；ordinary migration 发布时只允许自己的唯一 reference；shared union 自持一个 reference 并等其他 references 释放。operation 的独立 pin 因而同时阻止对象释放和物理替换。单纯补充不相交窗口可推进 epoch，让旧表保守失效。`p->guest/size` 及已存在 backing 的 `begin/end/buffer` 不在有效 pin 期间原地修改；generation 仍逐次核对。故完整 key 的原范围与 offset 无须每次重算，不能类推为 ready、writer 或 stage 的稳定性。
+
+仍保留表行/owner 索引边界与 generation 检查；子范围、碰撞、registry 变化、operation 结束保持原回退。生命周期与 hazard 不改。新增构建校验每 operation 每普通 Buffer 一次，不称作罕见/零成本。单个 range 只消费一次时可能没有收益；没有实际使用到本表的 range 还要承担保存成本。后继仅宿主资格，不是主线或 Android 性能验收。
