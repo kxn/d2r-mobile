@@ -14,6 +14,7 @@ OWNER='.stock-mali-candidate-owner';LOCK=base.LOCK;OLDAPK=R/'.local/build/image-
 PREFLIGHT=R/'.local/logs/mali-022d625-fixed060-official-dependencies-v2/preflight.json'
 PREFLIGHT_SHA='eaab451ed22034404d71bfdce84efe7e690765f55c5a79d4706b9e75964c4f00'
 SCOPE='stock-Mali-VMA-builtin-paused-fullASTC4'
+BACKGROUND_SAVE=HERE.parent/'android-game-background-save.py'
 def record(p):p=Path(p);return {'path':str(p),'sha256':sha(p),'bytes':p.stat().st_size}
 def checked(r):require(sha(r['path'])==r['sha256'],'pinned file changed: '+r['path']);return read(r['path'])
 def proof(config,execute=False):
@@ -66,10 +67,12 @@ def showmap(dev,pid,out):
   try:json.loads(q.stdout);valid_json=True
   except ValueError:pass
  result.update(command=cmd,returncode=q.returncode,valid_JSON=valid_json,status='actual-complete'if q.returncode==0 and valid_json else'actualpermission-or-tool-failure');(out/'showmap-result.json').write_text(json.dumps(result,indent=2)+'\n')
-def original_save(dev,pid,d,out,invoke):
+def original_save(dev,pid,d,out,invoke,vma_dump=False):
  require(not d.get('lifecycle_save_attempted'),'do not resume/retry a failed or completed lifecycle save')
  d['lifecycle_save_attempted']=True
- invoke('fresh-save',[sys.executable,str(R/'scripts/dev/android-game-background-save.py'),'--serial',d['serial'],'--report',str(out/'fresh-save.json')],45)
+ argv=[sys.executable,str(BACKGROUND_SAVE),'--serial',d['serial'],'--report',str(out/'fresh-save.json')]
+ if vma_dump:argv.append('--vma-dump-on-suspend')
+ invoke('fresh-save',argv,45)
  s=read(out/'fresh-save.json');require(s['pid']==pid and s['fresh_original_lifecycle_save']and s['save_commits']==2,'fresh original save2 required')
  require(dev.adb('shell','pidof '+PKG+' || true')==str(pid),'PID changed during save')
  d['fresh_save2_confirmed']=True
@@ -83,10 +86,12 @@ def vma_pause_capture(dev,pid,d,out,invoke):
  before=dev.app('cat','files/runtime/native.log')
  require('Android native start pid='+str(pid)+'\n'in before,'native log PID differs before explicit request')
  offset=len(before);(out/'before-vma-request-native.log').write_text(before)
- # Activity is already foreground. Only the one-shot extra is passed; no startup options, new job or GPU wait.
- reply=dev.adb('shell','am','start','-W','-n',PKG+'/.MainActivity','--ez','vma_dump_on_suspend','true')
- (out/'vma-request-am-start.txt').write_text(reply);same();d['vma_request_sent_once']=True
- saved=original_save(dev,pid,d,out,invoke)
+ # The existing helper carries the request in its ONLY foreground Intent,
+ # verifies actual onNewIntent acceptance, then establishes its original
+ # fresh-save offset/HOME. The controller sends no separate am start.
+ saved=original_save(dev,pid,d,out,invoke,vma_dump=True)
+ require(saved.get('vma_dump_requested')is True and saved.get('vma_request_confirmation'),'helper did not confirm its one fresh VMA request')
+ d['vma_request_sent_once']=True
  confirmation=saved['confirmation']
  require(re.search(r'Android background save asked=1 commits=2(?:\s|$)',confirmation),'original fresh save2 confirmation malformed')
  # Observe existing lifecycle output only. No device timer/sampler or additional GPU synchronization.

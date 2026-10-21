@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--serial',required=True)
     parser.add_argument('--report',type=Path,required=True)
     parser.add_argument('--resume',action='store_true',help='resume the same process after confirmed saving')
+    parser.add_argument('--vma-dump-on-suspend',action='store_true',help='request one builtin VMA dump in this original pause; default off')
     parser.add_argument('--timeout',type=float,default=20)
     args=parser.parse_args()
     if args.report.exists() or not 1<=args.timeout<=60:
@@ -33,7 +34,34 @@ def main():
 
     # HOME alone generates no new pause when already backgrounded. Foreground
     # first, then establish a fresh log boundary and request the original pause.
-    adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity')
+    if args.vma_dump_on_suspend:
+        # Carry the request in this helper's single foreground Intent. Wait
+        # for this PID's actual onNewIntent log before the original fresh-save
+        # boundary/HOME; am start returning is not callback acknowledgement.
+        request_prefix=adb('exec-out','run-as',PACKAGE,'cat','files/runtime/native.log')
+        adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity',
+            '--ez','vma_dump_on_suspend','true')
+        request_deadline=time.monotonic()+args.timeout
+        request_confirmation=None
+        while time.monotonic()<request_deadline:
+            if adb('shell','pidof',PACKAGE).strip()!=pid:
+                raise SystemExit('PID changed while requesting VMA dump; no HOME or success accepted')
+            current=adb('exec-out','run-as',PACKAGE,'cat','files/runtime/native.log')
+            if not current.startswith(request_prefix):
+                raise SystemExit('game log reset while requesting VMA dump')
+            requests=list(re.finditer(r'^.*\[vulkan VMA dump\] explicit request accepted=([01]); consumes at next normal suspend[^\n]*',current[len(request_prefix):],re.M))
+            if len(requests)>1:
+                raise SystemExit('multiple fresh VMA request confirmations; no HOME accepted')
+            if requests:
+                if requests[0].group(1)!='1':
+                    raise SystemExit('fresh VMA request rejected; no HOME accepted')
+                request_confirmation=requests[0].group(0)
+                break
+            time.sleep(.2)
+        if not request_confirmation:
+            raise SystemExit('no fresh accepted VMA request confirmation; no HOME accepted')
+    else:
+        adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity')
     offset=len(adb('exec-out','run-as',PACKAGE,'cat','files/runtime/native.log'))
     adb('shell','input','keyevent','HOME')
     deadline=time.monotonic()+args.timeout
@@ -49,6 +77,8 @@ def main():
     if not match:raise SystemExit('no fresh original save confirmation; leave suspended and stop dependent work')
     result=dict(pid=int(pid),serial=args.serial,fresh_original_lifecycle_save=True,
                 save_commits=2,confirmation=match.group(0),resumed_same_process=False)
+    if args.vma_dump_on_suspend:
+        result.update(vma_dump_requested=True,vma_request_confirmation=request_confirmation)
     if args.resume:
         adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity')
         if adb('shell','pidof',PACKAGE).strip()!=pid:raise SystemExit('PID changed on resume')

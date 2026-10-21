@@ -44,8 +44,9 @@ try:
    out=Path(td);d={'serial':'10.10.10.44:34455'};dev=Dev(mode)
    def invoke(label,argv,timeout):
     assert label=='fresh-save'and timeout==45 and not dev.saved
+    assert '--vma-dump-on-suspend'in argv;dev.events.append(('request',));dev.requested=True
     dev.events.append(('save2',));dev.saved=True
-    Path(argv[argv.index('--report')+1]).write_text(json.dumps({'pid':101,'fresh_original_lifecycle_save':True,'save_commits':2,'confirmation':SAVE.strip()}))
+    Path(argv[argv.index('--report')+1]).write_text(json.dumps({'pid':101,'fresh_original_lifecycle_save':True,'save_commits':2,'confirmation':SAVE.strip(),'vma_dump_requested':True,'vma_request_confirmation':REQ.strip()}))
    def showmap(dev,pid,out):assert dev.saved;dev.events.append(('showmap',))
    def run(argv,**kw):
     assert argv==dev.command+['exec-out','run-as',m.PKG,'cat','files/runtime/temp/vulkan-vma.json']

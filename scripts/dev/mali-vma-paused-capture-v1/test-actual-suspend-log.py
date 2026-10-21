@@ -34,8 +34,10 @@ try:
   with tempfile.TemporaryDirectory()as td:
    out=Path(td);d={'serial':'10.10.10.44:34455'};dev=Dev(tail)
    def invoke(label,argv,timeout):
-    assert label=='fresh-save'and not dev.saved;dev.saved=True
-    Path(argv[argv.index('--report')+1]).write_text(json.dumps({'pid':PID,'fresh_original_lifecycle_save':True,'save_commits':2,'confirmation':confirmation}))
+    assert label=='fresh-save'and not dev.saved
+    if '--vma-dump-on-suspend'in argv:assert not dev.requested;dev.requested=True;dev.requests+=1
+    dev.saved=True
+    Path(argv[argv.index('--report')+1]).write_text(json.dumps({'pid':PID,'fresh_original_lifecycle_save':True,'save_commits':2,'confirmation':confirmation,'vma_dump_requested':True,'vma_request_confirmation':'[dm] [vulkan VMA dump] explicit request accepted=1; consumes at next normal suspend'}))
    def run(argv,**kw):
     assert argv==dev.command+['exec-out','run-as',new.PKG,'cat','files/runtime/temp/vulkan-vma.json']
     return subprocess.CompletedProcess(argv,0,stdout=JSON,stderr=b'')

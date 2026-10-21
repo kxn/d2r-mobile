@@ -42,7 +42,7 @@ try:
     if 'screencap'in argv and mode.startswith('pre-'):dev.tool_failed=True;raise RuntimeError('capture failed before any lifecycle save')
     if 'screencap'in argv:return subprocess.CompletedProcess(argv,0,stdout=b'\x89PNG\r\n\x1a\nfixture',stderr=b'')
     if any('background-save.py'in str(x)for x in argv):
-     dev.saved=True;dev.saves+=1;p=Path(argv[argv.index('--report')+1]);p.write_text(json.dumps({'pid':101,'fresh_original_lifecycle_save':mode!='save-failed','save_commits':2,'confirmation':'[dm] Android background save asked=1 commits=2 froze=0 elapsed_ms=281.1'}));return subprocess.CompletedProcess(argv,0)
+     dev.requested='--vma-dump-on-suspend'in argv;dev.saved=True;dev.saves+=1;p=Path(argv[argv.index('--report')+1]);p.write_text(json.dumps({'pid':101,'fresh_original_lifecycle_save':mode!='save-failed','save_commits':2,'confirmation':'[dm] Android background save asked=1 commits=2 froze=0 elapsed_ms=281.1','vma_dump_requested':dev.requested,'vma_request_confirmation':'[dm] [vulkan VMA dump] explicit request accepted=1; consumes at next normal suspend'}));return subprocess.CompletedProcess(argv,0)
     raise AssertionError('unexpected subprocess '+str(argv))
    m.subprocess.run=run;m.subprocess.Popen=Client
    try:m.launch(dev,d,{},out)
