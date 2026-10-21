@@ -763,41 +763,63 @@ int vk_async_submissions(void) { mtl_init(); return async_submissions; }
 static int range_overlap(uint64_t a, uint64_t as, uint64_t b, uint64_t bs) {
   return as && bs && (a >= b ? a - b < bs : b - a < as);
 }
-static int recording_cpu_write(uint64_t address, uint64_t size) {
+static inline int recording_cpu_write_scoped(uint64_t address,uint64_t size,uint64_t gpu_address,uint64_t gpu_size) {
+#ifndef DM_VULKAN_SHARED_POOLS
+  (void)gpu_address;(void)gpu_size;
+#endif
   if (!recording_resources) return 0;
-  for (pool_writeback *w = recording_resources->writebacks; w; w = w->next)
+  for (pool_writeback *w = recording_resources->writebacks; w; w = w->next) {
+    uint64_t at=address,bytes=size;
+#ifdef DM_VULKAN_SHARED_POOLS
+    // Before flush, shared GPU publications live in this list too. Flush
+    // moves them to shared_publishes without creating any CPU writeback.
+    if(w->owner->shared) {at=gpu_address;bytes=gpu_size;}
+#endif
     for (writeback_range *r = w->ranges; r; r = r->next)
-      if (range_overlap(address, size, (uintptr_t)w->owner->guest + r->offset,
+      if (range_overlap(at, bytes, (uintptr_t)w->owner->guest + r->offset,
                          r->end - r->offset)) return 1;
+  }
 #ifdef DM_VULKAN_SHARED_POOLS
   for(pool_writeback *w=recording_resources->shared_publishes;w;w=w->next)
     for(writeback_range *r=w->ranges;r;r=r->next)
-      if(range_overlap(address,size,(uintptr_t)w->owner->guest+r->offset,r->end-r->offset))return 1;
+      if(range_overlap(gpu_address,gpu_size,(uintptr_t)w->owner->guest+r->offset,r->end-r->offset))return 1;
 #endif
   for (vk_effect *e = V.effects; e; e = e->next)
     if (e->dst && range_overlap(address, size, (uintptr_t)e->dst, e->size)) return 1;
   return 0;
 }
-static uint64_t pending_cpu_write(uint64_t address, uint64_t size) {
+static int recording_cpu_write(uint64_t address,uint64_t size) {
+  return recording_cpu_write_scoped(address,size,address,size);
+}
+static inline uint64_t pending_cpu_write_scoped(uint64_t address,uint64_t size,uint64_t gpu_address,uint64_t gpu_size) {
   if (!atomic_load(&in_flight)) return 0;
   submit_resources *r=recording_resources;
-  if(r && size && r->pending_read_size==size && r->pending_read_address==address)
+  int same_scope=address==gpu_address && size==gpu_size;
+  if(same_scope && r && size && r->pending_read_size==size && r->pending_read_address==address)
     return 0;
   uint64_t serial = 0;
   pthread_mutex_lock(&completion_mu);
   for (submission *s = pending; s; s = s->next)
     for (size_t i = 0; i < s->resources->cpu_write_count; i++) {
       const cpu_write_range *r = &s->resources->cpu_writes[i];
-      if (range_overlap(address, size, r->address, r->size)) {
+      uint64_t at=address,bytes=size;
+#ifdef DM_VULKAN_SHARED_POOLS
+      if(i>=s->resources->cpu_effect_write_count) {at=gpu_address;bytes=gpu_size;}
+#endif
+      if (range_overlap(at,bytes,r->address,r->size)) {
         serial = s->queue_serial;
         break;
       }
     }
   pthread_mutex_unlock(&completion_mu);
-  if(!serial && r && size) {
+  // A raw-range negative does not prove the larger CPU-effect page envelope.
+  if(!serial && same_scope && r && size) {
     r->pending_read_address=address;r->pending_read_size=size;
   }
   return serial;
+}
+static uint64_t pending_cpu_write(uint64_t address,uint64_t size) {
+  return pending_cpu_write_scoped(address,size,address,size);
 }
 static uint64_t pending_gpu_access(pool *p, uint64_t offset, uint64_t size) {
   if (!atomic_load(&in_flight)) return 0;
@@ -1394,6 +1416,11 @@ static void init_options(void) {
   if(account && strcmp(account,"0") && strcmp(account,"1"))
     die("DM_VULKAN_POOL_COPY_ACCOUNTING expects 0 or 1");
   o->pool_copy_accounting=account && !strcmp(account,"1");
+  const char *raw_image=getenv("DM_VK_SHARED_IMAGE_RAW_OBSERVE");
+  if(raw_image && strcmp(raw_image,"0") && strcmp(raw_image,"1"))
+    die("DM_VK_SHARED_IMAGE_RAW_OBSERVE expects0or1");
+  o->shared_image_raw_observe=raw_image && !strcmp(raw_image,"1");
+  LOG("[vulkan] shared image raw publication observation experimental=%d",o->shared_image_raw_observe);
   int defer_requested=atomic_load_explicit(&pool_defer_publication_requested,memory_order_acquire);
   o->pool_defer_publication=defer_requested>=0?defer_requested:option_one("DM_VULKAN_DEFER_POOL_PUBLICATION");
   const char *sync_nvn=getenv("DM_NVN_SYNC");
@@ -1780,6 +1807,13 @@ void mtl_init(void) { pthread_once(&init_once, init_device); }
 int mtl_pool_shared_mode(void) {
 #ifdef DM_VULKAN_SHARED_POOLS
   return shared_active;
+#else
+  return 0;
+#endif
+}
+int vk_pool_shared_image_raw_observe_mode(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  return shared_active && V.options.shared_image_raw_observe;
 #else
   return 0;
 #endif
@@ -3725,15 +3759,60 @@ static void shared_cpu_page_envelope(uint64_t address,uint64_t bytes,uint64_t *f
       address+bytes>UINT64_MAX-(page-1))die("CPU image observation page envelope");
   *first=address&~(page-1);*length=((address+bytes+page-1)&~(page-1))-*first;
 }
+// Caller retains p and holds resources. GPU writes do not change CPU page
+// permissions on coherent imports. Only THEIR byte conflict may be narrowed;
+// CPU callbacks/writeback, unknown/cache-required mappings keep the whole page.
+static int shared_image_raw_observe_locked(pool *p,uint64_t address,uint64_t bytes,uint64_t first,uint64_t length) {
+  if(!V.options.shared_image_raw_observe || !p->shared || p->shared_closing ||
+      !shared_pool_has_imports_locked(p) || !(p->shared_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))return 0;
+  uint64_t base=(uintptr_t)p->guest;
+  // A cross-Pool host page could have an NC writer/prewrite gate. Pool identity
+  // and its immutable imported properties qualify only a wholly contained page.
+  if(first<base || first-base>p->size || length>p->size-(first-base))return 0;
+#ifdef DM_VULKAN_TEST_EMBED
+  if(shared_gpu_gate_force || shared_dependency_test_force_cache)return 0;
+#endif
+  // Every real import in this Pool must have these same immutable properties.
+  // The CPU-only image source does not itself need a VkBuffer/import window.
+  (void)address;(void)bytes;return 1;
+}
+#ifdef DM_VULKAN_TEST_EMBED
+// Boundary qualification only. Synthetic absent/NC/cross-Pool metadata is not
+// claimed as actual noncoherent hardware; separate fixture checks real GPU bytes.
+int vk_test_shared_image_raw_scope(uint64_t address,uint64_t bytes,int edge) {
+  uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
+  pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);int yes=0;
+  if(p) {
+    pool q={.guest=p->guest,.size=p->size,.shared=p->shared,.shared_closing=p->shared_closing,
+      .backings=p->backings,.shared_covers=p->shared_covers,.shared_buffer_index=p->shared_buffer_index,
+      .shared_properties=p->shared_properties,.shared_lazy_eligible=p->shared_lazy_eligible};
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    q.native_allocations=p->native_allocations;q.native_allocation_index=p->native_allocation_index;
+#endif
+    if(edge==1) {q.backings=q.shared_covers=NULL;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      q.native_allocations=NULL;
+#endif
+    }
+    if(edge==2)q.shared_properties=0;
+    if(edge==3)q.shared_properties&=~VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if(edge==4)q.guest=(uint8_t *)(uintptr_t)(first+1); // same host page crosses identity
+    yes=shared_image_raw_observe_locked(&q,address,bytes,first,length);
+  }
+  pthread_mutex_unlock(&V.resources);return yes;
+}
+#endif
 int vk_pool_shared_cpu_observe_prepare(uint64_t address,uint64_t bytes) {
   if(!shared_active || !shared_cpu_observe_phase || !bytes)return 0;
   uint64_t first,length;shared_cpu_page_envelope(address,bytes,&first,&length);
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   if(!p || !p->shared || p->shared_closing) {pthread_mutex_unlock(&V.resources);return 0;}
   p->references++;
-  int recorded=recording_cpu_write(first,length);uint64_t offset=address-(uintptr_t)p->guest;
+  int raw=shared_image_raw_observe_locked(p,address,bytes,first,length);
+  uint64_t gpu_address=raw?address:first,gpu_bytes=raw?bytes:length;
+  int recorded=recording_cpu_write_scoped(first,length,gpu_address,gpu_bytes);uint64_t offset=address-(uintptr_t)p->guest;
   pthread_mutex_unlock(&V.resources);
-  uint64_t serial=pending_cpu_write(first,length);int reopen=V.cmd!=VK_NULL_HANDLE;
+  uint64_t serial=pending_cpu_write_scoped(first,length,gpu_address,gpu_bytes);int reopen=V.cmd!=VK_NULL_HANDLE;
   if(recorded) {uint64_t current=vk_internal_commit();if(current>serial)serial=current;}
   if(serial)vk_internal_wait(serial); // GPU-written bytes matter on coherent memory too
   if(recorded && reopen)mtl_sub_begin();
@@ -3750,10 +3829,12 @@ int vk_pool_shared_cpu_observe_begin(uint64_t address,uint64_t bytes,vk_shared_c
   pthread_mutex_lock(&V.resources);pool *p=pool_find(address,bytes);
   if(!p || !p->shared || p->shared_closing) {pthread_mutex_unlock(&V.resources);return 0;}
   p->references++;uint64_t offset=address-(uintptr_t)p->guest;
-  int recorded=recording_cpu_write(first,length);pthread_mutex_unlock(&V.resources);
+  int raw=shared_image_raw_observe_locked(p,address,bytes,first,length);
+  uint64_t gpu_address=raw?address:first,gpu_bytes=raw?bytes:length;
+  int recorded=recording_cpu_write_scoped(first,length,gpu_address,gpu_bytes);pthread_mutex_unlock(&V.resources);
   // A failed outer-preflight proof is not repaired while holding a physical
   // borrow. In particular do not arm and then wait a completion CPU writer.
-  if(recorded || pending_cpu_write(first,length) || shared_access_host_phase(p,offset,bytes,1,0)) {
+  if(recorded || pending_cpu_write_scoped(first,length,gpu_address,gpu_bytes) || shared_access_host_phase(p,offset,bytes,1,0)) {
     pthread_mutex_lock(&V.resources);p->references--;pthread_cond_broadcast(&pool_cv);
     pthread_mutex_unlock(&V.resources);return 0;
   }
