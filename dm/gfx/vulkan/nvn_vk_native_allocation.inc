@@ -251,7 +251,7 @@ void vk_pool_native_image_release(void *token) {
   // the final publication. The collector may free a immediately after 2; no
   // access to a or its Pool is permitted after that final store.
   pool *p=a->owner;
-  if(atomic_fetch_add_explicit(&p->native_retire_pending,1,memory_order_release)==UINT64_MAX)
+  if(0 && atomic_fetch_add_explicit(&p->native_retire_pending,1,memory_order_release)==UINT64_MAX) // Owned fault: omit notification
     die("Native allocation retirement notification overflow");
   if(!atomic_fetch_sub(&p->native_image_references,1))die("Native image Pool reference underflow");
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
