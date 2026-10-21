@@ -2,7 +2,11 @@
 """Reuse original joystick + official Simpleperf99/stat, optional existing Perfetto helper."""
 from pathlib import Path
 import subprocess as S,json,sys,shlex,hashlib,os,time
-R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport';serial,pid,mode,folder,window_arg,trace_arg=sys.argv[1:];assert trace_arg in ('0','1');trace=trace_arg=='1';assert serial=='10CG570J59001U1'and pid.isdecimal()and mode in ('0','1');shared=mode=='1';window=int(window_arg);assert shared and window in (0,1048576,16777216);D=Path(folder).resolve();assert D.is_relative_to(R/'.local/logs');B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',serial];phase={'owned_PID':int(pid),'shared_requested':shared,'scope':'Official8s cpu-clock:user99Hz DWARF16384, originalgamejoystick, no kernel samples/no custom sampler/timer','stages':[],'pre_record_cache_states':[],'window_bytes':window,'wait_wall_not_measured':not trace}
+R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport';serial,pid,mode,folder,window_arg,trace_arg=sys.argv[1:7];assert len(sys.argv)in(7,8);refill_arg=sys.argv[7]if len(sys.argv)==8 else'0';assert refill_arg in('0','1');refill=refill_arg=='1';assert trace_arg in ('0','1');trace=trace_arg=='1';assert serial=='10CG570J59001U1'and pid.isdecimal()and mode in ('0','1');shared=mode=='1';window=int(window_arg);assert shared and window in (0,1048576,16777216);D=Path(folder).resolve();assert D.is_relative_to(R/'.local/logs');B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',serial];phase={'owned_PID':int(pid),'shared_requested':shared,'scope':'Official8s cpu-clock:user99Hz DWARF16384, originalgamejoystick, no kernel samples/no custom sampler/timer','stages':[],'pre_record_cache_states':[],'window_bytes':window,'wait_wall_not_measured':not trace}
+# This receipt proves sameUID event open/permission only, not sample attribution.
+if refill:
+ probe=R/'.local/logs/q735-official-L1I-record-open-probe-v2/result.json';assert hashlib.sha256(probe.read_bytes()).hexdigest()=='b74438a5f5b66ebc914e2aec01991d4fa9fe20a80299b5a7f3d05fc3340e3808';opened=json.loads(probe.read_text());assert opened['sampling_event_open_returncode']==0 and opened['PERFILE2']and opened['bytes']>1024 and opened['perf_harden_before']==opened['perf_harden_after']
+ phase['raw_L1I_record_scope']={'probe':{'path':str(probe),'sha256':'b74438a5f5b66ebc914e2aec01991d4fa9fe20a80299b5a7f3d05fc3340e3808'},'event':'raw-l1i-cache-refill:u','period':1000000,'seconds':8,'DWARF_bytes':32768,'additional_window_and_overhead':True,'comparison':'Independent event; cpu-clock99/16384 is unchanged. Longer requested stack is not proof that any missing ancestor was caused by stack depth. Keep failed unwinds; never synthesize parent frames.','counter_limit':'Refill sampled PCs are not the entire frontend-stall cost, not per-frame work, and not exclusively host code.'}
 def ad(*a):return S.check_output(B+list(a),text=True,timeout=35).strip()
 def exact():assert ad('shell','pidof '+PKG+' || true')==pid,'not exact original owned PID'
 def app(*a):return ad('shell',shlex.join(['run-as',PKG,*a]))
@@ -31,12 +35,12 @@ stat_events={
  'pmu-front-cache':'task-clock,cpu-cycles:u,instructions:u,raw-l1i-cache:u,raw-l1i-cache-refill:u,raw-l1i-tlb-refill:u',
  'pmu-front-stalls':'task-clock,cpu-cycles:u,stalled-cycles-frontend:u,raw-stall-frontend-l1i:u,raw-stall-frontend-tlb:u,raw-stall-frontend-membound:u,raw-stall-frontend-cpubound:u',
 }
-capture_kinds=('stat','record','pmu-core','pmu-memory','pmu-front-cache','pmu-front-stalls')
+capture_kinds=('stat','record','pmu-core','pmu-memory','pmu-front-cache','pmu-front-stalls')+(('record-l1i-refill',)if refill else())
 phase['PMU_scope']='Four additional official8s stat windows, two for the measured frontend-stall/cache gap. Listed event names are not evidence that every PMU supports/counts them; preserve unavailable/multiplex/scaling output. Windows are separate, not per-frame instruction or DRAM-bandwidth measurements.'
 for kind in capture_kinds:
  first=endpoint('before-'+kind)
- token='native-bulk-bc-cpucost-v1-'+(('window'+str(window))if window else'whole')+'-'+kind;remote='files/runtime/profiles/'+token+('.data'if kind=='record'else'.csv');remotepid='files/runtime/profiles/'+token+'.pid';prop=ad('shell','getprop','security.perf_harden');assert prop in ('0','1');assert app('sh','-c','if test -e "$1" || test -e "$2"; then echo EXISTS; fi','sh',remote,remotepid)=='';profiles_existed=app('sh','-c','if test -d files/runtime/profiles; then echo DIR; fi')=='DIR';app('mkdir','-p','files/runtime/profiles')
- command=(['/system/bin/simpleperf','record','--in-app','-p',pid,'--duration','8','-e','cpu-clock:u','-f','99','--call-graph','dwarf,16384','--post-unwind=yes','--no-callchain-joiner','--keep-failed-unwinding-result','-o',remote] if kind=='record' else ['/system/bin/simpleperf','stat','--csv','--per-thread','--no-inherit','--monitor-new-thread','-p',pid,'--duration','8','-e',stat_events[kind],'-o',remote]);phase[kind+'_official_command']=command;phase['perf_harden_before']=prop;save()
+ token='native-bulk-bc-cpucost-v1-'+(('window'+str(window))if window else'whole')+'-'+kind;remote='files/runtime/profiles/'+token+('.data'if kind in('record','record-l1i-refill')else'.csv');remotepid='files/runtime/profiles/'+token+'.pid';prop=ad('shell','getprop','security.perf_harden');assert prop in ('0','1');assert app('sh','-c','if test -e "$1" || test -e "$2"; then echo EXISTS; fi','sh',remote,remotepid)=='';profiles_existed=app('sh','-c','if test -d files/runtime/profiles; then echo DIR; fi')=='DIR';app('mkdir','-p','files/runtime/profiles')
+ command=(['/system/bin/simpleperf','record','--in-app','-p',pid,'--duration','8','-e','cpu-clock:u','-f','99','--call-graph','dwarf,16384','--post-unwind=yes','--no-callchain-joiner','--keep-failed-unwinding-result','-o',remote] if kind=='record' else ['/system/bin/simpleperf','record','--in-app','-p',pid,'--duration','8','-e','raw-l1i-cache-refill:u','-c','1000000','--call-graph','dwarf,32768','--post-unwind=yes','--no-callchain-joiner','--keep-failed-unwinding-result','-o',remote] if kind=='record-l1i-refill' else ['/system/bin/simpleperf','stat','--csv','--per-thread','--no-inherit','--monitor-new-thread','-p',pid,'--duration','8','-e',stat_events[kind],'-o',remote]);phase[kind+'_official_command']=command;phase['perf_harden_before']=prop;save()
  # Official CSV summaries omit enabled/running times; retain verbose raw PMU
  # records instead of treating an absent scaling annotation as full coverage.
  if kind.startswith('pmu-'):command.insert(2,'--verbose')
@@ -45,7 +49,9 @@ for kind in capture_kinds:
   shell='echo $$ > '+shlex.quote(remotepid)+'; exec '+shlex.join(command)
   with(D/(kind+'-simpleperf-console.log')).open('w')as f:S.run(B+['shell',shlex.join(['run-as',PKG,'sh','-c',shell])],check=True,stdout=f,stderr=S.STDOUT,timeout=35)
   exact();raw=S.run(B+['exec-out','run-as',PKG,'cat',remote],capture_output=True,check=True,timeout=35).stdout
-  if kind=='record':assert raw[:8]==b'PERFILE2'and len(raw)>1024;leaf='official-simpleperf.data'
+  if kind in('record','record-l1i-refill'):
+   assert raw[:8]==b'PERFILE2'and len(raw)>1024;leaf='official-simpleperf.data'if kind=='record'else'official-raw-l1i-cache-refill.data'
+   phase[kind+'_record_metadata']={'path':str(D/leaf),'bytes':len(raw),'event':'cpu-clock:u'if kind=='record'else'raw-l1i-cache-refill:u','sample_frequency_Hz':99 if kind=='record'else None,'sample_period':1000000 if kind=='record-l1i-refill'else None,'DWARF_bytes':16384 if kind=='record'else 32768,'independent_window':True}
   else:assert b'Total test time'in raw;leaf='official-per-thread-'+kind+'.csv'
   (D/leaf).write_bytes(raw);phase[kind+'_sha256']=hashlib.sha256(raw).hexdigest();phase['stages'].append('official8s-'+kind+'-complete')
  finally:

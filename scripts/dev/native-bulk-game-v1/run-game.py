@@ -199,6 +199,11 @@ def proof(path, digest):
     if 'official_memory_map' in p:
         require(p['official_memory_map'] == {'tool': '/system/bin/showmap', 'format': 'json'},
                 'only the existing system showmap JSON memory snapshot is allowed')
+    if 'official_l1i_record' in p:
+        require(p['official_l1i_record'] is True and p['runtime_commit'] in
+                ('53c7d26628142a383c9c5f8d39a3edc23a1674c3',
+                 'd14808f591b0de60c241340c3f5c5df708f4e36b') and p.get('performance_tools'),
+                'independent raw-L1I record requires exact53c or d148 with official tools')
     if 'performance_tools' in p:
         tools = p['performance_tools']
         require(set(tools) == {'cpu_helper', 'scheduler_helper'}, 'performance tools fields differ')
@@ -396,6 +401,8 @@ def phase_game(dev, out, phase, p, token):
             performance_out.mkdir()
             command = [sys.executable, p['performance_tools']['cpu_helper']['path'],
                        p['serial'], own, '1', str(performance_out), str(p['pool_window_bytes']), '1']
+            if p.get('official_l1i_record'):
+                command.append('1')  # Independent raw-L1I record; original cpu-clock command unchanged.
             d['performance_command'] = command
             save()
             with (performance_out / 'console.txt').open('w') as log:
@@ -576,6 +583,12 @@ def main():
             'pmu_limit': 'Inspect actual event availability and multiplex/scaling; not per-frame instructions or DRAM traffic',
             'same_window_CPU_and_Surface_events': 'Perfetto only; stat/record are separate windows',
             'game_Surface_actual_frame_timeline_may_be_absent': True}
+        if p.get('official_l1i_record'):
+            plan['official_performance']['additional_record'] = {'event': 'raw-l1i-cache-refill:u',
+                'period': 1000000, 'seconds': 8, 'DWARF_bytes': 32768,
+                'independent_window_and_overhead': True, 'cpu_clock99_DWARF16384_unchanged': True,
+                'scope': 'Refill PC samples, not all frontend stalls or per-frame work; preserve failed unwinds'}
+            plan['scope'] += '; one additional independent raw-L1I refill record window'
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
     if p.get('official_gpu_tools'):
         plan['official_gpu'] = {'optional': True, 'tool': 'SDP2026.9 Realtime GUI',
