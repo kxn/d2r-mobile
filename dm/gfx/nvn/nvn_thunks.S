@@ -4715,6 +4715,7 @@ NVN_C(nvnth_522):
     br x17
 #ifdef DM_ANDROID_APP
     .globl NVN_C(nvnth_fast_0)
+    .hidden NVN_C(nvnth_fast_0)
 NVN_C(nvnth_fast_0):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #0
@@ -4722,6 +4723,7 @@ NVN_C(nvnth_fast_0):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_1)
+    .hidden NVN_C(nvnth_fast_1)
 NVN_C(nvnth_fast_1):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #16
@@ -4729,6 +4731,7 @@ NVN_C(nvnth_fast_1):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_2)
+    .hidden NVN_C(nvnth_fast_2)
 NVN_C(nvnth_fast_2):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #32
@@ -4736,6 +4739,7 @@ NVN_C(nvnth_fast_2):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_3)
+    .hidden NVN_C(nvnth_fast_3)
 NVN_C(nvnth_fast_3):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #48
@@ -4743,6 +4747,7 @@ NVN_C(nvnth_fast_3):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_4)
+    .hidden NVN_C(nvnth_fast_4)
 NVN_C(nvnth_fast_4):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #64
@@ -4750,6 +4755,7 @@ NVN_C(nvnth_fast_4):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_5)
+    .hidden NVN_C(nvnth_fast_5)
 NVN_C(nvnth_fast_5):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #80
@@ -4757,6 +4763,7 @@ NVN_C(nvnth_fast_5):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_6)
+    .hidden NVN_C(nvnth_fast_6)
 NVN_C(nvnth_fast_6):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #96
@@ -4764,6 +4771,7 @@ NVN_C(nvnth_fast_6):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_7)
+    .hidden NVN_C(nvnth_fast_7)
 NVN_C(nvnth_fast_7):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #112
@@ -4771,6 +4779,7 @@ NVN_C(nvnth_fast_7):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_8)
+    .hidden NVN_C(nvnth_fast_8)
 NVN_C(nvnth_fast_8):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #128
@@ -4778,6 +4787,7 @@ NVN_C(nvnth_fast_8):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_9)
+    .hidden NVN_C(nvnth_fast_9)
 NVN_C(nvnth_fast_9):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #144
@@ -4785,6 +4795,7 @@ NVN_C(nvnth_fast_9):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_10)
+    .hidden NVN_C(nvnth_fast_10)
 NVN_C(nvnth_fast_10):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #160
@@ -4792,6 +4803,7 @@ NVN_C(nvnth_fast_10):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_11)
+    .hidden NVN_C(nvnth_fast_11)
 NVN_C(nvnth_fast_11):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #176
@@ -4799,6 +4811,7 @@ NVN_C(nvnth_fast_11):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_12)
+    .hidden NVN_C(nvnth_fast_12)
 NVN_C(nvnth_fast_12):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #192
@@ -4806,6 +4819,7 @@ NVN_C(nvnth_fast_12):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_13)
+    .hidden NVN_C(nvnth_fast_13)
 NVN_C(nvnth_fast_13):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #208
@@ -4813,6 +4827,7 @@ NVN_C(nvnth_fast_13):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_14)
+    .hidden NVN_C(nvnth_fast_14)
 NVN_C(nvnth_fast_14):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #224
@@ -4820,6 +4835,7 @@ NVN_C(nvnth_fast_14):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_15)
+    .hidden NVN_C(nvnth_fast_15)
 NVN_C(nvnth_fast_15):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #240
@@ -4827,6 +4843,7 @@ NVN_C(nvnth_fast_15):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_16)
+    .hidden NVN_C(nvnth_fast_16)
 NVN_C(nvnth_fast_16):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #256
@@ -4834,6 +4851,7 @@ NVN_C(nvnth_fast_16):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_17)
+    .hidden NVN_C(nvnth_fast_17)
 NVN_C(nvnth_fast_17):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #272
@@ -4841,6 +4859,7 @@ NVN_C(nvnth_fast_17):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_18)
+    .hidden NVN_C(nvnth_fast_18)
 NVN_C(nvnth_fast_18):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #288
@@ -4848,6 +4867,7 @@ NVN_C(nvnth_fast_18):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_19)
+    .hidden NVN_C(nvnth_fast_19)
 NVN_C(nvnth_fast_19):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #304
@@ -4855,6 +4875,7 @@ NVN_C(nvnth_fast_19):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_20)
+    .hidden NVN_C(nvnth_fast_20)
 NVN_C(nvnth_fast_20):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #320
@@ -4862,6 +4883,7 @@ NVN_C(nvnth_fast_20):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_21)
+    .hidden NVN_C(nvnth_fast_21)
 NVN_C(nvnth_fast_21):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #336
@@ -4869,6 +4891,7 @@ NVN_C(nvnth_fast_21):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_22)
+    .hidden NVN_C(nvnth_fast_22)
 NVN_C(nvnth_fast_22):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #352
@@ -4876,6 +4899,7 @@ NVN_C(nvnth_fast_22):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_23)
+    .hidden NVN_C(nvnth_fast_23)
 NVN_C(nvnth_fast_23):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #368
@@ -4883,6 +4907,7 @@ NVN_C(nvnth_fast_23):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_24)
+    .hidden NVN_C(nvnth_fast_24)
 NVN_C(nvnth_fast_24):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #384
@@ -4890,6 +4915,7 @@ NVN_C(nvnth_fast_24):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_25)
+    .hidden NVN_C(nvnth_fast_25)
 NVN_C(nvnth_fast_25):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #400
@@ -4897,6 +4923,7 @@ NVN_C(nvnth_fast_25):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_26)
+    .hidden NVN_C(nvnth_fast_26)
 NVN_C(nvnth_fast_26):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #416
@@ -4904,6 +4931,7 @@ NVN_C(nvnth_fast_26):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_27)
+    .hidden NVN_C(nvnth_fast_27)
 NVN_C(nvnth_fast_27):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #432
@@ -4911,6 +4939,7 @@ NVN_C(nvnth_fast_27):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_28)
+    .hidden NVN_C(nvnth_fast_28)
 NVN_C(nvnth_fast_28):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #448
@@ -4918,6 +4947,7 @@ NVN_C(nvnth_fast_28):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_29)
+    .hidden NVN_C(nvnth_fast_29)
 NVN_C(nvnth_fast_29):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #464
@@ -4925,6 +4955,7 @@ NVN_C(nvnth_fast_29):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_30)
+    .hidden NVN_C(nvnth_fast_30)
 NVN_C(nvnth_fast_30):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #480
@@ -4932,6 +4963,7 @@ NVN_C(nvnth_fast_30):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_31)
+    .hidden NVN_C(nvnth_fast_31)
 NVN_C(nvnth_fast_31):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #496
@@ -4939,6 +4971,7 @@ NVN_C(nvnth_fast_31):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_32)
+    .hidden NVN_C(nvnth_fast_32)
 NVN_C(nvnth_fast_32):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #512
@@ -4946,6 +4979,7 @@ NVN_C(nvnth_fast_32):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_33)
+    .hidden NVN_C(nvnth_fast_33)
 NVN_C(nvnth_fast_33):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #528
@@ -4953,6 +4987,7 @@ NVN_C(nvnth_fast_33):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_34)
+    .hidden NVN_C(nvnth_fast_34)
 NVN_C(nvnth_fast_34):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #544
@@ -4960,6 +4995,7 @@ NVN_C(nvnth_fast_34):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_35)
+    .hidden NVN_C(nvnth_fast_35)
 NVN_C(nvnth_fast_35):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #560
@@ -4967,6 +5003,7 @@ NVN_C(nvnth_fast_35):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_36)
+    .hidden NVN_C(nvnth_fast_36)
 NVN_C(nvnth_fast_36):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #576
@@ -4974,6 +5011,7 @@ NVN_C(nvnth_fast_36):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_37)
+    .hidden NVN_C(nvnth_fast_37)
 NVN_C(nvnth_fast_37):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #592
@@ -4981,6 +5019,7 @@ NVN_C(nvnth_fast_37):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_38)
+    .hidden NVN_C(nvnth_fast_38)
 NVN_C(nvnth_fast_38):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #608
@@ -4988,6 +5027,7 @@ NVN_C(nvnth_fast_38):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_39)
+    .hidden NVN_C(nvnth_fast_39)
 NVN_C(nvnth_fast_39):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #624
@@ -4995,6 +5035,7 @@ NVN_C(nvnth_fast_39):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_40)
+    .hidden NVN_C(nvnth_fast_40)
 NVN_C(nvnth_fast_40):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #640
@@ -5002,6 +5043,7 @@ NVN_C(nvnth_fast_40):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_41)
+    .hidden NVN_C(nvnth_fast_41)
 NVN_C(nvnth_fast_41):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #656
@@ -5009,6 +5051,7 @@ NVN_C(nvnth_fast_41):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_42)
+    .hidden NVN_C(nvnth_fast_42)
 NVN_C(nvnth_fast_42):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #672
@@ -5016,6 +5059,7 @@ NVN_C(nvnth_fast_42):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_43)
+    .hidden NVN_C(nvnth_fast_43)
 NVN_C(nvnth_fast_43):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #688
@@ -5023,6 +5067,7 @@ NVN_C(nvnth_fast_43):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_44)
+    .hidden NVN_C(nvnth_fast_44)
 NVN_C(nvnth_fast_44):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #704
@@ -5030,6 +5075,7 @@ NVN_C(nvnth_fast_44):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_45)
+    .hidden NVN_C(nvnth_fast_45)
 NVN_C(nvnth_fast_45):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #720
@@ -5037,6 +5083,7 @@ NVN_C(nvnth_fast_45):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_46)
+    .hidden NVN_C(nvnth_fast_46)
 NVN_C(nvnth_fast_46):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #736
@@ -5044,6 +5091,7 @@ NVN_C(nvnth_fast_46):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_47)
+    .hidden NVN_C(nvnth_fast_47)
 NVN_C(nvnth_fast_47):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #752
@@ -5051,6 +5099,7 @@ NVN_C(nvnth_fast_47):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_48)
+    .hidden NVN_C(nvnth_fast_48)
 NVN_C(nvnth_fast_48):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #768
@@ -5058,6 +5107,7 @@ NVN_C(nvnth_fast_48):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_49)
+    .hidden NVN_C(nvnth_fast_49)
 NVN_C(nvnth_fast_49):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #784
@@ -5065,6 +5115,7 @@ NVN_C(nvnth_fast_49):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_50)
+    .hidden NVN_C(nvnth_fast_50)
 NVN_C(nvnth_fast_50):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #800
@@ -5072,6 +5123,7 @@ NVN_C(nvnth_fast_50):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_51)
+    .hidden NVN_C(nvnth_fast_51)
 NVN_C(nvnth_fast_51):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #816
@@ -5079,6 +5131,7 @@ NVN_C(nvnth_fast_51):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_52)
+    .hidden NVN_C(nvnth_fast_52)
 NVN_C(nvnth_fast_52):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #832
@@ -5086,6 +5139,7 @@ NVN_C(nvnth_fast_52):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_53)
+    .hidden NVN_C(nvnth_fast_53)
 NVN_C(nvnth_fast_53):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #848
@@ -5093,6 +5147,7 @@ NVN_C(nvnth_fast_53):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_54)
+    .hidden NVN_C(nvnth_fast_54)
 NVN_C(nvnth_fast_54):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #864
@@ -5100,6 +5155,7 @@ NVN_C(nvnth_fast_54):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_55)
+    .hidden NVN_C(nvnth_fast_55)
 NVN_C(nvnth_fast_55):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #880
@@ -5107,6 +5163,7 @@ NVN_C(nvnth_fast_55):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_56)
+    .hidden NVN_C(nvnth_fast_56)
 NVN_C(nvnth_fast_56):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #896
@@ -5114,6 +5171,7 @@ NVN_C(nvnth_fast_56):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_57)
+    .hidden NVN_C(nvnth_fast_57)
 NVN_C(nvnth_fast_57):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #912
@@ -5121,6 +5179,7 @@ NVN_C(nvnth_fast_57):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_58)
+    .hidden NVN_C(nvnth_fast_58)
 NVN_C(nvnth_fast_58):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #928
@@ -5128,6 +5187,7 @@ NVN_C(nvnth_fast_58):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_59)
+    .hidden NVN_C(nvnth_fast_59)
 NVN_C(nvnth_fast_59):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #944
@@ -5135,6 +5195,7 @@ NVN_C(nvnth_fast_59):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_60)
+    .hidden NVN_C(nvnth_fast_60)
 NVN_C(nvnth_fast_60):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #960
@@ -5142,6 +5203,7 @@ NVN_C(nvnth_fast_60):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_61)
+    .hidden NVN_C(nvnth_fast_61)
 NVN_C(nvnth_fast_61):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #976
@@ -5149,6 +5211,7 @@ NVN_C(nvnth_fast_61):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_62)
+    .hidden NVN_C(nvnth_fast_62)
 NVN_C(nvnth_fast_62):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #992
@@ -5156,6 +5219,7 @@ NVN_C(nvnth_fast_62):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_63)
+    .hidden NVN_C(nvnth_fast_63)
 NVN_C(nvnth_fast_63):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1008
@@ -5163,6 +5227,7 @@ NVN_C(nvnth_fast_63):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_64)
+    .hidden NVN_C(nvnth_fast_64)
 NVN_C(nvnth_fast_64):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1024
@@ -5170,6 +5235,7 @@ NVN_C(nvnth_fast_64):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_65)
+    .hidden NVN_C(nvnth_fast_65)
 NVN_C(nvnth_fast_65):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1040
@@ -5177,6 +5243,7 @@ NVN_C(nvnth_fast_65):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_66)
+    .hidden NVN_C(nvnth_fast_66)
 NVN_C(nvnth_fast_66):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1056
@@ -5184,6 +5251,7 @@ NVN_C(nvnth_fast_66):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_67)
+    .hidden NVN_C(nvnth_fast_67)
 NVN_C(nvnth_fast_67):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1072
@@ -5191,6 +5259,7 @@ NVN_C(nvnth_fast_67):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_68)
+    .hidden NVN_C(nvnth_fast_68)
 NVN_C(nvnth_fast_68):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1088
@@ -5198,6 +5267,7 @@ NVN_C(nvnth_fast_68):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_69)
+    .hidden NVN_C(nvnth_fast_69)
 NVN_C(nvnth_fast_69):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1104
@@ -5205,6 +5275,7 @@ NVN_C(nvnth_fast_69):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_70)
+    .hidden NVN_C(nvnth_fast_70)
 NVN_C(nvnth_fast_70):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1120
@@ -5212,6 +5283,7 @@ NVN_C(nvnth_fast_70):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_71)
+    .hidden NVN_C(nvnth_fast_71)
 NVN_C(nvnth_fast_71):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1136
@@ -5219,6 +5291,7 @@ NVN_C(nvnth_fast_71):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_72)
+    .hidden NVN_C(nvnth_fast_72)
 NVN_C(nvnth_fast_72):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1152
@@ -5226,6 +5299,7 @@ NVN_C(nvnth_fast_72):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_73)
+    .hidden NVN_C(nvnth_fast_73)
 NVN_C(nvnth_fast_73):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1168
@@ -5233,6 +5307,7 @@ NVN_C(nvnth_fast_73):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_74)
+    .hidden NVN_C(nvnth_fast_74)
 NVN_C(nvnth_fast_74):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1184
@@ -5240,6 +5315,7 @@ NVN_C(nvnth_fast_74):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_75)
+    .hidden NVN_C(nvnth_fast_75)
 NVN_C(nvnth_fast_75):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1200
@@ -5247,6 +5323,7 @@ NVN_C(nvnth_fast_75):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_76)
+    .hidden NVN_C(nvnth_fast_76)
 NVN_C(nvnth_fast_76):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1216
@@ -5254,6 +5331,7 @@ NVN_C(nvnth_fast_76):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_77)
+    .hidden NVN_C(nvnth_fast_77)
 NVN_C(nvnth_fast_77):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1232
@@ -5261,6 +5339,7 @@ NVN_C(nvnth_fast_77):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_78)
+    .hidden NVN_C(nvnth_fast_78)
 NVN_C(nvnth_fast_78):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1248
@@ -5268,6 +5347,7 @@ NVN_C(nvnth_fast_78):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_79)
+    .hidden NVN_C(nvnth_fast_79)
 NVN_C(nvnth_fast_79):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1264
@@ -5275,6 +5355,7 @@ NVN_C(nvnth_fast_79):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_80)
+    .hidden NVN_C(nvnth_fast_80)
 NVN_C(nvnth_fast_80):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1280
@@ -5282,6 +5363,7 @@ NVN_C(nvnth_fast_80):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_81)
+    .hidden NVN_C(nvnth_fast_81)
 NVN_C(nvnth_fast_81):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1296
@@ -5289,6 +5371,7 @@ NVN_C(nvnth_fast_81):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_82)
+    .hidden NVN_C(nvnth_fast_82)
 NVN_C(nvnth_fast_82):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1312
@@ -5296,6 +5379,7 @@ NVN_C(nvnth_fast_82):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_83)
+    .hidden NVN_C(nvnth_fast_83)
 NVN_C(nvnth_fast_83):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1328
@@ -5303,6 +5387,7 @@ NVN_C(nvnth_fast_83):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_84)
+    .hidden NVN_C(nvnth_fast_84)
 NVN_C(nvnth_fast_84):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1344
@@ -5310,6 +5395,7 @@ NVN_C(nvnth_fast_84):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_85)
+    .hidden NVN_C(nvnth_fast_85)
 NVN_C(nvnth_fast_85):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1360
@@ -5317,6 +5403,7 @@ NVN_C(nvnth_fast_85):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_86)
+    .hidden NVN_C(nvnth_fast_86)
 NVN_C(nvnth_fast_86):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1376
@@ -5324,6 +5411,7 @@ NVN_C(nvnth_fast_86):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_87)
+    .hidden NVN_C(nvnth_fast_87)
 NVN_C(nvnth_fast_87):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1392
@@ -5331,6 +5419,7 @@ NVN_C(nvnth_fast_87):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_88)
+    .hidden NVN_C(nvnth_fast_88)
 NVN_C(nvnth_fast_88):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1408
@@ -5338,6 +5427,7 @@ NVN_C(nvnth_fast_88):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_89)
+    .hidden NVN_C(nvnth_fast_89)
 NVN_C(nvnth_fast_89):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1424
@@ -5345,6 +5435,7 @@ NVN_C(nvnth_fast_89):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_90)
+    .hidden NVN_C(nvnth_fast_90)
 NVN_C(nvnth_fast_90):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1440
@@ -5352,6 +5443,7 @@ NVN_C(nvnth_fast_90):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_91)
+    .hidden NVN_C(nvnth_fast_91)
 NVN_C(nvnth_fast_91):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1456
@@ -5359,6 +5451,7 @@ NVN_C(nvnth_fast_91):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_92)
+    .hidden NVN_C(nvnth_fast_92)
 NVN_C(nvnth_fast_92):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1472
@@ -5366,6 +5459,7 @@ NVN_C(nvnth_fast_92):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_93)
+    .hidden NVN_C(nvnth_fast_93)
 NVN_C(nvnth_fast_93):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1488
@@ -5373,6 +5467,7 @@ NVN_C(nvnth_fast_93):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_94)
+    .hidden NVN_C(nvnth_fast_94)
 NVN_C(nvnth_fast_94):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1504
@@ -5380,6 +5475,7 @@ NVN_C(nvnth_fast_94):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_95)
+    .hidden NVN_C(nvnth_fast_95)
 NVN_C(nvnth_fast_95):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1520
@@ -5387,6 +5483,7 @@ NVN_C(nvnth_fast_95):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_96)
+    .hidden NVN_C(nvnth_fast_96)
 NVN_C(nvnth_fast_96):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1536
@@ -5394,6 +5491,7 @@ NVN_C(nvnth_fast_96):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_97)
+    .hidden NVN_C(nvnth_fast_97)
 NVN_C(nvnth_fast_97):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1552
@@ -5401,6 +5499,7 @@ NVN_C(nvnth_fast_97):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_98)
+    .hidden NVN_C(nvnth_fast_98)
 NVN_C(nvnth_fast_98):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1568
@@ -5408,6 +5507,7 @@ NVN_C(nvnth_fast_98):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_99)
+    .hidden NVN_C(nvnth_fast_99)
 NVN_C(nvnth_fast_99):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1584
@@ -5415,6 +5515,7 @@ NVN_C(nvnth_fast_99):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_100)
+    .hidden NVN_C(nvnth_fast_100)
 NVN_C(nvnth_fast_100):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1600
@@ -5422,6 +5523,7 @@ NVN_C(nvnth_fast_100):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_101)
+    .hidden NVN_C(nvnth_fast_101)
 NVN_C(nvnth_fast_101):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1616
@@ -5429,6 +5531,7 @@ NVN_C(nvnth_fast_101):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_102)
+    .hidden NVN_C(nvnth_fast_102)
 NVN_C(nvnth_fast_102):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1632
@@ -5436,6 +5539,7 @@ NVN_C(nvnth_fast_102):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_103)
+    .hidden NVN_C(nvnth_fast_103)
 NVN_C(nvnth_fast_103):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1648
@@ -5443,6 +5547,7 @@ NVN_C(nvnth_fast_103):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_104)
+    .hidden NVN_C(nvnth_fast_104)
 NVN_C(nvnth_fast_104):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1664
@@ -5450,6 +5555,7 @@ NVN_C(nvnth_fast_104):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_105)
+    .hidden NVN_C(nvnth_fast_105)
 NVN_C(nvnth_fast_105):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1680
@@ -5457,6 +5563,7 @@ NVN_C(nvnth_fast_105):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_106)
+    .hidden NVN_C(nvnth_fast_106)
 NVN_C(nvnth_fast_106):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1696
@@ -5464,6 +5571,7 @@ NVN_C(nvnth_fast_106):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_107)
+    .hidden NVN_C(nvnth_fast_107)
 NVN_C(nvnth_fast_107):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1712
@@ -5471,6 +5579,7 @@ NVN_C(nvnth_fast_107):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_108)
+    .hidden NVN_C(nvnth_fast_108)
 NVN_C(nvnth_fast_108):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1728
@@ -5478,6 +5587,7 @@ NVN_C(nvnth_fast_108):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_109)
+    .hidden NVN_C(nvnth_fast_109)
 NVN_C(nvnth_fast_109):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1744
@@ -5485,6 +5595,7 @@ NVN_C(nvnth_fast_109):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_110)
+    .hidden NVN_C(nvnth_fast_110)
 NVN_C(nvnth_fast_110):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1760
@@ -5492,6 +5603,7 @@ NVN_C(nvnth_fast_110):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_111)
+    .hidden NVN_C(nvnth_fast_111)
 NVN_C(nvnth_fast_111):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1776
@@ -5499,6 +5611,7 @@ NVN_C(nvnth_fast_111):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_112)
+    .hidden NVN_C(nvnth_fast_112)
 NVN_C(nvnth_fast_112):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1792
@@ -5506,6 +5619,7 @@ NVN_C(nvnth_fast_112):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_113)
+    .hidden NVN_C(nvnth_fast_113)
 NVN_C(nvnth_fast_113):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1808
@@ -5513,6 +5627,7 @@ NVN_C(nvnth_fast_113):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_114)
+    .hidden NVN_C(nvnth_fast_114)
 NVN_C(nvnth_fast_114):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1824
@@ -5520,6 +5635,7 @@ NVN_C(nvnth_fast_114):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_115)
+    .hidden NVN_C(nvnth_fast_115)
 NVN_C(nvnth_fast_115):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1840
@@ -5527,6 +5643,7 @@ NVN_C(nvnth_fast_115):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_116)
+    .hidden NVN_C(nvnth_fast_116)
 NVN_C(nvnth_fast_116):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1856
@@ -5534,6 +5651,7 @@ NVN_C(nvnth_fast_116):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_117)
+    .hidden NVN_C(nvnth_fast_117)
 NVN_C(nvnth_fast_117):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1872
@@ -5541,6 +5659,7 @@ NVN_C(nvnth_fast_117):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_118)
+    .hidden NVN_C(nvnth_fast_118)
 NVN_C(nvnth_fast_118):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1888
@@ -5548,6 +5667,7 @@ NVN_C(nvnth_fast_118):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_119)
+    .hidden NVN_C(nvnth_fast_119)
 NVN_C(nvnth_fast_119):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1904
@@ -5555,6 +5675,7 @@ NVN_C(nvnth_fast_119):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_120)
+    .hidden NVN_C(nvnth_fast_120)
 NVN_C(nvnth_fast_120):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1920
@@ -5562,6 +5683,7 @@ NVN_C(nvnth_fast_120):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_121)
+    .hidden NVN_C(nvnth_fast_121)
 NVN_C(nvnth_fast_121):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1936
@@ -5569,6 +5691,7 @@ NVN_C(nvnth_fast_121):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_122)
+    .hidden NVN_C(nvnth_fast_122)
 NVN_C(nvnth_fast_122):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1952
@@ -5576,6 +5699,7 @@ NVN_C(nvnth_fast_122):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_123)
+    .hidden NVN_C(nvnth_fast_123)
 NVN_C(nvnth_fast_123):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1968
@@ -5583,6 +5707,7 @@ NVN_C(nvnth_fast_123):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_124)
+    .hidden NVN_C(nvnth_fast_124)
 NVN_C(nvnth_fast_124):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #1984
@@ -5590,6 +5715,7 @@ NVN_C(nvnth_fast_124):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_125)
+    .hidden NVN_C(nvnth_fast_125)
 NVN_C(nvnth_fast_125):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2000
@@ -5597,6 +5723,7 @@ NVN_C(nvnth_fast_125):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_126)
+    .hidden NVN_C(nvnth_fast_126)
 NVN_C(nvnth_fast_126):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2016
@@ -5604,6 +5731,7 @@ NVN_C(nvnth_fast_126):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_127)
+    .hidden NVN_C(nvnth_fast_127)
 NVN_C(nvnth_fast_127):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2032
@@ -5611,6 +5739,7 @@ NVN_C(nvnth_fast_127):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_128)
+    .hidden NVN_C(nvnth_fast_128)
 NVN_C(nvnth_fast_128):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2048
@@ -5618,6 +5747,7 @@ NVN_C(nvnth_fast_128):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_129)
+    .hidden NVN_C(nvnth_fast_129)
 NVN_C(nvnth_fast_129):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2064
@@ -5625,6 +5755,7 @@ NVN_C(nvnth_fast_129):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_130)
+    .hidden NVN_C(nvnth_fast_130)
 NVN_C(nvnth_fast_130):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2080
@@ -5632,6 +5763,7 @@ NVN_C(nvnth_fast_130):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_131)
+    .hidden NVN_C(nvnth_fast_131)
 NVN_C(nvnth_fast_131):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2096
@@ -5639,6 +5771,7 @@ NVN_C(nvnth_fast_131):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_132)
+    .hidden NVN_C(nvnth_fast_132)
 NVN_C(nvnth_fast_132):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2112
@@ -5646,6 +5779,7 @@ NVN_C(nvnth_fast_132):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_133)
+    .hidden NVN_C(nvnth_fast_133)
 NVN_C(nvnth_fast_133):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2128
@@ -5653,6 +5787,7 @@ NVN_C(nvnth_fast_133):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_134)
+    .hidden NVN_C(nvnth_fast_134)
 NVN_C(nvnth_fast_134):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2144
@@ -5660,6 +5795,7 @@ NVN_C(nvnth_fast_134):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_135)
+    .hidden NVN_C(nvnth_fast_135)
 NVN_C(nvnth_fast_135):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2160
@@ -5667,6 +5803,7 @@ NVN_C(nvnth_fast_135):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_136)
+    .hidden NVN_C(nvnth_fast_136)
 NVN_C(nvnth_fast_136):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2176
@@ -5674,6 +5811,7 @@ NVN_C(nvnth_fast_136):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_137)
+    .hidden NVN_C(nvnth_fast_137)
 NVN_C(nvnth_fast_137):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2192
@@ -5681,6 +5819,7 @@ NVN_C(nvnth_fast_137):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_138)
+    .hidden NVN_C(nvnth_fast_138)
 NVN_C(nvnth_fast_138):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2208
@@ -5688,6 +5827,7 @@ NVN_C(nvnth_fast_138):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_139)
+    .hidden NVN_C(nvnth_fast_139)
 NVN_C(nvnth_fast_139):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2224
@@ -5695,6 +5835,7 @@ NVN_C(nvnth_fast_139):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_140)
+    .hidden NVN_C(nvnth_fast_140)
 NVN_C(nvnth_fast_140):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2240
@@ -5702,6 +5843,7 @@ NVN_C(nvnth_fast_140):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_141)
+    .hidden NVN_C(nvnth_fast_141)
 NVN_C(nvnth_fast_141):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2256
@@ -5709,6 +5851,7 @@ NVN_C(nvnth_fast_141):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_142)
+    .hidden NVN_C(nvnth_fast_142)
 NVN_C(nvnth_fast_142):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2272
@@ -5716,6 +5859,7 @@ NVN_C(nvnth_fast_142):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_143)
+    .hidden NVN_C(nvnth_fast_143)
 NVN_C(nvnth_fast_143):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2288
@@ -5723,6 +5867,7 @@ NVN_C(nvnth_fast_143):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_144)
+    .hidden NVN_C(nvnth_fast_144)
 NVN_C(nvnth_fast_144):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2304
@@ -5730,6 +5875,7 @@ NVN_C(nvnth_fast_144):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_145)
+    .hidden NVN_C(nvnth_fast_145)
 NVN_C(nvnth_fast_145):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2320
@@ -5737,6 +5883,7 @@ NVN_C(nvnth_fast_145):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_146)
+    .hidden NVN_C(nvnth_fast_146)
 NVN_C(nvnth_fast_146):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2336
@@ -5744,6 +5891,7 @@ NVN_C(nvnth_fast_146):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_147)
+    .hidden NVN_C(nvnth_fast_147)
 NVN_C(nvnth_fast_147):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2352
@@ -5751,6 +5899,7 @@ NVN_C(nvnth_fast_147):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_148)
+    .hidden NVN_C(nvnth_fast_148)
 NVN_C(nvnth_fast_148):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2368
@@ -5758,6 +5907,7 @@ NVN_C(nvnth_fast_148):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_149)
+    .hidden NVN_C(nvnth_fast_149)
 NVN_C(nvnth_fast_149):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2384
@@ -5765,6 +5915,7 @@ NVN_C(nvnth_fast_149):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_150)
+    .hidden NVN_C(nvnth_fast_150)
 NVN_C(nvnth_fast_150):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2400
@@ -5772,6 +5923,7 @@ NVN_C(nvnth_fast_150):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_151)
+    .hidden NVN_C(nvnth_fast_151)
 NVN_C(nvnth_fast_151):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2416
@@ -5779,6 +5931,7 @@ NVN_C(nvnth_fast_151):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_152)
+    .hidden NVN_C(nvnth_fast_152)
 NVN_C(nvnth_fast_152):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2432
@@ -5786,6 +5939,7 @@ NVN_C(nvnth_fast_152):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_153)
+    .hidden NVN_C(nvnth_fast_153)
 NVN_C(nvnth_fast_153):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2448
@@ -5793,6 +5947,7 @@ NVN_C(nvnth_fast_153):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_154)
+    .hidden NVN_C(nvnth_fast_154)
 NVN_C(nvnth_fast_154):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2464
@@ -5800,6 +5955,7 @@ NVN_C(nvnth_fast_154):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_155)
+    .hidden NVN_C(nvnth_fast_155)
 NVN_C(nvnth_fast_155):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2480
@@ -5807,6 +5963,7 @@ NVN_C(nvnth_fast_155):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_156)
+    .hidden NVN_C(nvnth_fast_156)
 NVN_C(nvnth_fast_156):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2496
@@ -5814,6 +5971,7 @@ NVN_C(nvnth_fast_156):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_157)
+    .hidden NVN_C(nvnth_fast_157)
 NVN_C(nvnth_fast_157):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2512
@@ -5821,6 +5979,7 @@ NVN_C(nvnth_fast_157):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_158)
+    .hidden NVN_C(nvnth_fast_158)
 NVN_C(nvnth_fast_158):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2528
@@ -5828,6 +5987,7 @@ NVN_C(nvnth_fast_158):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_159)
+    .hidden NVN_C(nvnth_fast_159)
 NVN_C(nvnth_fast_159):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2544
@@ -5835,6 +5995,7 @@ NVN_C(nvnth_fast_159):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_160)
+    .hidden NVN_C(nvnth_fast_160)
 NVN_C(nvnth_fast_160):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2560
@@ -5842,6 +6003,7 @@ NVN_C(nvnth_fast_160):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_161)
+    .hidden NVN_C(nvnth_fast_161)
 NVN_C(nvnth_fast_161):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2576
@@ -5849,6 +6011,7 @@ NVN_C(nvnth_fast_161):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_162)
+    .hidden NVN_C(nvnth_fast_162)
 NVN_C(nvnth_fast_162):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2592
@@ -5856,6 +6019,7 @@ NVN_C(nvnth_fast_162):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_163)
+    .hidden NVN_C(nvnth_fast_163)
 NVN_C(nvnth_fast_163):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2608
@@ -5863,6 +6027,7 @@ NVN_C(nvnth_fast_163):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_164)
+    .hidden NVN_C(nvnth_fast_164)
 NVN_C(nvnth_fast_164):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2624
@@ -5870,6 +6035,7 @@ NVN_C(nvnth_fast_164):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_165)
+    .hidden NVN_C(nvnth_fast_165)
 NVN_C(nvnth_fast_165):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2640
@@ -5877,6 +6043,7 @@ NVN_C(nvnth_fast_165):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_166)
+    .hidden NVN_C(nvnth_fast_166)
 NVN_C(nvnth_fast_166):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2656
@@ -5884,6 +6051,7 @@ NVN_C(nvnth_fast_166):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_167)
+    .hidden NVN_C(nvnth_fast_167)
 NVN_C(nvnth_fast_167):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2672
@@ -5891,6 +6059,7 @@ NVN_C(nvnth_fast_167):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_168)
+    .hidden NVN_C(nvnth_fast_168)
 NVN_C(nvnth_fast_168):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2688
@@ -5898,6 +6067,7 @@ NVN_C(nvnth_fast_168):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_169)
+    .hidden NVN_C(nvnth_fast_169)
 NVN_C(nvnth_fast_169):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2704
@@ -5905,6 +6075,7 @@ NVN_C(nvnth_fast_169):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_170)
+    .hidden NVN_C(nvnth_fast_170)
 NVN_C(nvnth_fast_170):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2720
@@ -5912,6 +6083,7 @@ NVN_C(nvnth_fast_170):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_171)
+    .hidden NVN_C(nvnth_fast_171)
 NVN_C(nvnth_fast_171):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2736
@@ -5919,6 +6091,7 @@ NVN_C(nvnth_fast_171):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_172)
+    .hidden NVN_C(nvnth_fast_172)
 NVN_C(nvnth_fast_172):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2752
@@ -5926,6 +6099,7 @@ NVN_C(nvnth_fast_172):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_173)
+    .hidden NVN_C(nvnth_fast_173)
 NVN_C(nvnth_fast_173):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2768
@@ -5933,6 +6107,7 @@ NVN_C(nvnth_fast_173):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_174)
+    .hidden NVN_C(nvnth_fast_174)
 NVN_C(nvnth_fast_174):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2784
@@ -5940,6 +6115,7 @@ NVN_C(nvnth_fast_174):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_175)
+    .hidden NVN_C(nvnth_fast_175)
 NVN_C(nvnth_fast_175):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2800
@@ -5947,6 +6123,7 @@ NVN_C(nvnth_fast_175):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_176)
+    .hidden NVN_C(nvnth_fast_176)
 NVN_C(nvnth_fast_176):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2816
@@ -5954,6 +6131,7 @@ NVN_C(nvnth_fast_176):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_177)
+    .hidden NVN_C(nvnth_fast_177)
 NVN_C(nvnth_fast_177):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2832
@@ -5961,6 +6139,7 @@ NVN_C(nvnth_fast_177):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_178)
+    .hidden NVN_C(nvnth_fast_178)
 NVN_C(nvnth_fast_178):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2848
@@ -5968,6 +6147,7 @@ NVN_C(nvnth_fast_178):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_179)
+    .hidden NVN_C(nvnth_fast_179)
 NVN_C(nvnth_fast_179):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2864
@@ -5975,6 +6155,7 @@ NVN_C(nvnth_fast_179):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_180)
+    .hidden NVN_C(nvnth_fast_180)
 NVN_C(nvnth_fast_180):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2880
@@ -5982,6 +6163,7 @@ NVN_C(nvnth_fast_180):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_181)
+    .hidden NVN_C(nvnth_fast_181)
 NVN_C(nvnth_fast_181):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2896
@@ -5989,6 +6171,7 @@ NVN_C(nvnth_fast_181):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_182)
+    .hidden NVN_C(nvnth_fast_182)
 NVN_C(nvnth_fast_182):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2912
@@ -5996,6 +6179,7 @@ NVN_C(nvnth_fast_182):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_183)
+    .hidden NVN_C(nvnth_fast_183)
 NVN_C(nvnth_fast_183):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2928
@@ -6003,6 +6187,7 @@ NVN_C(nvnth_fast_183):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_184)
+    .hidden NVN_C(nvnth_fast_184)
 NVN_C(nvnth_fast_184):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2944
@@ -6010,6 +6195,7 @@ NVN_C(nvnth_fast_184):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_185)
+    .hidden NVN_C(nvnth_fast_185)
 NVN_C(nvnth_fast_185):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2960
@@ -6017,6 +6203,7 @@ NVN_C(nvnth_fast_185):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_186)
+    .hidden NVN_C(nvnth_fast_186)
 NVN_C(nvnth_fast_186):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2976
@@ -6024,6 +6211,7 @@ NVN_C(nvnth_fast_186):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_187)
+    .hidden NVN_C(nvnth_fast_187)
 NVN_C(nvnth_fast_187):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #2992
@@ -6031,6 +6219,7 @@ NVN_C(nvnth_fast_187):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_188)
+    .hidden NVN_C(nvnth_fast_188)
 NVN_C(nvnth_fast_188):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3008
@@ -6038,6 +6227,7 @@ NVN_C(nvnth_fast_188):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_189)
+    .hidden NVN_C(nvnth_fast_189)
 NVN_C(nvnth_fast_189):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3024
@@ -6045,6 +6235,7 @@ NVN_C(nvnth_fast_189):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_190)
+    .hidden NVN_C(nvnth_fast_190)
 NVN_C(nvnth_fast_190):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3040
@@ -6052,6 +6243,7 @@ NVN_C(nvnth_fast_190):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_191)
+    .hidden NVN_C(nvnth_fast_191)
 NVN_C(nvnth_fast_191):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3056
@@ -6059,6 +6251,7 @@ NVN_C(nvnth_fast_191):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_192)
+    .hidden NVN_C(nvnth_fast_192)
 NVN_C(nvnth_fast_192):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3072
@@ -6066,6 +6259,7 @@ NVN_C(nvnth_fast_192):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_193)
+    .hidden NVN_C(nvnth_fast_193)
 NVN_C(nvnth_fast_193):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3088
@@ -6073,6 +6267,7 @@ NVN_C(nvnth_fast_193):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_194)
+    .hidden NVN_C(nvnth_fast_194)
 NVN_C(nvnth_fast_194):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3104
@@ -6080,6 +6275,7 @@ NVN_C(nvnth_fast_194):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_195)
+    .hidden NVN_C(nvnth_fast_195)
 NVN_C(nvnth_fast_195):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3120
@@ -6087,6 +6283,7 @@ NVN_C(nvnth_fast_195):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_196)
+    .hidden NVN_C(nvnth_fast_196)
 NVN_C(nvnth_fast_196):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3136
@@ -6094,6 +6291,7 @@ NVN_C(nvnth_fast_196):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_197)
+    .hidden NVN_C(nvnth_fast_197)
 NVN_C(nvnth_fast_197):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3152
@@ -6101,6 +6299,7 @@ NVN_C(nvnth_fast_197):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_198)
+    .hidden NVN_C(nvnth_fast_198)
 NVN_C(nvnth_fast_198):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3168
@@ -6108,6 +6307,7 @@ NVN_C(nvnth_fast_198):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_199)
+    .hidden NVN_C(nvnth_fast_199)
 NVN_C(nvnth_fast_199):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3184
@@ -6115,6 +6315,7 @@ NVN_C(nvnth_fast_199):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_200)
+    .hidden NVN_C(nvnth_fast_200)
 NVN_C(nvnth_fast_200):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3200
@@ -6122,6 +6323,7 @@ NVN_C(nvnth_fast_200):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_201)
+    .hidden NVN_C(nvnth_fast_201)
 NVN_C(nvnth_fast_201):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3216
@@ -6129,6 +6331,7 @@ NVN_C(nvnth_fast_201):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_202)
+    .hidden NVN_C(nvnth_fast_202)
 NVN_C(nvnth_fast_202):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3232
@@ -6136,6 +6339,7 @@ NVN_C(nvnth_fast_202):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_203)
+    .hidden NVN_C(nvnth_fast_203)
 NVN_C(nvnth_fast_203):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3248
@@ -6143,6 +6347,7 @@ NVN_C(nvnth_fast_203):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_204)
+    .hidden NVN_C(nvnth_fast_204)
 NVN_C(nvnth_fast_204):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3264
@@ -6150,6 +6355,7 @@ NVN_C(nvnth_fast_204):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_205)
+    .hidden NVN_C(nvnth_fast_205)
 NVN_C(nvnth_fast_205):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3280
@@ -6157,6 +6363,7 @@ NVN_C(nvnth_fast_205):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_206)
+    .hidden NVN_C(nvnth_fast_206)
 NVN_C(nvnth_fast_206):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3296
@@ -6164,6 +6371,7 @@ NVN_C(nvnth_fast_206):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_207)
+    .hidden NVN_C(nvnth_fast_207)
 NVN_C(nvnth_fast_207):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3312
@@ -6171,6 +6379,7 @@ NVN_C(nvnth_fast_207):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_208)
+    .hidden NVN_C(nvnth_fast_208)
 NVN_C(nvnth_fast_208):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3328
@@ -6178,6 +6387,7 @@ NVN_C(nvnth_fast_208):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_209)
+    .hidden NVN_C(nvnth_fast_209)
 NVN_C(nvnth_fast_209):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3344
@@ -6185,6 +6395,7 @@ NVN_C(nvnth_fast_209):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_210)
+    .hidden NVN_C(nvnth_fast_210)
 NVN_C(nvnth_fast_210):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3360
@@ -6192,6 +6403,7 @@ NVN_C(nvnth_fast_210):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_211)
+    .hidden NVN_C(nvnth_fast_211)
 NVN_C(nvnth_fast_211):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3376
@@ -6199,6 +6411,7 @@ NVN_C(nvnth_fast_211):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_212)
+    .hidden NVN_C(nvnth_fast_212)
 NVN_C(nvnth_fast_212):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3392
@@ -6206,6 +6419,7 @@ NVN_C(nvnth_fast_212):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_213)
+    .hidden NVN_C(nvnth_fast_213)
 NVN_C(nvnth_fast_213):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3408
@@ -6213,6 +6427,7 @@ NVN_C(nvnth_fast_213):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_214)
+    .hidden NVN_C(nvnth_fast_214)
 NVN_C(nvnth_fast_214):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3424
@@ -6220,6 +6435,7 @@ NVN_C(nvnth_fast_214):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_215)
+    .hidden NVN_C(nvnth_fast_215)
 NVN_C(nvnth_fast_215):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3440
@@ -6227,6 +6443,7 @@ NVN_C(nvnth_fast_215):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_216)
+    .hidden NVN_C(nvnth_fast_216)
 NVN_C(nvnth_fast_216):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3456
@@ -6234,6 +6451,7 @@ NVN_C(nvnth_fast_216):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_217)
+    .hidden NVN_C(nvnth_fast_217)
 NVN_C(nvnth_fast_217):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3472
@@ -6241,6 +6459,7 @@ NVN_C(nvnth_fast_217):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_218)
+    .hidden NVN_C(nvnth_fast_218)
 NVN_C(nvnth_fast_218):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3488
@@ -6248,6 +6467,7 @@ NVN_C(nvnth_fast_218):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_219)
+    .hidden NVN_C(nvnth_fast_219)
 NVN_C(nvnth_fast_219):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3504
@@ -6255,6 +6475,7 @@ NVN_C(nvnth_fast_219):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_220)
+    .hidden NVN_C(nvnth_fast_220)
 NVN_C(nvnth_fast_220):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3520
@@ -6262,6 +6483,7 @@ NVN_C(nvnth_fast_220):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_221)
+    .hidden NVN_C(nvnth_fast_221)
 NVN_C(nvnth_fast_221):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3536
@@ -6269,6 +6491,7 @@ NVN_C(nvnth_fast_221):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_222)
+    .hidden NVN_C(nvnth_fast_222)
 NVN_C(nvnth_fast_222):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3552
@@ -6276,6 +6499,7 @@ NVN_C(nvnth_fast_222):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_223)
+    .hidden NVN_C(nvnth_fast_223)
 NVN_C(nvnth_fast_223):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3568
@@ -6283,6 +6507,7 @@ NVN_C(nvnth_fast_223):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_224)
+    .hidden NVN_C(nvnth_fast_224)
 NVN_C(nvnth_fast_224):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3584
@@ -6290,6 +6515,7 @@ NVN_C(nvnth_fast_224):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_225)
+    .hidden NVN_C(nvnth_fast_225)
 NVN_C(nvnth_fast_225):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3600
@@ -6297,6 +6523,7 @@ NVN_C(nvnth_fast_225):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_226)
+    .hidden NVN_C(nvnth_fast_226)
 NVN_C(nvnth_fast_226):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3616
@@ -6304,6 +6531,7 @@ NVN_C(nvnth_fast_226):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_227)
+    .hidden NVN_C(nvnth_fast_227)
 NVN_C(nvnth_fast_227):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3632
@@ -6311,6 +6539,7 @@ NVN_C(nvnth_fast_227):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_228)
+    .hidden NVN_C(nvnth_fast_228)
 NVN_C(nvnth_fast_228):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3648
@@ -6318,6 +6547,7 @@ NVN_C(nvnth_fast_228):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_229)
+    .hidden NVN_C(nvnth_fast_229)
 NVN_C(nvnth_fast_229):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3664
@@ -6325,6 +6555,7 @@ NVN_C(nvnth_fast_229):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_230)
+    .hidden NVN_C(nvnth_fast_230)
 NVN_C(nvnth_fast_230):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3680
@@ -6332,6 +6563,7 @@ NVN_C(nvnth_fast_230):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_231)
+    .hidden NVN_C(nvnth_fast_231)
 NVN_C(nvnth_fast_231):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3696
@@ -6339,6 +6571,7 @@ NVN_C(nvnth_fast_231):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_232)
+    .hidden NVN_C(nvnth_fast_232)
 NVN_C(nvnth_fast_232):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3712
@@ -6346,6 +6579,7 @@ NVN_C(nvnth_fast_232):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_233)
+    .hidden NVN_C(nvnth_fast_233)
 NVN_C(nvnth_fast_233):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3728
@@ -6353,6 +6587,7 @@ NVN_C(nvnth_fast_233):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_234)
+    .hidden NVN_C(nvnth_fast_234)
 NVN_C(nvnth_fast_234):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3744
@@ -6360,6 +6595,7 @@ NVN_C(nvnth_fast_234):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_235)
+    .hidden NVN_C(nvnth_fast_235)
 NVN_C(nvnth_fast_235):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3760
@@ -6367,6 +6603,7 @@ NVN_C(nvnth_fast_235):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_236)
+    .hidden NVN_C(nvnth_fast_236)
 NVN_C(nvnth_fast_236):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3776
@@ -6374,6 +6611,7 @@ NVN_C(nvnth_fast_236):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_237)
+    .hidden NVN_C(nvnth_fast_237)
 NVN_C(nvnth_fast_237):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3792
@@ -6381,6 +6619,7 @@ NVN_C(nvnth_fast_237):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_238)
+    .hidden NVN_C(nvnth_fast_238)
 NVN_C(nvnth_fast_238):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3808
@@ -6388,6 +6627,7 @@ NVN_C(nvnth_fast_238):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_239)
+    .hidden NVN_C(nvnth_fast_239)
 NVN_C(nvnth_fast_239):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3824
@@ -6395,6 +6635,7 @@ NVN_C(nvnth_fast_239):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_240)
+    .hidden NVN_C(nvnth_fast_240)
 NVN_C(nvnth_fast_240):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3840
@@ -6402,6 +6643,7 @@ NVN_C(nvnth_fast_240):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_241)
+    .hidden NVN_C(nvnth_fast_241)
 NVN_C(nvnth_fast_241):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3856
@@ -6409,6 +6651,7 @@ NVN_C(nvnth_fast_241):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_242)
+    .hidden NVN_C(nvnth_fast_242)
 NVN_C(nvnth_fast_242):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3872
@@ -6416,6 +6659,7 @@ NVN_C(nvnth_fast_242):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_243)
+    .hidden NVN_C(nvnth_fast_243)
 NVN_C(nvnth_fast_243):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3888
@@ -6423,6 +6667,7 @@ NVN_C(nvnth_fast_243):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_244)
+    .hidden NVN_C(nvnth_fast_244)
 NVN_C(nvnth_fast_244):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3904
@@ -6430,6 +6675,7 @@ NVN_C(nvnth_fast_244):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_245)
+    .hidden NVN_C(nvnth_fast_245)
 NVN_C(nvnth_fast_245):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3920
@@ -6437,6 +6683,7 @@ NVN_C(nvnth_fast_245):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_246)
+    .hidden NVN_C(nvnth_fast_246)
 NVN_C(nvnth_fast_246):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3936
@@ -6444,6 +6691,7 @@ NVN_C(nvnth_fast_246):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_247)
+    .hidden NVN_C(nvnth_fast_247)
 NVN_C(nvnth_fast_247):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3952
@@ -6451,6 +6699,7 @@ NVN_C(nvnth_fast_247):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_248)
+    .hidden NVN_C(nvnth_fast_248)
 NVN_C(nvnth_fast_248):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3968
@@ -6458,6 +6707,7 @@ NVN_C(nvnth_fast_248):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_249)
+    .hidden NVN_C(nvnth_fast_249)
 NVN_C(nvnth_fast_249):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #3984
@@ -6465,6 +6715,7 @@ NVN_C(nvnth_fast_249):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_250)
+    .hidden NVN_C(nvnth_fast_250)
 NVN_C(nvnth_fast_250):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4000
@@ -6472,6 +6723,7 @@ NVN_C(nvnth_fast_250):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_251)
+    .hidden NVN_C(nvnth_fast_251)
 NVN_C(nvnth_fast_251):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4016
@@ -6479,6 +6731,7 @@ NVN_C(nvnth_fast_251):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_252)
+    .hidden NVN_C(nvnth_fast_252)
 NVN_C(nvnth_fast_252):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4032
@@ -6486,6 +6739,7 @@ NVN_C(nvnth_fast_252):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_253)
+    .hidden NVN_C(nvnth_fast_253)
 NVN_C(nvnth_fast_253):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4048
@@ -6493,6 +6747,7 @@ NVN_C(nvnth_fast_253):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_254)
+    .hidden NVN_C(nvnth_fast_254)
 NVN_C(nvnth_fast_254):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4064
@@ -6500,6 +6755,7 @@ NVN_C(nvnth_fast_254):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_255)
+    .hidden NVN_C(nvnth_fast_255)
 NVN_C(nvnth_fast_255):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4080
@@ -6507,6 +6763,7 @@ NVN_C(nvnth_fast_255):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_256)
+    .hidden NVN_C(nvnth_fast_256)
 NVN_C(nvnth_fast_256):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4096
@@ -6514,6 +6771,7 @@ NVN_C(nvnth_fast_256):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_257)
+    .hidden NVN_C(nvnth_fast_257)
 NVN_C(nvnth_fast_257):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4112
@@ -6521,6 +6779,7 @@ NVN_C(nvnth_fast_257):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_258)
+    .hidden NVN_C(nvnth_fast_258)
 NVN_C(nvnth_fast_258):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4128
@@ -6528,6 +6787,7 @@ NVN_C(nvnth_fast_258):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_259)
+    .hidden NVN_C(nvnth_fast_259)
 NVN_C(nvnth_fast_259):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4144
@@ -6535,6 +6795,7 @@ NVN_C(nvnth_fast_259):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_260)
+    .hidden NVN_C(nvnth_fast_260)
 NVN_C(nvnth_fast_260):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4160
@@ -6542,6 +6803,7 @@ NVN_C(nvnth_fast_260):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_261)
+    .hidden NVN_C(nvnth_fast_261)
 NVN_C(nvnth_fast_261):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4176
@@ -6549,6 +6811,7 @@ NVN_C(nvnth_fast_261):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_262)
+    .hidden NVN_C(nvnth_fast_262)
 NVN_C(nvnth_fast_262):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4192
@@ -6556,6 +6819,7 @@ NVN_C(nvnth_fast_262):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_263)
+    .hidden NVN_C(nvnth_fast_263)
 NVN_C(nvnth_fast_263):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4208
@@ -6563,6 +6827,7 @@ NVN_C(nvnth_fast_263):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_264)
+    .hidden NVN_C(nvnth_fast_264)
 NVN_C(nvnth_fast_264):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4224
@@ -6570,6 +6835,7 @@ NVN_C(nvnth_fast_264):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_265)
+    .hidden NVN_C(nvnth_fast_265)
 NVN_C(nvnth_fast_265):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4240
@@ -6577,6 +6843,7 @@ NVN_C(nvnth_fast_265):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_266)
+    .hidden NVN_C(nvnth_fast_266)
 NVN_C(nvnth_fast_266):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4256
@@ -6584,6 +6851,7 @@ NVN_C(nvnth_fast_266):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_267)
+    .hidden NVN_C(nvnth_fast_267)
 NVN_C(nvnth_fast_267):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4272
@@ -6591,6 +6859,7 @@ NVN_C(nvnth_fast_267):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_268)
+    .hidden NVN_C(nvnth_fast_268)
 NVN_C(nvnth_fast_268):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4288
@@ -6598,6 +6867,7 @@ NVN_C(nvnth_fast_268):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_269)
+    .hidden NVN_C(nvnth_fast_269)
 NVN_C(nvnth_fast_269):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4304
@@ -6605,6 +6875,7 @@ NVN_C(nvnth_fast_269):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_270)
+    .hidden NVN_C(nvnth_fast_270)
 NVN_C(nvnth_fast_270):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4320
@@ -6612,6 +6883,7 @@ NVN_C(nvnth_fast_270):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_271)
+    .hidden NVN_C(nvnth_fast_271)
 NVN_C(nvnth_fast_271):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4336
@@ -6619,6 +6891,7 @@ NVN_C(nvnth_fast_271):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_272)
+    .hidden NVN_C(nvnth_fast_272)
 NVN_C(nvnth_fast_272):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4352
@@ -6626,6 +6899,7 @@ NVN_C(nvnth_fast_272):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_273)
+    .hidden NVN_C(nvnth_fast_273)
 NVN_C(nvnth_fast_273):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4368
@@ -6633,6 +6907,7 @@ NVN_C(nvnth_fast_273):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_274)
+    .hidden NVN_C(nvnth_fast_274)
 NVN_C(nvnth_fast_274):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4384
@@ -6640,6 +6915,7 @@ NVN_C(nvnth_fast_274):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_275)
+    .hidden NVN_C(nvnth_fast_275)
 NVN_C(nvnth_fast_275):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4400
@@ -6647,6 +6923,7 @@ NVN_C(nvnth_fast_275):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_276)
+    .hidden NVN_C(nvnth_fast_276)
 NVN_C(nvnth_fast_276):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4416
@@ -6654,6 +6931,7 @@ NVN_C(nvnth_fast_276):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_277)
+    .hidden NVN_C(nvnth_fast_277)
 NVN_C(nvnth_fast_277):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4432
@@ -6661,6 +6939,7 @@ NVN_C(nvnth_fast_277):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_278)
+    .hidden NVN_C(nvnth_fast_278)
 NVN_C(nvnth_fast_278):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4448
@@ -6668,6 +6947,7 @@ NVN_C(nvnth_fast_278):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_279)
+    .hidden NVN_C(nvnth_fast_279)
 NVN_C(nvnth_fast_279):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4464
@@ -6675,6 +6955,7 @@ NVN_C(nvnth_fast_279):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_280)
+    .hidden NVN_C(nvnth_fast_280)
 NVN_C(nvnth_fast_280):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4480
@@ -6682,6 +6963,7 @@ NVN_C(nvnth_fast_280):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_281)
+    .hidden NVN_C(nvnth_fast_281)
 NVN_C(nvnth_fast_281):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4496
@@ -6689,6 +6971,7 @@ NVN_C(nvnth_fast_281):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_282)
+    .hidden NVN_C(nvnth_fast_282)
 NVN_C(nvnth_fast_282):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4512
@@ -6696,6 +6979,7 @@ NVN_C(nvnth_fast_282):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_283)
+    .hidden NVN_C(nvnth_fast_283)
 NVN_C(nvnth_fast_283):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4528
@@ -6703,6 +6987,7 @@ NVN_C(nvnth_fast_283):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_284)
+    .hidden NVN_C(nvnth_fast_284)
 NVN_C(nvnth_fast_284):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4544
@@ -6710,6 +6995,7 @@ NVN_C(nvnth_fast_284):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_285)
+    .hidden NVN_C(nvnth_fast_285)
 NVN_C(nvnth_fast_285):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4560
@@ -6717,6 +7003,7 @@ NVN_C(nvnth_fast_285):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_286)
+    .hidden NVN_C(nvnth_fast_286)
 NVN_C(nvnth_fast_286):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4576
@@ -6724,6 +7011,7 @@ NVN_C(nvnth_fast_286):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_287)
+    .hidden NVN_C(nvnth_fast_287)
 NVN_C(nvnth_fast_287):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4592
@@ -6731,6 +7019,7 @@ NVN_C(nvnth_fast_287):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_288)
+    .hidden NVN_C(nvnth_fast_288)
 NVN_C(nvnth_fast_288):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4608
@@ -6738,6 +7027,7 @@ NVN_C(nvnth_fast_288):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_289)
+    .hidden NVN_C(nvnth_fast_289)
 NVN_C(nvnth_fast_289):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4624
@@ -6745,6 +7035,7 @@ NVN_C(nvnth_fast_289):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_290)
+    .hidden NVN_C(nvnth_fast_290)
 NVN_C(nvnth_fast_290):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4640
@@ -6752,6 +7043,7 @@ NVN_C(nvnth_fast_290):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_291)
+    .hidden NVN_C(nvnth_fast_291)
 NVN_C(nvnth_fast_291):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4656
@@ -6759,6 +7051,7 @@ NVN_C(nvnth_fast_291):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_292)
+    .hidden NVN_C(nvnth_fast_292)
 NVN_C(nvnth_fast_292):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4672
@@ -6766,6 +7059,7 @@ NVN_C(nvnth_fast_292):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_293)
+    .hidden NVN_C(nvnth_fast_293)
 NVN_C(nvnth_fast_293):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4688
@@ -6773,6 +7067,7 @@ NVN_C(nvnth_fast_293):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_294)
+    .hidden NVN_C(nvnth_fast_294)
 NVN_C(nvnth_fast_294):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4704
@@ -6780,6 +7075,7 @@ NVN_C(nvnth_fast_294):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_295)
+    .hidden NVN_C(nvnth_fast_295)
 NVN_C(nvnth_fast_295):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4720
@@ -6787,6 +7083,7 @@ NVN_C(nvnth_fast_295):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_296)
+    .hidden NVN_C(nvnth_fast_296)
 NVN_C(nvnth_fast_296):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4736
@@ -6794,6 +7091,7 @@ NVN_C(nvnth_fast_296):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_297)
+    .hidden NVN_C(nvnth_fast_297)
 NVN_C(nvnth_fast_297):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4752
@@ -6801,6 +7099,7 @@ NVN_C(nvnth_fast_297):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_298)
+    .hidden NVN_C(nvnth_fast_298)
 NVN_C(nvnth_fast_298):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4768
@@ -6808,6 +7107,7 @@ NVN_C(nvnth_fast_298):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_299)
+    .hidden NVN_C(nvnth_fast_299)
 NVN_C(nvnth_fast_299):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4784
@@ -6815,6 +7115,7 @@ NVN_C(nvnth_fast_299):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_300)
+    .hidden NVN_C(nvnth_fast_300)
 NVN_C(nvnth_fast_300):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4800
@@ -6822,6 +7123,7 @@ NVN_C(nvnth_fast_300):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_301)
+    .hidden NVN_C(nvnth_fast_301)
 NVN_C(nvnth_fast_301):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4816
@@ -6829,6 +7131,7 @@ NVN_C(nvnth_fast_301):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_302)
+    .hidden NVN_C(nvnth_fast_302)
 NVN_C(nvnth_fast_302):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4832
@@ -6836,6 +7139,7 @@ NVN_C(nvnth_fast_302):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_303)
+    .hidden NVN_C(nvnth_fast_303)
 NVN_C(nvnth_fast_303):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4848
@@ -6843,6 +7147,7 @@ NVN_C(nvnth_fast_303):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_304)
+    .hidden NVN_C(nvnth_fast_304)
 NVN_C(nvnth_fast_304):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4864
@@ -6850,6 +7155,7 @@ NVN_C(nvnth_fast_304):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_305)
+    .hidden NVN_C(nvnth_fast_305)
 NVN_C(nvnth_fast_305):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4880
@@ -6857,6 +7163,7 @@ NVN_C(nvnth_fast_305):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_306)
+    .hidden NVN_C(nvnth_fast_306)
 NVN_C(nvnth_fast_306):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4896
@@ -6864,6 +7171,7 @@ NVN_C(nvnth_fast_306):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_307)
+    .hidden NVN_C(nvnth_fast_307)
 NVN_C(nvnth_fast_307):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4912
@@ -6871,6 +7179,7 @@ NVN_C(nvnth_fast_307):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_308)
+    .hidden NVN_C(nvnth_fast_308)
 NVN_C(nvnth_fast_308):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4928
@@ -6878,6 +7187,7 @@ NVN_C(nvnth_fast_308):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_309)
+    .hidden NVN_C(nvnth_fast_309)
 NVN_C(nvnth_fast_309):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4944
@@ -6885,6 +7195,7 @@ NVN_C(nvnth_fast_309):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_310)
+    .hidden NVN_C(nvnth_fast_310)
 NVN_C(nvnth_fast_310):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4960
@@ -6892,6 +7203,7 @@ NVN_C(nvnth_fast_310):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_311)
+    .hidden NVN_C(nvnth_fast_311)
 NVN_C(nvnth_fast_311):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4976
@@ -6899,6 +7211,7 @@ NVN_C(nvnth_fast_311):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_312)
+    .hidden NVN_C(nvnth_fast_312)
 NVN_C(nvnth_fast_312):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #4992
@@ -6906,6 +7219,7 @@ NVN_C(nvnth_fast_312):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_313)
+    .hidden NVN_C(nvnth_fast_313)
 NVN_C(nvnth_fast_313):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5008
@@ -6913,6 +7227,7 @@ NVN_C(nvnth_fast_313):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_314)
+    .hidden NVN_C(nvnth_fast_314)
 NVN_C(nvnth_fast_314):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5024
@@ -6920,6 +7235,7 @@ NVN_C(nvnth_fast_314):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_315)
+    .hidden NVN_C(nvnth_fast_315)
 NVN_C(nvnth_fast_315):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5040
@@ -6927,6 +7243,7 @@ NVN_C(nvnth_fast_315):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_316)
+    .hidden NVN_C(nvnth_fast_316)
 NVN_C(nvnth_fast_316):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5056
@@ -6934,6 +7251,7 @@ NVN_C(nvnth_fast_316):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_317)
+    .hidden NVN_C(nvnth_fast_317)
 NVN_C(nvnth_fast_317):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5072
@@ -6941,6 +7259,7 @@ NVN_C(nvnth_fast_317):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_318)
+    .hidden NVN_C(nvnth_fast_318)
 NVN_C(nvnth_fast_318):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5088
@@ -6948,6 +7267,7 @@ NVN_C(nvnth_fast_318):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_319)
+    .hidden NVN_C(nvnth_fast_319)
 NVN_C(nvnth_fast_319):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5104
@@ -6955,6 +7275,7 @@ NVN_C(nvnth_fast_319):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_320)
+    .hidden NVN_C(nvnth_fast_320)
 NVN_C(nvnth_fast_320):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5120
@@ -6962,6 +7283,7 @@ NVN_C(nvnth_fast_320):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_321)
+    .hidden NVN_C(nvnth_fast_321)
 NVN_C(nvnth_fast_321):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5136
@@ -6969,6 +7291,7 @@ NVN_C(nvnth_fast_321):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_322)
+    .hidden NVN_C(nvnth_fast_322)
 NVN_C(nvnth_fast_322):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5152
@@ -6976,6 +7299,7 @@ NVN_C(nvnth_fast_322):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_323)
+    .hidden NVN_C(nvnth_fast_323)
 NVN_C(nvnth_fast_323):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5168
@@ -6983,6 +7307,7 @@ NVN_C(nvnth_fast_323):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_324)
+    .hidden NVN_C(nvnth_fast_324)
 NVN_C(nvnth_fast_324):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5184
@@ -6990,6 +7315,7 @@ NVN_C(nvnth_fast_324):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_325)
+    .hidden NVN_C(nvnth_fast_325)
 NVN_C(nvnth_fast_325):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5200
@@ -6997,6 +7323,7 @@ NVN_C(nvnth_fast_325):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_326)
+    .hidden NVN_C(nvnth_fast_326)
 NVN_C(nvnth_fast_326):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5216
@@ -7004,6 +7331,7 @@ NVN_C(nvnth_fast_326):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_327)
+    .hidden NVN_C(nvnth_fast_327)
 NVN_C(nvnth_fast_327):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5232
@@ -7011,6 +7339,7 @@ NVN_C(nvnth_fast_327):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_328)
+    .hidden NVN_C(nvnth_fast_328)
 NVN_C(nvnth_fast_328):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5248
@@ -7018,6 +7347,7 @@ NVN_C(nvnth_fast_328):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_329)
+    .hidden NVN_C(nvnth_fast_329)
 NVN_C(nvnth_fast_329):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5264
@@ -7025,6 +7355,7 @@ NVN_C(nvnth_fast_329):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_330)
+    .hidden NVN_C(nvnth_fast_330)
 NVN_C(nvnth_fast_330):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5280
@@ -7032,6 +7363,7 @@ NVN_C(nvnth_fast_330):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_331)
+    .hidden NVN_C(nvnth_fast_331)
 NVN_C(nvnth_fast_331):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5296
@@ -7039,6 +7371,7 @@ NVN_C(nvnth_fast_331):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_332)
+    .hidden NVN_C(nvnth_fast_332)
 NVN_C(nvnth_fast_332):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5312
@@ -7046,6 +7379,7 @@ NVN_C(nvnth_fast_332):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_333)
+    .hidden NVN_C(nvnth_fast_333)
 NVN_C(nvnth_fast_333):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5328
@@ -7053,6 +7387,7 @@ NVN_C(nvnth_fast_333):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_334)
+    .hidden NVN_C(nvnth_fast_334)
 NVN_C(nvnth_fast_334):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5344
@@ -7060,6 +7395,7 @@ NVN_C(nvnth_fast_334):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_335)
+    .hidden NVN_C(nvnth_fast_335)
 NVN_C(nvnth_fast_335):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5360
@@ -7067,6 +7403,7 @@ NVN_C(nvnth_fast_335):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_336)
+    .hidden NVN_C(nvnth_fast_336)
 NVN_C(nvnth_fast_336):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5376
@@ -7074,6 +7411,7 @@ NVN_C(nvnth_fast_336):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_337)
+    .hidden NVN_C(nvnth_fast_337)
 NVN_C(nvnth_fast_337):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5392
@@ -7081,6 +7419,7 @@ NVN_C(nvnth_fast_337):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_338)
+    .hidden NVN_C(nvnth_fast_338)
 NVN_C(nvnth_fast_338):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5408
@@ -7088,6 +7427,7 @@ NVN_C(nvnth_fast_338):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_339)
+    .hidden NVN_C(nvnth_fast_339)
 NVN_C(nvnth_fast_339):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5424
@@ -7095,6 +7435,7 @@ NVN_C(nvnth_fast_339):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_340)
+    .hidden NVN_C(nvnth_fast_340)
 NVN_C(nvnth_fast_340):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5440
@@ -7102,6 +7443,7 @@ NVN_C(nvnth_fast_340):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_341)
+    .hidden NVN_C(nvnth_fast_341)
 NVN_C(nvnth_fast_341):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5456
@@ -7109,6 +7451,7 @@ NVN_C(nvnth_fast_341):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_342)
+    .hidden NVN_C(nvnth_fast_342)
 NVN_C(nvnth_fast_342):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5472
@@ -7116,6 +7459,7 @@ NVN_C(nvnth_fast_342):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_343)
+    .hidden NVN_C(nvnth_fast_343)
 NVN_C(nvnth_fast_343):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5488
@@ -7123,6 +7467,7 @@ NVN_C(nvnth_fast_343):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_344)
+    .hidden NVN_C(nvnth_fast_344)
 NVN_C(nvnth_fast_344):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5504
@@ -7130,6 +7475,7 @@ NVN_C(nvnth_fast_344):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_345)
+    .hidden NVN_C(nvnth_fast_345)
 NVN_C(nvnth_fast_345):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5520
@@ -7137,6 +7483,7 @@ NVN_C(nvnth_fast_345):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_346)
+    .hidden NVN_C(nvnth_fast_346)
 NVN_C(nvnth_fast_346):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5536
@@ -7144,6 +7491,7 @@ NVN_C(nvnth_fast_346):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_347)
+    .hidden NVN_C(nvnth_fast_347)
 NVN_C(nvnth_fast_347):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5552
@@ -7151,6 +7499,7 @@ NVN_C(nvnth_fast_347):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_348)
+    .hidden NVN_C(nvnth_fast_348)
 NVN_C(nvnth_fast_348):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5568
@@ -7158,6 +7507,7 @@ NVN_C(nvnth_fast_348):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_349)
+    .hidden NVN_C(nvnth_fast_349)
 NVN_C(nvnth_fast_349):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5584
@@ -7165,6 +7515,7 @@ NVN_C(nvnth_fast_349):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_350)
+    .hidden NVN_C(nvnth_fast_350)
 NVN_C(nvnth_fast_350):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5600
@@ -7172,6 +7523,7 @@ NVN_C(nvnth_fast_350):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_351)
+    .hidden NVN_C(nvnth_fast_351)
 NVN_C(nvnth_fast_351):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5616
@@ -7179,6 +7531,7 @@ NVN_C(nvnth_fast_351):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_352)
+    .hidden NVN_C(nvnth_fast_352)
 NVN_C(nvnth_fast_352):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5632
@@ -7186,6 +7539,7 @@ NVN_C(nvnth_fast_352):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_353)
+    .hidden NVN_C(nvnth_fast_353)
 NVN_C(nvnth_fast_353):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5648
@@ -7193,6 +7547,7 @@ NVN_C(nvnth_fast_353):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_354)
+    .hidden NVN_C(nvnth_fast_354)
 NVN_C(nvnth_fast_354):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5664
@@ -7200,6 +7555,7 @@ NVN_C(nvnth_fast_354):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_355)
+    .hidden NVN_C(nvnth_fast_355)
 NVN_C(nvnth_fast_355):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5680
@@ -7207,6 +7563,7 @@ NVN_C(nvnth_fast_355):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_356)
+    .hidden NVN_C(nvnth_fast_356)
 NVN_C(nvnth_fast_356):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5696
@@ -7214,6 +7571,7 @@ NVN_C(nvnth_fast_356):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_357)
+    .hidden NVN_C(nvnth_fast_357)
 NVN_C(nvnth_fast_357):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5712
@@ -7221,6 +7579,7 @@ NVN_C(nvnth_fast_357):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_358)
+    .hidden NVN_C(nvnth_fast_358)
 NVN_C(nvnth_fast_358):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5728
@@ -7228,6 +7587,7 @@ NVN_C(nvnth_fast_358):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_359)
+    .hidden NVN_C(nvnth_fast_359)
 NVN_C(nvnth_fast_359):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5744
@@ -7235,6 +7595,7 @@ NVN_C(nvnth_fast_359):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_360)
+    .hidden NVN_C(nvnth_fast_360)
 NVN_C(nvnth_fast_360):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5760
@@ -7242,6 +7603,7 @@ NVN_C(nvnth_fast_360):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_361)
+    .hidden NVN_C(nvnth_fast_361)
 NVN_C(nvnth_fast_361):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5776
@@ -7249,6 +7611,7 @@ NVN_C(nvnth_fast_361):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_362)
+    .hidden NVN_C(nvnth_fast_362)
 NVN_C(nvnth_fast_362):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5792
@@ -7256,6 +7619,7 @@ NVN_C(nvnth_fast_362):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_363)
+    .hidden NVN_C(nvnth_fast_363)
 NVN_C(nvnth_fast_363):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5808
@@ -7263,6 +7627,7 @@ NVN_C(nvnth_fast_363):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_364)
+    .hidden NVN_C(nvnth_fast_364)
 NVN_C(nvnth_fast_364):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5824
@@ -7270,6 +7635,7 @@ NVN_C(nvnth_fast_364):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_365)
+    .hidden NVN_C(nvnth_fast_365)
 NVN_C(nvnth_fast_365):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5840
@@ -7277,6 +7643,7 @@ NVN_C(nvnth_fast_365):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_366)
+    .hidden NVN_C(nvnth_fast_366)
 NVN_C(nvnth_fast_366):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5856
@@ -7284,6 +7651,7 @@ NVN_C(nvnth_fast_366):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_367)
+    .hidden NVN_C(nvnth_fast_367)
 NVN_C(nvnth_fast_367):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5872
@@ -7291,6 +7659,7 @@ NVN_C(nvnth_fast_367):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_368)
+    .hidden NVN_C(nvnth_fast_368)
 NVN_C(nvnth_fast_368):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5888
@@ -7298,6 +7667,7 @@ NVN_C(nvnth_fast_368):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_369)
+    .hidden NVN_C(nvnth_fast_369)
 NVN_C(nvnth_fast_369):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5904
@@ -7305,6 +7675,7 @@ NVN_C(nvnth_fast_369):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_370)
+    .hidden NVN_C(nvnth_fast_370)
 NVN_C(nvnth_fast_370):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5920
@@ -7312,6 +7683,7 @@ NVN_C(nvnth_fast_370):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_371)
+    .hidden NVN_C(nvnth_fast_371)
 NVN_C(nvnth_fast_371):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5936
@@ -7319,6 +7691,7 @@ NVN_C(nvnth_fast_371):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_372)
+    .hidden NVN_C(nvnth_fast_372)
 NVN_C(nvnth_fast_372):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5952
@@ -7326,6 +7699,7 @@ NVN_C(nvnth_fast_372):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_373)
+    .hidden NVN_C(nvnth_fast_373)
 NVN_C(nvnth_fast_373):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5968
@@ -7333,6 +7707,7 @@ NVN_C(nvnth_fast_373):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_374)
+    .hidden NVN_C(nvnth_fast_374)
 NVN_C(nvnth_fast_374):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #5984
@@ -7340,6 +7715,7 @@ NVN_C(nvnth_fast_374):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_375)
+    .hidden NVN_C(nvnth_fast_375)
 NVN_C(nvnth_fast_375):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6000
@@ -7347,6 +7723,7 @@ NVN_C(nvnth_fast_375):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_376)
+    .hidden NVN_C(nvnth_fast_376)
 NVN_C(nvnth_fast_376):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6016
@@ -7354,6 +7731,7 @@ NVN_C(nvnth_fast_376):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_377)
+    .hidden NVN_C(nvnth_fast_377)
 NVN_C(nvnth_fast_377):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6032
@@ -7361,6 +7739,7 @@ NVN_C(nvnth_fast_377):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_378)
+    .hidden NVN_C(nvnth_fast_378)
 NVN_C(nvnth_fast_378):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6048
@@ -7368,6 +7747,7 @@ NVN_C(nvnth_fast_378):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_379)
+    .hidden NVN_C(nvnth_fast_379)
 NVN_C(nvnth_fast_379):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6064
@@ -7375,6 +7755,7 @@ NVN_C(nvnth_fast_379):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_380)
+    .hidden NVN_C(nvnth_fast_380)
 NVN_C(nvnth_fast_380):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6080
@@ -7382,6 +7763,7 @@ NVN_C(nvnth_fast_380):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_381)
+    .hidden NVN_C(nvnth_fast_381)
 NVN_C(nvnth_fast_381):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6096
@@ -7389,6 +7771,7 @@ NVN_C(nvnth_fast_381):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_382)
+    .hidden NVN_C(nvnth_fast_382)
 NVN_C(nvnth_fast_382):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6112
@@ -7396,6 +7779,7 @@ NVN_C(nvnth_fast_382):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_383)
+    .hidden NVN_C(nvnth_fast_383)
 NVN_C(nvnth_fast_383):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6128
@@ -7403,6 +7787,7 @@ NVN_C(nvnth_fast_383):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_384)
+    .hidden NVN_C(nvnth_fast_384)
 NVN_C(nvnth_fast_384):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6144
@@ -7410,6 +7795,7 @@ NVN_C(nvnth_fast_384):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_385)
+    .hidden NVN_C(nvnth_fast_385)
 NVN_C(nvnth_fast_385):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6160
@@ -7417,6 +7803,7 @@ NVN_C(nvnth_fast_385):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_386)
+    .hidden NVN_C(nvnth_fast_386)
 NVN_C(nvnth_fast_386):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6176
@@ -7424,6 +7811,7 @@ NVN_C(nvnth_fast_386):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_387)
+    .hidden NVN_C(nvnth_fast_387)
 NVN_C(nvnth_fast_387):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6192
@@ -7431,6 +7819,7 @@ NVN_C(nvnth_fast_387):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_388)
+    .hidden NVN_C(nvnth_fast_388)
 NVN_C(nvnth_fast_388):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6208
@@ -7438,6 +7827,7 @@ NVN_C(nvnth_fast_388):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_389)
+    .hidden NVN_C(nvnth_fast_389)
 NVN_C(nvnth_fast_389):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6224
@@ -7445,6 +7835,7 @@ NVN_C(nvnth_fast_389):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_390)
+    .hidden NVN_C(nvnth_fast_390)
 NVN_C(nvnth_fast_390):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6240
@@ -7452,6 +7843,7 @@ NVN_C(nvnth_fast_390):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_391)
+    .hidden NVN_C(nvnth_fast_391)
 NVN_C(nvnth_fast_391):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6256
@@ -7459,6 +7851,7 @@ NVN_C(nvnth_fast_391):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_392)
+    .hidden NVN_C(nvnth_fast_392)
 NVN_C(nvnth_fast_392):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6272
@@ -7466,6 +7859,7 @@ NVN_C(nvnth_fast_392):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_393)
+    .hidden NVN_C(nvnth_fast_393)
 NVN_C(nvnth_fast_393):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6288
@@ -7473,6 +7867,7 @@ NVN_C(nvnth_fast_393):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_394)
+    .hidden NVN_C(nvnth_fast_394)
 NVN_C(nvnth_fast_394):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6304
@@ -7480,6 +7875,7 @@ NVN_C(nvnth_fast_394):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_395)
+    .hidden NVN_C(nvnth_fast_395)
 NVN_C(nvnth_fast_395):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6320
@@ -7487,6 +7883,7 @@ NVN_C(nvnth_fast_395):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_396)
+    .hidden NVN_C(nvnth_fast_396)
 NVN_C(nvnth_fast_396):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6336
@@ -7494,6 +7891,7 @@ NVN_C(nvnth_fast_396):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_397)
+    .hidden NVN_C(nvnth_fast_397)
 NVN_C(nvnth_fast_397):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6352
@@ -7501,6 +7899,7 @@ NVN_C(nvnth_fast_397):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_398)
+    .hidden NVN_C(nvnth_fast_398)
 NVN_C(nvnth_fast_398):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6368
@@ -7508,6 +7907,7 @@ NVN_C(nvnth_fast_398):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_399)
+    .hidden NVN_C(nvnth_fast_399)
 NVN_C(nvnth_fast_399):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6384
@@ -7515,6 +7915,7 @@ NVN_C(nvnth_fast_399):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_400)
+    .hidden NVN_C(nvnth_fast_400)
 NVN_C(nvnth_fast_400):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6400
@@ -7522,6 +7923,7 @@ NVN_C(nvnth_fast_400):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_401)
+    .hidden NVN_C(nvnth_fast_401)
 NVN_C(nvnth_fast_401):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6416
@@ -7529,6 +7931,7 @@ NVN_C(nvnth_fast_401):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_402)
+    .hidden NVN_C(nvnth_fast_402)
 NVN_C(nvnth_fast_402):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6432
@@ -7536,6 +7939,7 @@ NVN_C(nvnth_fast_402):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_403)
+    .hidden NVN_C(nvnth_fast_403)
 NVN_C(nvnth_fast_403):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6448
@@ -7543,6 +7947,7 @@ NVN_C(nvnth_fast_403):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_404)
+    .hidden NVN_C(nvnth_fast_404)
 NVN_C(nvnth_fast_404):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6464
@@ -7550,6 +7955,7 @@ NVN_C(nvnth_fast_404):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_405)
+    .hidden NVN_C(nvnth_fast_405)
 NVN_C(nvnth_fast_405):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6480
@@ -7557,6 +7963,7 @@ NVN_C(nvnth_fast_405):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_406)
+    .hidden NVN_C(nvnth_fast_406)
 NVN_C(nvnth_fast_406):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6496
@@ -7564,6 +7971,7 @@ NVN_C(nvnth_fast_406):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_407)
+    .hidden NVN_C(nvnth_fast_407)
 NVN_C(nvnth_fast_407):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6512
@@ -7571,6 +7979,7 @@ NVN_C(nvnth_fast_407):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_408)
+    .hidden NVN_C(nvnth_fast_408)
 NVN_C(nvnth_fast_408):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6528
@@ -7578,6 +7987,7 @@ NVN_C(nvnth_fast_408):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_409)
+    .hidden NVN_C(nvnth_fast_409)
 NVN_C(nvnth_fast_409):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6544
@@ -7585,6 +7995,7 @@ NVN_C(nvnth_fast_409):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_410)
+    .hidden NVN_C(nvnth_fast_410)
 NVN_C(nvnth_fast_410):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6560
@@ -7592,6 +8003,7 @@ NVN_C(nvnth_fast_410):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_411)
+    .hidden NVN_C(nvnth_fast_411)
 NVN_C(nvnth_fast_411):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6576
@@ -7599,6 +8011,7 @@ NVN_C(nvnth_fast_411):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_412)
+    .hidden NVN_C(nvnth_fast_412)
 NVN_C(nvnth_fast_412):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6592
@@ -7606,6 +8019,7 @@ NVN_C(nvnth_fast_412):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_413)
+    .hidden NVN_C(nvnth_fast_413)
 NVN_C(nvnth_fast_413):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6608
@@ -7613,6 +8027,7 @@ NVN_C(nvnth_fast_413):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_414)
+    .hidden NVN_C(nvnth_fast_414)
 NVN_C(nvnth_fast_414):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6624
@@ -7620,6 +8035,7 @@ NVN_C(nvnth_fast_414):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_415)
+    .hidden NVN_C(nvnth_fast_415)
 NVN_C(nvnth_fast_415):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6640
@@ -7627,6 +8043,7 @@ NVN_C(nvnth_fast_415):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_416)
+    .hidden NVN_C(nvnth_fast_416)
 NVN_C(nvnth_fast_416):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6656
@@ -7634,6 +8051,7 @@ NVN_C(nvnth_fast_416):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_417)
+    .hidden NVN_C(nvnth_fast_417)
 NVN_C(nvnth_fast_417):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6672
@@ -7641,6 +8059,7 @@ NVN_C(nvnth_fast_417):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_418)
+    .hidden NVN_C(nvnth_fast_418)
 NVN_C(nvnth_fast_418):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6688
@@ -7648,6 +8067,7 @@ NVN_C(nvnth_fast_418):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_419)
+    .hidden NVN_C(nvnth_fast_419)
 NVN_C(nvnth_fast_419):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6704
@@ -7655,6 +8075,7 @@ NVN_C(nvnth_fast_419):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_420)
+    .hidden NVN_C(nvnth_fast_420)
 NVN_C(nvnth_fast_420):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6720
@@ -7662,6 +8083,7 @@ NVN_C(nvnth_fast_420):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_421)
+    .hidden NVN_C(nvnth_fast_421)
 NVN_C(nvnth_fast_421):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6736
@@ -7669,6 +8091,7 @@ NVN_C(nvnth_fast_421):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_422)
+    .hidden NVN_C(nvnth_fast_422)
 NVN_C(nvnth_fast_422):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6752
@@ -7676,6 +8099,7 @@ NVN_C(nvnth_fast_422):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_423)
+    .hidden NVN_C(nvnth_fast_423)
 NVN_C(nvnth_fast_423):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6768
@@ -7683,6 +8107,7 @@ NVN_C(nvnth_fast_423):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_424)
+    .hidden NVN_C(nvnth_fast_424)
 NVN_C(nvnth_fast_424):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6784
@@ -7690,6 +8115,7 @@ NVN_C(nvnth_fast_424):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_425)
+    .hidden NVN_C(nvnth_fast_425)
 NVN_C(nvnth_fast_425):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6800
@@ -7697,6 +8123,7 @@ NVN_C(nvnth_fast_425):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_426)
+    .hidden NVN_C(nvnth_fast_426)
 NVN_C(nvnth_fast_426):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6816
@@ -7704,6 +8131,7 @@ NVN_C(nvnth_fast_426):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_427)
+    .hidden NVN_C(nvnth_fast_427)
 NVN_C(nvnth_fast_427):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6832
@@ -7711,6 +8139,7 @@ NVN_C(nvnth_fast_427):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_428)
+    .hidden NVN_C(nvnth_fast_428)
 NVN_C(nvnth_fast_428):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6848
@@ -7718,6 +8147,7 @@ NVN_C(nvnth_fast_428):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_429)
+    .hidden NVN_C(nvnth_fast_429)
 NVN_C(nvnth_fast_429):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6864
@@ -7725,6 +8155,7 @@ NVN_C(nvnth_fast_429):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_430)
+    .hidden NVN_C(nvnth_fast_430)
 NVN_C(nvnth_fast_430):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6880
@@ -7732,6 +8163,7 @@ NVN_C(nvnth_fast_430):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_431)
+    .hidden NVN_C(nvnth_fast_431)
 NVN_C(nvnth_fast_431):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6896
@@ -7739,6 +8171,7 @@ NVN_C(nvnth_fast_431):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_432)
+    .hidden NVN_C(nvnth_fast_432)
 NVN_C(nvnth_fast_432):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6912
@@ -7746,6 +8179,7 @@ NVN_C(nvnth_fast_432):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_433)
+    .hidden NVN_C(nvnth_fast_433)
 NVN_C(nvnth_fast_433):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6928
@@ -7753,6 +8187,7 @@ NVN_C(nvnth_fast_433):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_434)
+    .hidden NVN_C(nvnth_fast_434)
 NVN_C(nvnth_fast_434):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6944
@@ -7760,6 +8195,7 @@ NVN_C(nvnth_fast_434):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_435)
+    .hidden NVN_C(nvnth_fast_435)
 NVN_C(nvnth_fast_435):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6960
@@ -7767,6 +8203,7 @@ NVN_C(nvnth_fast_435):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_436)
+    .hidden NVN_C(nvnth_fast_436)
 NVN_C(nvnth_fast_436):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6976
@@ -7774,6 +8211,7 @@ NVN_C(nvnth_fast_436):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_437)
+    .hidden NVN_C(nvnth_fast_437)
 NVN_C(nvnth_fast_437):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #6992
@@ -7781,6 +8219,7 @@ NVN_C(nvnth_fast_437):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_438)
+    .hidden NVN_C(nvnth_fast_438)
 NVN_C(nvnth_fast_438):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7008
@@ -7788,6 +8227,7 @@ NVN_C(nvnth_fast_438):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_439)
+    .hidden NVN_C(nvnth_fast_439)
 NVN_C(nvnth_fast_439):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7024
@@ -7795,6 +8235,7 @@ NVN_C(nvnth_fast_439):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_440)
+    .hidden NVN_C(nvnth_fast_440)
 NVN_C(nvnth_fast_440):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7040
@@ -7802,6 +8243,7 @@ NVN_C(nvnth_fast_440):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_441)
+    .hidden NVN_C(nvnth_fast_441)
 NVN_C(nvnth_fast_441):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7056
@@ -7809,6 +8251,7 @@ NVN_C(nvnth_fast_441):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_442)
+    .hidden NVN_C(nvnth_fast_442)
 NVN_C(nvnth_fast_442):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7072
@@ -7816,6 +8259,7 @@ NVN_C(nvnth_fast_442):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_443)
+    .hidden NVN_C(nvnth_fast_443)
 NVN_C(nvnth_fast_443):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7088
@@ -7823,6 +8267,7 @@ NVN_C(nvnth_fast_443):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_444)
+    .hidden NVN_C(nvnth_fast_444)
 NVN_C(nvnth_fast_444):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7104
@@ -7830,6 +8275,7 @@ NVN_C(nvnth_fast_444):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_445)
+    .hidden NVN_C(nvnth_fast_445)
 NVN_C(nvnth_fast_445):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7120
@@ -7837,6 +8283,7 @@ NVN_C(nvnth_fast_445):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_446)
+    .hidden NVN_C(nvnth_fast_446)
 NVN_C(nvnth_fast_446):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7136
@@ -7844,6 +8291,7 @@ NVN_C(nvnth_fast_446):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_447)
+    .hidden NVN_C(nvnth_fast_447)
 NVN_C(nvnth_fast_447):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7152
@@ -7851,6 +8299,7 @@ NVN_C(nvnth_fast_447):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_448)
+    .hidden NVN_C(nvnth_fast_448)
 NVN_C(nvnth_fast_448):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7168
@@ -7858,6 +8307,7 @@ NVN_C(nvnth_fast_448):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_449)
+    .hidden NVN_C(nvnth_fast_449)
 NVN_C(nvnth_fast_449):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7184
@@ -7865,6 +8315,7 @@ NVN_C(nvnth_fast_449):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_450)
+    .hidden NVN_C(nvnth_fast_450)
 NVN_C(nvnth_fast_450):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7200
@@ -7872,6 +8323,7 @@ NVN_C(nvnth_fast_450):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_451)
+    .hidden NVN_C(nvnth_fast_451)
 NVN_C(nvnth_fast_451):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7216
@@ -7879,6 +8331,7 @@ NVN_C(nvnth_fast_451):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_452)
+    .hidden NVN_C(nvnth_fast_452)
 NVN_C(nvnth_fast_452):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7232
@@ -7886,6 +8339,7 @@ NVN_C(nvnth_fast_452):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_453)
+    .hidden NVN_C(nvnth_fast_453)
 NVN_C(nvnth_fast_453):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7248
@@ -7893,6 +8347,7 @@ NVN_C(nvnth_fast_453):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_454)
+    .hidden NVN_C(nvnth_fast_454)
 NVN_C(nvnth_fast_454):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7264
@@ -7900,6 +8355,7 @@ NVN_C(nvnth_fast_454):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_455)
+    .hidden NVN_C(nvnth_fast_455)
 NVN_C(nvnth_fast_455):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7280
@@ -7907,6 +8363,7 @@ NVN_C(nvnth_fast_455):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_456)
+    .hidden NVN_C(nvnth_fast_456)
 NVN_C(nvnth_fast_456):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7296
@@ -7914,6 +8371,7 @@ NVN_C(nvnth_fast_456):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_457)
+    .hidden NVN_C(nvnth_fast_457)
 NVN_C(nvnth_fast_457):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7312
@@ -7921,6 +8379,7 @@ NVN_C(nvnth_fast_457):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_458)
+    .hidden NVN_C(nvnth_fast_458)
 NVN_C(nvnth_fast_458):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7328
@@ -7928,6 +8387,7 @@ NVN_C(nvnth_fast_458):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_459)
+    .hidden NVN_C(nvnth_fast_459)
 NVN_C(nvnth_fast_459):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7344
@@ -7935,6 +8395,7 @@ NVN_C(nvnth_fast_459):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_460)
+    .hidden NVN_C(nvnth_fast_460)
 NVN_C(nvnth_fast_460):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7360
@@ -7942,6 +8403,7 @@ NVN_C(nvnth_fast_460):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_461)
+    .hidden NVN_C(nvnth_fast_461)
 NVN_C(nvnth_fast_461):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7376
@@ -7949,6 +8411,7 @@ NVN_C(nvnth_fast_461):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_462)
+    .hidden NVN_C(nvnth_fast_462)
 NVN_C(nvnth_fast_462):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7392
@@ -7956,6 +8419,7 @@ NVN_C(nvnth_fast_462):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_463)
+    .hidden NVN_C(nvnth_fast_463)
 NVN_C(nvnth_fast_463):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7408
@@ -7963,6 +8427,7 @@ NVN_C(nvnth_fast_463):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_464)
+    .hidden NVN_C(nvnth_fast_464)
 NVN_C(nvnth_fast_464):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7424
@@ -7970,6 +8435,7 @@ NVN_C(nvnth_fast_464):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_465)
+    .hidden NVN_C(nvnth_fast_465)
 NVN_C(nvnth_fast_465):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7440
@@ -7977,6 +8443,7 @@ NVN_C(nvnth_fast_465):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_466)
+    .hidden NVN_C(nvnth_fast_466)
 NVN_C(nvnth_fast_466):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7456
@@ -7984,6 +8451,7 @@ NVN_C(nvnth_fast_466):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_467)
+    .hidden NVN_C(nvnth_fast_467)
 NVN_C(nvnth_fast_467):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7472
@@ -7991,6 +8459,7 @@ NVN_C(nvnth_fast_467):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_468)
+    .hidden NVN_C(nvnth_fast_468)
 NVN_C(nvnth_fast_468):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7488
@@ -7998,6 +8467,7 @@ NVN_C(nvnth_fast_468):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_469)
+    .hidden NVN_C(nvnth_fast_469)
 NVN_C(nvnth_fast_469):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7504
@@ -8005,6 +8475,7 @@ NVN_C(nvnth_fast_469):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_470)
+    .hidden NVN_C(nvnth_fast_470)
 NVN_C(nvnth_fast_470):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7520
@@ -8012,6 +8483,7 @@ NVN_C(nvnth_fast_470):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_471)
+    .hidden NVN_C(nvnth_fast_471)
 NVN_C(nvnth_fast_471):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7536
@@ -8019,6 +8491,7 @@ NVN_C(nvnth_fast_471):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_472)
+    .hidden NVN_C(nvnth_fast_472)
 NVN_C(nvnth_fast_472):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7552
@@ -8026,6 +8499,7 @@ NVN_C(nvnth_fast_472):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_473)
+    .hidden NVN_C(nvnth_fast_473)
 NVN_C(nvnth_fast_473):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7568
@@ -8033,6 +8507,7 @@ NVN_C(nvnth_fast_473):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_474)
+    .hidden NVN_C(nvnth_fast_474)
 NVN_C(nvnth_fast_474):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7584
@@ -8040,6 +8515,7 @@ NVN_C(nvnth_fast_474):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_475)
+    .hidden NVN_C(nvnth_fast_475)
 NVN_C(nvnth_fast_475):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7600
@@ -8047,6 +8523,7 @@ NVN_C(nvnth_fast_475):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_476)
+    .hidden NVN_C(nvnth_fast_476)
 NVN_C(nvnth_fast_476):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7616
@@ -8054,6 +8531,7 @@ NVN_C(nvnth_fast_476):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_477)
+    .hidden NVN_C(nvnth_fast_477)
 NVN_C(nvnth_fast_477):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7632
@@ -8061,6 +8539,7 @@ NVN_C(nvnth_fast_477):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_478)
+    .hidden NVN_C(nvnth_fast_478)
 NVN_C(nvnth_fast_478):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7648
@@ -8068,6 +8547,7 @@ NVN_C(nvnth_fast_478):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_479)
+    .hidden NVN_C(nvnth_fast_479)
 NVN_C(nvnth_fast_479):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7664
@@ -8075,6 +8555,7 @@ NVN_C(nvnth_fast_479):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_480)
+    .hidden NVN_C(nvnth_fast_480)
 NVN_C(nvnth_fast_480):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7680
@@ -8082,6 +8563,7 @@ NVN_C(nvnth_fast_480):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_481)
+    .hidden NVN_C(nvnth_fast_481)
 NVN_C(nvnth_fast_481):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7696
@@ -8089,6 +8571,7 @@ NVN_C(nvnth_fast_481):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_482)
+    .hidden NVN_C(nvnth_fast_482)
 NVN_C(nvnth_fast_482):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7712
@@ -8096,6 +8579,7 @@ NVN_C(nvnth_fast_482):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_483)
+    .hidden NVN_C(nvnth_fast_483)
 NVN_C(nvnth_fast_483):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7728
@@ -8103,6 +8587,7 @@ NVN_C(nvnth_fast_483):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_484)
+    .hidden NVN_C(nvnth_fast_484)
 NVN_C(nvnth_fast_484):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7744
@@ -8110,6 +8595,7 @@ NVN_C(nvnth_fast_484):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_485)
+    .hidden NVN_C(nvnth_fast_485)
 NVN_C(nvnth_fast_485):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7760
@@ -8117,6 +8603,7 @@ NVN_C(nvnth_fast_485):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_486)
+    .hidden NVN_C(nvnth_fast_486)
 NVN_C(nvnth_fast_486):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7776
@@ -8124,6 +8611,7 @@ NVN_C(nvnth_fast_486):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_487)
+    .hidden NVN_C(nvnth_fast_487)
 NVN_C(nvnth_fast_487):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7792
@@ -8131,6 +8619,7 @@ NVN_C(nvnth_fast_487):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_488)
+    .hidden NVN_C(nvnth_fast_488)
 NVN_C(nvnth_fast_488):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7808
@@ -8138,6 +8627,7 @@ NVN_C(nvnth_fast_488):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_489)
+    .hidden NVN_C(nvnth_fast_489)
 NVN_C(nvnth_fast_489):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7824
@@ -8145,6 +8635,7 @@ NVN_C(nvnth_fast_489):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_490)
+    .hidden NVN_C(nvnth_fast_490)
 NVN_C(nvnth_fast_490):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7840
@@ -8152,6 +8643,7 @@ NVN_C(nvnth_fast_490):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_491)
+    .hidden NVN_C(nvnth_fast_491)
 NVN_C(nvnth_fast_491):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7856
@@ -8159,6 +8651,7 @@ NVN_C(nvnth_fast_491):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_492)
+    .hidden NVN_C(nvnth_fast_492)
 NVN_C(nvnth_fast_492):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7872
@@ -8166,6 +8659,7 @@ NVN_C(nvnth_fast_492):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_493)
+    .hidden NVN_C(nvnth_fast_493)
 NVN_C(nvnth_fast_493):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7888
@@ -8173,6 +8667,7 @@ NVN_C(nvnth_fast_493):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_494)
+    .hidden NVN_C(nvnth_fast_494)
 NVN_C(nvnth_fast_494):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7904
@@ -8180,6 +8675,7 @@ NVN_C(nvnth_fast_494):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_495)
+    .hidden NVN_C(nvnth_fast_495)
 NVN_C(nvnth_fast_495):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7920
@@ -8187,6 +8683,7 @@ NVN_C(nvnth_fast_495):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_496)
+    .hidden NVN_C(nvnth_fast_496)
 NVN_C(nvnth_fast_496):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7936
@@ -8194,6 +8691,7 @@ NVN_C(nvnth_fast_496):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_497)
+    .hidden NVN_C(nvnth_fast_497)
 NVN_C(nvnth_fast_497):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7952
@@ -8201,6 +8699,7 @@ NVN_C(nvnth_fast_497):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_498)
+    .hidden NVN_C(nvnth_fast_498)
 NVN_C(nvnth_fast_498):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7968
@@ -8208,6 +8707,7 @@ NVN_C(nvnth_fast_498):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_499)
+    .hidden NVN_C(nvnth_fast_499)
 NVN_C(nvnth_fast_499):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #7984
@@ -8215,6 +8715,7 @@ NVN_C(nvnth_fast_499):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_500)
+    .hidden NVN_C(nvnth_fast_500)
 NVN_C(nvnth_fast_500):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8000
@@ -8222,6 +8723,7 @@ NVN_C(nvnth_fast_500):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_501)
+    .hidden NVN_C(nvnth_fast_501)
 NVN_C(nvnth_fast_501):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8016
@@ -8229,6 +8731,7 @@ NVN_C(nvnth_fast_501):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_502)
+    .hidden NVN_C(nvnth_fast_502)
 NVN_C(nvnth_fast_502):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8032
@@ -8236,6 +8739,7 @@ NVN_C(nvnth_fast_502):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_503)
+    .hidden NVN_C(nvnth_fast_503)
 NVN_C(nvnth_fast_503):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8048
@@ -8243,6 +8747,7 @@ NVN_C(nvnth_fast_503):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_504)
+    .hidden NVN_C(nvnth_fast_504)
 NVN_C(nvnth_fast_504):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8064
@@ -8250,6 +8755,7 @@ NVN_C(nvnth_fast_504):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_505)
+    .hidden NVN_C(nvnth_fast_505)
 NVN_C(nvnth_fast_505):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8080
@@ -8257,6 +8763,7 @@ NVN_C(nvnth_fast_505):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_506)
+    .hidden NVN_C(nvnth_fast_506)
 NVN_C(nvnth_fast_506):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8096
@@ -8264,6 +8771,7 @@ NVN_C(nvnth_fast_506):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_507)
+    .hidden NVN_C(nvnth_fast_507)
 NVN_C(nvnth_fast_507):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8112
@@ -8271,6 +8779,7 @@ NVN_C(nvnth_fast_507):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_508)
+    .hidden NVN_C(nvnth_fast_508)
 NVN_C(nvnth_fast_508):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8128
@@ -8278,6 +8787,7 @@ NVN_C(nvnth_fast_508):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_509)
+    .hidden NVN_C(nvnth_fast_509)
 NVN_C(nvnth_fast_509):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8144
@@ -8285,6 +8795,7 @@ NVN_C(nvnth_fast_509):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_510)
+    .hidden NVN_C(nvnth_fast_510)
 NVN_C(nvnth_fast_510):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8160
@@ -8292,6 +8803,7 @@ NVN_C(nvnth_fast_510):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_511)
+    .hidden NVN_C(nvnth_fast_511)
 NVN_C(nvnth_fast_511):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8176
@@ -8299,6 +8811,7 @@ NVN_C(nvnth_fast_511):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_512)
+    .hidden NVN_C(nvnth_fast_512)
 NVN_C(nvnth_fast_512):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8192
@@ -8306,6 +8819,7 @@ NVN_C(nvnth_fast_512):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_513)
+    .hidden NVN_C(nvnth_fast_513)
 NVN_C(nvnth_fast_513):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8208
@@ -8313,6 +8827,7 @@ NVN_C(nvnth_fast_513):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_514)
+    .hidden NVN_C(nvnth_fast_514)
 NVN_C(nvnth_fast_514):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8224
@@ -8320,6 +8835,7 @@ NVN_C(nvnth_fast_514):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_515)
+    .hidden NVN_C(nvnth_fast_515)
 NVN_C(nvnth_fast_515):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8240
@@ -8327,6 +8843,7 @@ NVN_C(nvnth_fast_515):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_516)
+    .hidden NVN_C(nvnth_fast_516)
 NVN_C(nvnth_fast_516):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8256
@@ -8334,6 +8851,7 @@ NVN_C(nvnth_fast_516):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_517)
+    .hidden NVN_C(nvnth_fast_517)
 NVN_C(nvnth_fast_517):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8272
@@ -8341,6 +8859,7 @@ NVN_C(nvnth_fast_517):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_518)
+    .hidden NVN_C(nvnth_fast_518)
 NVN_C(nvnth_fast_518):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8288
@@ -8348,6 +8867,7 @@ NVN_C(nvnth_fast_518):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_519)
+    .hidden NVN_C(nvnth_fast_519)
 NVN_C(nvnth_fast_519):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8304
@@ -8355,6 +8875,7 @@ NVN_C(nvnth_fast_519):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_520)
+    .hidden NVN_C(nvnth_fast_520)
 NVN_C(nvnth_fast_520):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8320
@@ -8362,6 +8883,7 @@ NVN_C(nvnth_fast_520):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_521)
+    .hidden NVN_C(nvnth_fast_521)
 NVN_C(nvnth_fast_521):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8336
@@ -8369,6 +8891,7 @@ NVN_C(nvnth_fast_521):
     ldr x17, [x16, #8]
     br x17
     .globl NVN_C(nvnth_fast_522)
+    .hidden NVN_C(nvnth_fast_522)
 NVN_C(nvnth_fast_522):
     NVN_ADDR(x16, nvn_slot)
     mov x17, #8352
@@ -8905,6 +9428,7 @@ NVN_C(nvn_thunk):
     .quad NVN_C(nvnth_522)
 #ifdef DM_ANDROID_APP
     .globl NVN_C(nvn_thunk_fast)
+    .hidden NVN_C(nvn_thunk_fast)
 NVN_C(nvn_thunk_fast):
     .quad NVN_C(nvnth_fast_0)
     .quad NVN_C(nvnth_fast_1)

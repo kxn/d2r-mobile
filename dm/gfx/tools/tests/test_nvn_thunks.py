@@ -65,6 +65,12 @@ def main():
             assert [(int(offset, 16), name) for offset, name in table] == expected_table
             syms = run([args.objdump, "-t", obj])
             assert "nvn_thunk_fast" in syms if app else "nvn_thunk_fast" not in syms
+            for line in syms.splitlines():
+                symbol = line.split()[-1] if line.split() else ""
+                if symbol == "nvn_thunk_fast" or symbol.startswith("nvnth_fast_"):
+                    assert app and ".hidden" in line, line
+                elif symbol == "nvn_thunk" or re.fullmatch(r"nvnth_[0-9]+", symbol):
+                    assert ".hidden" not in line, line
         # Actual dispatch + frame reporting code, with inert platform dependencies.
         harness = r'''
 #include <assert.h>
