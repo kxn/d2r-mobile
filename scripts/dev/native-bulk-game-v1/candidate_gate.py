@@ -92,7 +92,7 @@ COMBINED_RAW='5cbf65d16d01aca261f90691d6a72549ecae737139e3a8487dc2f26da4284700'
 COMBINED_CANONICAL='7543b6cf98ed70c5cc41ce959795f85cbe4ccd9abc341408c879a2780ce7a248'
 
 
-def validate(p,pinned,read,require):
+def validate_959(p,pinned,read,require):
     if p['runtime_commit']!=COMBINED_RUNTIME:
         return validate_8480(p,pinned,read,require)
     import copy
@@ -134,3 +134,51 @@ def validate(p,pinned,read,require):
     control['runtime_commit']=RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
     control['native_candidate_validation']['root_review']=old_root
     validate_8480(control,pinned,read,require)
+
+
+STORE_RUNTIME='d14808f591b0de60c241340c3f5c5df708f4e36b'
+STORE_REVIEW='4ee5066775e7578cc663fe2a208e9114160bdaf2fe01c043218b61fc315a3aa8'
+STORE_CANONICAL='1b69f1455e775f42eb95833bb21ad4fbd3c35d059f791abbafbb1939dbf4c09f'
+STORE_RAW='225361b17da1deadc9f5b14d41a3c61c24b1ec41655b1b7fc54d02cdf053ca9c'
+
+
+def validate(p,pinned,read,require):
+    if p['runtime_commit']!=STORE_RUNTIME:
+        return validate_959(p,pinned,read,require)
+    import copy
+    c=p['native_candidate_validation']
+    require(c['root_review']['sha256']==STORE_REVIEW,'exactd148 root review required')
+    review=read(pinned(c['root_review']))
+    require(review['status']=='ROOT_REVIEWED_D148_CANONICAL_AND_FRESH_RAW28'
+            and review['runtime']==STORE_RUNTIME and review['base']==COMBINED_RUNTIME
+            and review['tool_ready'] is True and review['actual_device_evidence'] is False,
+            'store fusion root source review differs')
+    require(p['canonical']['sha256']==STORE_CANONICAL and p['raw']['sha256']==STORE_RAW
+            and review['canonical_ready']==p['canonical'] and review['raw_ready']==p['raw'],
+            'store fusion canonical/raw differs')
+    canonical=read(pinned(p['canonical']));raw=read(pinned(p['raw']))
+    require(canonical['commit']==raw['source_commit']==STORE_RUNTIME
+            and review['APK']==canonical['canonical_APK']['archive']
+            and review['host_ELF_SHA256']==canonical['canonical_native_library_sha256']['libdmhost_android.so']
+            and review['host_ELF_BuildID']==canonical['canonical_host_ELF_build_id']
+            and raw['all_23_module_rule_artifact_bytes_equal959'] is True
+            and raw['executables_equal959'] is True and raw['revision_provenance_fresh'] is True,
+            'store fusion actual APK/raw revision differs')
+    for key in ('raw28_hashes_verified','six_APK_libraries_verified','new_fixture_literals_absent_APP'):
+        require(review[key] is True,'store root closure absent '+key)
+    pinned(review['source_ready']);pinned(review['APK'])
+    previous=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/native-cpu-combined-pair-v1-candidate-B-root-actual-review.json',
+                          'sha256':'ac39859b16651d3c9aa460f0938e1c508291083be605278bb4c2eaeb2f05b7c8'}))
+    require(previous['runtime']==COMBINED_RUNTIME and previous['game_modules_executed'] is True
+            and previous['route_completed']==3 and previous['fresh_save_then_stopped'] is True
+            and previous['cleanup_followup_all_owned_not_executing'] is True,
+            'actual959 prerequisite incomplete')
+    actual=read(pinned(previous['result']))
+    require(actual['original_restored'] and actual['cleanup_complete'] and actual['cleanup_errors']==[],
+            'actual959 original restoration incomplete')
+    old_root={'path':'/home/dl/d2r-mobile/.local/logs/cpu-binding-phase-combined-9592893-root-canonical-raw-review.json',
+              'sha256':COMBINED_REVIEW}
+    old=read(pinned(old_root));control=copy.deepcopy(p)
+    control['runtime_commit']=COMBINED_RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
+    control['native_candidate_validation']['root_review']=old_root
+    validate_959(control,pinned,read,require)
