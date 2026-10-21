@@ -186,6 +186,7 @@ static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
 #include "native_vulkan_astc_copy.inc"
 #include "native_vulkan_mixed_compressed_copy.inc"
 #include "native_vulkan_page_array.inc"
+#include "native_vulkan_page_array_hardware.inc"
 #include "native_vulkan_image_observe.inc"
 extern int vk_test_texture_retired_frontier(uint64_t,uint64_t,uint64_t *);
 static void shared_image_retired_alias_test(NVNmemoryPool *pool,uint8_t *data) {

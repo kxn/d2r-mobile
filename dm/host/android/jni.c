@@ -444,6 +444,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeLegacyAs
   }
   legacy_astc_configured=1;legacy_astc_startup=enabled!=0;legacy_astc_fixture=fixture!=0;pthread_mutex_unlock(&operation_mode_mutex);
 }
+// Fixture-only cold selection. No game/runtime option or hot switch is exposed.
+static int page_array_oracle_configured,page_array_oracle_optimized;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePageArrayOracle(
+    JNIEnv *env,jclass klass,jboolean optimized) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(page_array_oracle_configured || operation_mode_fixed || vk_loader_is_initialized()) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"Page-array oracle requires one cold invocation");return;
+  }
+  page_array_oracle_configured=1;page_array_oracle_optimized=optimized!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int upload_dual_startup;
 static int astc_decode_startup,astc_decode_fixture;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAstcDecode(
@@ -836,6 +849,25 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTests(
     JNIEnv *env, jclass klass, jstring directory, jboolean async_submit,
     jboolean acquire_scope, jboolean memory_only, jboolean validation_enabled, jboolean readback_batch) {
   (void)klass;
+  if(page_array_oracle_configured) {
+    if(!async_submit || acquire_scope || memory_only || !validation_enabled || readback_batch ||
+        shared_guest_heap_startup || astc_decode_startup || astc_decode_fixture || legacy_astc_startup || legacy_astc_fixture)
+      die("Page-array oracle requires uncombined private async validated tests");
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    if(native_resource_fixture_directory[0])die("Page-array oracle cannot use a native resource fixture");
+#endif
+    pthread_mutex_lock(&operation_mode_mutex);
+    if(operation_mode_fixed || vk_loader_is_initialized())die("Page-array oracle must precede Vulkan initialization");
+    operation_mode_fixed=1;pthread_mutex_unlock(&operation_mode_mutex);
+#ifdef DM_VULKAN_SHARED_POOLS
+    extern void vk_legacy_astc_copy_startup(int);vk_legacy_astc_copy_startup(0);
+#else
+    die("Page-array oracle fixture not compiled");
+#endif
+    if(setenv("DM_VULKAN_SHARED_POOLS","0",1) ||
+        setenv("DM_VULKAN_COMPRESSED_PAGE_ARRAYS",page_array_oracle_optimized?"1":"0",1) ||
+        setenv("DM_PAGE_ARRAY_HARDWARE_ORACLE","1",1))die("Page-array oracle cold selection");
+  }
   if(readback_batch) {
     static _Atomic int once;
     if(atomic_exchange(&once,1) || !async_submit || acquire_scope || memory_only || validation_enabled ||

@@ -24,6 +24,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static boolean nativeResourceFixtureStarted;
     private boolean sharedImageFixture;
     private static native void nativeTests(String directory, boolean asyncSubmit, boolean acquireScope, boolean memoryOnly, boolean validation, boolean readbackBatch);
+    private static native void nativePageArrayOracle(boolean optimized);
     private static native void nativeSuspend(boolean paused);
     private static native void nativeTrimMemory();
     private static native void nativeThermalLimit(int limit);
@@ -87,7 +88,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeSubmissionBarrierReference(boolean reference);
     private static native void nativeQueryPerDrawReference(boolean reference);
     private android.window.OnBackInvokedCallback backCallback;
-    private static boolean hostStarted, readbackBatchFixtureStarted;
+    private static boolean hostStarted, readbackBatchFixtureStarted, pageArrayFixtureStarted;
     private boolean started, resumed;
     private SurfaceHolder surfaceHolder;
     private TouchControls touchControls;
@@ -139,6 +140,36 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        // One cold finite system-Vulkan oracle through the existing nativeTests
+        // entry. It cannot start game/Surface or change normal game options.
+        if (getIntent().getBooleanExtra("compressed_page_array_test", false)) {
+            if (saved != null || hostStarted || pageArrayFixtureStarted || sharedImageFixtureStarted ||
+                    !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
+                    !getIntent().getBooleanExtra("run_vulkan_tests", false) ||
+                    !getIntent().getBooleanExtra("async_submit", false) ||
+                    !getIntent().getBooleanExtra("vulkan_test_validation", true) ||
+                    !getIntent().hasExtra("compressed_page_arrays") ||
+                    !"system".equals(getIntent().getStringExtra("vulkan_provider")) ||
+                    getIntent().getBooleanExtra("shared_guest_heap", false) ||
+                    getIntent().getBooleanExtra("legacy_astc_copy", false) ||
+                    getIntent().getBooleanExtra("legacy_astc_copy_test", false) ||
+                    getIntent().getBooleanExtra("astc_decode_unorm8", false) ||
+                    getIntent().getBooleanExtra("astc_decode_test", false) ||
+                    getIntent().getBooleanExtra("memory_test", false) ||
+                    getIntent().getBooleanExtra("acquire_scope_test", false) ||
+                    getIntent().getBooleanExtra("readback_batch_test", false) ||
+                    getIntent().hasExtra("native_resource_table") || getIntent().hasExtra("native_resource_fixture_dir") ||
+                    getIntent().hasExtra("shared_image_test"))
+                throw new IllegalArgumentException("Page-array oracle requires one cold explicit system/private async validated test without game/other fixtures");
+            pageArrayFixtureStarted = true;
+            File fixtureRoot = new File(getFilesDir(), "runtime");
+            if (!fixtureRoot.isDirectory() && !fixtureRoot.mkdirs()) throw new IllegalStateException("runtime directory");
+            nativeProbe(fixtureRoot.getAbsolutePath());
+            nativeVulkanDriver("system", new File(fixtureRoot, "vulkan-driver").getAbsolutePath(), getApplicationInfo().nativeLibraryDir);
+            nativePageArrayOracle(getIntent().getBooleanExtra("compressed_page_arrays", false));
+            new Thread(() -> nativeTests(fixtureRoot.getAbsolutePath(), true, false, false, true, false), "page-array-test").start();
+            return;
+        }
         if (getIntent().getBooleanExtra("readback_batch_test", false)) {
             if (saved != null || hostStarted || readbackBatchFixtureStarted || sharedImageFixtureStarted ||
                     !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
