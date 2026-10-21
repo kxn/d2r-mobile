@@ -24,10 +24,10 @@ def pinned(row):
 
 class Gate(unittest.TestCase):
  def config(self):
-  p=read(R/'.local/build/native-candidate-retirement-v1/inputs-DRAFT.json')
+  p=read(R/'.local/build/native-candidate-source-span-ebe-v1/inputs-DRAFT.json')
   p['phases'][1]['composition_data']=read(pinned(p['phases'][1]['composition']))
   return p
- def test_actual_reviewed716_848_and6f_refs_are_accepted(self):
+ def test_actual_reviewedebe0_716_and6f_refs_are_accepted(self):
   g.validate(self.config(),pinned,read,require)
  def test_wrong_runtime_provider_window_or_selection_rejected(self):
   for key,value in [('runtime_commit',g.BASE),('driver',{'sha256':'0'*64}),('pool_window_bytes',16777216)]:
@@ -73,7 +73,7 @@ class Gate(unittest.TestCase):
    with self.subTest(key=key):
     with self.assertRaises(RuntimeError):g.validate(p,pinned,altered,require)
  def test_actual_predecessor_phase_must_be_complete(self):
-  p=self.config();actual=R/'.local/logs/native-candidate-geometry-848-Q735-v1/result.json'
+  p=self.config();actual=R/'.local/logs/native-candidate-retirement-716-Q735-v1/result.json'
   for key,value in [('original_route_completed',2),('fresh_save_then_stopped',False),('official_performance_complete',False),('game_modules_executed',False)]:
    def altered(path):
     data=read(path)
@@ -93,7 +93,7 @@ class Gate(unittest.TestCase):
  def test_actual_complete_build_and_separate_verify_required(self):
   p=self.config();review=read(pinned(p['native_candidate_validation']['root_review']))
   q=Path(review['complete_audit']['path'])
-  for key,value in [('commit',g.BASE),('separate_original_NSO_rebuild_and_verify_only_pass',False),('new_host_cache_getter_and_epoch_death_symbols_absent_APP',False),('native_APP_death_env_literal_absent',False),('operation_geometry_APP_probes_absent',False),('texture_retirement_index_APP_probes_absent',False),('six_library_hashes_and_LOAD_alignment',[]),('raw_deployment_files',27)]:
+  for key,value in [('commit',g.BASE),('separate_original_NSO_rebuild_and_verify_only_pass',False),('new_host_cache_getter_and_epoch_death_symbols_absent_APP',False),('native_APP_death_env_literal_absent',False),('operation_geometry_APP_probes_absent',False),('texture_retirement_index_APP_probes_absent',False),('operation_image_source_APP_probes_absent',False),('pool_span_search_APP_probes_absent',False),('six_library_hashes_and_LOAD_alignment',[]),('raw_deployment_files',27)]:
    def altered(path):
     data=read(path)
     if Path(path)==q:data[key]=value
@@ -101,7 +101,7 @@ class Gate(unittest.TestCase):
    with self.subTest(key=key):
     with self.assertRaises(RuntimeError):g.validate(p,pinned,altered,require)
  def test_qualified_predecessor_does_not_fake_stable_performance(self):
-  p=self.config();q=R/'.local/logs/native-candidate-geometry-848-Q735-v1/result.json'
+  p=self.config();q=R/'.local/logs/native-candidate-retirement-716-Q735-v1/result.json'
   self.assertFalse(read(q)['phases'][0]['performance_stable_target60_PSO_variants_all_windows'])
   g.validate(p,pinned,read,require)
 
