@@ -377,4 +377,4 @@ finally:
  except BaseException as e:result['cleanup_errors'].append(repr(e))
  save()
 print(json.dumps(result))
-raise SystemExit(0 if result['stage']in('actual-original-NVN-native-window-family-owned-passed','actual-old-AA-native-table-refused-by-original-runtime') and not result['cleanup_errors'] else 1)
+raise SystemExit(0 if result['stage']in('actual-original-NVN-native-window-family-owned-passed','actual-old-AA-native-table-refused-by-original-runtime','actual-qualified-ASTC6-original-NVN-native-window-family-owned-passed') and not result['cleanup_errors'] else 1)
