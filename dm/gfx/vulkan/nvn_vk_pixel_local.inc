@@ -206,6 +206,9 @@ const vk_pixel_local_proof *vk_shader_pixel_local_subset(vk_shader *shader,VkSha
     vk_shader *alt=calloc(1,sizeof *alt);if(!alt)return NULL;*alt=*shader;
     alt->next=NULL;alt->texel_storage_alternative=NULL;alt->predicate=NULL;
     alt->canonical_base=base;
+    // The new DPL module is outside the five-artifact DDK proof closure.
+    // Keep its original full key; DSP already rejects the changed module token.
+    alt->driver_schema[0]=alt->driver_schema[1]=NULL;
     alt->pixel_local_data=NULL;alt->pixel_local_checked=1;
     alt->bindings=malloc(shader->nb*sizeof *alt->bindings);if(!alt->bindings){free(alt);return NULL;}
     memcpy(alt->bindings,shader->bindings,shader->nb*sizeof *alt->bindings);

@@ -29,6 +29,7 @@ typedef struct vk_shader {
   struct vk_shader *texel_storage_alternative;
   char key[17];
   uint8_t fingerprint[32];
+  uint8_t proof_fingerprint[32]; // original five-artifact identity; DPL only extends pipeline identity
   uint32_t stage, set, nb, nc1, local[3], input_mask;
   int pos_attr, pos_w1, may_discard, writes_smask;
   uint32_t color_mask;

@@ -3,6 +3,39 @@
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 extern vk_buffer *vk_test_driver_span_constant(vk_shader *,int,uint64_t *,uint64_t *);
 #endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+#include "../../../host/crypto.h"
+// Real load_key regression: valid empty DPL is a pipeline input, while the
+// independent DDK/DSP proof still covers exactly the original five artifacts.
+static void driver_proof_identity_test(const vk_shader *s) {
+  CHECK(vk_pixel_local_enabled());
+  char path[2048];uint32_t local[48];
+  CHECK(snprintf(path,sizeof path,"%s/%s.plocal",V.options.shader_root,s->key)<(int)sizeof path);
+  FILE *file=fopen(path,"rb");CHECK(file!=NULL);
+  CHECK(fread(local,1,sizeof local,file)==sizeof local);CHECK(fgetc(file)==EOF);CHECK(!fclose(file));
+  CHECK(local[0]==UINT32_C(0x314c5044) && (local[1]==1 || local[1]==2));
+  CHECK(local[2]==192 && local[3]==s->stage && local[4]==s->set && !local[5] && local[6]==192 && !local[7]);
+  uint8_t hashes[5][32],proof[32],combined[64],pipeline[32],changed[32];
+  memcpy(hashes[0],(uint8_t *)local+64,32); // meta, spv, spec, pred, tssbo
+  memcpy(hashes[1],(uint8_t *)local+32,32);
+  memcpy(hashes[2],(uint8_t *)local+96,96);
+  CC_SHA256(hashes,sizeof hashes,proof);CHECK(!memcmp(proof,s->proof_fingerprint,32));
+  memcpy(combined,proof,32);CC_SHA256(local,sizeof local,combined+32);
+  CC_SHA256(combined,sizeof combined,pipeline);
+  CHECK(!memcmp(pipeline,s->fingerprint,32));CHECK(memcmp(proof,pipeline,32));
+  CHECK(vk_shader_fingerprint(s->key,changed));CHECK(!memcmp(changed,pipeline,32));
+  // Both versions are valid empty recipes with the same exact five hashes.
+  // Recompute via the unchanged public entry, then restore owned fixture bytes.
+  uint32_t version=local[1];local[1]=3-version;
+  file=fopen(path,"wb");CHECK(file!=NULL);CHECK(fwrite(local,1,sizeof local,file)==sizeof local);CHECK(!fclose(file));
+  CHECK(vk_shader_fingerprint(s->key,changed));CHECK(memcmp(changed,pipeline,32));
+  CC_SHA256(local,sizeof local,combined+32);CC_SHA256(combined,sizeof combined,proof);
+  CHECK(!memcmp(changed,proof,32));
+  local[1]=version;file=fopen(path,"wb");CHECK(file!=NULL);
+  CHECK(fwrite(local,1,sizeof local,file)==sizeof local);CHECK(!fclose(file));
+  CHECK(vk_shader_fingerprint(s->key,changed));CHECK(!memcmp(changed,pipeline,32));
+}
+#endif
 static uint32_t sparse_address_oracle(unsigned reg,int ubo) {
   const p_bind_buf *b=ubo?&S.ubo[5][reg]:&S.ssbo[5][reg];
   return (uint32_t)b->addr^(uint32_t)(b->addr>>32)^(uint32_t)b->size;
@@ -21,6 +54,7 @@ static void driver_sparse_key_test(void) {
     CHECK(vk_driver_schema_words(s,2)==(n==2||n>=4?UINT32_MAX:n==3?0:4));
     if(n<3)CHECK(vk_driver_schema_words(s,0)==6);
 #ifndef DM_ANDROID_APP
+    if(getenv("DM_DRIVER_PROOF_IDENTITY_FIXTURE"))driver_proof_identity_test(s);
     if(getenv("DM_DRIVER_SPAN_SHADER_FIXTURE")) {
       // Use the original compiled shaders and production metadata loader.
       // Dynamic c2 and the known-zero read at 65520 must retain 64 KiB;
@@ -89,6 +123,12 @@ static void driver_sparse_key_test(void) {
           uint64_t expected_range=mode==0 || vk_driver_span_reference_mode() ||
               !actual->driver_span[slot/2]?65536:4096;
           CHECK(range==expected_range);
+          if(getenv("DM_DRIVER_PROOF_IDENTITY_FIXTURE") && mode==1 && seq==0) {
+            vk_shader changed=*actual;changed.module=VK_NULL_HANDLE;
+            CHECK(changed.driver_span_module!=changed.module);
+            CHECK(vk_test_driver_span_constant(&changed,slot,&offset,&range)!=NULL);
+            CHECK(range==65536); // unproved DPL/future module cannot inherit span
+          }
         }
       }
 #endif

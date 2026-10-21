@@ -52,7 +52,7 @@ static vk_shader driver_span_mock(unsigned key,vk_binding bindings[3]) {
   vk_shader s={.stage=5,.set=5,.nb=2,.bindings=bindings,
     .module=(VkShaderModule)(uintptr_t)(0x12340000u+key)};
   snprintf(s.key,sizeof s.key,"%016x",key);
-  for(unsigned i=0;i<sizeof s.fingerprint;i++)s.fingerprint[i]=(uint8_t)(key+i*7+3);
+  for(unsigned i=0;i<sizeof s.proof_fingerprint;i++)s.proof_fingerprint[i]=(uint8_t)(key+i*7+3);
   bindings[0]=(vk_binding){.kind=1,.reg=0,.binding=3,.count=1};
   bindings[1]=(vk_binding){.kind=1,.reg=2,.binding=7,.count=1};
   bindings[2]=bindings[0];return s;
@@ -61,7 +61,7 @@ static vk_shader driver_span_mock(unsigned key,vk_binding bindings[3]) {
 // by rereading a malformed sidecar into an already authorized live shader.
 static void driver_span_wire(vk_shader *s,const char *root,unsigned mutation) {
   uint32_t data[25]={UINT32_C(0x31505344),1,s->stage,s->set};
-  memcpy(data+4,s->fingerprint,32);data[12]=3;data[13]=4096;data[14]=7;data[15]=4096;
+  memcpy(data+4,s->proof_fingerprint,32);data[12]=3;data[13]=4096;data[14]=7;data[15]=4096;
   size_t bytes=96;
   switch(mutation) {
   case 0:break;

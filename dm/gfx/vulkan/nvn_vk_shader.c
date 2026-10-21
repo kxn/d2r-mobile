@@ -752,7 +752,7 @@ static void shader_descriptor_layouts(vk_shader *s) {
 #include "nvn_vk_texel_storage.inc"
 #include "nvn_vk_pixel_local.inc"
 
-int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
+static int shader_fingerprints(const char *key,uint8_t digest[32],uint8_t proof[32]) {
   if(strlen(key)!=16 || strspn(key,"0123456789abcdef")!=16 || !V.options.shader_root)return 0;
   const char *suffixes[]={"meta","spv","spec","pred","tssbo"};
   uint8_t hashes[5][32]={{0}};
@@ -772,6 +772,9 @@ int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
   // optional closure during shader creation/prewarm verification, never draw
   // lookup. A later prewarm verification may recompute this fingerprint.
   CC_SHA256(hashes,sizeof hashes,digest);
+  // DDK/DSP prove only these five artifacts, independently of optional DPL.
+  // Save this once at load; the pipeline fingerprint still includes DPL.
+  if(proof)memcpy(proof,digest,32);
   if(vk_pixel_local_enabled()) {
     size_t local_bytes;void *local=pixel_local_read(key,"plocal",&local_bytes);
     if(local) {
@@ -780,6 +783,9 @@ int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
     }
   }
   return 1;
+}
+int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
+  return shader_fingerprints(key,digest,NULL);
 }
 vk_shader *vk_shader_get(const void *control) {
   uint8_t digest[32];
@@ -841,7 +847,7 @@ vk_shader *vk_shader_load_key(const char *key) {
     die("Vulkan shader allocation");
   s->canonical_base=s;
   strcpy(s->key, key);
-  if(!vk_shader_fingerprint(key,s->fingerprint))die("Vulkan shader fingerprint: %s",key);
+  if(!shader_fingerprints(key,s->fingerprint,s->proof_fingerprint))die("Vulkan shader fingerprint: %s",key);
   s->stage = metadata[1];
   s->set = metadata[2];
   s->nb = metadata[3];

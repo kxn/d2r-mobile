@@ -21,7 +21,7 @@ static void driver_span_load(vk_shader *s) {
   FILE *file=fopen(path,"rb");if(!file)return;
   uint32_t data[25];size_t bytes=fread(data,1,sizeof data,file);fclose(file);
   if(bytes!=96 || data[0]!=UINT32_C(0x31505344) || data[1]!=1 ||
-      data[2]!=s->stage || data[3]!=s->set || memcmp(data+4,s->fingerprint,32))return;
+      data[2]!=s->stage || data[3]!=s->set || memcmp(data+4,s->proof_fingerprint,32))return;
   uint8_t digest[32];CC_SHA256(data,64,digest);if(memcmp(digest,data+16,32))return;
   for(unsigned n=0;n<2;n++) {
     uint32_t binding=data[12+n*2],end=data[13+n*2];unsigned slot=n*2,found=0;
@@ -49,7 +49,7 @@ static void driver_schema_load(vk_shader *s) {
   uint32_t data[96];size_t bytes=fread(data,1,sizeof data,file);
   int complete=feof(file);fclose(file);
   if(!complete || bytes<96 || (bytes&3) || data[0]!=UINT32_C(0x314b4444) || data[1]!=1 ||
-      data[2]!=s->stage || data[3]!=s->set || memcmp(data+4,s->fingerprint,32))return;
+      data[2]!=s->stage || data[3]!=s->set || memcmp(data+4,s->proof_fingerprint,32))return;
   uint8_t digest[32];CC_SHA256(data,bytes-32,digest);
   if(memcmp(digest,(uint8_t *)data+bytes-32,32))return;
   struct { uint32_t count;const uint16_t *words; } schemas[2]={{0}};
