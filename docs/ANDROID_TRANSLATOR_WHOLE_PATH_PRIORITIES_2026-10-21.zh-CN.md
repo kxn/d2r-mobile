@@ -1,6 +1,6 @@
 # 翻译线程：按整条调用链安排优化
 
-固定绑定 schema、图像请求阶段边界和首次 walk 融合 store index 已完成并做了真机对照，尚未证明整帧 CPU 或 FPS 净收益。下一步先验证官方 PMU 指出的取指开销，再扩大已经验证的 ASTC6 原生资源路径。已完成共享路径中的旧 Pool 扫描、比较、镜像上传计数为零；不能继续把该路径的 CPU 时间归因于已经消失的拷贝。现有证据也不支持阻塞锁是主要原因。
+固定绑定 schema、图像请求阶段边界、首次 walk 融合 store index 和构造阶段外提已完成真机对照，尚未证明整帧 CPU 或 FPS 净收益。继续缩短逐绘制资源消费的实际工作，同时扩大已经验证的 ASTC6 原生资源路径，并以一次整池/窗口共享对照核实资源准入的 CPU 与内存取舍。已完成共享路径中的旧 Pool 扫描、比较、镜像上传计数为零；不能继续把该路径的 CPU 时间归因于已经消失的拷贝。现有证据也不支持阻塞锁是主要原因。
 
 ## 已有官方数据的结论
 
@@ -88,3 +88,33 @@ A650 补充结果：强制 SYSMEM 的第二次普通运行仍发生真实 kernel
 - `.local/logs/native-qualified-astc6-pilot32-root-asset-review.json`
 
 ASTC6 格式 165 的实际 GPU 终态为 rc=0，内容和清理均通过，但当时控制器进程退出 1：原因是成功 stage 白名单漏掉新格式阶段。原记录保留；`882cca3` 修复了控制器，格式 166 已用其完成实际退出 0 的事务。没有把旧控制器退出码重新标为成功，也没有将独立资源验证记作原游戏通过。
+
+## 构造阶段外提与资源扩展的实际结果
+
+`53c7d26` 已完成 canonical Android 原入口构建、原始 NSO fresh rewrite 和独立 verify28，并执行真实游戏三段跑动、存档退出、官方工具采集和原包恢复。根审实际查看了跑动后画面，未见明显营地黑块或几何错误。相邻 `d14808f` 对照使用同一新工具、新增的独立 raw L1I refill 采样窗口、原 6,217 个 ASTC4 原生资源、f830 和固定 0.60；两个完整事务均无清理错误。
+
+| 运行 | 完整 Surface 间隔 | 翻译线程 Running / 间隔 | 运行时加权频率 | 平均出图间隔 |
+| --- | ---: | ---: | ---: | ---: |
+| 53c 外提候选 | 234 | 28.09349ms | 1566.29MHz | 33.133708ms |
+| d148 同工具对照 | 235 | 27.05099ms | 1609.12MHz | 33.133888ms |
+
+未证明净提速；候选 Running 高约 3.85%，同期频率低约 2.66%，不能只按频率线性修正，也不能删去不利样本。独立前端停顿窗口的 L1I stall/cycles 为 17.57% / 17.53%，没有明显比例改善。取指 refill 和 ITLB 计数下降保留为进一步核验的线索，不能冒充每帧工作量或整帧收益。保留候选的依据限于明确的代码布局和热路径入口栈帧减少、内容/异步/失败回退检查，以及未见明显画面或重大资源成本退化；不把整段约 18% 停顿记作候选可省额。
+
+新增原 Simpleperf raw refill 采样使用 period=1,000,000、DWARF=32,768B，原 cpu-clock 99Hz/16,384B 窗口不变。实际原 ReportLib 和 LLVM 核对两侧 host ELF 与 f830 BuildID 后，refill 样本仍主要落在宿主；53c 为宿主 72.44%、Turnip 14.04%、Bionic 12.65%，d148 为 74.92%、12.29%、12.12%。完整调用职责和实际保留父栈同时归档，嵌套 inclusive 比例不相加，缺失的父栈不补造。仅凭两次样本不能宣称每个宿主子树都下降。
+
+资源准入另有一个小候选 `2327201`：直接复用既有 8B binding schema 的状态偏移、Storage writable 和 bias 槽，仍读取传入的当前或保存状态，不新增缓存、epoch 或常驻字节。它只针对明确观察到的 6/632 个类型/寄存器解码样本，约 0.95%；不能写成消除了整个 7.91% 准入。原范围/内容/异步及 ASan/UBSan 检查通过，错误地读全局 S 的变异负控被检出。Android canonical/raw28 已完成，尚未进行该后继的原游戏资格验证。
+
+调度调查使用同一实际 Perfetto：翻译线程在低 capacity 的 CPU0–2 上不足 0.07% Running，大部分时间位于实际 capacity 873/1024 的核心，ready 等待约每个 Surface 间隔 0.2ms。现有数据不支持被困小核或长时间抢不到 CPU。线程频率确实未持续达到硬件上限，但这不是擅自绑核或强制升频的依据；旧 Q/f830 ADPF 有效 API 对照已经做过，未见可辨收益。实际 priority 的 vendor 编码暂不猜测，下次既有游戏事务读取系统提供的 policy/nice/cgroup/uclamp 补足缺口。
+
+ASTC6 混合 32 项已经完成独立真实游戏三段跑动与存档恢复；画面短测未见明显问题，但不证明这个场景使用了全部 32 个条目。之后原工具、原 producer 和 f830 实际处理了全部 2,838 个已通过原画质规则的候选，23 批全部完成并清理，根审重核 8,560 个输出哈希。实际 native physical bytes 合计从 173,953,024B 降到 103,989,248B，减少 69,963,776B，约 66.7MiB；2,834 项变小、4 项相等，没有变大项。此处仍是资源表示/驱动需求量，**不是已测的游戏 PSS、DRAM、温度或 FPS 收益**。完整资源组合及后续真实游戏验证仍需完成。
+
+下一轮不继续无限外提低频分支：优先验证完整资源扩展、一次共享整池/1MiB 窗口策略对照，并在保持依赖正确的前提下减少实际动态工作。整池模式原本会跳过整个 operation preflight，却也失去 operation geometry 并可能导入更多 Pool 页面；需要测净 CPU 和内存成本，不能直接把约 8% 当成可得收益，更不能直接作为 6GB 默认策略。
+
+新增可核查记录：
+
+- `.local/logs/native-cpu-cold-phase-53c-Q735-v1-root-actual-review.json`
+- `.local/logs/cpu-cold-phase-53c-d148-official-comparison-v1/comparison-facts-agent.json`
+- `.local/logs/cpu-thread-placement-53c-d148-v1/placement-policy-adpf-findings-agent.json`
+- `.local/logs/pool-admission-consumer-2327201-root-canonical-raw-review.json`
+- `.local/logs/native-qualified-astc6-game-d148-Q735-v1-root-actual-review.json`
+- `.local/logs/native-qualified-astc6-full2838-root-actual-review.json`
