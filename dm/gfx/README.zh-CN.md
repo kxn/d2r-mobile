@@ -11,7 +11,7 @@ English: [README.md](README.md)
 ### 接管 NVN 接口
 
 - 游戏主程序只导入一个 NVN 符号 `nvnBootstrapLoader`，其余 NVN 函数都通过它按名字取地址。宿主强制接管这个导入（`nvn/hle_nvn.c`），原版图形驱动一条指令都不执行。
-- 游戏会取址的名字共 523 个（`nvn/names.txt`）。每个名字对应一个跳板（`nvn/nvn_thunks.S`，生成文件）：先给该函数的调用计数加一，再跳到实现。
+- 游戏会取址的名字共 523 个（`nvn/names.txt`）。每个名字对应一个跳板（`nvn/nvn_thunks.S`，生成文件）：先给该函数的调用计数加一，再跳到实现。 Android APP 普通模式在初始化时一次选定免计数跳板，保持相同的 16 字节槽 ABI；显式设置 `DM_NVN_FRAMES`、`DM_NVN_TSV` 或 `DM_NVN_PROF` 恢复计数。Apple 默认行为不变。
 - 其中游戏主程序里有调用点的 216 个（`nvn/nvn_slots.tsv`）都有实现：203 个按 NVN 语义实现，13 个是空实现（`hle_nvn.c` 的 `g_nops`）。其余 307 个接报红桩，被调到时日志里打印 `【红】NVN 未实现被调用：名字`。
 - 每个实现都按 `nvn/nvn_protos.h`（生成文件）做编译期签名检查。苹果 arm64 与 Switch 的调用约定在小于 32 位的整型参数上不同，所以 `NVNboolean` 参数在宿主侧一律按 `uint32_t` 接、只看低 8 位。
 
