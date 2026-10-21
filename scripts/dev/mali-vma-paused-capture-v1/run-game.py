@@ -99,7 +99,7 @@ def vma_pause_capture(dev,pid,d,out,invoke):
   if requests:require(requests[0].group(1)=='1','explicit VMA request rejected')
   failed=re.search(r'\[vulkan VMA dump\] failed:[^\n]*',tail)
   completion=re.search(r'\[vulkan VMA dump\] complete=([01]) errno=([0-9]+) file=([^\n]+?) builtin_detailed_map=1 post_drain_before_this_job_trim=1 earlier_tail_FRAME_trim_not_excluded=1;',tail)
-  suspended=tail.find('[nvn] 图形挂起：在途 GPU 工作已清空')
+  suspended=tail.find('[nvn] 图形挂起：在途 GPU 工作已清空',completion.end())if completion else -1
   (out/'vma-pause-native-tail.log').write_text(tail)
   if failed:raise RuntimeError('original VMA dump incomplete: '+failed.group(0))
   if completion:
