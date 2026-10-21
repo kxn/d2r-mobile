@@ -216,12 +216,14 @@ def proof(path, digest):
         require(pinned(tools['scheduler_helper']) == HERE.parent / 'capture-android-scheduler.py',
                 'existing official scheduler orchestration required')
     if 'official_cpu_aa' in p:
-        require(p['official_cpu_aa'] == {'repetitions': 3, 'record_seconds': 30,
-                'sample_frequency_Hz': 99, 'DWARF_bytes': 49152, 'keep_failed_debug_info': True}
+        require((p['official_cpu_aa'] == {'repetitions': 3, 'record_seconds': 30,
+                'sample_frequency_Hz': 99, 'DWARF_bytes': 49152, 'keep_failed_debug_info': True} or
+                p['official_cpu_aa'] == {'repetitions': 3, 'record_seconds': 30,
+                'sample_frequency_Hz': 99, 'callgraph': 'fp'})
                 and p.get('performance_tools') and p.get('native_host_experiment')
                 and not any(p.get(k) for k in ('official_gpu_tools', 'official_l1i_record',
                     'sustained_play', 'counter_snapshot')),
-                'A/A requires original host qualification and fixed3x30s99Hz49152B/debug-info tools only')
+                'A/A requires original host qualification and fixed3x30s99Hz DWARF48KiB/debug or separateFP tools only')
     if 'official_gpu_tools' in p:
         gpu = p['official_gpu_tools']
         require(set(gpu) == {'helper', 'config', 'scheduler_helper'} and p.get('performance_tools'),
@@ -418,7 +420,7 @@ def phase_game(dev, out, phase, p, token):
             if p.get('official_l1i_record'):
                 command.append('1')  # Independent raw-L1I record; original cpu-clock command unchanged.
             if p.get('official_cpu_aa'):
-                command.extend(['0', str(p['official_cpu_aa']['DWARF_bytes'])])
+                command.extend(['0', 'fp' if p['official_cpu_aa'].get('callgraph') == 'fp' else str(p['official_cpu_aa']['DWARF_bytes'])])
             if p.get('official_cpu_aa'):
                 d['official_cpu_aa'] = p['official_cpu_aa']
                 d['AA_overlap_and_reproducibility_require_offline_review'] = True

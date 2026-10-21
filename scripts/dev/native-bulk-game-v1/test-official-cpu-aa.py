@@ -10,6 +10,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+import subprocess as real_subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -18,10 +19,16 @@ D = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('aa', D / 'official_cpu_aa.py')
 aa = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(aa)
+previous_source = real_subprocess.check_output(['git', '-C', str(D.parents[2]), 'show',
+    'abc396f27aefbce194eb4db60845766ceb2b9871:scripts/dev/native-bulk-game-v1/official_cpu_aa.py'], text=True)
+previous_command = next(n.value for n in ast.walk(ast.parse(previous_source))
+    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'command' for t in n.targets)
+    and isinstance(n.value, ast.List) and n.value.elts and isinstance(n.value.elts[0], ast.Constant)
+    and n.value.elts[0].value == '/system/bin/simpleperf')
 
 
 class Flow(unittest.TestCase):
-    def exercise(self, fault=None):
+    def exercise(self, fault=None, callgraph='dwarf'):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             phase = {'stages': []}
@@ -121,7 +128,7 @@ class Flow(unittest.TestCase):
                  patch.object(aa, 'started', ready):
                 try:
                     aa.run(folder=root, base=['adb', '-s', 'SERIAL'], package='owned.app', pid='12345',
-                           stack=49152, phase=phase, endpoint=lambda name: copy.deepcopy(sample),
+                           stack=49152 if callgraph == 'dwarf' else None, callgraph=callgraph, phase=phase, endpoint=lambda name: copy.deepcopy(sample),
                            app=app, ad=ad, exact=lambda: None, snapshot=lambda name: events.append(name),
                            save=save, env={}, scheduler=D / 'scheduler-fixture.py')
                     self.assertIsNone(fault)
@@ -140,13 +147,25 @@ class Flow(unittest.TestCase):
                 self.assertFalse(phase['AA_overlap_accepted'])
                 self.assertEqual(len(set(tools)), 3)
                 for ordinal, row in enumerate(phase['AA_windows'], 1):
-                    self.assertIn('--keep-failed-unwinding-debug-info', row['command'])
-                    self.assertIn('dwarf,49152', row['command'])
+                    if callgraph == 'dwarf':
+                        previous = eval(compile(ast.Expression(previous_command), '<frozen-DWARF-command>', 'eval'),
+                            {'pid': '12345', 'stack': 49152, 'remote': row['command'][row['command'].index('-o') + 1]})
+                        self.assertEqual(row['command'], previous)
+                        self.assertIn('--keep-failed-unwinding-debug-info', row['command'])
+                        self.assertIn('dwarf,49152', row['command'])
+                    else:
+                        self.assertEqual(row['command'][row['command'].index('--call-graph') + 1], 'fp')
+                        self.assertIsNone(row['DWARF_bytes'])
+                        self.assertFalse(phase['AA_keep_failed_debug_info'])
+                        self.assertFalse(phase['AA_post_unwind'])
+                        self.assertFalse(any(v.startswith(('--post-unwind', '--keep-failed-unwinding', '--no-callchain-joiner')) for v in row['command']))
                     self.assertEqual(row['command'][row['command'].index('--start_profiling_fd') + 1], '1')
                     self.assertTrue((root / f'AA-record-{ordinal}.metadata.json').is_file())
                     self.assertTrue(row['capture_complete'])
 
     def test_three_distinct_record_and_five_trace_windows(self): self.exercise()
+    def test_FP_same_three_records_without_DWARF_or_failure_stack_flags(self): self.exercise(callgraph='fp')
+    def test_FP_failure_preserves_original_cleanup(self): self.exercise('ready', callgraph='fp')
     def test_missing_ready_restores_owned_tool_and_property(self): self.exercise('ready')
     def test_cancel_restores_owned_tool_and_property(self): self.exercise('cancel')
     def test_trace_failure_is_not_complete(self): self.exercise('trace')
@@ -201,6 +220,12 @@ class Flow(unittest.TestCase):
         for change in [{'DWARF_bytes': 16384}, {'repetitions': 1}, {'sample_frequency_Hz': 199},
                        {'record_seconds': 8}, {'keep_failed_debug_info': False}]:
             bad = copy.deepcopy(good); bad['official_cpu_aa'].update(change)
+            with self.assertRaises(AssertionError): exec(code, {'p': bad, 'require': require})
+        fp = copy.deepcopy(good)
+        fp['official_cpu_aa'] = {'repetitions': 3, 'record_seconds': 30, 'sample_frequency_Hz': 99, 'callgraph': 'fp'}
+        exec(code, {'p': fp, 'require': require})
+        for extra in ({'DWARF_bytes': 49152}, {'keep_failed_debug_info': True}, {'callgraph': 'dwarf'}):
+            bad = copy.deepcopy(fp); bad['official_cpu_aa'].update(extra)
             with self.assertRaises(AssertionError): exec(code, {'p': bad, 'require': require})
         for option in ('official_gpu_tools', 'official_l1i_record', 'counter_snapshot'):
             bad = copy.deepcopy(good); bad[option] = True

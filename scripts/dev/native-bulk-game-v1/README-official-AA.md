@@ -21,3 +21,9 @@ No pooled graph precedes individual-window review. Compare the same Surface CPU,
 frequency, PSO/variant/work counters and public API logs across bookends and
 concurrent traces. Keeping debug info/48KiB stacks changes instrumentation from
 the historical eight-second16KiB captures; no strict cross-method gain claim.
+
+For an independent FP sensitivity run use exactly `{ "repetitions": 3,
+"record_seconds": 30, "sample_frequency_Hz": 99, "callgraph": "fp" }`.
+It uses official `--call-graph fp` with no DWARF size, post-unwind, joiner or
+failed-stack flags. All three windows use the same method; outputs/metadata
+identify FP separately, with no claim that FP and DWARF measure identically.

@@ -32,7 +32,9 @@ def main():
     args.output = args.output.resolve()
     meta = json.loads((args.capture / 'official-cpu-capture.json').read_text())
     assert meta['complete'] and len(meta['AA_windows']) == 3
-    assert meta['AA_DWARF_bytes'] == 49152 and meta['AA_keep_failed_debug_info']
+    callgraph = meta.get('AA_callgraph', 'dwarf')
+    assert ((callgraph == 'dwarf' and meta['AA_DWARF_bytes'] == 49152 and meta['AA_keep_failed_debug_info']) or
+            (callgraph == 'fp' and meta['AA_DWARF_bytes'] is None and not meta['AA_keep_failed_debug_info']))
     args.output.mkdir(exist_ok=False)
     (args.output / 'binary_cache').symlink_to(args.binary_cache.resolve(), target_is_directory=True)
     commands, windows = [], []
@@ -46,6 +48,11 @@ def main():
         assert result.returncode == 0, 'official offline tool failed; retain stderr'
 
     for row in meta['AA_windows']:
+        expected = 'fp' if callgraph == 'fp' else 'dwarf,49152'
+        assert row['command'][row['command'].index('--call-graph') + 1] == expected
+        if callgraph == 'fp':
+            assert not any(v.startswith(('--post-unwind', '--keep-failed-unwinding', '--no-callchain-joiner'))
+                           for v in row['command'])
         data = Path(row['data'])
         assert hashlib.sha256(data.read_bytes()).hexdigest() == row['data_sha256']
         report = ReportLib()
@@ -78,7 +85,7 @@ def main():
         tables = [list(csv.DictReader(io.StringIO(t))) for t in output.read_text().strip().split('\n\n')]
         mapped = tables[-1][0]
         a, b = int(mapped['monotonic_start_ns']), int(mapped['monotonic_end_ns'])
-        window = {'ordinal': row['ordinal'], 'actual_meta': info, 'actual_APP_BuildIDs': sorted(app_ids),
+        window = {'ordinal': row['ordinal'], 'callgraph': callgraph, 'DWARF_bytes': meta['AA_DWARF_bytes'], 'actual_meta': info, 'actual_APP_BuildIDs': sorted(app_ids),
                   'PID_samples': len(times), 'NvN_samples': len(nvn_times),
                   'PID_sample_MONOTONIC_ns': [min(times), max(times)],
                   'NvN_sample_MONOTONIC_ns': [min(nvn_times), max(nvn_times)],
@@ -99,6 +106,7 @@ def main():
                 args.output / (name + '-callgraph.stdout'), args.output / (name + '-callgraph.stderr'))
     result = {'status': 'OFFICIAL_OFFLINE_AA_REPORTS_COMPLETE_NOT_OPTIMIZATION_GAIN', 'windows': windows,
               'overlap_accepted': all(w['full_trace_inside_PID_samples'] and w['full_trace_inside_NvN_samples'] for w in windows),
+              'sampling_callgraph': callgraph, 'cross_method_DWARF_FP_equivalence_proven': False,
               'same_workload_or_reproducibility_proven': False,
               'boundary': 'Clock overlap is necessary, not identical workload, precision, full unwinding or zero sampling disturbance. '
                           'Compare the two Perfetto-only bookends with three concurrent traces and original state/cap/publicthermal endpoints. '

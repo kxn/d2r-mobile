@@ -39,13 +39,15 @@ def bracket(first, last):
 
 
 def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
-        snapshot, save, env, scheduler):
-    assert stack == 49152
+        snapshot, save, env, scheduler, callgraph='dwarf'):
+    assert (callgraph == 'dwarf' and stack == 49152) or (callgraph == 'fp' and stack is None)
     phase.update(scope='Same-binary same-PID A/A: three official30s cpu-clock:u99Hz records; '
                        'each contains an intended original8s Perfetto window, plus Perfetto-only bookends',
-                 AA_record_seconds=30, AA_repetitions=3, AA_DWARF_bytes=stack,
-                 AA_keep_failed_debug_info=True,
-                 AA_method_change='49152B stacks and official failed-unwind debug info; original8s16KiB record is not a strict A/A counterpart',
+                 AA_record_seconds=30, AA_repetitions=3, AA_callgraph=callgraph, AA_DWARF_bytes=stack,
+                 AA_keep_failed_debug_info=(callgraph == 'dwarf'),
+                 AA_post_unwind=(callgraph == 'dwarf'),
+                 AA_method_change=('FP live-chain sensitivity; no DWARF stack copy/post-unwind/debug flags; not a same-method DWARF A/A' if callgraph == 'fp' else
+                    '49152B stacks and official failed-unwind debug info; original8s16KiB record is not a strict A/A counterpart'),
                  AA_windows=[], AA_overlap_accepted=False,
                  AA_overlap_scope='Pending offline verification: official sample MONOTONIC timestamps '
                                   'must be mapped using Perfetto clock_snapshot; live processes alone are insufficient')
@@ -107,13 +109,14 @@ def run(*, folder, base, package, pid, stack, phase, endpoint, app, ad, exact,
             assert prop in ('0', '1')
             command = ['/system/bin/simpleperf', 'record', '--in-app', '-p', pid,
                        '--duration', '30', '-e', 'cpu-clock:u', '-f', '99',
-                       '--call-graph', 'dwarf,' + str(stack), '--post-unwind=yes',
-                       '--no-callchain-joiner', '--keep-failed-unwinding-result',
-                       '--keep-failed-unwinding-debug-info',
-                       '--start_profiling_fd', '1', '-o', remote]
+                       '--call-graph', 'fp' if callgraph == 'fp' else 'dwarf,' + str(stack)]
+            if callgraph == 'dwarf':
+                command.extend(['--post-unwind=yes', '--no-callchain-joiner',
+                                '--keep-failed-unwinding-result', '--keep-failed-unwinding-debug-info'])
+            command.extend(['--start_profiling_fd', '1', '-o', remote])
             row = {'ordinal': ordinal + 1, 'command': command, 'owned_PID': int(pid),
                    'duration_seconds_requested': 30, 'sample_frequency_Hz': 99,
-                   'DWARF_bytes': stack, 'overlap_accepted': False}
+                   'callgraph': callgraph, 'DWARF_bytes': stack, 'overlap_accepted': False}
             phase['AA_windows'].append(row)
             save()
             process = None
