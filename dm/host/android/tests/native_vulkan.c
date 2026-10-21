@@ -760,6 +760,13 @@ static void fixed_shared_buffer_test(void) {
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  const char *span_reference=getenv("DM_DRIVER_SPAN_REFERENCE");
+  if(span_reference) {
+    CHECK(!strcmp(span_reference,"0") || !strcmp(span_reference,"1"));
+    vk_driver_span_reference_startup(!strcmp(span_reference,"1"));
+  }
+#endif
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE"))vk_legacy_astc_copy_startup(1);
 #endif

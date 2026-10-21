@@ -259,10 +259,11 @@ static void observe_tick(const uint64_t *registers) {
     void vk_store_event_stats(uint64_t *,uint64_t *);
     void vk_bloom_quarter_blit_stats(uint64_t *,uint64_t *,uint64_t *);
     void vk_driver_constant_stats(uint64_t *,uint64_t *,uint64_t *,int *);
+    int vk_driver_span_reference_mode(void);
     uint64_t driver_last,driver_content,driver_misses;int driver_reference;
     vk_driver_constant_stats(&driver_last,&driver_content,&driver_misses,&driver_reference);
-    fprintf(state_log, ",\"driver_constants\":{\"reference\":%s,\"last_hits\":%llu,\"content_hits\":%llu,\"misses\":%llu}",
-      driver_reference?"true":"false",(unsigned long long)driver_last,
+    fprintf(state_log, ",\"driver_constants\":{\"reference\":%s,\"span_reference\":%s,\"last_hits\":%llu,\"content_hits\":%llu,\"misses\":%llu}",
+      driver_reference?"true":"false",vk_driver_span_reference_mode()?"true":"false",(unsigned long long)driver_last,
       (unsigned long long)driver_content,(unsigned long long)driver_misses);
     void vk_descriptor_batch_stats(uint64_t *,uint64_t *,int *);
     uint64_t descriptor_calls,descriptor_sets;int descriptor_batch_reference;

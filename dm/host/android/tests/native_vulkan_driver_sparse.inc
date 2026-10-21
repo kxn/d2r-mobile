@@ -75,6 +75,20 @@ static void driver_sparse_key_test(void) {
         expected[seq][3]=(uint32_t)S.samp[5][0];
       } else memset(expected[seq],0,sizeof expected[seq]);
       vk_dispatch(&(p_dispatch){1,1,1});
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      if(getenv("DM_DRIVER_SPAN_SHADER_FIXTURE")) {
+        // Query the actual production constant result; do not change the
+        // original draw, GPU numerical oracle or last/content/miss assertions.
+        vk_shader *actual=vk_shader_get(controls[which]);
+        for(unsigned slot=0;slot<=2;slot+=2) {
+          uint64_t offset,range;
+          CHECK(vk_test_driver_span_constant(actual,slot,&offset,&range)!=NULL);
+          uint64_t expected_range=mode==0 || vk_driver_span_reference_mode() ||
+              !actual->driver_span[slot/2]?65536:4096;
+          CHECK(range==expected_range);
+        }
+      }
+#endif
     }
     CHECK(mtl_wait(mtl_sub_commit(),UINT64_MAX));
     for(unsigned seq=0;seq<12;seq++)for(unsigned lane=0;lane<4;lane++)

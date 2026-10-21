@@ -178,6 +178,8 @@ void vk_compute_layout_reference(int reference);
 void vk_readonly_depth_reference(int reference);
 void vk_texture_prepare_attachment(const tex_t *texture,const view_t *view);
 void vk_driver_constant_reference(int reference);
+void vk_driver_span_reference_startup(int reference);
+int vk_driver_span_reference_mode(void);
 #ifdef DM_VULKAN_TEST_EMBED
 unsigned vk_driver_schema_words(const vk_shader *s,unsigned slot);
 #endif

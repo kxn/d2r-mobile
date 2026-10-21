@@ -27,6 +27,21 @@ static struct {
 static _Atomic int storage_bias_requested=-1,storage_bias_active=1;
 static _Atomic uint64_t storage_direct,storage_copy_ops,storage_copy_bytes;
 static _Atomic int driver_reference_requested=-1,driver_reference_active=1;
+// Low bit: startup span-only reference. Bit 1 freezes it before the first
+// context; setter and freeze linearize without a lock on the recording path.
+static _Atomic unsigned driver_span_policy;
+void vk_driver_span_reference_startup(int reference) {
+  unsigned prior=atomic_load(&driver_span_policy);
+  do {
+    if(prior&2)die("Vulkan driver span reference is fixed before shader startup");
+  } while(!atomic_compare_exchange_weak(&driver_span_policy,&prior,!!reference));
+}
+int vk_driver_span_reference_mode(void) { return atomic_load(&driver_span_policy)&1; }
+static int driver_span_policy_snapshot(void) {
+  unsigned prior=atomic_fetch_or(&driver_span_policy,2);
+  if(!(prior&2))LOG("[vulkan driver span] immutable startup reference=%u; proved slots=%s",prior&1,(prior&1)?"65536":"4096");
+  return prior&1;
+}
 static _Atomic uint64_t driver_last_hits,driver_content_hits,driver_misses;
 static _Atomic uint64_t descriptor_content_hits,descriptor_content_misses;
 static _Atomic uint64_t driver_arena_slots,driver_arena_zeroes,driver_arena_chunks;
@@ -243,6 +258,7 @@ struct vk_shader_submission {
   descriptor_batch *descriptor_batches[128];
   int storage_bias_reference;
   int driver_reference;
+  int driver_span_reference;
   uint32_t descriptor_retained;
   int descriptor_reuse_reference;
 };
@@ -1144,6 +1160,7 @@ vk_shader_submission *vk_shader_begin(vk_shader_submission *state) {
     atomic_store(&driver_reference_requested,reference);
   }
   binding_state->driver_reference=reference;
+  binding_state->driver_span_reference=driver_span_policy_snapshot();
   atomic_store(&driver_reference_active,reference);
   if (!binding_state->descriptor_blocks)
     binding_state->descriptor_blocks = descriptor_create();
@@ -1373,7 +1390,7 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset,uint64_t *ran
     union { uint8_t key[1056],data[0xa00]; } scratch;
     uint8_t *key=scratch.key,*driver_data=scratch.data;
     int reference=binding_state->driver_reference;
-    if(!reference && !driver_arena_reference() && s->driver_span_module==s->module &&
+    if(!binding_state->driver_span_reference && !reference && !driver_arena_reference() && s->driver_span_module==s->module &&
         s->driver_span[slot/2]==4096 && V.props.limits.minUniformBufferOffsetAlignment<=4096)*range=4096;
     const vk_driver_schema *schema=reference?NULL:s->driver_schema[slot/2];
     size_t bytes;
