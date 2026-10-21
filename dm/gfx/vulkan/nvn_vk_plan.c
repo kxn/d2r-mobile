@@ -51,7 +51,23 @@ void vk_pass_stats_publish(void) {
   atomic_store_explicit(&index_stats.reference,recorded_reference_scans,memory_order_relaxed);
   atomic_store_explicit(&index_stats.reference_ops,recorded_reference_ops,memory_order_relaxed);
 }
-static void store_index_build(void);
+// A single submission-local forward interpreter. It follows the exact same
+// CALL/JUMP order as walk; no command handle is cached across submissions.
+typedef struct {
+  p_set_rt rt;
+  p_scissor sc;
+  int has_sc,target_buckets[9];
+  const prog_t *program;
+  uint64_t slots[6][160];
+  uint8_t known_zero[6];
+} store_build_context;
+_Static_assert(sizeof(store_build_context)<=8192,"Submission store context remains bounded");
+static void store_index_begin(store_build_context *ctx);
+static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode,const void *a,unsigned size);
+static void store_index_finish(void);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static void store_walk_test_verify(void);
+#endif
 static ds_st scan_ds;
 static uint32_t scan_stencil_mask[2];
 static int planned_stencil_writer(void) {
@@ -61,7 +77,7 @@ static int planned_stencil_writer(void) {
        (scan_stencil_mask[1] && (scan_ds.fail_b!=NVN_STENCIL_OP_KEEP ||
         scan_ds.zfail_b!=NVN_STENCIL_OP_KEEP || scan_ds.zpass_b!=NVN_STENCIL_OP_KEEP)));
 }
-static int walk(const uint8_t *p, unsigned depth) {
+static int walk(const uint8_t *p, unsigned depth,store_build_context *store) {
   if (depth>32 || !p) return 0;
   for (unsigned guard=0;guard<1000000;guard++) {
     op_hdr h;memcpy(&h,p,sizeof h);
@@ -76,7 +92,7 @@ static int walk(const uint8_t *p, unsigned depth) {
     planned_op *o=&plan[count++];
     // Only forward inputs need initialization here. After a successful walk,
     // the complete reverse loop overwrites need/sample_live/writes for EVERY
-    // node before any store-index/replay consumer. A failed walk invalidates
+    // node before any reverse-output/replay consumer. A failed walk invalidates
     // the plan. Do not initialize those reverse outputs twice.
     o->op=p;
     const uint8_t forward[4]={0,0,(uint8_t)h.op,0};
@@ -105,12 +121,16 @@ static int walk(const uint8_t *p, unsigned depth) {
       // actually change a value. Track masks in real call/jump order too.
       o->drawing_writes=(scan_ds.dw?1:0)|(planned_stencil_writer()?2:0);
     }
+    // State is consumed only after the original walk validation above. The
+    // store interpreter checks its own payload extent before any access;
+    // a short payload or store allocation failure disables only this index.
+    if(store && index_valid) store_index_op(store,count-1,h.op,a,h.size);
     if(h.op==OP_END) return 1;
     if(h.op==OP_JUMP || h.op==OP_CALL) {
       if(h.size<16) return 0;
       const uint8_t *target;memcpy(&target,a,8);
       if(h.op==OP_JUMP) { if(!target) return 0;p=target;continue; }
-      if(!walk(target,depth+1)) return 0;
+      if(!walk(target,depth+1,store)) return 0;
     }
     p+=h.size;
   }
@@ -132,7 +152,12 @@ static void submission_index_build(const uint64_t *handles,int n) {
   reference_mode=V.options.store_reference;
   check_mode=V.options.store_check;
   if(!vk_tbdr_enabled() || n<0 || (n&&!handles)) { valid=0;return; }
-  for(int i=0;i<n;i++) if(!walk((const void *)(uintptr_t)handles[i],0)) { valid=0;return; }
+  store_build_context context;
+  int build_store=store_valid && (!reference_mode||check_mode);
+  if(build_store) store_index_begin(&context);
+  for(int i=0;i<n;i++) if(!walk((const void *)(uintptr_t)handles[i],0,build_store?&context:NULL)) {
+    valid=index_valid=0;return;
+  }
   unsigned need=0,writes=0,samples_needed=1;
   uint64_t live_draws=0,dead_draws=0;
   for(unsigned i=count;i-->0;) {
@@ -155,9 +180,11 @@ static void submission_index_build(const uint64_t *handles,int n) {
   }
   atomic_fetch_add(&sample_live_draws,live_draws);
   atomic_fetch_add(&sample_dead_draws,dead_draws);
-  if(store_valid && (!reference_mode||check_mode)) {
-    int trace=vk_system_trace_begin("NVN attachment store index");
-    store_index_build();
+  if(build_store) {
+    // Event collection is already complete. Stable scatter and alias closure
+    // still run after the complete reverse proof, exactly as before.
+    int trace=vk_system_trace_begin("NVN attachment store index finalization");
+    store_index_finish();
     vk_system_trace_end(trace);
   }
 }
@@ -344,4 +371,5 @@ static int store_scan(const tex_t *target,const view_t *view,VkImageAspectFlagBi
 
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 #include "tests/planned_forward.inc"
+#include "tests/store_walk_fusion.inc"
 #endif
