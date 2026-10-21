@@ -91,3 +91,8 @@ if(DM_VULKAN_NATIVE_RESOURCES)
   target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_IMAGE_SOURCE_WRAP=1)
   target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_texture_cpu_preflight" "-Wl,--wrap=vk_texture_native_pool_collect")
 endif()
+
+option(DM_VULKAN_COLD_PHASE_REFERENCE "Inline complete Vulkan construction phases for comparison" OFF)
+if(DM_VULKAN_COLD_PHASE_REFERENCE)
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_COLD_PHASE_REFERENCE=1)
+endif()

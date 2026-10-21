@@ -1,3 +1,4 @@
+#include "nvn_vk_phase_layout.h"
 // 复用原项目控制段哈希、阶段绑定与 c0/c1/c2 约定；GPU
 // 指令离线翻译，运行时只创建 Vulkan 对象。 Reuse original control hashes, stage
 // bindings and c0/c1/c2 conventions; GPU instructions translate offline,
@@ -1277,6 +1278,36 @@ static void driver_data_reference(int slot,unsigned stage,uint8_t driver_data[0x
     }
   }
 }
+// Exact key lookup stays in the consuming loop. Only a real immutable
+// constant MISS allocates, expands the original ABI and publishes its arena.
+// Scratch remains the caller's existing union; no extra large stack copy.
+static VK_COLD_PHASE vk_buffer *driver_constant_create(vk_shader *s,int slot,
+    uint64_t *offset,int reference,const vk_driver_schema *schema,uint64_t hash,
+    const uint8_t *content,size_t bytes,uint8_t *driver_data,
+    unsigned bucket,driver_constant **last) {
+  driver_constant *copy = calloc(1, sizeof *copy + (reference?0:bytes));
+  if (!copy)die("Vulkan immutable driver constant allocation");
+  copy->hash = hash;copy->slot = slot;copy->stage = s->stage;
+  copy->schema=schema;
+  if(!reference) {
+    memcpy(copy->data,content,bytes);
+    // A sparse key is only an equality proof, never a GPU table format.
+    // Reuse the original complete ABI construction on this rarer MISS;
+    // no second full-key scratch allocation/spill is needed on every hit.
+    if(schema)driver_data_reference(slot,s->stage,driver_data);
+    else driver_key_expand(slot,s->stage,copy->data,driver_data);
+  }
+  if(driver_arena_reference()) {
+    copy->buffer = vk_temp_buffer(65536);
+    memset(copy->buffer->map, 0, 65536);
+    memcpy(copy->buffer->map, driver_data, 0xa00);
+  } else driver_arena_store(copy,driver_data,0xa00);
+  copy->next = binding_state->driver_constants[bucket];
+  binding_state->driver_constants[bucket] = copy;*last=copy;
+  shader_recorded.driver_misses += 1;
+  *offset=copy->offset;
+  return copy->buffer;
+}
 static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
   *offset=0;
   if (slot < 0) {
@@ -1366,28 +1397,7 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
         *offset=copy->offset;
         return copy->buffer;
       }
-    driver_constant *copy = calloc(1, sizeof *copy + (reference?0:bytes));
-    if (!copy)die("Vulkan immutable driver constant allocation");
-    copy->hash = hash;copy->slot = slot;copy->stage = s->stage;
-    copy->schema=schema;
-    if(!reference) {
-      memcpy(copy->data,content,bytes);
-      // A sparse key is only an equality proof, never a GPU table format.
-      // Reuse the original complete ABI construction on this rarer MISS;
-      // no second full-key scratch allocation/spill is needed on every hit.
-      if(schema)driver_data_reference(slot,s->stage,driver_data);
-      else driver_key_expand(slot,s->stage,copy->data,driver_data);
-    }
-    if(driver_arena_reference()) {
-      copy->buffer = vk_temp_buffer(65536);
-      memset(copy->buffer->map, 0, 65536);
-      memcpy(copy->buffer->map, driver_data, sizeof scratch.data);
-    } else driver_arena_store(copy,driver_data,sizeof scratch.data);
-    copy->next = binding_state->driver_constants[bucket];
-    binding_state->driver_constants[bucket] = copy;*last=copy;
-    shader_recorded.driver_misses += 1;
-    *offset=copy->offset;
-    return copy->buffer;
+    return driver_constant_create(s,slot,offset,reference,schema,hash,content,bytes,driver_data,bucket,last);
   }
   vk_buffer *b = vk_temp_buffer(65536);
   memset(b->map, 0, 65536);
@@ -1554,6 +1564,72 @@ static __attribute__((noinline)) VkDescriptorSet descriptor_create_selected(
   shader_recorded.descriptor_content_misses += 1;
   return set;
 }
+// Keep the full copied-storage phase (including cached copies and writable
+// post-operation state) behind the original unaligned/non-bias predicate.
+// Ready/hazard/transfer order and current-operation ownership stay live.
+static VK_COLD_PHASE vk_buffer *storage_alignment_copy(const p_bind_buf *u,
+    int writable,VkPipelineStageFlags producing_stage,vk_buffer *v,uint64_t *offset) {
+  uint64_t off=*offset;
+  unsigned index = 0;
+  while (index < current_operation.storage_copy_count &&
+         (current_operation.storage_copies[index].address != u->addr ||
+          current_operation.storage_copies[index].size != u->size))
+    index++;
+  if (index == current_operation.storage_copy_count) {
+    if (index == 128)
+      die("Vulkan storage alignment copy capacity exceeded");
+    vk_buffer *aligned = NULL;
+    unsigned bucket =
+        ((u->addr >> 4) ^ (u->addr >> 20) ^ u->size) % 1024;
+    // 只读对齐副本跨绘制复用；GPU
+    // 写代号改变后重拷，可写绑定仍逐绘制拷回。 Reuse read-only
+    // alignment copies across draws. GPU writes invalidate them;
+    // writable bindings still copy back per draw.
+    if (!writable)
+      for (constant_copy *copy = binding_state->readonly_storage_copies[bucket]; copy;
+           copy = copy->next)
+        if (copy->address == u->addr && copy->size == u->size &&
+            copy->epoch == V.buffer_epoch) {
+          aligned = copy->buffer;
+          break;
+        }
+    if (!aligned) {
+      vk_buffer *copy_source;uint64_t copy_offset;
+      if(!vk_pool_address_stage(u->addr,u->size,(void **)&copy_source,&copy_offset,VK_PIPELINE_STAGE_TRANSFER_BIT))
+        die("Vulkan storage copy outside pool");
+      if(copy_source!=v || copy_offset!=off) die("Vulkan storage copy source changed");
+      aligned = vk_temp_buffer(u->size);
+      VkBufferCopy c = {.srcOffset = off, .size = u->size};
+      vk_render_end();
+      vk_buffer_shader_read(u->addr,u->size,VK_PIPELINE_STAGE_TRANSFER_BIT);
+      vkCmdCopyBuffer(V.cmd, v->handle, aligned->handle, 1, &c);
+      vk_buffer_transfer_written();
+      shader_recorded.storage_copy_ops += 1;
+      shader_recorded.storage_copy_bytes += c.size;
+      if (!writable) {
+        constant_copy *copy = calloc(1, sizeof *copy);
+        if (!copy)
+          die("Vulkan readonly storage cache allocation");
+        copy->address = u->addr;
+        copy->size = u->size;
+        copy->epoch = V.buffer_epoch;
+        copy->buffer = aligned;
+        copy->next = binding_state->readonly_storage_copies[bucket];
+        binding_state->readonly_storage_copies[bucket] = copy;
+      }
+    }
+    current_operation.storage_copies[index].address = u->addr;
+    current_operation.storage_copies[index].size = u->size;
+    current_operation.storage_copies[index].offset = off;
+    current_operation.storage_copies[index].original = v;
+    current_operation.storage_copies[index].aligned = aligned;
+    current_operation.storage_copies[index].writable = 0;
+    current_operation.storage_copy_count++;
+  }
+  if (writable)
+    current_operation.storage_copies[index].writable = 1;
+  *offset=0;return current_operation.storage_copies[index].aligned;
+}
 static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection,const VkImageView *local_views,const VkImageLayout *local_layouts) {
   // The immutable dynamic schema assigns every ordinal 0..count-1 once.
@@ -1654,66 +1730,7 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
           // 暂存与拷回保持命令顺序。 NVN sub-buffer offsets can be smaller than
           // Vulkan alignment; GPU staging and copyback preserve command
           // ordering.
-          unsigned index = 0;
-          while (index < current_operation.storage_copy_count &&
-                 (current_operation.storage_copies[index].address != u->addr ||
-                  current_operation.storage_copies[index].size != u->size))
-            index++;
-          if (index == current_operation.storage_copy_count) {
-            if (index == 128)
-              die("Vulkan storage alignment copy capacity exceeded");
-            vk_buffer *aligned = NULL;
-            unsigned bucket =
-                ((u->addr >> 4) ^ (u->addr >> 20) ^ u->size) % 1024;
-            // 只读对齐副本跨绘制复用；GPU
-            // 写代号改变后重拷，可写绑定仍逐绘制拷回。 Reuse read-only
-            // alignment copies across draws. GPU writes invalidate them;
-            // writable bindings still copy back per draw.
-            if (!writable)
-              for (constant_copy *copy = binding_state->readonly_storage_copies[bucket]; copy;
-                   copy = copy->next)
-                if (copy->address == u->addr && copy->size == u->size &&
-                    copy->epoch == V.buffer_epoch) {
-                  aligned = copy->buffer;
-                  break;
-                }
-            if (!aligned) {
-              vk_buffer *copy_source;uint64_t copy_offset;
-              if(!vk_pool_address_stage(u->addr,u->size,(void **)&copy_source,&copy_offset,VK_PIPELINE_STAGE_TRANSFER_BIT))
-                die("Vulkan storage copy outside pool");
-              if(copy_source!=v || copy_offset!=off) die("Vulkan storage copy source changed");
-              aligned = vk_temp_buffer(u->size);
-              VkBufferCopy c = {.srcOffset = off, .size = u->size};
-              vk_render_end();
-              vk_buffer_shader_read(u->addr,u->size,VK_PIPELINE_STAGE_TRANSFER_BIT);
-              vkCmdCopyBuffer(V.cmd, v->handle, aligned->handle, 1, &c);
-              vk_buffer_transfer_written();
-              shader_recorded.storage_copy_ops += 1;
-              shader_recorded.storage_copy_bytes += c.size;
-              if (!writable) {
-                constant_copy *copy = calloc(1, sizeof *copy);
-                if (!copy)
-                  die("Vulkan readonly storage cache allocation");
-                copy->address = u->addr;
-                copy->size = u->size;
-                copy->epoch = V.buffer_epoch;
-                copy->buffer = aligned;
-                copy->next = binding_state->readonly_storage_copies[bucket];
-                binding_state->readonly_storage_copies[bucket] = copy;
-              }
-            }
-            current_operation.storage_copies[index].address = u->addr;
-            current_operation.storage_copies[index].size = u->size;
-            current_operation.storage_copies[index].offset = off;
-            current_operation.storage_copies[index].original = v;
-            current_operation.storage_copies[index].aligned = aligned;
-            current_operation.storage_copies[index].writable = 0;
-            current_operation.storage_copy_count++;
-          }
-          if (writable)
-            current_operation.storage_copies[index].writable = 1;
-          v = current_operation.storage_copies[index].aligned;
-          off = 0;
+          v=storage_alignment_copy(u,writable,producing_stage,v,&off);
         } else if (writable)
           vk_buffer_writeback_stage(u->addr,u->size,producing_stage);
       }
