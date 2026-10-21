@@ -24,17 +24,24 @@ assert stable>=4,'PSO/variant readiness never stabilized'
 assert endpoint('before-tools')['frame_pacing']['target_fps']==60,'Target is not60 before tools; preserve run, no hot policy changes'
 (D/'thread-names-before.txt').write_text(app('sh','-c','for t in /proc/"$1"/task/*; do printf "%s\\t" "${t##*/}"; cat "$t/comm"; done','sh',pid))
 maps=app('cat','/proc/'+pid+'/maps');(D/'maps.txt').write_text(maps);assert not any(x in maps.lower()for x in ['renderdoc','libvklayer_khronos_validation','liblwi','libvklayer_sdp'])
-for kind in ('stat','record'):
+stat_events={
+ 'stat':'task-clock,cpu-cycles:u,cpu-cycles:k,instructions:u,minor-faults,major-faults,context-switches,cpu-migrations',
+ 'pmu-core':'task-clock,cpu-cycles:u,instructions:u,branch-misses:u,stalled-cycles-frontend:u,stalled-cycles-backend:u',
+ 'pmu-memory':'task-clock,cpu-cycles:u,instructions:u,cache-references:u,cache-misses:u,bus-cycles:u',
+}
+capture_kinds=('stat','record','pmu-core','pmu-memory')
+phase['PMU_scope']='Two additional official8s stat windows. Listed event names are not evidence that every PMU supports/counts them; preserve unavailable/multiplex/scaling output. Windows are separate, not per-frame instruction or DRAM-bandwidth measurements.'
+for kind in capture_kinds:
  first=endpoint('before-'+kind)
  token='native-bulk-bc-cpucost-v1-'+(('window'+str(window))if window else'whole')+'-'+kind;remote='files/runtime/profiles/'+token+('.data'if kind=='record'else'.csv');remotepid='files/runtime/profiles/'+token+'.pid';prop=ad('shell','getprop','security.perf_harden');assert prop in ('0','1');assert app('sh','-c','if test -e "$1" || test -e "$2"; then echo EXISTS; fi','sh',remote,remotepid)=='';profiles_existed=app('sh','-c','if test -d files/runtime/profiles; then echo DIR; fi')=='DIR';app('mkdir','-p','files/runtime/profiles')
- command=(['/system/bin/simpleperf','record','--in-app','-p',pid,'--duration','8','-e','cpu-clock:u','-f','99','--call-graph','dwarf,16384','--post-unwind=yes','--no-callchain-joiner','--keep-failed-unwinding-result','-o',remote] if kind=='record' else ['/system/bin/simpleperf','stat','--csv','--per-thread','--no-inherit','--monitor-new-thread','-p',pid,'--duration','8','-e','task-clock,cpu-cycles:u,cpu-cycles:k,instructions:u,minor-faults,major-faults,context-switches,cpu-migrations','-o',remote]);phase[kind+'_official_command']=command;phase['perf_harden_before']=prop;save()
+ command=(['/system/bin/simpleperf','record','--in-app','-p',pid,'--duration','8','-e','cpu-clock:u','-f','99','--call-graph','dwarf,16384','--post-unwind=yes','--no-callchain-joiner','--keep-failed-unwinding-result','-o',remote] if kind=='record' else ['/system/bin/simpleperf','stat','--csv','--per-thread','--no-inherit','--monitor-new-thread','-p',pid,'--duration','8','-e',stat_events[kind],'-o',remote]);phase[kind+'_official_command']=command;phase['perf_harden_before']=prop;save()
  try:
   if prop!='0':ad('shell','setprop','security.perf_harden','0')
   shell='echo $$ > '+shlex.quote(remotepid)+'; exec '+shlex.join(command)
   with(D/(kind+'-simpleperf-console.log')).open('w')as f:S.run(B+['shell',shlex.join(['run-as',PKG,'sh','-c',shell])],check=True,stdout=f,stderr=S.STDOUT,timeout=35)
   exact();raw=S.run(B+['exec-out','run-as',PKG,'cat',remote],capture_output=True,check=True,timeout=35).stdout
   if kind=='record':assert raw[:8]==b'PERFILE2'and len(raw)>1024;leaf='official-simpleperf.data'
-  else:assert b'Total test time'in raw;leaf='official-per-thread-stat.csv'
+  else:assert b'Total test time'in raw;leaf='official-per-thread-'+kind+'.csv'
   (D/leaf).write_bytes(raw);phase[kind+'_sha256']=hashlib.sha256(raw).hexdigest();phase['stages'].append('official8s-'+kind+'-complete')
  finally:
   spid=app('sh','-c','if test -f "$1"; then cat "$1"; fi','sh',remotepid)
@@ -65,5 +72,5 @@ if trace:
  b=phase['scheduler_bracket'];b['stable_target60_PSO_variants']=b['target']==[60,60]and b['PSO'][0]==b['PSO'][1]and b['variants'][0]==b['variants'][1]
  phase['wait_scope']='Official scheduler/APP marker wall intervals only, separate window from stat/record; observed fence includes driver/GPU/CPU wake, not pure GPU time or additive critical path.'
 (D/'thermal-public-api.log').write_text(ad('logcat','-d','--pid='+pid,'-s','DmThermal:I','AndroidRuntime:E'))
-phase['stable_target60_PSO_variants_all_windows']=all(phase[k+'_bracket']['stable_target60_PSO_variants']for k in (('stat','record','scheduler')if trace else('stat','record')))
+phase['stable_target60_PSO_variants_all_windows']=all(phase[k+'_bracket']['stable_target60_PSO_variants']for k in (capture_kinds+('scheduler',)if trace else capture_kinds))
 phase['public_thermal_only']=True;phase['frame_scope']='Official SurfaceFlinger frame/timeline request; analysis must verify exact game SurfaceView. Existing Q traces have buffer PresentFenceSignaled but no app SurfaceView actual_frame_timeline_slice. No fallback to display-wide FPS.';phase['no_GPU_counter_or_FPS_gain_claim']=True;phase['complete']=True;save()
