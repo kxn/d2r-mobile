@@ -3,7 +3,7 @@ Only standard adb subprocess calls are faked; no device access or lifecycle repl
 """
 from pathlib import Path
 import contextlib,hashlib,io,json,re,runpy,subprocess,sys,tempfile,time
-R=Path('/home/dl/d2r-mobile');NEW=Path(__file__).resolve().parent.parent/'android-game-background-save.py';OLD=R/'scripts/dev/android-game-background-save.py'
+R=Path('/home/dl/d2r-mobile');NEW=Path(__file__).resolve().parent.parent/'android-game-background-save.py';OLD=R/'.local/worktrees/mali-vma-paused-capture-v1/scripts/dev/android-game-background-save.py'
 TRACES=[
  ('v1',6660,'e0a352564f4a212604a41ce50589eda1647fbecdbd1dccdee1227c6d97105a9d'),
  ('v2',12267,'2c9d5554f5edc02dfc8df0a5e98b386861e8a94cf09f6f00871afd3a1a656d1a')]

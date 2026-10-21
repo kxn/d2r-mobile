@@ -9,7 +9,7 @@ class Client:
  def poll(self):self.n+=1;return None if self.n==1 else 0
  def terminate(self):raise AssertionError('should not kill already-completed launcher')
 class Dev:
- def __init__(self,mode):self.mode=mode;self.tool_failed=False;self.force_stops=0;self.saves=0;self.requested=False;self.saved=False;self.command=['fake-owned-adb'];self.state={'valid':True,'world_input_ready':True,'scale_3d':.75,'guest_heap':{'shared':False},'game_output':{'width':2772,'height':1240},'surface_output':{'width':2772,'height':1240},'world_freeze':{'host_frozen':False},'runtime_extrap':{'enabled':False},'area':1,'x':5225,'y':6295}
+ def __init__(self,mode):self.mode=mode;self.tool_failed=False;self.force_stops=0;self.saves=0;self.requested=False;self.saved=False;self.command=['fake-owned-adb'];self.state={'valid':True,'world_input_ready':True,'scale_3d':.65,'guest_heap':{'shared':False},'game_output':{'width':2772,'height':1240},'surface_output':{'width':2772,'height':1240},'world_freeze':{'host_frozen':False},'runtime_extrap':{'enabled':False},'area':1,'x':5225,'y':6295}
  def stopped(self):assert self.force_stops or self.mode=='exited'
  def adb(self,*a):
   if a[:2]==('shell','pidof '+m.PKG+' || true'):

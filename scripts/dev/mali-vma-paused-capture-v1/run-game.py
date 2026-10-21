@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse, hashlib, importlib.util, json, os, re, shlex, signal, subprocess, sys, tarfile, time, uuid, zipfile
 R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport';HERE=Path(__file__).resolve().parent
 SOURCE=R/'.local/worktrees/vma-one-shot-dump-noembed-v2';COMMIT='7225d7f7ca6d435d59a3cfb102eabbc59a619592'
+RUNTIMES={COMMIT:{'source':SOURCE,'block_MiB':32,'root_review_SHA256':'65c435649cc86f60c3434ea58cf4ed7c4153dc7d5f2c58ae603c623e0971348c'},'463bbfccd32bfa658a14c7492ebecde7731bca78':{'source':R/'.local/worktrees/vma-block16m-experiment-v1','block_MiB':16,'root_review_SHA256':None}}
 def module(name,path):
  s=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 base=module('accepted_mali_CAS',R/'.local/worktrees/panvk-minegraph-static-hardware-game-v4/scripts/dev/run-panvk-minegraph-game.py')
@@ -13,18 +14,20 @@ DIRS={'modules':'files/runtime/modules','temp':'files/runtime/temp','cache':'cac
 OWNER='.stock-mali-candidate-owner';LOCK=base.LOCK;OLDAPK=R/'.local/build/image-binding-022d625-canonical-source/canonical.apk'
 PREFLIGHT=R/'.local/logs/mali-022d625-fixed060-official-dependencies-v2/preflight.json'
 PREFLIGHT_SHA='eaab451ed22034404d71bfdce84efe7e690765f55c5a79d4706b9e75964c4f00'
-SCOPE='stock-Mali-VMA-builtin-paused-fullASTC4'
+SCOPE='stock-Mali-VMA-fixed065-blocksize-paused-fullASTC4'
 BACKGROUND_SAVE=HERE.parent/'android-game-background-save.py'
 def record(p):p=Path(p);return {'path':str(p),'sha256':sha(p),'bytes':p.stat().st_size}
 def checked(r):require(sha(r['path'])==r['sha256'],'pinned file changed: '+r['path']);return read(r['path'])
 def proof(config,execute=False):
- require(config['runtime_commit']==COMMIT and config['scope']==SCOPE,'wrong candidate scope')
- require(config['scale_initial']==.75 and config['dynamic_3d']is True and config['provider']=='system'and config['shared']is False and config['legacy_ASTC_copy']is False,'wrong runtime mode')
+ commit=config['runtime_commit'];require(commit in RUNTIMES and config['scope']==SCOPE,'wrong candidate scope');runtime=RUNTIMES[commit]
+ require(config['preferred_block_MiB']==runtime['block_MiB'],'runtime/blocksize mismatch')
+ require(runtime['root_review_SHA256'] is not None,'DRAFT: root artifact identity not yet pinned for this runtime')
+ require(config['scale_initial']==.65 and config['dynamic_3d']is False and config['provider']=='system'and config['shared']is False and config['legacy_ASTC_copy']is False,'wrong runtime mode')
  require(re.fullmatch(r'10\.10\.10\.44:[0-9]+',config['serial']),'not Mali lease address')
  require(config.get('artifact_records_ready')is True,'DRAFT: root-reviewed canonical/raw inputs required')
  c=checked(config['canonical_ready']);b=checked(config['raw_ready']);review=checked(config['root_artifact_review'])
- require(review['runtime']==COMMIT,'root canonical/raw review changed')
- require(c['commit']==b['source_commit']==COMMIT,'source identity')
+ require(config['root_artifact_review']['sha256']==runtime['root_review_SHA256'] and review['runtime']==commit,'root canonical/raw review changed')
+ require(c['commit']==b['source_commit']==commit,'source identity')
  for field in ('canonical_producer_inputs','actual_NDK_dependencies'):
   for row in checked(c[field]):require(sha(row['archive'])==row['sha256']and sha(row['source'])==row['sha256'],'canonical source/dependency changed')
  checked(c['canonical_build_manifest']);apk=c['canonical_APK']['archive'];require(sha(apk['path'])==apk['sha256'],'APK changed')
@@ -39,10 +42,10 @@ def proof(config,execute=False):
   require(config.get('execution_ready')is True,'DRAFT cannot execute')
   checked(config['root_tool_review'])
   for r in config['tool_files']:require(sha(r['path'])==r['sha256'],'tool changed')
- return {'APK':apk,'modules':b['28_deployment_file_hashes'],'bundle':b['bundle'],'baseline35':old['original_modules_resources_private_driver_hashes']}
-def command(serial,out):
- # No scale/fixed Intent: nativeBoot default .75, adaptive scaling remains ON.
- return [sys.executable,str(SOURCE/'scripts/dev/android-game-launch.py'),'--serial',serial,'--external-profile','--vulkan-provider','system','--no-shared-guest-heap','--no-legacy-astc-copy','--pool-window-bytes','16777216','--pool-copy-accounting','--game-res','2772x1240','--timeout','90','--report',str(out/'launch.json')]
+ return {'APK':apk,'modules':b['28_deployment_file_hashes'],'bundle':b['bundle'],'baseline35':old['original_modules_resources_private_driver_hashes'],'runtime_commit':commit,'runtime_source':runtime['source']}
+def command(serial,out,source=SOURCE):
+ # Candidate control: same explicit fixed .65 for both independently restored runs.
+ return [sys.executable,str(source/'scripts/dev/android-game-launch.py'),'--serial',serial,'--external-profile','--fixed-3d','--scale-3d','0.65','--vulkan-provider','system','--no-shared-guest-heap','--no-legacy-astc-copy','--pool-window-bytes','16777216','--pool-copy-accounting','--game-res','2772x1240','--timeout','90','--report',str(out/'launch.json')]
 def baseline(dev,p):
  dev.stopped();path=dev.adb('shell','pm','path',PKG).removeprefix('package:');require(path.startswith('/')and'\n'not in path,'one original APK required');require(dev.adb('shell','sha256sum',path).split()[0]==base.APK,'installed original APK differs')
  lines=dev.app('sha256sum',*p['baseline35']);got={n:h for h,n in(x.split(None,1)for x in lines.splitlines())};require(got==p['baseline35'],'original35 differs')
@@ -55,7 +58,7 @@ def owned(inv,d,label,p):
  return True
 def snapshot(dev,pid,path):
  require(dev.adb('shell','pidof '+PKG+' || true')==str(pid),'first PID changed')
- d=json.loads(dev.app('tail','-n','1','files/runtime/game-state.jsonl'));require(d['valid']and d['world_input_ready']and .5<=d['scale_3d']<=.75 and not d['guest_heap']['shared']and d['game_output']==d['surface_output']=={'width':2772,'height':1240}and not d['world_freeze']['host_frozen']and not d['runtime_extrap']['enabled'],'stock scene/mode changed');path.write_text(json.dumps(d,indent=2)+'\n');return d
+ d=json.loads(dev.app('tail','-n','1','files/runtime/game-state.jsonl'));require(d['valid']and d['world_input_ready']and d['scale_3d']==.65 and not d['guest_heap']['shared']and d['game_output']==d['surface_output']=={'width':2772,'height':1240}and not d['world_freeze']['host_frozen']and not d['runtime_extrap']['enabled'],'stock scene/mode changed');path.write_text(json.dumps(d,indent=2)+'\n');return d
 def showmap(dev,pid,out):
  # One existing standard tool invocation while the same original process stays paused; no sampling loop.
  result={'PID':pid,'tool':'/system/bin/showmap','attempted':False};helpq=subprocess.run(dev.command+['shell','/system/bin/showmap','--help'],capture_output=True,text=True,timeout=15)
@@ -138,7 +141,7 @@ def launch(dev,d,p,out):
   with(out/(label+'.log')).open('x')as f:subprocess.run(cmd,stdout=f,stderr=subprocess.STDOUT,check=True,timeout=timeout)
  try:
   with(out/'launch.log').open('x')as f:
-   client=subprocess.Popen(command(d['serial'],out),stdout=f,stderr=subprocess.STDOUT);deadline=time.monotonic()+120
+   client=subprocess.Popen(command(d['serial'],out,Path(p.get('runtime_source',SOURCE))),stdout=f,stderr=subprocess.STDOUT);deadline=time.monotonic()+120
    while client.poll()is None:
     now=dev.adb('shell','pidof '+PKG+' || true')
     if now:
@@ -152,7 +155,7 @@ def launch(dev,d,p,out):
   d['route_completed']=0
   if state['area']==1 and abs(state['x']-5225)<=24 and abs(state['y']-6289)<=24:
    for i,(x,y)in enumerate([(5225,6295),(5235,6289)]):
-    same();invoke('walk-'+str(i),[sys.executable,str(SOURCE/'scripts/dev/android-game-walk-to.py'),str(x),str(y),'--radius','4','--timeout','5','--ready-timeout','2','--serial',d['serial']],25);d['route_completed']+=1
+    same();invoke('walk-'+str(i),[sys.executable,str(Path(p.get('runtime_source',SOURCE))/'scripts/dev/android-game-walk-to.py'),str(x),str(y),'--radius','4','--timeout','5','--ready-timeout','2','--serial',d['serial']],25);d['route_completed']+=1
   else:raise RuntimeError('outside verified camp bounds: no route/VMA success claimed')
   after=snapshot(dev,own,out/'after-route.json');require(d['route_completed']==2 and after['area']==1,'both original camp walks required')
   q=subprocess.run(dev.command+['exec-out','screencap','-p'],capture_output=True,check=True,timeout=15);require(q.stdout.startswith(b'\x89PNG\r\n\x1a\n'),'screenshot notPNG');(out/'HUD.png').write_bytes(q.stdout)
@@ -205,7 +208,7 @@ def restore(dev,d,p,out):
 def main():
  ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--inputs',type=Path,required=True);ap.add_argument('--inputs-sha256',required=True);ap.add_argument('--output',type=Path,required=True);ap.add_argument('--execute',action='store_true');a=ap.parse_args()
  require(sha(a.inputs)==a.inputs_sha256,'inputs changed');c=read(a.inputs);p=proof(c,a.execute)
- plan={'scope':c['scope'],'runtime_commit':COMMIT,'candidate_APK':p['APK'],'serial':c['serial'],'launch':command(c['serial'],a.output),'directories_CAS':DIRS,'original_overlay_and_shaders_and_system_driver_retained':True,'original_progress_saved':True,'mode':'initial .75 adaptive (no fixed flag), systemVulkan sharedOFF legacyASTCOFF; not .60 matched perfAB','showmap':'one standard command after original save2 and original graphics-suspend marker; paused post-trim, VMA is earlier pre-this-job-trim; cannot subtract or claim same instant','default_offline':not a.execute}
+ plan={'scope':c['scope'],'runtime_commit':p['runtime_commit'],'preferred_block_MiB':c['preferred_block_MiB'],'candidate_APK':p['APK'],'serial':c['serial'],'launch':command(c['serial'],a.output,Path(p['runtime_source'])),'directories_CAS':DIRS,'original_overlay_and_shaders_and_system_driver_retained':True,'original_progress_saved':True,'mode':'fixed .65 for32/16 independent one-shot memory control; systemVulkan sharedOFF legacyASTCOFF; not dynamicv4 perfAB','showmap':'one standard command after original save2 and original graphics-suspend marker; paused post-trim, VMA is earlier pre-this-job-trim; cannot subtract or claim same instant','default_offline':not a.execute}
  if not a.execute:print(json.dumps(plan,indent=2));return
  os.environ['PATH']=str(R/'.local/android-sdk/platform-tools')+':'+os.environ['PATH']
  a.output.mkdir(parents=True,exist_ok=False);out=a.output;token=uuid.uuid4().hex;dev=base.old.common.Device(c['serial']);d={**plan,'token':token,'owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'stage':'files/runtime/.stock-mali-vma-paused-'+token,'transfer':'/data/local/tmp/stock-mali-vma-paused-'+token+'.tar','cleanup_errors':[],'phase':'preflight'};save=lambda:journal(out/'result.json',d);save();claimed=False
