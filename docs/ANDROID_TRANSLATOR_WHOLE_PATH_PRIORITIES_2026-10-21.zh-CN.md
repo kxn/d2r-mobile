@@ -430,3 +430,9 @@ CPU预检候选成功时省去完整binding iterator、plan重建和逐源resolv
 新 shader 链 `8b016120f586` 已在原入口完成 6931/6931 构建；基础 SPIR-V、metadata、DDK1 和 specialization 全量字节与原 `9507875007c6` 相同。但是当前工具链的 DPL v2 增加 single-omission 变体，`.plocal` 从 54.656MiB 增至 310.921MiB，增加 256.265MiB；Android 启动默认开启 pixel-local，首次请求会保留该 shader 的整个 blob 与 record 元数据，不能按 C 层 unset=OFF 假定没有驻留代价。额外 driver module 虽按需创建，这个增长仍可能抵消常量槽的内存目标。
 
 因此完整新库不部署，保留其独立验证作为 DSP 证明来源。交付改为原 950 库全部原字节、原 `.chain`、JSON 与 DPL 不变，只增加 6927 份 96B DSP 和独立来源 manifest。补充合同须核原完整部署 receipt、已完成的新库 proof 验证、五类实际模块及指纹字节一致；不更换旧链标签，也不把补充产物冒称为原整库构建。现有整库部署工具没有独立 supplement 合同，新增工具仅覆盖这个产物组合缺口，复用原 proof 解析与原发布/恢复原语，不新增计时或采样。此时仍没有新的真机 PSS、CPU、FPS 或持续温度结论。
+
+### 默认局部渲染导致常量证明静默回退的根因
+
+进一步核对真实 BASE1 日志中的 109 个已加载 shader，其中 108 个带 DDK：原 DDK 的五产物指纹全部与实际资源匹配，但与默认 pixel-local ON 时的 pipeline 指纹匹配数为 0/108；新 DSP 也有相同失配。原因是 public `vk_shader_fingerprint()` 在五产物摘要后追加 DPL，而 DDK/DSP 加载仍直接比较这个扩展后的字段。这是常量证明没有被采纳的静态激活根因，不是新采样或已测 CPU 收益。原始资产、日志及精确计算在 `.local/logs/driver-proof-fingerprint-root-actual-assets-mismatch.json`。
+
+候选 `f75de42` 从真实 dd4 源后继分离这两个身份：创建 shader 时保存额外 32B 原五产物 proof digest，DDK/DSP 比较它；原 public pipeline 指纹、DPL 变化失效及 DSP module token 不变。新的 DPL fragment module 在证明闭包外，保守清除继承的 DDK schema。draw 热路没有新增文件读取、hash 或原子操作。10 组最终实际宿主 GPU/CoreSYNC/ASan 测试通过，原 dd4 二进制对同有效 DPL 资源负控准确复现 schema assertion 失败；它们不代替 Android 验收。根审已核实际源与测试闭包，后续 canonical 和原始 NSO 重建使用新 f75 身份，不重标 dd4 旧产物。正式源记录为 `.local/logs/driver-proof-fingerprint-f75de42-source-ready-root-v3.json`；其中 direct base/source parent 为 dd4，真实 Q09a 比较谱系单列。
