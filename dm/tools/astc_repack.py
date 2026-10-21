@@ -41,9 +41,10 @@ def block_bytes(w, h, block):
     return ((w + block - 1) // block) * ((h + block - 1) // block) * 16
 
 
-def desc(entry, fmt):
+def desc(entry, fmt, source_formats=None):
     if (entry.get('type') != 2 or entry.get('depth') != 1 or
-            entry.get('layoutType') != 3 or entry.get('format') not in GAME_FORMAT):
+            entry.get('layoutType') != 3 or entry.get('format') not in
+            (GAME_FORMAT if source_formats is None else source_formats)):
         raise Unsupported('only type2/depth1/layoutType3 BC3 textures are supported')
     w, h, n, layout = (entry[k] for k in ('width', 'height', 'levels', 'layoutData'))
     if (not all(isinstance(v, int) for v in (w, h, n, layout)) or
@@ -100,7 +101,7 @@ def mip_table(data, n, tab):
     return spans
 
 
-def full_texture(data, entry):
+def full_texture(data, entry, nvn_format=None):
     if len(data) < 36 or len(data) > MAX_INPUT_BYTES or data[:4] != b'<DE(':
         raise Unsupported('unsupported full texture header/size')
     if (data[4] != entry['format'] or data[6] != entry['type'] or
@@ -112,7 +113,8 @@ def full_texture(data, entry):
         raise ValueError('full header and original descriptor cache disagree')
     tab = 32 + struct.unpack_from('<I', data, 32)[0]
     spans = mip_table(data, entry['levels'], tab)
-    old = desc(entry, NVN_BC3[entry['format']])
+    old = desc(entry, NVN_BC3[entry['format']] if nvn_format is None else nvn_format,
+               None if nvn_format is None else {entry['format']})
     offsets = geometry(old)
     first = spans[0][0]
     for i, (start, size) in enumerate(spans):
