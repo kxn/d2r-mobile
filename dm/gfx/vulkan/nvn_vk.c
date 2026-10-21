@@ -1657,7 +1657,8 @@ static void init_device(void) {
     const char *native_extensions[]={VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
       VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME,VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME};
     for(unsigned n=0;n<sizeof native_extensions/sizeof *native_extensions;n++)
-      device_extensions[dc.enabledExtensionCount++]=native_extensions[n];
+      if(!V.format_features2 || strcmp(native_extensions[n],VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME))
+        device_extensions[dc.enabledExtensionCount++]=native_extensions[n];
   }
 #ifdef DM_VULKAN_TEST_EMBED
   else if(native_pending_fixture)
