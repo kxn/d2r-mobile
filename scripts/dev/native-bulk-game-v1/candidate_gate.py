@@ -1,11 +1,11 @@
-"""Exact reviewed ebe0 combined source-flow/span-index native-only functional/CPU validation, no new measurements."""
-RUNTIME='ebe0d0e5512f6d3e816dc0ee164734152012b003'
-PREDECESSOR='716cd6cdbdf16cd63d285cc4c063a30fdf0104eb'
-ARTIFACT_BASE=PREDECESSOR
-PREDECESSOR_REVIEW='28965fae296f3f7d7d6b227e6f34d49903880bff894b0791816e71934116de47'
+"""Exact reviewed8480 immutable operation source identity reuse native-only functional/CPU validation, no new measurements."""
+RUNTIME='8480a5329ab71d1431f32c159a0def0513f57f3c'
+PREDECESSOR='ebe0d0e5512f6d3e816dc0ee164734152012b003'
+ARTIFACT_BASE='27fe6da7b4d558ee692a3c30b50a18715997611a'
+PREDECESSOR_REVIEW='881be7737eefdfd544509fb82d803ddd84175c4b02fa9afaa7b81d9421bdc2eb'
 DRIVER='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
-ROOT_REVIEW='13f3fb5e87480fdd83be73ae036ef90ca2bab9009c6943a7f41d6923709220c2'
-SOURCE_READY='cef81cf52e0c712a1ec07a40315bfad7d2f4ee9346a0dc047bf414a0e0913889'
+ROOT_REVIEW='35ae09c6f43d2a7857d71f6cfb6dfa66c6fa3f908a3b72b2738b342f1dbaba4d'
+SOURCE_READY='0af59a7d79f3a0226020b816d952e07a7529a76879c6334fd3966784c0f4ca8d'
 BASE='6f8188e392f21ff045ef640ad8c4f184de048806'
 
 
@@ -16,12 +16,12 @@ def validate(p,pinned,read,require):
             'counter_snapshot' not in p and 'performance_tools' in p,
             'short CPU candidate mode excludes longtest, SDP and LLDB')
     require(p['runtime_commit']==RUNTIME and p['driver']['sha256']==DRIVER
-            and p['pool_window_bytes']==1048576,'exactebe0/f830/1MiB target only')
+            and p['pool_window_bytes']==1048576,'exact8480/f830/1MiB target only')
     require(p['phases'][1]['composition_data']['entry_count']==6217,'same6217 only')
     require(len(ROOT_REVIEW)==64,'candidate actual root artifact review remains pending')
     require(c['root_review']['sha256']==ROOT_REVIEW,'exact root candidate review required')
     review=read(pinned(c['root_review']))
-    require(review['status']=='ROOT_REVIEWED_EXACT_EBE0_CANONICAL_AND_FRESH_RAW28'
+    require(review['status']=='ROOT_REVIEWED_EXACT_8480_CANONICAL_AND_FRESH_RAW28'
             and review['runtime']==RUNTIME and review['base']==ARTIFACT_BASE
             and review['actual_device_authorized'] is False and review['tool_ready_authorized'] is True,
             'candidate source review differs')
@@ -39,7 +39,7 @@ def validate(p,pinned,read,require):
             'reviewed APK/libraries/raw original inputs differ')
     pinned(review['APK']); pinned(review['source_review'])
     audit=read(pinned(review['complete_audit']))
-    require(audit['status']=='EXACT_EBE0_SOURCE_COMPLETE_CANONICAL_FRESH_RAW_CLOSURE_VERIFIED_NO_DEVICE'
+    require(audit['status']=='EXACT_8480A53_SOURCE_COMPLETE_CANONICAL_FRESH_RAW_CLOSURE_VERIFIED_NO_DEVICE'
             and audit['commit']==RUNTIME and audit['separate_original_NSO_rebuild_and_verify_only_pass'] is True
             and audit['new_host_cache_getter_and_epoch_death_symbols_absent_APP'] is True
             and audit['native_APP_death_env_literal_absent'] is True
@@ -48,6 +48,7 @@ def validate(p,pinned,read,require):
             and audit['texture_retirement_index_APP_probes_absent'] is True
             and audit['operation_image_source_APP_probes_absent'] is True
             and audit['pool_span_search_APP_probes_absent'] is True
+            and audit['source_refresh_functional_observer_absent_APP'] is True
             and audit['root_source_review']==review['source_review'] and audit['raw_deployment_files']==28
             and audit['canonical_ready']==p['canonical'] and audit['raw_ready']==p['raw']
             and len(audit['six_library_hashes_and_LOAD_alignment'])==6
@@ -62,23 +63,23 @@ def validate(p,pinned,read,require):
     for row in qualified['refs']:pinned(row)
 
     require(c['qualified_predecessor_short']['sha256']==PREDECESSOR_REVIEW,
-            'exact actual716 short root review required')
+            'exact actualebe short root review required')
     previous=read(pinned(c['qualified_predecessor_short']))
-    require(previous['status']=='ROOT_REVIEWED_EXACT716_REAL_GAME_SHORT_OFFICIAL_ANALYSIS_CLEANUP_COMPLETE'
+    require(previous['status']=='ROOT_REVIEWED_EXACT_EBE_REAL_GAME_SHORT_OFFICIAL_ANALYSIS_CLEANUP_COMPLETE'
             and previous['runtime']==PREDECESSOR and previous['game_modules_executed'] is True
             and previous['route_completed']==3 and previous['visual_root_actually_viewed'] is True
             and previous['cleanup_followup_all_owned_not_executing'] is True,
-            'actual716 functional qualification required')
+            'actualebe functional qualification required')
     for key in ('artifact_review','analysis_ready','analysis'):pinned(previous[key])
     actual=read(pinned(previous['result']))
     require(actual['stage']=='native-original-game-short-candidate-validation-complete'
             and actual['plan']['runtime']==PREDECESSOR
             and actual['original_restored'] is True and actual['cleanup_complete'] is True
             and actual['cleanup_errors']==[] and len(actual['phases'])==1,
-            'actual716 short transaction not complete')
+            'actualebe short transaction not complete')
     phase=actual['phases'][0]
     require(phase['original_HUD_reached'] is True and phase['game_modules_executed'] is True
             and phase['original_route_completed']==3 and phase['fresh_save_then_stopped'] is True
             and phase['official_performance_complete'] is True and phase['cpu_validity'] is True,
-            'actual716 originalgame/CPU/save qualification incomplete')
-    # Actual716 is functional/tool qualification, not a matched CPU/FPS/heat baseline.
+            'actualebe originalgame/CPU/save qualification incomplete')
+    # Actualebe is functional/tool qualification, not a matched CPU/FPS/heat baseline.
