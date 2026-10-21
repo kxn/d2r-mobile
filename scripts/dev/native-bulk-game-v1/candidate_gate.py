@@ -1,10 +1,10 @@
-"""Exact reviewed633@10c native-only functional/CPU validation, no new measurements."""
-RUNTIME='633ea750561f3cc3b072acc82e44a444cb25b045'
-PREDECESSOR='80a71bcf10e92b100027ffa32d71eec85852d7fc'
-ARTIFACT_BASE='10c53698a3155522e743a01f7e5b0e3d860b69ad'
-PREDECESSOR_REVIEW='145dbcfd60d0d9aec9d810e727a4b5b68f08c0a6a3ef1bf830fb2466442380a8'
+"""Exact reviewed846 logical descriptor native-only functional/CPU validation, no new measurements."""
+RUNTIME='846fb023c2390358127eb1cedf649bc292b93e4d'
+PREDECESSOR='633ea750561f3cc3b072acc82e44a444cb25b045'
+ARTIFACT_BASE='2ad92a2e6cca8679a177de343183697211ce5584'
+PREDECESSOR_REVIEW='11732c5e0abee431d49d86e9467bb4ac70e794f74f816bf2c8bf8e61e5213798'
 DRIVER='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
-ROOT_REVIEW='00c3c64ce3f634a91661e81801f42fb084aa50eeb7903f029a7ab76885016472'
+ROOT_REVIEW='10ca45052e98b6cd23e69435b871229918d0dfa0b0ccd467889275061fd074a2'
 BASE='6f8188e392f21ff045ef640ad8c4f184de048806'
 
 
@@ -15,11 +15,11 @@ def validate(p,pinned,read,require):
             'counter_snapshot' not in p and 'performance_tools' in p,
             'short CPU candidate mode excludes longtest, SDP and LLDB')
     require(p['runtime_commit']==RUNTIME and p['driver']['sha256']==DRIVER
-            and p['pool_window_bytes']==1048576,'exact633@10c/f830/1MiB target only')
+            and p['pool_window_bytes']==1048576,'exact846/f830/1MiB target only')
     require(p['phases'][1]['composition_data']['entry_count']==6217,'same6217 only')
     require(c['root_review']['sha256']==ROOT_REVIEW,'exact root candidate review required')
     review=read(pinned(c['root_review']))
-    require(review['status']=='ROOT_REVIEWED_EXACT633_CANONICAL_AND_FRESH_RAW28'
+    require(review['status']=='ROOT_REVIEWED_EXACT846_CANONICAL_AND_FRESH_RAW28'
             and review['runtime']==RUNTIME and review['base']==ARTIFACT_BASE
             and review['actual_device_authorized'] is False and review['tool_ready_authorized'] is True,
             'candidate source review differs')
@@ -37,9 +37,11 @@ def validate(p,pinned,read,require):
             'reviewed APK/libraries/raw original inputs differ')
     pinned(review['APK']); pinned(review['source_review'])
     audit=read(pinned(review['complete_audit']))
-    require(audit['status']=='EXACT_633_SOURCE_CANONICAL_AND_FRESH_RAW_CLOSURE_VERIFIED_NO_DEVICE'
+    require(audit['status']=='EXACT_846FB02_REVIEWED_LOGICAL_DESCRIPTOR_SOURCE_CANONICAL_FRESH_RAW_CLOSURE_VERIFIED_NO_DEVICE'
             and audit['commit']==RUNTIME and audit['separate_fresh_original_NSO_and_verify_only'] is True
-            and set(audit['actual_APP_host_test_symbols_excluded'])>={'vk_test_native_retire_pause','vk_test_native_retire_state','native_retire_test_pause','native_retire_test_context'} and audit['raw_deployment_files']==28
+            and audit['actual_APP_dump_stats_observer_absent'] is True
+            and audit['source_ready']['sha256']=='92c71a51d5bd2b58ceda9762189dfa12358ee53e82aa224b5292bcc556471afc'
+            and audit['root_review']==review['source_review'] and audit['raw_deployment_files']==28
             and audit['canonical_ready']==p['canonical'] and audit['raw_ready']==p['raw']
             and len(audit['six_library_hashes_and_LOAD_alignment'])==6
             and {r['library']:r['sha256'] for r in audit['six_library_hashes_and_LOAD_alignment']}==canonical['canonical_native_library_sha256'],
@@ -53,24 +55,23 @@ def validate(p,pinned,read,require):
     for row in qualified['refs']:pinned(row)
 
     require(c['qualified_predecessor_short']['sha256']==PREDECESSOR_REVIEW,
-            'exact actual80a short root review required')
+            'exact actual633 short root review required')
     previous=read(pinned(c['qualified_predecessor_short']))
-    require(previous['status']=='ROOT_REVIEWED_80A_ORIGINAL_GAME_SHORT_FUNCTIONAL_AND_CAPTURE_PASS'
-            and previous['runtime']==PREDECESSOR and previous['save_commits']==2
-            and previous['original_APK_six_dirs_restored'] is True
-            and previous['cleanup_errors']==[] and previous['integration_eligible_functionally'] is True,
-            'actual80a functional/restore qualification required')
-    evidence=[read(pinned(row)) for row in previous['refs']]
-    actual=next((row for row in evidence if row.get('stage')==
-                'native-original-game-short-candidate-validation-complete'),None)
-    require(actual is not None and actual['plan']['runtime']==PREDECESSOR
+    require(previous['status']=='ROOT_REVIEWED_EXACT633_REAL_GAME_SHORT_OFFICIAL_ANALYSIS_CLEANUP_COMPLETE'
+            and previous['runtime']==PREDECESSOR and previous['game_modules_executed'] is True
+            and previous['route_completed']==3,
+            'actual633 functional qualification required')
+    for key in ('artifact_review','analysis_ready','analysis'):pinned(previous[key])
+    actual=read(pinned(previous['result']))
+    require(actual['stage']=='native-original-game-short-candidate-validation-complete'
+            and actual['plan']['runtime']==PREDECESSOR
             and actual['original_restored'] is True and actual['cleanup_complete'] is True
             and actual['cleanup_errors']==[] and len(actual['phases'])==1,
-            'actual80a short transaction not complete')
+            'actual633 short transaction not complete')
     phase=actual['phases'][0]
     require(phase['original_HUD_reached'] is True and phase['game_modules_executed'] is True
             and phase['original_route_completed']==3 and phase['fresh_save_then_stopped'] is True
             and phase['official_performance_complete'] is True and phase['cpu_validity'] is True,
-            'actual80a originalgame/CPU/save qualification incomplete')
-    # This predecessor is functional/tool qualification, not a matched performance baseline.
-    # Never manufacture a matched CPU/FPS/heat baseline from that short run.
+            'actual633 originalgame/CPU/save qualification incomplete')
+    # Historical633 is functional/tool qualification, not a matched performance baseline.
+    # Never manufacture matched CPU/FPS/heat gains from these independent short runs.

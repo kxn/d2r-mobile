@@ -340,3 +340,6 @@ release登记在ref--前，store2最后访问，真实ready2摘除才减。原�
 采样13/633仅定位历史扫描，不等于全可省；实际PC/工作量/频率/PSO及预算释放要
 按当前官方窗口记录，不能把历史短测称匹配A/B或先宣称净CPU/FPS/热收益。
 DRAFT execution_ready=false，root另建唯一ROOT输入授权；不覆盖旧工具/报告。
+
+
+Exact846 logical descriptor CPU candidate successor: only candidate qualification gate/tests and this note differ from the frozen633 tools. Runtime/canonical/fresh raw and source audit are pinned to the actual root receipts. Native6217, f830, fixed0.60 at2750x1260, 1MiB windows and original three walk points are unchanged. Official stat,99Hz user-callstack and Perfetto remain separate8s windows. No new counter/timer, GPU layer, LLDB, ADPF or paired baseline acquisition. Actual633 and6f qualify the existing functional/tool path; their measurements are historical nonmatched references, not a claim of net CPU/FPS/thermal improvement. The DRAFT input defaults execution_ready=false; root alone may author the independently hashed ROOT execution input after review.
