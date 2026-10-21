@@ -27,3 +27,34 @@ reference 开关仍走原路径。miss 新增一次有界 O(1) 提示读取和�
 template/reuse/reference 切换、上下文回收与逐像素结果。owned metadata
 测试另核当前槽 realloc/替换、epoch、hint 碰撞及真实 recycle 清空；这些
 测试分支不编入正式运行时。它们不代替 Android 原游戏、FPS 或热验收。
+
+## 2026-10-21：真机结果与合入边界
+
+最终候选 `d5ecbcd` 还要求当前 history entry 的 capacity 足够容纳本次
+重新构造的 key，再做完整值比较；提示不能绕过资源依赖、当前值检查或
+上下文 epoch。新增成本仍为每 submission context 384 B，stage-last 命中
+路径不维护提示。已合入 `36bb836`，与 guest-entry 私有图像预算共存。
+
+Q735 实际运行本候选重新构建的原游戏模块，完成三段原输入行走、官方
+Simpleperf/Perfetto 采集、原生命周期 save2、停止与完整恢复。模式为
+f830/native6217/sharedON、fixed .60、2750×1260、1 MiB 窗口，不是默认
+.75 dynamic 或持续野外测试。两张截图没有新的明显黑块或几何缺失，
+已有绿色地面散点仍在，不声明全场景等价。
+
+与既有 80a 工具窗口相比，bindings self 为 32/630 → 32/624 个用户态
+样本；独立 8 秒 stat 的 NvN task-clock 为 6599.88 → 6704.08 ms，
+用户态 cycles 为 10.081 → 10.090 G。Perfetto 的 replay Running 为
+26.386 → 26.261 ms/完整 Surface 间隔，期间加权频率和实际工作量也不同；
+Surface 间隔均值 33.2279 → 33.2849 ms。因此没有明确的净 CPU 或整帧
+收益证据。新提示 PC 没有落到样本不表示零命中，旧 history 总命中也不是
+新提示命中率；端点 PSS 少 35.11 MiB 不能归因于这个 384 B/context 的缓存。
+
+保留理由是：当前值完全相等且提示有效时可以省去原 hash，容量、epoch 和
+完整值检查保证复用条件；新增成本有界，短测没有发现明显资源或稳定性退化。
+这不是已经解决主要 CPU 热点的结论。合并后的 host Vulkan 验证另覆盖
+异步/串行 descriptor 用例各 94,412 项与 image-budget 用例各 1,590 项，
+Core/SYNC 无报告；该组合 host 结果不能冒充合并版 Android 真机验收。
+
+实际凭据：`.local/logs/native-candidate-short-d5-Q735-v1-root-actual-review.json`
+（SHA256 `b6c555eddd034fc25ffb71e69da4b5aec1d3287a21a7c3b13d2f92040226db8e`）。
+合并版验证：`.local/logs/main-budget-hint-v1-host-validation/result.json`。

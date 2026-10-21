@@ -1776,6 +1776,21 @@ ASTC 压缩块仍为 16B，没有展开为 RGBA；主要变化是行跨度和 mi
 这不是每帧节省的 DRAM 流量，也还不是游戏净驻留量：旧填充不一定被采样，
 线性排布反而可能降低二维过滤局部性。两条 native 路径原本都禁用 UBWC。
 
+逐项核对同一 6,217 项、53,701 级 mip 的 recipe 与线性 ASTC 哈希一致，
+可进一步拆出布局填充。紧密 ASTC 块本体两版均为 382.726 MiB；原 NVN
+395.728 MiB 已包含自身排布填充。AA185 的 664.125 MiB 中，元数据行跨度
+填充约 263.110 MiB、有效块行之外的 slice 填充 18.269 MiB、末分配对齐
+0.021 MiB；f830 对应为 17.549、4.553、18.210 MiB，合计 423.039 MiB，
+比原 NVN 多 27.312 MiB（约 6.9%）。例如小 mip 有效一行可能只有一个
+16 B ASTC 块，旧布局报告的最小行跨度仍是 1024 B；当前线性路径降到
+256 B，但各图像末尾仍需分配对齐。透明度不改变 ASTC 的固定块字节数。
+
+这些是驱动实际布局元数据的算术分类；AA 的 tiled 行跨度不表示它是
+row-major，也不能把全部填充进一步断言成某项硬件限制或缓存偏好。
+全量复核见 `.local/logs/native6217-layout-padding-audit-v1/result.json`
+（SHA256 `22a34c7e471260180903e5537585282f8669d471bea2620cdec722ffa6d3fe5a`），
+root 独立重算全部 12,434 份元数据及逐 mip 哈希对照，未重新加工资源或访问设备。
+
 f830 普通纹理 control 的官方 SDP 数据有效，旧捕获失败源于用电脑时间
 检查设备计数器时间，约 0.9 秒偏差导致末端覆盖误判。保留原失败报告；
 按 Perfetto 首次官方时钟快照限定的实际 8.006 秒窗口，九项计数均被覆盖。
@@ -2018,3 +2033,25 @@ TRACE、DUMP、SYNC 或 shader_map，也未加入槽位修正。原022游戏 PID
 
 root 凭据：`.local/logs/panvk-bc-emulation-originalBC-original022-mali-v8/root-actual-restoration-review.json`
 （SHA256 `c40d566e03c311f360ed671e300a929909d90423bec78e90751c7fb2dc56238f`）。
+
+### BC4 数组复制真机通过，完整游戏挂起仍待定位
+
+旧官方捕获中的 BC4_UNORM 源纹理、含行跨度的真实上传数据和 7 级 mip，
+已用于原 022 NVN 后端的独立 GPU 用例：单层源上传、片元采样、复制至
+252 层数组的第 250 层、再次采样及原始压缩块回读。五个独立命令对象
+中间不强制完成，仅最后通过原 Fence 等待；同一 ac88 驱动实际通过
+43,688 个采样像素、21,856 个原始字节检查。实际记录为 7 次上传、7 次
+image-copy、14 次 decode，不能把潜在的数组保留路径写成已执行全数组上传。
+独立包已退出、卸载并清理，原游戏与目录、驱动设置前后不变。
+
+这证明该有限 BC4 emulation/copy 路径可以完成，不是完整游戏修复。
+队列编号须按实际源码解释：q0 为 VERTEX_TILER，q1 为 FRAGMENT，q2 为
+COMPUTE。v8 挂起快照中 q0 已完成 882，而 q1/q2 完成 880、进入 CALL881
+后尚未返回；不能把 q0 完成误作 Compute 解码完成，也不能把最后一条
+CPU TRACE 当作 GPU 当前指令。现成 Arm CSF debugfs 同步状态接口在这台
+stock 内核上实际未暴露，现有用户态寄存器映射也不包含内核的 WAIT 寄存器。
+保留该工具缺口，不凭空扩大屏障或改同步 scope。
+
+真实用例凭据：`.local/logs/panvk-original022-BC4-layered-mali-v1/root-actual-review.json`
+（SHA256 `e33491da0f2a3abfaa653c0ca3eda42f6f89875e5981e415cf75c744da9e05f5`）。
+队列与工具审计：`.local/logs/panvk-game-v7-v8-graphics-sync-recheck-agent-v2.json`。
