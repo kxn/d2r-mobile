@@ -37,7 +37,8 @@ static void image_source_value_boundaries(void) {
   vk_state saved=S;S.targets=(p_set_rt){0};
   vk_binding binding={.kind=6,.count=1,.reg=0};
   vk_shader shader={.stage=1,.nb=1,.bindings=&binding},*list[6]={NULL,&shader};
-  vk_test_shader_image_binding_mask_build(&shader);CHECK(shader.sampled_source_schema==2);
+  vk_test_shader_image_binding_mask_build(&shader);CHECK(!shader.sampled_source_schema);
+  shader.pool_binding_mask_ready=1;vk_test_shader_image_binding_mask_build(&shader);CHECK(shader.sampled_source_schema==2);
   tex_t a={.serial=UINT64_C(0x1000000000000100)},b={.serial=UINT64_C(0x1000000000000200)};
   mtl_set_tex_pool_n(64);mtl_reg_tex(37,&a,NULL);mtl_reg_tex(38,&b,NULL);S.tex[1][0]=37;
   int parent=vk_shader_image_sources_begin();CHECK(parent);vk_shader_cpu_sources(list,&S,0);

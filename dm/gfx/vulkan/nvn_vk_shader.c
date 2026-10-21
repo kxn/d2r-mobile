@@ -476,7 +476,9 @@ static void shader_image_binding_mask_build(vk_shader *s) {
   }
   // All-image schemas skip no entries, so retain their contiguous scan.
   s->image_binding_mask_ready=selected<s->nb;
-  if(!storage)s->sampled_source_schema=selected+1;
+  // The original complete Pool schema proof also rejects unsupported buffer
+  // kinds/arrays/registers. Do not allocate source packets for such fallbacks.
+  if(!storage && s->pool_binding_mask_ready)s->sampled_source_schema=selected+1;
 }
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_shader_image_binding_mask_build(vk_shader *s) {shader_image_binding_mask_build(s);}
