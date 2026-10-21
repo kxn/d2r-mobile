@@ -42,6 +42,7 @@ typedef struct vk_shader {
   uint64_t pool_binding_mask[2]; // final-schema indices, never current resource contents
   uint32_t pool_binding_mask_ready; // zero retains the original full scan
   uint32_t image_binding_mask_ready; // zero keeps full scan/errors; fits prior alignment gap
+  uint32_t sampled_source_schema; // immutable selected count+1, zero retains original path
   uint8_t *c1;
   vk_buffer c1_buffer;
   VkShaderModule module;
@@ -200,6 +201,13 @@ void vk_bloom_quarter_stats(uint64_t *chains,uint64_t *skipped,uint64_t *replace
 void vk_bloom_quarter_test_facts(const char *keys[4]);
 void vk_bloom_quarter_test_blit_format(VkFormat format);
 uint64_t vk_texture_descriptor_epoch(void);
+// Operation-owned source value only. No view, physical owner, dirty/ready fact
+// or producer state. Separate from the unchanged 200B logical lookup entries.
+typedef struct {uint64_t epoch;int id,valid;tex_t texture;} vk_texture_source_value;
+const tex_t *vk_texture_source_resolve(vk_texture_source_value *value,int id);
+int vk_shader_image_sources_begin(void);
+void vk_shader_image_sources_end(int token);
+
 typedef struct {
   VkImage image;
   VkImageView view;

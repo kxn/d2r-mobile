@@ -315,6 +315,7 @@ static VkPipelineStageFlags producer_stage(unsigned stage) {
   if(stage>=sizeof stages/sizeof *stages) die("Vulkan shader producer stage");
   return stages[stage];
 }
+#include "nvn_vk_image_source_flow.inc"
 #include "nvn_vk_shader_pool_ranges.inc"
 void vk_shader_writebacks(void) {
   if(!shader_operation_depth) die("Vulkan shader operation underflow");
@@ -462,18 +463,22 @@ void vk_test_shader_pool_binding_mask_build(vk_shader *s) {shader_pool_binding_m
 // texel-storage alternative. Reinterpreting it would change that contract.
 static void shader_image_binding_mask_build(vk_shader *s) {
   s->image_binding_mask[0]=s->image_binding_mask[1]=0;
-  s->image_binding_mask_ready=0;
+  s->image_binding_mask_ready=0;s->sampled_source_schema=0;
   if(s->nb>128 || (s->nb&&!s->bindings))return;
-  unsigned selected=0;
+  unsigned selected=0,storage=0;
   for(unsigned k=0;k<s->nb;k++) {
     const vk_binding *b=&s->bindings[k];
     if(b->count!=1)return;
     if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
     if(b->reg<0 || b->reg>=(b->kind==4?32:128))return;
     s->image_binding_mask[k/64]|=UINT64_C(1)<<(k%64);selected++;
+    storage|=b->kind==4;
   }
   // All-image schemas skip no entries, so retain their contiguous scan.
   s->image_binding_mask_ready=selected<s->nb;
+  // The original complete Pool schema proof also rejects unsupported buffer
+  // kinds/arrays/registers. Do not allocate source packets for such fallbacks.
+  if(!storage && s->pool_binding_mask_ready)s->sampled_source_schema=selected+1;
 }
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_shader_image_binding_mask_build(vk_shader *s) {shader_image_binding_mask_build(s);}
@@ -1829,7 +1834,7 @@ static int dispatch_pool_collect(void *context,vk_pool_requirement_sink sink,voi
   return vk_shader_pool_ranges_state(stages,&S,1,sink,out);
 }
 void vk_dispatch(const p_dispatch *p) {
-  vk_texture_lookup_scope_begin();
+  vk_texture_lookup_scope_begin();int source_operation=vk_shader_image_sources_begin();
   int cpu_preflight=V.options.pool_defer_publication;
 #ifdef DM_VULKAN_SHARED_POOLS
   cpu_preflight|=vk_pool_shared_active() || vk_legacy_astc_copy_mode();
@@ -1840,5 +1845,5 @@ void vk_dispatch(const p_dispatch *p) {
   }
   int token=vk_pool_operation_begin(dispatch_pool_collect,NULL);
   dispatch_record(p);vk_pool_operation_end(token);
-  vk_texture_lookup_scope_end();
+  vk_shader_image_sources_end(source_operation);vk_texture_lookup_scope_end();
 }
