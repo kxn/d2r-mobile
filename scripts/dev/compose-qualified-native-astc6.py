@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -34,6 +35,107 @@ PINS = {
     DATA / '.local/logs/native-qualified-astc6-ca28208-source-ready-agent.json': 'ba8972cf9d740ca77bd20ba6c01d218217fe392d5e7f57efff5e41b5d9599fd5',
 }
 PACKER_SHA = 'f4ae133c09071606a48fce987ac9c1da442266e89d217a386c471eea8ee1b5cb'
+FULL_PREP = DATA / '.local/build/native-qualified-astc6-full2838-prepare-v1/inputs/batch-prepare.json'
+FULL_PREP_SHA = 'cfa2f0852b08d41b71d1599a3757dec7211a6483d29d5f29b55c4a49948d2b1a'
+FULL_SELECTION_SHA = '597cd590fb6002cc086fab9ceaccb5d9023c176d4810d9f7371722c0048efc74'
+FULL_ACTUAL = DATA / '.local/logs/native-qualified-astc6-full2838-f830-Q735-v1'
+
+
+def profile_inputs(profile, actual_result_sha256=None, actual_index_sha256=None):
+    """No future receipt is invented or substituted with the old32 receipt."""
+    require(profile in ('pilot32', 'qualified-full2838-v1'), 'unknown composition profile')
+    pins = dict(PINS)
+    if profile == 'pilot32':
+        require(actual_result_sha256 is None and actual_index_sha256 is None,
+                'pilot32 retains its original actual receipt contract')
+        return NEW_PREP, ACTUAL, 32, pins
+    require(all(isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value)
+                for value in (actual_result_sha256, actual_index_sha256)),
+            'full2838 requires explicit actual result and receipt index SHA256')
+    del pins[NEW_PREP]
+    pins[FULL_PREP] = FULL_PREP_SHA
+    pins[FULL_PREP.parent.parent / 'selection.json'] = FULL_SELECTION_SHA
+    pins[FULL_ACTUAL / 'result.json'] = actual_result_sha256
+    pins[FULL_ACTUAL / 'actual-batch-receipt-index.json'] = actual_index_sha256
+    return FULL_PREP, FULL_ACTUAL, 2838, pins
+
+
+def allocation_decision(old_native, new_native, old_blocks, new_blocks, old_source, new_source):
+    """Actual allocation comparison, separate from source/useful-block bytes."""
+    require(all(type(value) is int and value > 0 for value in
+                (old_native, new_native, old_blocks, new_blocks, old_source, new_source)),
+            'positive actual allocation and source byte counts required')
+    if new_native > old_native:
+        return 'larger', False, 'keep original ASTC4: actual native allocation grows'
+    if new_native < old_native:
+        return 'strictsmaller', True, 'actual native allocation is smaller'
+    keep = new_blocks < old_blocks or new_source < old_source
+    return 'equal', keep, ('equal allocation; useful compressed blocks or source bytes decrease'
+                         if keep else 'keep original ASTC4: no allocation/source benefit proved')
+
+
+def actual_allocation_bytes(metadata, source, entry):
+    recipe = metadata['recipe']
+    require(metadata['complete'] is True and metadata['producer_source_sha256'] == PRODUCER and
+            metadata['declaration_sha256'] == entry['source']['sha256'] and
+            metadata['texture_sha256'] == entry['texture']['sha256'] and
+            recipe['VkFormat'] == source['VkFormat'] and recipe['VkFormat'] in (165, 166) and
+            recipe['width'] == source['width'] and recipe['height'] == source['height'] and
+            recipe['depth'] == source['depth'] == 1 and recipe['arrayLayers'] == source['layers'] == 1 and
+            recipe['mipLevels'] == source['levels'] == len(source['mips']) == len(metadata['mips']) and
+            source['block'] == [6, 6] and
+            source['linear_ASTC_bytes'] == sum(mip['linear_bytes'] for mip in source['mips']) and
+            metadata['original_driver_roundtrip_compressed_blocks_exact'] is True,
+            'actual ASTC6 allocation metadata/source differs')
+    for original, actual in zip(source['mips'], metadata['mips']):
+        require(all(original[k] == actual[k] for k in ('level', 'width', 'height')) and
+                original['sha256'] == actual['linear_ASTC_sha256'],
+                'actual native mip does not match approved source blocks')
+    size = metadata['physical_image_bytes']
+    require(type(size) is int and 0 < size <= (1 << 64)-1, 'invalid actual allocation byte count')
+    return size
+
+
+def allocation_selection(prepared, old_prepared, old_pack, coverage, hashes):
+    old_inputs = {normalized(entry['logical']): entry for entry in old_prepared['entries']}
+    old_details = {normalized(entry['logical']): entry for entry in old_pack['entries']}
+    decisions, selected = [], []
+    counts = dict(strictsmaller=0, equal=0, larger=0, notlarger=0, retained=0, retained_equal=0)
+    for entry in prepared['entries']:
+        name = normalized(entry['logical'])
+        require(name in old_inputs and name in old_details, 'allocation candidate outside old6217')
+        old = old_inputs[name]
+        source = read(entry['source']['path']); previous = read(old['source']['path'])
+        metadata_path = Path(coverage[entry['id']]['baked']) / 'native-resource.json'
+        hashes.file(metadata_path)
+        metadata = read(metadata_path)
+        new_native = actual_allocation_bytes(metadata, source, entry)
+        require(previous['block'] == [4, 4] and
+                previous['linear_ASTC_bytes'] == sum(mip['linear_bytes'] for mip in previous['mips']),
+                'old prepared useful compressed byte count differs')
+        old_native = old_details[name]['image_size']
+        category, keep, reason = allocation_decision(old_native, new_native,
+            previous['linear_ASTC_bytes'], source['linear_ASTC_bytes'],
+            old['texture']['bytes'], entry['texture']['bytes'])
+        counts[category] += 1
+        if category != 'larger': counts['notlarger'] += 1
+        if keep:
+            selected.append(entry); counts['retained'] += 1
+            if category == 'equal': counts['retained_equal'] += 1
+        decisions.append({'logical': entry['logical'], 'id': entry['id'], 'category': category,
+            'retain_ASTC6': keep, 'reason': reason, 'old_native_bytes': old_native,
+            'new_actual_native_bytes': new_native, 'retained_allocation_saved_bytes': old_native-new_native if keep else 0,
+            'old_useful_ASTC_bytes': previous['linear_ASTC_bytes'], 'new_useful_ASTC_bytes': source['linear_ASTC_bytes'],
+            'old_source_CFT_bytes': old['texture']['bytes'], 'new_source_CFT_bytes': entry['texture']['bytes'],
+            'actual_metadata': {'path': str(metadata_path), 'sha256': hashes.file(metadata_path)}})
+    require(sum(counts[k] for k in ('strictsmaller', 'equal', 'larger')) == len(prepared['entries']),
+            'allocation decision coverage differs')
+    return selected, {'schema': 1, 'complete': True, 'candidate_count': len(decisions), 'counts': counts,
+        'retained_allocation_saved_bytes': sum(row['retained_allocation_saved_bytes'] for row in decisions),
+        'policy': 'Keep actual smaller, or equal with fewer useful compressed/source bytes; larger retains original ASTC4',
+        'allocation_source': 'original strict-pack image_size versus authenticated actual f830 producer physical_image_bytes',
+        'PSS_DRAM_FPS_or_heat_claim': False, 'entries': decisions}
+
 
 
 def require(value, message):
@@ -120,11 +222,11 @@ def actual_gate(composer, root, prepared, prepared_path, ready, acceptance, hash
     return coverage, query
 
 
-def qualified_gate(prepared, old_prepared, hashes):
+def qualified_gate(prepared, old_prepared, hashes, expected_count=32):
     selection = prepared['selection']
     require(selection['kind'] == 'explicit-qualified-ASTC6-native-replacement-v1' and
-            len(prepared['entries']) == selection['expected_count'] == 32 and
-            selection['formats'] == [99, 85], 'expected reviewed ASTC6 pilot32')
+            len(prepared['entries']) == selection['expected_count'] == expected_count and
+            selection['formats'] == [99, 85], 'expected reviewed ASTC6 selection')
     # This prepared manifest and its policy/large report were already root-reviewed.
     # Authenticate every declared source before repeating the per-item quality check.
     for key in ['logical_manifest', 'qualified_composition', 'encoder_job', 'encoder_report',
@@ -147,7 +249,7 @@ def qualified_gate(prepared, old_prepared, hashes):
                        'max_alpha_coverage_fraction': 0.001, 'constant_alpha_max_error': 0}
     require(selection['original_quality_policy'] == expected_policy, 'original quality policy differs')
     proofs = {normalized(p['logical']): p for p in selection['quality_item_proofs']}
-    require(len(proofs) == 32, 'quality proof coverage differs')
+    require(len(proofs) == expected_count, 'quality proof coverage differs')
     for entry in prepared['entries']:
         name = normalized(entry['logical'])
         require(name in proofs, 'missing selected quality proof')
@@ -173,14 +275,15 @@ def qualified_gate(prepared, old_prepared, hashes):
                 source['decoder_or_encoder_used'] is False, 'unexpected source preparation')
 
 
-def compose(output):
+def compose(output, profile='pilot32', actual_result_sha256=None, actual_index_sha256=None):
+    new_prep_path, actual_root, expected_count, pins = profile_inputs(profile, actual_result_sha256, actual_index_sha256)
     require(not output.exists(), 'new output required; partial outputs cannot be reused')
     require(not subprocess.check_output(['git', '-C', str(ROOT), 'status', '--porcelain'], text=True), 'source must be committed and clean')
     composer_path = next(p for p in PINS if p.name == 'compose-bulk-turnip-native-overlay.py')
     require(sha(composer_path) == PINS[composer_path], 'original composer changed')
     composer = load(composer_path, 'original_native_bulk_composer')
     h = composer.Fingerprints()
-    for path, expected in PINS.items():
+    for path, expected in pins.items():
         require(h.file(path) == expected, 'frozen evidence changed: ' + str(path))
     old_comp = read(OLD / 'native-overlay/composition.json')
     old_pack = read(OLD / 'native-pack/native-pack.json')
@@ -198,14 +301,19 @@ def compose(output):
     ready = composer.producer_gate.source_ready_gate(arg('producer-source-ready'),
         old_comp['producer_identity_lineage']['current_source_ready_sha256'], PRODUCER, acceptance, h)
     old_prepared = read(OLD_PREP)
-    new_prepared = read(NEW_PREP)
-    qualified_gate(new_prepared, old_prepared, h)
+    new_prepared = read(new_prep_path)
+    qualified_gate(new_prepared, old_prepared, h, expected_count)
     old_coverage, _ = actual_gate(composer, DATA / '.local/logs/native-astc-linear-bulk-q-all6217-v1', old_prepared, OLD_PREP, ready, acceptance, h)
-    new_coverage, query = actual_gate(composer, ACTUAL, new_prepared, NEW_PREP, ready, acceptance, h)
+    new_coverage, query = actual_gate(composer, actual_root, new_prepared, new_prep_path, ready, acceptance, h)
     old_specs_path = OLD / 'entries.json'
     require(h.file(old_specs_path) == '0ebee0cef3dcc3543651baa957d5eaa582b28bfb11d2ef68dde00f5b1b589b69', 'old ordered specifications changed')
     old_specs = read(old_specs_path)
-    names, replacements, specs = ordered_substitution(old_prepared['entries'], new_prepared['entries'], old_specs, new_coverage)
+    allocation_report = None
+    selected_entries = new_prepared['entries']
+    if profile == 'qualified-full2838-v1':
+        selected_entries, allocation_report = allocation_selection(new_prepared, old_prepared, old_pack, new_coverage, h)
+        require(selected_entries, 'no qualified actual allocation/source benefit; keep original family')
+    names, replacements, specs = ordered_substitution(old_prepared['entries'], selected_entries, old_specs, new_coverage)
     require(names == [normalized(d['logical']) for d in old_pack['entries']], 'old prepared/family order differs')
     for entry, spec in zip(old_prepared['entries'], old_specs):
         require(Path(spec['baked']).resolve() == Path(old_coverage[entry['id']]['baked']) and
@@ -214,6 +322,7 @@ def compose(output):
     require(h.file(packer_path) == PACKER_SHA == old_pack['tool_sha256'], 'original strict packer changed')
     packer = load(packer_path, 'original_strict_native_packer')
     output.mkdir(parents=True)
+    if allocation_report is not None: write(output / 'allocation-selection.json', allocation_report)
     entries_path = output / 'entries.json'
     write(entries_path, specs)
     pack_command = [sys.executable, str(packer_path), '--entries', str(entries_path),
@@ -250,6 +359,8 @@ def compose(output):
     archive = prebuilt / archive_name
     (inputs / 'data' / archive_name).symlink_to(archive)
     updated, entry_proofs = {}, []
+    allocation_rows = ({normalized(row['logical']): row for row in allocation_report['entries']}
+                       if allocation_report is not None else {})
     with archive.open('wb') as stream, (prebuilt / 'pack_index.tsv').open('w') as index:
         index.write('# pack\t' + archive_name + '\n')
         for ordinal, (name, spec, detail, old_detail) in enumerate(zip(names, specs, record['entries'], old_pack['entries'])):
@@ -261,7 +372,13 @@ def compose(output):
                 preserved_entry(old_detail, detail, old_table, table, ordinal, len(names))
                 require(descriptor == old_cache[cache_map[name]], 'unselected descriptor/thumbnail changed')
             else:
-                require(detail['id'] == old_detail['id'] == ordinal + 1 and detail['image_size'] < old_detail['image_size'], 'replacement family ID/byte reduction differs')
+                require(detail['id'] == old_detail['id'] == ordinal + 1 and
+                        (detail['image_size'] < old_detail['image_size'] if profile == 'pilot32' else
+                         detail['image_size'] <= old_detail['image_size']), 'replacement family ID/allocation selection differs')
+                if allocation_report is not None:
+                    decision = allocation_rows[name]
+                    require(decision['retain_ASTC6'] is True and detail['image_size'] == decision['new_actual_native_bytes'],
+                            'strict packer differs from authenticated allocation decision')
                 require(descriptor == {**read(spec['source'])['source_descriptor'], 'layoutData': old_cache[cache_map[name]]['layoutData']}, 'selected descriptor beyond approved ASTC6 and original family marker')
                 patched[cache_map[name]] = descriptor
                 entry_proofs.append({'id': ordinal + 1, 'logical': name, 'old_native_bytes': old_detail['image_size'],
@@ -275,7 +392,7 @@ def compose(output):
             key, encoded, decoded = result
             index.write(f'{name}\t{key.hex()}\t{encoded}\t{decoded}\n')
             composer.read_indexed(inputs, manifest[name], {'ekey': key.hex(), 'encoded_bytes': encoded, 'encoding': manifest[name][8]}, texture)
-    require(len(entry_proofs) == 32 and all(a == b for a, b in zip(old_cache, patched) if normalized(a['filename']) not in replacements), 'unselected cache changed')
+    require(len(entry_proofs) == len(selected_entries) and all(a == b for a, b in zip(old_cache, patched) if normalized(a['filename']) not in replacements), 'unselected cache changed')
     files = out / 'files'
     files.mkdir()
     cache_path = files / 'cache'
@@ -289,9 +406,9 @@ def compose(output):
     generated = {str(p.relative_to(output)): sha(p) for p in output.rglob('*') if p.is_file() and not p.is_symlink()}
     h.file(Path(__file__))
     result = {'schema': 1, 'complete': True, 'source_revision': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip(),
-        'source_fingerprints': h.finish(), 'entry_count': 6217, 'replaced_entries': 32, 'unchanged_native_entries': 6185,
+        'source_fingerprints': h.finish(), 'entry_count': 6217, 'replaced_entries': len(selected_entries), 'unchanged_native_entries': 6217-len(selected_entries),
         'family_ID_order_and_serialized_names_preserved': True, 'unselected_table_recipe_family_texture_descriptor_thumbnail_exact': True,
-        'cache_entries': 31072, 'unchanged_cache_entries': 31040, 'selected_quality_approved_ASTC6_thumbnails_exact': True,
+        'cache_entries': 31072, 'unchanged_cache_entries': 31072-len(selected_entries), 'selected_quality_approved_ASTC6_thumbnails_exact': True,
         'old_native_payload_bytes': old_comp['native_payload_bytes'], 'native_payload_bytes': sum(d['image_size'] for d in record['entries']),
         'old_selected_native_bytes': sum(p['old_native_bytes'] for p in entry_proofs), 'selected_native_bytes': sum(p['native_bytes'] for p in entry_proofs),
         'native_table_sha256': sha(output / 'native-pack/native-layouts.bin'), 'native_table_bytes': len(table), 'native_pack_content_sha256': record['pack_content_sha256'],
@@ -302,6 +419,11 @@ def compose(output):
         'game_binary_modified': False, 'device_access': False, 'game_modules_executed': False, 'game_acceptance': False, 'deploy_allowed': False,
         'remaining': ['actual ASTC6 new-source original NVN consumer qualification', 'actual game Builder/storage/streaming/visual qualification',
                       'official tool profiles for PSS/DRAM/heat/6GB working set; payload counts are not these measurements']}
+    if allocation_report is not None:
+        result.update(profile=profile, allocation_selection={'path': str(output / 'allocation-selection.json'),
+            'sha256': sha(output / 'allocation-selection.json')},
+            actual_candidate_count=expected_count, actual_allocation_summary=allocation_report['counts'],
+            actual_result_sha256=actual_result_sha256, actual_receipt_index_sha256=actual_index_sha256)
     write(out / 'composition.json', result)
     return result
 
@@ -309,8 +431,11 @@ def compose(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--profile', choices=['pilot32', 'qualified-full2838-v1'], default='pilot32')
+    parser.add_argument('--actual-result-sha256')
+    parser.add_argument('--actual-index-sha256')
     args = parser.parse_args()
-    result = compose(args.output.resolve())
+    result = compose(args.output.resolve(), args.profile, args.actual_result_sha256, args.actual_index_sha256)
     print(json.dumps({k: result[k] for k in ['complete', 'entry_count', 'replaced_entries', 'native_payload_bytes', 'native_table_sha256', 'deploy_allowed']}))
 
 
