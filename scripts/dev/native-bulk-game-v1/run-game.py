@@ -260,6 +260,12 @@ def proof(path, digest):
         candidate.validate(p, pinned, read, require)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
+    if p['phases'][1]['composition']['sha256'] == '8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3':
+        require('qualified_native_asset_validation' in p, 'mixed32 assets require explicit bounded resource qualification')
+    if 'qualified_native_asset_validation' in p:
+        asset = module('source_pinned_qualified_native_asset_gate', HERE / 'qualified_asset_gate.py')
+        p['_asset_validation'] = asset.validate(p, pinned, read, require)
+        p['controller_sources'][str(HERE / 'qualified_asset_gate.py')] = sha(HERE / 'qualified_asset_gate.py')
     return p
 
 
@@ -486,6 +492,9 @@ def phase_game(dev, out, phase, p, token):
                       'Native-only sustained original-input route, sparse official Perfetto; '
                       'no combat or whole-game acceptance implied' if p.get('sustained_play') else
                       'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance')
+        if p.get('_asset_validation'):
+            d['qualified_native_asset_validation'] = p['_asset_validation']
+            d['scope'] = p['_asset_validation']['scope']
         save()
     finally:
         if launcher is not None and launcher.poll() is None:
@@ -573,6 +582,10 @@ def main():
             'default': 'OFF unless source-pinned official_gpu_tools is supplied',
             'scope': 'Global hardware metrics, no exclusive draw/pass attribution'}
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['official_gpu_tools'].values()})
+    if p.get('_asset_validation'):
+        plan.update(phases=['native6217-with32-qualified-ASTC6-replacements'],
+                    qualified_native_asset_validation=p['_asset_validation'],
+                    scope=p['_asset_validation']['scope'])
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -691,7 +704,9 @@ def main():
                 require(phase_result.get('sustained_play', {}).get('continuous_pass') is True,
                         '30min sustained route did not complete')
         owner.unlink()
-        d['stage'] = ('native-original-game-short-candidate-validation-complete'
+        d['stage'] = ('qualified-native-ASTC6-original-game-resource-validation-complete'
+                      if p.get('_asset_validation') else
+                      'native-original-game-short-candidate-validation-complete'
                       if p.get('native_candidate_validation') else
                       'native-original-game-uninterrupted-sustained-route-complete'
                       if p.get('sustained_play') else
