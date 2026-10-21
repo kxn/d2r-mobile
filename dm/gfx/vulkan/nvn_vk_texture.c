@@ -2297,6 +2297,11 @@ static vk_texture_submission *texture_state;
 static atomic_int texture_binding_requested,texture_binding_active;
 static int texture_binding_reference;
 static uint64_t texture_binding_hits,texture_prepare_hits,texture_binding_misses;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Owned functional branch coverage only; absent from the Android application.
+static uint64_t native_sampled_preflight_noops;
+uint64_t vk_test_native_sampled_preflight_noops(void) {return native_sampled_preflight_noops;}
+#endif
 static atomic_uint_fast64_t published_binding_hits,published_prepare_hits,published_binding_misses;
 void vk_texture_binding_reference(int reference) { atomic_store(&texture_binding_requested,!!reference); }
 void vk_texture_binding_stats(uint64_t *views,uint64_t *prepares,uint64_t *misses,int *reference) {
@@ -2974,6 +2979,21 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
     // Preparation can itself emit image accesses or re-enter pass-end replay.
     // Retain this owner for the current serial before any such callback.
     known->last_use=vk_recording_serial();
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    // This imported recipe has no replacement or layout work for an ordinary
+    // sampled view. Native publications and all consumers stay in GENERAL;
+    // attachment alias classification cannot make it more conservative. Keep
+    // deferred mip drains and format/storage preparation on the original path.
+    // Actual CPU publication, native/Buffer alias dependencies, uploads and
+    // consumer lifetime accounting still run at the ordinary live consumers.
+    if(known->native_entry && known->layout==VK_IMAGE_LAYOUT_GENERAL && !storage && !vk_mip_clear_pending() &&
+        !(has_view && view.set_format && view.format!=known->tex.d.format)) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      native_sampled_preflight_noops++;
+#endif
+      return;
+    }
+#endif
     // The only callback before the final physical operation is deferred-mip
     // access below. With no pending transaction it is an exact no-op (it does
     // not inspect V.nvn_barrier); alias classification is also pure. Borrow
@@ -3120,7 +3140,13 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   // are not feedback hazards for a dispatch. Its real storage aliases have
   // already pinned GENERAL during preparation of all image descriptors.
   if(!layout || storage || (stage!=VK_SHADER_STAGE_FRAGMENT_BIT && !compute_read) ||
-      (!compute_read && !layout_reference && sampled_target_alias(&i->tex,v))) {
+      (!compute_read && !layout_reference &&
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+       // Native layouts are unconditionally GENERAL, even for feedback. The
+       // real per-consumer alias dependency remains in image_dependencies.
+       (!i->native_entry || i->layout!=VK_IMAGE_LAYOUT_GENERAL) &&
+#endif
+       sampled_target_alias(&i->tex,v))) {
     VkPipelineStageFlags stages=image_shader_stages(stage);
     if(stages) image_general_access(i,stages,VK_ACCESS_SHADER_READ_BIT|
         (storage?VK_ACCESS_SHADER_WRITE_BIT:0));
