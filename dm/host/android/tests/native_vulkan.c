@@ -1053,6 +1053,16 @@ int dm_vulkan_test_main(void) {
   for (int i = 0; i < 13; i++)
     memset(controls[i], i, sizeof controls[i]);
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_STORE_WALK_FUSION_FIXTURE")) {
+    extern unsigned vk_pass_test_store_walk_begin(void),vk_pass_test_store_walk_end(void);
+    CALL(nvnQueueFinish,&queue);
+    checks+=vk_pass_test_store_walk_begin();
+    store_overwrite_test(controls[0],controls[9],NVN_FORMAT_DEPTH32F_STENCIL8);
+    store_overwrite_test(controls[0],controls[9],NVN_FORMAT_DEPTH24_STENCIL8);
+    checks+=vk_pass_test_store_walk_end();
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"submission-store-walk-fusion\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
   if(getenv("DM_POOL_GEOMETRY_POLICY_FIXTURE")) {
     pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);
     CHECK(vk_validation_error_count()==0);
