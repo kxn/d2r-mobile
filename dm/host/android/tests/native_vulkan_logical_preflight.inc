@@ -107,6 +107,9 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     vk_internal_wait(vk_internal_commit());
     int active_reference;vk_texture_binding_stats(&hits,&prepares,&misses,&active_reference);
     CHECK(active_reference==(int)reference);CHECK(prepares-prepares_before==(reference?0:1));
+    // Make the first real draw resolve its logical value instead of being
+    // satisfied solely by the physical recipe prepared above.
+    mtl_reg_tex(ordinary,cpu,NULL);
     mtl_sub_begin();logical_preflight_draw(&textures[0],ordinary);vk_internal_wait(vk_internal_commit());
     logical_preflight_pixels(&textures[0],(uint8_t[]){128,128,128,255},0);
     // GPU then CPU changes at the exact same logical descriptor must still
