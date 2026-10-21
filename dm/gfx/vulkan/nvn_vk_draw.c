@@ -1508,7 +1508,8 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
     if(kind==1 && reg>=3 && reg<19) buffer=&S.ubo[0][reg-3];
     if((kind==2||kind==8) && reg>=0 && reg<16)
       buffer=kind==8?&S.ubo[0][reg]:&S.ssbo[0][reg];
-    if(buffer) vk_buffer_vertex_require(buffer->addr,buffer->size);
+    if(buffer && buffer->addr && buffer->size)
+      vk_buffer_vertex_require(buffer->addr,buffer->size);
   }
   // Consecutive attributes often share one complete VBO range. Only reuse
   // the immediately preceding require in this draw; a different range must
@@ -1532,7 +1533,9 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
       previous_vertex_valid=command==V.cmd && serial==vk_recording_serial() && pass==V.passes &&
           epoch==V.buffer_epoch && state==vk_pipeline_state_epoch();
     }
-  if(idx) vk_buffer_vertex_require(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4));
+  // Empty indexed draws bind a valid address but fetch no index bytes.
+  // size==0 remains the distinct unknown-extent VBO contract.
+  if(idx && idx->count) vk_buffer_vertex_require(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4));
   VkDescriptorSet sets[6] = {0};
   if(S.targets.n<0 || S.targets.n>8) die("Vulkan color target count");
   for(int k=0;k<S.targets.n;k++) if(S.targets.color[k])
@@ -1841,7 +1844,10 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
       die("Vulkan 8-bit indices pending");
     vk_buffer *b;
     uint64_t off;
-    if (!vk_pool_address_stage(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4),
+    // Match admission and original Metal: prove the binding address even
+    // when no indices are fetched. The one-byte ledger use is conservative.
+    uint64_t index_bytes=idx->count?(uint64_t)idx->count*(idx->itype==1?2:4):1;
+    if (!vk_pool_address_stage(idx->ibuf,index_bytes,
                   (void **)&b,&off,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT))
       die("Vulkan index buffer missing");
     render_bind_index(j,b->handle,off,

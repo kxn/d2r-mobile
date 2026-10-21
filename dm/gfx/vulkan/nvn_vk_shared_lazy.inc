@@ -35,7 +35,12 @@ static pool_backing_span *shared_lazy_ensure_locked(pool *p,uint64_t offset,uint
   if(p->shared_import_nodes==SHARED_LAZY_NODE_LIMIT ||
       length>SHARED_LAZY_POOL_BYTES-p->shared_import_bytes ||
       total>SHARED_LAZY_GLOBAL_BYTES || length>SHARED_LAZY_GLOBAL_BYTES-total)
-    die("Shared lazy experimental import budget exhausted; candidate incomplete");
+    die("Shared lazy experimental import budget exhausted; candidate incomplete: "
+        "pool=%p size=%llu offset=%llu request=%llu rounded_begin=%llu rounded_end=%llu "
+        "nodes=%u imported=%llu global=%llu",
+        (void *)p->guest,(unsigned long long)p->size,(unsigned long long)offset,
+        (unsigned long long)bytes,(unsigned long long)begin,(unsigned long long)end,
+        p->shared_import_nodes,(unsigned long long)p->shared_import_bytes,(unsigned long long)total);
   if(p->backing_generation==UINT64_MAX)die("Shared lazy backing generation exhausted");
   pool_backing_span *fresh=calloc(1,sizeof *fresh);
   if(!fresh)die("Shared lazy backing node allocation");

@@ -68,6 +68,85 @@ static unsigned lazy_alias_collect_calls;
 static int lazy_alias_collect(void *context,vk_pool_requirement_sink sink,void *out) {
   lazy_alias_collect_calls++;return sink(out,context);
 }
+static PFN_vkCmdDrawIndexed lazy_empty_draw_original;
+static unsigned lazy_empty_draws;
+static void VKAPI_PTR lazy_empty_draw(VkCommandBuffer command,uint32_t count,uint32_t instances,
+    uint32_t first,int32_t base,uint32_t base_instance) {
+  CHECK(!count && instances==1);lazy_empty_draws++;
+  lazy_empty_draw_original(command,count,instances,first,base,base_instance);
+}
+static void shared_lazy_empty_binding_test(void) {
+  enum { W=65536 };
+  vk_state saved=S;NVNmemoryPoolBuilder pb;NVNmemoryPool owned;
+  CALL(nvnMemoryPoolBuilderSetDefaults,&pb);CALL(nvnMemoryPoolBuilderSetDevice,&pb,&device);
+  CALL(nvnMemoryPoolBuilderSetStorage,&pb,bytes,4u<<20);
+  CALL(nvnMemoryPoolBuilderSetFlags,&pb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+  CHECK(CALL(nvnMemoryPoolInitialize,&owned,&pb));
+  NVNtexture target;NVNtextureBuilder tb;CALL(nvnTextureBuilderSetDefaults,&tb);
+  CALL(nvnTextureBuilderSetDevice,&tb,&device);CALL(nvnTextureBuilderSetWidth,&tb,4);
+  CALL(nvnTextureBuilderSetHeight,&tb,4);CALL(nvnTextureBuilderSetFormat,&tb,NVN_FORMAT_RGBA8);
+  CALL(nvnTextureBuilderSetStorage,&tb,&owned,0);CHECK(CALL(nvnTextureInitialize,&target,&tb));
+  uint8_t controls[3][0x880];const unsigned markers[]={12,24,1};NVNprogram programs[2];
+  for(unsigned n=0;n<3;n++)memset(controls[n],markers[n],sizeof controls[n]);
+  for(unsigned n=0;n<2;n++) {
+    NVNshaderData code[]={{.control=controls[n]},{.control=controls[2]}};
+    CHECK(CALL(nvnProgramInitialize,&programs[n],&device));
+    CHECK(CALL(nvnProgramSetShaders,&programs[n],2,code));
+  }
+  dm_guest_write_prepare(bytes+2*W,16);memcpy(bytes+2*W,(float[]){1,0,0,1},16);
+  NVNpolygonState polygon;CALL(nvnPolygonStateSetDefaults,&polygon);CALL(nvnPolygonStateSetCullFace,&polygon,NVN_FACE_NONE);
+  NVNdepthStencilState depth;CALL(nvnDepthStencilStateSetDefaults,&depth);
+  CALL(nvnDepthStencilStateSetDepthTestEnable,&depth,0);CALL(nvnDepthStencilStateSetDepthWriteEnable,&depth,0);
+  CALL(nvnDepthStencilStateSetStencilTestEnable,&depth,0);NVNcolorState color;CALL(nvnColorStateSetDefaults,&color);
+  NVNvertexAttribState attributes[2];for(unsigned n=0;n<2;n++) {
+    CALL(nvnVertexAttribStateSetDefaults,&attributes[n]);CALL(nvnVertexAttribStateSetStreamIndex,&attributes[n],0);
+    CALL(nvnVertexAttribStateSetFormat,&attributes[n],n?NVN_FORMAT_RG32F:NVN_FORMAT_RGB32F,n?12:0);
+  }
+  NVNvertexStreamState stream;CALL(nvnVertexStreamStateSetDefaults,&stream);CALL(nvnVertexStreamStateSetStride,&stream,20);
+  mtl_sub_begin();S=(vk_state){.depth_range={0,1},.chmask={~0u}};
+  S.targets=(p_set_rt){.n=1,.color={(const tex_t *)&target}};
+  S.poly=*(const poly_st *)&polygon;S.ds=*(const ds_st *)&depth;S.color=*(const color_st *)&color;
+  for(unsigned n=0;n<2;n++)S.attr[n]=*(const va_st *)&attributes[n];
+  S.stream[0]=*(const vs_st *)&stream;S.vertex[0]=(NVNbufferRange){(uintptr_t)bytes+W,80};
+  S.ubo[1][0]=(p_bind_buf){.addr=(uintptr_t)bytes+2*W,.size=16};
+  // These are real reflected VS UBO/SSBO consumers with a valid nonzero
+  // address and zero size, not unknown-extent vertex streams.
+  S.ubo[0][0]=(p_bind_buf){.addr=(uintptr_t)bytes+3*W,.size=0};
+  S.ssbo[0][0]=(p_bind_buf){.addr=(uintptr_t)bytes+4*W,.size=0};
+  S.has_viewport=S.has_scissor=1;S.viewport[0][2]=S.viewport[0][3]=4;S.scissor=(p_scissor){0,0,4,4};
+  p_clear_tex clear={.tex=(const tex_t *)&target,.r={0,0,0,4,4,1},.mask=15,.c.f={.25f,.5f,.75f,1}};
+  vk_texture_clear(&clear);
+  vk_pool_span_info span;lazy_empty_draw_original=vkCmdDrawIndexed;vkCmdDrawIndexed=lazy_empty_draw;
+  for(unsigned n=0;n<2;n++) {
+    S.program=(const prog_t *)&programs[n];vk_pipeline_state_changed();
+    CHECK(!vk_pool_shared_materialized((uintptr_t)bytes+(5+n)*W,1));
+    p_draw_idx empty={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,
+      .itype=n?NVN_INDEX_TYPE_UNSIGNED_INT:NVN_INDEX_TYPE_UNSIGNED_SHORT,
+      .count=0,.instances=1,.ibuf=(uintptr_t)bytes+(5+n)*W};
+#ifdef DM_VULKAN_VERTEX_REQUIRE_WRAP
+    vertex_req_observed_program=(const prog_t *)&programs[n];vertex_req_calls=0;
+#endif
+    vk_draw(NULL,&empty);
+#ifdef DM_VULKAN_VERTEX_REQUIRE_WRAP
+    vertex_req_observed_program=NULL;
+    CHECK(vertex_req_calls==(n?0:1));
+    if(!n)CHECK(vertex_req_addresses[0]==S.vertex[0].address && vertex_req_sizes[0]==80);
+#endif
+    CHECK(lazy_empty_draws==n+1);
+    CHECK(vk_pool_span_query(empty.ibuf,1,&span)==VK_POOL_SPAN_SINGLE);
+    CHECK(span.logical_begin==(5+n)*W && span.logical_end==(6+n)*W);
+    CHECK(!vk_pool_shared_materialized((uintptr_t)bytes+3*W,1));
+    CHECK(!vk_pool_shared_materialized((uintptr_t)bytes+4*W,1));
+    CHECK(!vk_pool_shared_materialized((uintptr_t)bytes+7*W,1));
+  }
+  vkCmdDrawIndexed=lazy_empty_draw_original;vk_internal_wait(vk_internal_commit());
+  uint8_t pixels[64];NVNcopyRegion region={0,0,0,4,4,1};CALL(nvnTextureReadTexels,&target,NULL,&region,pixels);
+  for(unsigned n=0;n<16;n++)CHECK(!memcmp(pixels+n*4,(uint8_t[]){64,128,191,255},4));
+  S=saved;vk_pipeline_state_changed();for(unsigned n=0;n<2;n++)CALL(nvnProgramFinalize,&programs[n]);
+  CALL(nvnTextureFinalize,&target);CALL(nvnMemoryPoolFinalize,&owned);
+  CHECK(!vk_validation_error_count());
+}
+
 static void shared_lazy_alias_gpu_test(void) {
   enum {W=65536,SIZE=64};
   CHECK(vk_pool_shared_mode() && V.options.pool_window_bytes==W);
@@ -261,7 +340,8 @@ static void shared_lazy_alias_gpu_test(void) {
   vkCmdPipelineBarrier=lazy_alias_barrier_original;vkDestroyBuffer=lazy_alias_destroy_original;
   if(gate)vkDestroySemaphore(V.device,gate,NULL);
   CHECK(vk_pool_span_query((uintptr_t)address,SIZE,&range)==VK_POOL_SPAN_NONE);
+  shared_lazy_empty_binding_test();
   CHECK(!vk_validation_error_count());
-  printf("{\"test\":\"shared-lazy-coherent-alias\",\"checks\":%u,\"result\":\"passed\",\"T2T_unbacked_copy_collect_then_original_observation\":true,\"ASTC_metadata_only_not_GPU\":true,\"generic_admission_before_observation\":true,\"draw_only_demand_admission\":true,\"invalid_batch_unchanged_coverage\":true,\"actual_GPU_bidirectional_bytes\":true,\"warm_proof_global\":true,\"old_writer_pending_during_cover_import\":%s,\"unknown_visibility_fallback\":true,\"old_physical_writer_after_cover\":true,\"HOST_publication_bytes\":true,\"nested_logical_scopes\":true,\"address_only_remaining_extent_and_ledger\":true,\"address_only_RAW_precise_vertex_dependency\":true,\"old_buffers_retained_through_completion\":true,\"actual_borrow_to_commit_pin_upgrade\":true,\"pool_close_destroyed_once\":true,\"game_modules_executed\":false}\n",checks,pending_gate?"true":"false");
+  printf("{\"test\":\"shared-lazy-coherent-alias\",\"checks\":%u,\"result\":\"passed\",\"T2T_unbacked_copy_collect_then_original_observation\":true,\"ASTC_metadata_only_not_GPU\":true,\"generic_admission_before_observation\":true,\"draw_only_demand_admission\":true,\"invalid_batch_unchanged_coverage\":true,\"actual_GPU_bidirectional_bytes\":true,\"warm_proof_global\":true,\"old_writer_pending_during_cover_import\":%s,\"unknown_visibility_fallback\":true,\"old_physical_writer_after_cover\":true,\"HOST_publication_bytes\":true,\"nested_logical_scopes\":true,\"address_only_remaining_extent_and_ledger\":true,\"address_only_RAW_precise_vertex_dependency\":true,\"old_buffers_retained_through_completion\":true,\"actual_borrow_to_commit_pin_upgrade\":true,\"pool_close_destroyed_once\":true,\"empty_index16_32_finite_address_proof\":true,\"zero_VS_UBO_SSBO_not_address_only_VBO\":true,\"empty_draw_GPU_target_preserved\":true,\"game_modules_executed\":false}\n",checks,pending_gate?"true":"false");
 }
 #endif
