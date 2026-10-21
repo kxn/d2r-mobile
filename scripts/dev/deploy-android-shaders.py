@@ -33,6 +33,25 @@ def require(value, message):
         raise SystemExit(message)
 
 
+def verify_driver_artifacts(cache, key, reflection):
+    """Optional DSP1 cannot authorize an unverified range or alter DDK1."""
+    from dmsh_driver_keys import build_with_spans, SUFFIXES
+    driver_blob, driver_proof, span_blob, span_proof = build_with_spans(
+        {suffix:(cache/(key+'.'+suffix)).read_bytes() for suffix in SUFFIXES
+         if (cache/(key+'.'+suffix)).is_file()},reflection.get('texel_storage_alternative'))
+    require((cache/(key+'.dkey')).read_bytes()==driver_blob and
+            reflection.get('driver_keys')=={'sha256':hashlib.sha256(driver_blob).hexdigest(),'proof':driver_proof},
+            'driver read schema regeneration mismatch: '+key)
+    span=cache/(key+'.dspan')
+    if 'driver_spans' in reflection:
+        require(span.is_file() and span.read_bytes()==span_blob and
+                reflection['driver_spans']=={'sha256':hashlib.sha256(span_blob).hexdigest(),'proof':span_proof},
+                'driver span regeneration mismatch: '+key)
+        return True
+    require(not span.exists(), 'undeclared driver span: '+key)
+    return False
+
+
 def verify_quad_traits(flags, stage, reflection, options, key):
     """Bind new wire traits to the explicit source profile and actual reflection.
 
@@ -196,6 +215,8 @@ def main():
     specialization_keys=set();texel_alternative_keys=set();predicate_keys=set()
     for key in keys-builtin_keys:
         reflection=json.loads((cache/(key+'.json')).read_text())
+        if 'driver_spans' in reflection:
+            expected_files.add(key+'.dspan')
         if reflection.get('pixel_local',{}).get('sha256'):
             expected_files.add(key+'.plocal.json')
         if reflection.get('pixel_local_runtime',{}).get('sha256'):
@@ -255,13 +276,7 @@ def main():
                 # Recompute the complete proof from the actual shipped modules,
                 # not just its self-reported hash. Optional runtime failures keep
                 # full keys, but declared deployment artifacts must be exact.
-                from dmsh_driver_keys import build as build_driver_keys, SUFFIXES
-                driver_blob,driver_proof=build_driver_keys(
-                    {suffix:(cache/(key+'.'+suffix)).read_bytes() for suffix in SUFFIXES
-                     if (cache/(key+'.'+suffix)).is_file()},reflection.get('texel_storage_alternative'))
-                require((cache/(key+'.dkey')).read_bytes()==driver_blob and
-                        reflection.get('driver_keys')=={'sha256':hashlib.sha256(driver_blob).hexdigest(),'proof':driver_proof},
-                        'driver read schema regeneration mismatch: '+key)
+                verify_driver_artifacts(cache,key,reflection)
                 if key in specialization_keys:
                     proof=reflection['uniform_specialization'];recipe=(cache/(key+'.spec')).read_bytes()
                     require(sha(cache/(key+'.spec'))==proof['specialization_sha256'] and
