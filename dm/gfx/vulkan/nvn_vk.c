@@ -6,6 +6,9 @@
 // mapped mirrors; upload only CPU-modified pages and publish GPU writes only
 // after fence completion.
 #include "../nvn/nvn_dirty.h"
+#ifdef DM_VULKAN_SHARED_POOLS
+#include "nvn_vk_shared_import.h"
+#endif
 #include "nvn_vk_shader.h"
 #include "nvn_vk_plan.h"
 #include "nvn_vk_window.h"
@@ -70,6 +73,12 @@ typedef struct pool {
   int cpu_copy_requires_gpu,cpu_authority_tracking;
 #ifdef DM_VULKAN_SHARED_POOLS
   int shared,shared_closing;
+  // Experimental coherent imports: canonical nodes stay disjoint; immutable
+  // covering aliases never replace an earlier VkBuffer or its local origin.
+  int shared_lazy_eligible;
+  pool_backing_span *shared_covers;
+  uint64_t shared_import_bytes,shared_unique_bytes;
+  unsigned shared_import_nodes,shared_cover_nodes;
   VkMemoryPropertyFlags shared_properties;
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   _Atomic unsigned native_image_references;
@@ -99,6 +108,12 @@ static _Atomic unsigned legacy_encoding_guard_count;
 static _Atomic uint64_t legacy_encoding_low=UINT64_MAX,legacy_encoding_high;
 static uint64_t shared_alignment,shared_window_bytes;
 static int shared_union_visibility_pending;
+static int shared_lazy_requested,shared_lazy_active;
+static _Atomic uint64_t shared_lazy_import_bytes,shared_lazy_unique_bytes;
+static _Atomic uint64_t shared_lazy_import_nodes,shared_lazy_cover_nodes;
+static pool_backing_span *shared_lazy_ensure_locked(pool *,uint64_t,uint64_t);
+static void shared_lazy_pin_recorded(pool *);
+static void shared_lazy_pin_locked(pool *);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 static void native_allocation_cache_locked(pool *,uint64_t,uint64_t,int);
 static void native_allocation_collect_locked(pool *);
@@ -298,6 +313,11 @@ void vk_pool_mirror_stats(uint64_t *registered,uint64_t *backed,uint64_t *count,
   pthread_mutex_lock(&V.resources);
   for(pool *p=pools;p;p=p->next) {
     *registered+=p->size;(*count)++;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared_lazy_eligible) {
+      *backed+=p->shared_unique_bytes;if(p->shared_import_nodes)(*materialized)++;
+    } else
+#endif
     if(p->backings) { *backed+=pool_spans_bytes(p);(*materialized)++; }
   }
   pthread_mutex_unlock(&V.resources);
@@ -943,6 +963,9 @@ static pool_gpu_access *record_pool_use(pool *p,uint64_t offset,uint64_t size,
     p->references++;
   }
   record_pool_range(use,offset,size,stages,initial_contents);
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared_lazy_eligible)shared_lazy_pin_recorded(p);
+#endif
   return use;
 }
 static void record_pool_access(pool *p,uint64_t offset,uint64_t size,VkPipelineStageFlags stages) {
@@ -1861,6 +1884,17 @@ static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, in
   if(!p->shared)
 #endif
   if(V.options.pool_mirror_reference) pool_materialize(p);
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_lazy_active) {
+    p->shared_lazy_eligible=p->shared && known &&
+        !((uintptr_t)mem%shared_alignment) && !(size%shared_alignment) &&
+        shared_import_host_pointer((uintptr_t)mem,size)!=NULL;
+    // The opt-in mode has one immutable all-Pool provenance contract. Do
+    // not publish a mixed legacy Pool after an empty lazy scope has begun.
+    // Rejection is an explicit limitation of this experiment, not fallback.
+    if(!p->shared_lazy_eligible)die("Shared lazy candidate unsupported Pool registration: complete committed RW alias required");
+  }
+#endif
   p->next = pools;
   pools = p;
   uint64_t prior_identity=atomic_fetch_add_explicit(&pool_registry_epoch,1,memory_order_release);
@@ -1979,6 +2013,15 @@ void mtl_pool_del(const void *mem) {
   native_allocation_collect_locked(p);
   if(p->native_allocations)die("Native allocations survived Pool close");
 #endif
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared_lazy_eligible) {
+    atomic_fetch_sub(&shared_lazy_import_bytes,p->shared_import_bytes);
+    atomic_fetch_sub(&shared_lazy_unique_bytes,p->shared_unique_bytes);
+    atomic_fetch_sub(&shared_lazy_import_nodes,p->shared_import_nodes);
+    atomic_fetch_sub(&shared_lazy_cover_nodes,p->shared_cover_nodes);
+    pool_span_chain_destroy(p,p->shared_covers);p->shared_covers=NULL;
+  }
+#endif
   pool_spans_destroy(p);
 #ifdef DM_VULKAN_SHARED_POOLS
   while(p->encoding_guards) {legacy_encoding_range *g=p->encoding_guards;p->encoding_guards=g->next;
@@ -2007,7 +2050,11 @@ int vk_pool_span_query(uint64_t addr,uint64_t size,vk_pool_span_info *out) {
     value.pool_identity=p->identity;value.pool_base=(uintptr_t)p->guest;value.pool_size=p->size;
     value.logical_begin=addr-value.pool_base;value.logical_end=value.logical_begin+size;value.size=size;
     pool_span_piece span;
-    if(!p->backings) status=VK_POOL_SPAN_UNBACKED;
+    if(!p->backings
+#ifdef DM_VULKAN_SHARED_POOLS
+       && !p->shared_covers
+#endif
+       ) status=VK_POOL_SPAN_UNBACKED;
     else if(!pool_span_resolve_locked(p,value.logical_begin,size,&span)) status=VK_POOL_SPAN_CROSSING;
     else {
       status=VK_POOL_SPAN_SINGLE;value.logical_begin=span.backing->begin;value.logical_end=span.backing->end;
@@ -2229,6 +2276,9 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       if(!pool_span_retained_hint(p,r->pool_lookups[k].span_hint,logical,len,&span) &&
           !pool_recording_span_hint(r,p,logical,len,&span)) {
         if(!pool_span_resolve(p,logical,len,&span)) {
+#ifdef DM_VULKAN_SHARED_POOLS
+          if(p->shared_lazy_eligible)goto pool_address_locked_miss;
+#endif
           if(guarded)
             die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
                 (unsigned long long)addr,(unsigned long long)len,pool_operation_depth);
@@ -2238,6 +2288,9 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
         remember_span=1;
       }
       r->pool_lookups[k].span_hint=span.backing;
+#ifdef DM_VULKAN_SHARED_POOLS
+      if(p->shared_lazy_eligible)shared_lazy_pin_recorded(p);
+#endif
       pool_initialize_range(p,logical,len);
       *buf=&span.backing->buffer;*off=span.offset;
       record_pool_range(r->pool_lookups[k].use,logical,len,stages,initial_contents);
@@ -2245,14 +2298,31 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       pool_lookup_hits++;return 1;
     }
   }
+#ifdef DM_VULKAN_SHARED_POOLS
+pool_address_locked_miss:
+#endif
   pthread_mutex_lock(&V.resources);
   pool *p = pool_find(addr, len);
   // The former admission query returned unknown guarded ranges before the
   // slow counter. Keep that counter's meaning while doing only one lookup.
   if(p || !guarded)pool_lookup_slow++;
   if (p) {
-    uint64_t logical=addr-(uintptr_t)p->guest;
+    uint64_t logical=addr-(uintptr_t)p->guest,use_logical=logical,use_bytes=len;
     pool_span_piece span;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared_lazy_eligible) {
+      // Address-only VBOs have no finite declared fetch bound. Preserve the
+      // original conservative remainder-of-Pool contract, never truncate it
+      // to one window. Empty tail bindings keep a legal end offset.
+      if(!len) {
+        use_logical=logical<p->size?logical:p->size-1;
+        use_bytes=p->size-use_logical;
+      }
+      pool_backing_span *b=shared_lazy_ensure_locked(p,use_logical,use_bytes);
+      span=(pool_span_piece){b,logical,logical-b->begin,len};
+      pool_materialize_metadata(p);
+    } else
+#endif
     if(guarded && p->backings) {
       if(!pool_span_resolve_locked(p,logical,len,&span))
         die("Vulkan missing operation pool admission address=%#llx bytes=%llu depth=%u",
@@ -2270,7 +2340,7 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
     }
     pool_initialize_range(p,logical,len);
     *buf=&span.backing->buffer;*off=span.offset;
-    pool_gpu_access *use=record_pool_use(p,logical,len,stages,initial_contents);
+    pool_gpu_access *use=record_pool_use(p,use_logical,use_bytes,stages,initial_contents);
     if(r && use && !r->pool_lookup_reference) {
       pool_recording_hints_refresh(r);
       unsigned k=r->pool_lookup_next++%8;
@@ -2469,6 +2539,12 @@ static int buffer_history_owner(unsigned index,const pool *p,const pool_backing_
 static int buffer_named_dependencies(VkCommandBuffer command,const vk_buffer_use *uses,unsigned count,
     VkPipelineStageFlags sources,VkPipelineStageFlags destination,VkAccessFlags writes,
     VkAccessFlags access,VkPipelineStageFlags visible_producers) {
+  // A producer may still use an older overlapping import. Address-only
+  // producer publication cannot prove which VkBuffer executed that write.
+  // Disable the named visibility proof FROM STARTUP, before any alias exists.
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_lazy_active)return 0;
+#endif
   if(atomic_load(&buffer_memory_reference) || vertex_buffer_write_overflow || !recording_resources)
     return 0;
   pool *owners[16];pool_backing_span *backings[16];unsigned owners_count=0;
@@ -2621,6 +2697,19 @@ void vk_buffer_producers_visible(VkPipelineStageFlags producers,VkPipelineStageF
   buffer_common_visible=common;
 }
 void vk_buffer_vertex_require(uint64_t address,uint64_t size) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_lazy_active && address && !size) {
+    // An address-only VBO can consume any remaining registered Pool byte.
+    // Resolve the conservative logical extent under the registry lock, then
+    // run the ORIGINAL dependency path outside it (it may end/replay a pass).
+    pthread_mutex_lock(&V.resources);pool *p=pool_find(address,0);
+    if(p && p->shared_lazy_eligible) {
+      shared_lazy_pin_locked(p);
+      size=p->size-(address-(uintptr_t)p->guest);
+    }
+    pthread_mutex_unlock(&V.resources);
+  }
+#endif
   vk_buffer_shader_read(address,size,
       VK_PIPELINE_STAGE_VERTEX_INPUT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT);
 }
@@ -4054,7 +4143,13 @@ static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *kn
 #else
   if(native_token)die("Native image writeback unavailable");
 #endif
-    pool_materialize(p);
+  {
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared_lazy_eligible)shared_lazy_ensure_locked(p,dst-(uintptr_t)p->guest,size);
+    else
+#endif
+      pool_materialize(p);
+  }
   uint64_t off = dst - (uintptr_t)p->guest;
   pool_initialize_range(p,off,size);
   if(actual_write)pool_cpu_written(p,off,size);

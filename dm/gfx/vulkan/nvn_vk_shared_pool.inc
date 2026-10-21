@@ -6,7 +6,7 @@
 extern int dm_guest_heap_probe_views_create(size_t,size_t,dm_guest_heap_probe_views *) __attribute__((weak));
 extern void dm_guest_heap_probe_views_destroy(dm_guest_heap_probe_views *) __attribute__((weak));
 static int shared_pool_has_imports_locked(const pool *p) {
-  return p->backings!=NULL
+  return p->backings!=NULL || p->shared_covers!=NULL
 #ifdef DM_VULKAN_NATIVE_RESOURCES
       || p->native_allocations!=NULL
 #endif
@@ -91,6 +91,20 @@ static void shared_cache(vk_buffer *b,uint64_t offset,uint64_t bytes,int invalid
 // cover untouched holes and visits only their actual imported intersections.
 static void shared_pool_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int invalidate,int complete) {
   if(!p->shared || offset>p->size || bytes>p->size-offset)die("Shared cache logical range");
+  if(p->shared_lazy_eligible) {
+    if(!(p->shared_properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))die("Shared lazy cache must be coherent");
+    if(complete) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+      if(!shared_pool_storage_covered_locked(p,offset,bytes))die("Shared lazy cache range lacks physical union coverage");
+#else
+      pool_span_iter it;pool_span_piece piece;
+      if(!pool_span_iter_begin(p,offset,bytes,&it))die("Shared lazy cache union range");
+      int next;while((next=pool_span_iter_next(&it,&piece))==1){}
+      if(next<0)die("Shared lazy cache range lacks physical union coverage");
+#endif
+    }
+    return; // coherent memory only; no per-import cache calls
+  }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   native_allocation_cache_locked(p,offset,bytes,invalidate);
 #endif
@@ -110,6 +124,22 @@ static void shared_pool_cache_locked(pool *p,uint64_t offset,uint64_t bytes,int 
   if(complete && at!=end)die("Shared cache range not imported");
 }
 static void shared_pool_host_barrier(pool *p,uint64_t offset,uint64_t bytes,VkPipelineStageFlags producers) {
+  if(shared_lazy_active) {
+    pthread_mutex_lock(&V.resources);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    int covered=shared_pool_storage_covered_locked(p,offset,bytes);
+#else
+    pool_span_iter it;pool_span_piece piece;int covered=pool_span_iter_begin(p,offset,bytes,&it),next=0;
+    if(covered)while((next=pool_span_iter_next(&it,&piece))==1){}
+    covered=covered && next==0;
+#endif
+    pthread_mutex_unlock(&V.resources);
+    if(!covered)die("Shared lazy HOST writer lacks physical union coverage");
+    VkMemoryBarrier barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
+    vkCmdPipelineBarrier(V.cmd,producers,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,NULL,0,NULL);
+    return;
+  }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   // A named active-buffer barrier cannot publish writes through another
   // VkDeviceMemory import bound to a native VkImage. Preserve the real alias.
@@ -169,8 +199,10 @@ static VkResult shared_span_try_allocate(pool *p,pool_backing_span *span,uint64_
   }
   span->buffer.map=p->guest+begin;span->begin=begin;span->end=end;return VK_SUCCESS;
 }
+#include "nvn_vk_shared_lazy.inc"
 static void shared_pool_materialize(pool *p) {
   if(p->shared_closing)die("Shared Pool address after closing");
+  if(p->shared_lazy_eligible)return; // only an exact actual access imports pages
   if(p->backings)return;
   if(shared_window_bytes)die("Shared window access requires complete operation admission");
   void *import_pointer=shared_import_host_pointer((uintptr_t)p->guest,p->size);
@@ -216,7 +248,13 @@ static void shared_probe_release(dm_guest_heap_probe_views *views,void *memory,s
 }
 #include "nvn_vk_shared_overlap_probe.inc"
 static void shared_device_probe(void) {
-  if(!shared_requested)return;
+  const char *lazy=getenv("DM_VK_SHARED_LAZY_WINDOWS");
+  if(lazy && strcmp(lazy,"0") && strcmp(lazy,"1"))die("DM_VK_SHARED_LAZY_WINDOWS expects0or1");
+  shared_lazy_requested=lazy && !strcmp(lazy,"1");
+  if(!shared_requested) {
+    if(shared_lazy_requested)LOG("[shared lazy] unsupported: fixed shared mode required");
+    return;
+  }
   uint64_t candidate_window=0;
   if(!vk_query_native_supported()) {LOG("[shared pool] startup legacy: native query timestamp format unsupported");return;}
   extern int dm_gfx_shared_owner_ready(void);
@@ -259,6 +297,7 @@ static void shared_device_probe(void) {
       views.guest?"memfd-pair-guest-RO":"host-owned-anonymous",(void *)memory,(void *)import_pointer,bytes);
   vk_buffer b={0};VkResult status=shared_buffer_create(import_pointer,bytes,&b);
   if(status!=VK_SUCCESS) {vk_buffer_destroy(&b);shared_probe_release(&views,memory,bytes);LOG("[shared pool] startup legacy: probe import=%d",status);return;}
+  int probe_coherent=!!(b.properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
   VkCommandPool pool_handle;VkCommandBuffer cmd;VkFence fence;
   VkCommandPoolCreateInfo pc={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.queueFamilyIndex=V.queue_family};
   VK_CHECK(vkCreateCommandPool(V.device,&pc,NULL,&pool_handle));
@@ -331,6 +370,18 @@ static void shared_device_probe(void) {
     atomic_store_explicit(&pool_defer_publication_enabled,0,memory_order_release);
   }
   shared_active=valid;LOG("[shared pool] immutable startup %s; import_window_bytes=%llu no online mirror fallback",valid?"shared":"legacy: byte probe mismatch",(unsigned long long)shared_window_bytes);
+  if(shared_lazy_requested) {
+    static const uint8_t exact_f830[32]={0xf8,0x30,0x28,0x5f,0xe6,0x8f,0x0a,0x74,0x47,0x92,0x26,0x9d,0xa5,0xf1,0x60,0xed,
+      0x86,0x36,0xc1,0x72,0xb1,0xf6,0x51,0x1d,0xb9,0xd9,0x94,0x78,0xe1,0xa2,0xac,0xce};
+    uint8_t digest[32];int provider=vk_loader_native_driver_digest(digest) && !memcmp(digest,exact_f830,32);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && !defined(__ANDROID__)
+    // Owned software-GPU contract oracle only. Never qualifies an APP driver.
+    if(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE"))provider=1;
+#endif
+    shared_lazy_active=valid && shared_window_bytes && probe_coherent && provider;
+    LOG("[shared lazy] immutable startup %s; no enumeration/copy/replacement; named-buffer proofs disabled=%d",
+        shared_lazy_active?"enabled experimental":"unsupported: original admission retained",shared_lazy_active);
+  }
 }
 
 void vk_pool_shared_publish(uint64_t address,uint64_t bytes,int invalidate) {

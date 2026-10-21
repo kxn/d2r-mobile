@@ -10,6 +10,7 @@ void vk_test_shared_union_observer_release(void (*release)(void)) {
 // and reclaimed old descriptor/typed-view contexts before entering here.
 static int shared_pool_union_quiescent(uint64_t base,uint64_t identity,
     const vk_pool_requirement *trigger,uint64_t window) {
+  if(shared_lazy_active)return 0; // immutable aliases never enter destructive union
   if(V.cmd || recording_resources || stream_recording || vk_render_active() ||
       vk_counter_active() || vk_shader_operation_active() || vk_texture_binding_scope_active() ||
       vk_texture_shader_collecting() || vk_mip_clear_pending() || !trigger)return 0;

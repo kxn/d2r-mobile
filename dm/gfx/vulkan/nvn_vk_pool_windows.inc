@@ -110,6 +110,12 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
     }
     if(!whole_reference && pool_native_requirement(p,r))continue;
 #ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared_lazy_eligible) {
+      if(whole_reference)goto done;
+      shared_lazy_ensure_locked(p,r->address-(uintptr_t)p->guest,r->size);continue;
+    }
+#endif
+#ifdef DM_VULKAN_SHARED_POOLS
     // A manual reservation API call must never install private/mirror nodes
     // in an immutable shared-whole Pool. Normal whole lookup imports it.
     if(p->shared && !shared_window_bytes && !p->backings)goto done;

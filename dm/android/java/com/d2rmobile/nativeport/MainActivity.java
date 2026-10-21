@@ -53,6 +53,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolMirrorReference(boolean reference);
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativeSharedGuestHeap(boolean enabled);
+    private static native void nativeSharedLazyWindows(boolean enabled);
     private static native void nativeLegacyAstcCopy(boolean enabled, boolean fixture);
     private static native void nativeNativeResources(String table, String packSha256, String producerSha256, String fixtureDirectory, boolean validation);
     private static native void nativePoolDeferPublication(boolean enabled);
@@ -213,6 +214,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
+            nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
             nativeLegacyAstcCopy(getIntent().getBooleanExtra("legacy_astc_copy", false),
                     getIntent().getBooleanExtra("run_vulkan_tests", false) &&
                     getIntent().getBooleanExtra("legacy_astc_copy_test", false));
@@ -436,6 +438,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 android.util.Log.w("D2RNativeResources", "native resources require a cold restart");
                 intent.removeExtra(key);
             }
+        }
+        if (intent.hasExtra("shared_lazy_windows")) {
+            android.util.Log.w("D2RPool", "shared_lazy_windows is startup-only; cold restart required");
+            intent.removeExtra("shared_lazy_windows");
         }
         if (intent.hasExtra("shared_guest_heap")) {
             android.util.Log.w("D2RPool", "shared_guest_heap is startup-only; cold restart required");

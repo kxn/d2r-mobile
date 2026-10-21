@@ -150,6 +150,9 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
 // Startup only. Zero preserves the original whole-pool policy.
 void vk_pool_window_bytes(uint64_t bytes);
 uint64_t vk_pool_window_fallbacks(void);
+#ifdef DM_VULKAN_SHARED_POOLS
+void vk_pool_lazy_window_stats(int *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+#endif
 void vk_pool_window_stats(uint64_t *bytes,uint64_t *admissions,uint64_t *added_bytes,
     uint64_t *added_spans,uint64_t *promotions);
 typedef int (*vk_pool_operation_collect)(void *context,vk_pool_requirement_sink sink,void *sink_context);
@@ -445,6 +448,7 @@ void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 void *vk_pool_native_image_bind(uint64_t,uint64_t,VkImage,const VkMemoryRequirements *,VkDeviceMemory *);
 void vk_pool_native_image_writeback(void *,uint64_t,uint64_t,VkPipelineStageFlags);
+void vk_pool_native_image_operation_retain(void *);
 void vk_pool_native_image_use(void *,uint64_t,uint64_t,VkPipelineStageFlags);
 void vk_pool_native_image_release(void *);
 void vk_pool_native_image_collect(void);

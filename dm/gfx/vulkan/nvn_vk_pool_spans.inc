@@ -8,6 +8,15 @@ typedef struct {
   uint64_t logical,offset,size;
 } pool_span_piece;
 typedef struct { pool *owner;uint64_t at,end; } pool_span_iter;
+#ifdef DM_VULKAN_SHARED_POOLS
+static pool_backing_span *shared_lazy_cover(const pool *p,uint64_t offset,uint64_t size) {
+  if(!p->shared_lazy_eligible || offset>p->size || size>p->size-offset)return NULL;
+  for(pool_backing_span *b=p->shared_covers;b;b=b->next)
+    if(offset>=b->begin && (offset<b->end || (!size && offset==p->size && offset==b->end)) &&
+        size<=b->end-offset)return b;
+  return NULL;
+}
+#endif
 static int pool_span_iter_begin(pool *p,uint64_t offset,uint64_t size,pool_span_iter *it) {
   if(offset>p->size || size>p->size-offset)return 0;
   *it=(pool_span_iter){p,offset,offset+size};return 1;
@@ -16,6 +25,21 @@ static int pool_span_iter_begin(pool *p,uint64_t offset,uint64_t size,pool_span_
 // Never jump over a hole and never concatenate it into a physical range.
 static int pool_span_iter_next(pool_span_iter *it,pool_span_piece *out) {
   if(it->at==it->end)return 0;
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(it->owner->shared_lazy_eligible) {
+    // Iterate the logical UNION, not both imports' duplicate bytes. This is
+    // only a backed prefix; a binding still requires one complete VkBuffer.
+    pool_backing_span *best=NULL;
+    for(unsigned chain=0;chain<2;chain++)
+      for(pool_backing_span *b=chain?it->owner->shared_covers:it->owner->backings;b;b=b->next)
+        if(b->begin<=it->at && b->end>it->at && (!best || b->end>best->end))best=b;
+    if(!best)return -1;
+    uint64_t end=best->end<it->end?best->end:it->end,offset=it->at-best->begin;
+    if(!best->buffer.handle || !best->generation || end<=it->at ||
+        offset>best->buffer.size || end-it->at>best->buffer.size-offset)return -1;
+    *out=(pool_span_piece){best,it->at,offset,end-it->at};it->at=end;return 1;
+  }
+#endif
   for(pool_backing_span *b=it->owner->backings;b;b=b->next) {
     if(it->at<b->begin)return -1;
     if(it->at>=b->end)continue;
@@ -28,6 +52,10 @@ static int pool_span_iter_next(pool_span_iter *it,pool_span_piece *out) {
   return -1;
 }
 static int pool_span_resolve(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  pool_backing_span *cover=shared_lazy_cover(p,offset,size);
+  if(cover) {*out=(pool_span_piece){cover,offset,offset-cover->begin,size};return 1;}
+#endif
   if(!size) {
     // Preserve the legacy address-only lookup, including the exact pool tail.
     // It records no GPU access; it cannot prove a nonempty physical range.
@@ -38,6 +66,16 @@ static int pool_span_resolve(pool *p,uint64_t offset,uint64_t size,pool_span_pie
       }
     return 0;
   }
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared_lazy_eligible) {
+    if(offset>p->size || size>p->size-offset)return 0;
+    for(pool_backing_span *b=p->backings;b;b=b->next)
+      if(offset>=b->begin && offset<b->end && size<=b->end-offset) {
+        *out=(pool_span_piece){b,offset,offset-b->begin,size};return 1;
+      }
+    return 0;
+  }
+#endif
   pool_span_iter it;if(!pool_span_iter_begin(p,offset,size,&it))return 0;
   return pool_span_iter_next(&it,out)==1 && it.at==it.end;
 }
@@ -98,6 +136,9 @@ static __attribute__((noinline)) void pool_span_index_build_locked(pool *p) {
 // V.resources MUST be held. This searches physical topology only. It does not
 // admit a range, join adjacent backings, retain objects or publish GPU access.
 static int pool_span_search_locked(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared_lazy_eligible)return pool_span_resolve(p,offset,size,out);
+#endif
   if(!size || !p->backings || !p->backings->next)
     return pool_span_resolve(p,offset,size,out);
   if(offset>p->size || size>p->size-offset)return 0;
@@ -122,6 +163,9 @@ static int pool_span_search_locked(pool *p,uint64_t offset,uint64_t size,pool_sp
 // proves only the same physical mapping, never content freshness or visibility.
 // Whole/single-node pools keep the original resolver without any hint access.
 static int pool_span_resolve_locked(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared_lazy_eligible)return pool_span_resolve(p,offset,size,out);
+#endif
   if(!size || !p->backings || !p->backings->next)
     return pool_span_resolve(p,offset,size,out);
   pool_backing_span *b=p->locked_span_hint;

@@ -501,6 +501,14 @@ static void observe_tick(const uint64_t *registers) {
       (unsigned long long)window_bytes,(unsigned long long)window_admissions,
       (unsigned long long)window_added_bytes,(unsigned long long)window_added_spans,
       (unsigned long long)window_promotions,(unsigned long long)vk_pool_window_fallbacks());
+#ifdef DM_VULKAN_SHARED_POOLS
+    void vk_pool_lazy_window_stats(int *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+    int lazy_active;uint64_t lazy_unique,lazy_mapped,lazy_nodes,lazy_covers;
+    vk_pool_lazy_window_stats(&lazy_active,&lazy_unique,&lazy_mapped,&lazy_nodes,&lazy_covers);
+    fprintf(state_log, ",\"shared_lazy_windows\":{\"experimental\":true,\"active\":%s,\"logical_unique_bytes\":%llu,\"import_allocation_bytes\":%llu,\"import_nodes\":%llu,\"cover_nodes\":%llu}",
+      lazy_active?"true":"false",(unsigned long long)lazy_unique,(unsigned long long)lazy_mapped,
+      (unsigned long long)lazy_nodes,(unsigned long long)lazy_covers);
+#endif
     uint64_t storage_direct,storage_copies,storage_bytes;int storage_reference;
     vk_storage_bias_stats(&storage_direct,&storage_copies,&storage_bytes,&storage_reference);
     fprintf(state_log, ",\"storage_alignment\":{\"reference\":%s,\"direct\":%llu,\"copies\":%llu,\"bytes\":%llu}",
