@@ -21,9 +21,10 @@ def sha(p):
  with Path(p).open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def put(p,x):Path(p).write_text(json.dumps(x,indent=2)+'\n')
 def validate(p,pinned):
- c=p['official_api_frame'];require(set(c)=={'tool','frames','timeout_seconds','layer_apk','info','convert'},'official frame fields differ')
+ c=p['official_api_frame'];require(set(c)=={'tool','frames','timeout_seconds','memory_tracking_mode','layer_apk','info','convert'},'official frame fields differ')
  require(c['tool']=='gfxreconstruct'and type(c['frames'])is int and c['frames']==1 and
   type(c['timeout_seconds'])is int and 20<=c['timeout_seconds']<=180,'one bounded official frame required')
+ require(c['memory_tracking_mode']=='assisted','shared HOST_ALLOCATION capture requires explicit assisted mode')
  require(p.get('native_host_experiment')and p.get('native_candidate_validation')and
   not any(p.get(k)for k in ['performance_tools','official_cpu_aa','official_l1i_record','official_gpu_tools',
   'counter_snapshot','sustained_play','official_memory_map']),'API frame capture must be separate from performance/debugger modes')
@@ -32,6 +33,9 @@ def validate(p,pinned):
   require(pinned(c[key])==path,'existing official tool required: '+key)
  require(c['layer_apk']['sha256']==LAYER_SHA,'official layer APK differs')
  return {'tool':'official GFXReconstruct single Vulkan frame','frames':1,'timeout_seconds':c['timeout_seconds'],
+  'memory_tracking_mode':'assisted','mapped_pointer_policy':'preserve original driver mapping; no page-guard shadow',
+  'coherent_noFlush_payload_complete':False,
+  'snapshot_boundary':'Official triggered trim still idles the device and snapshots live resources; large scans/copies and capture perturbation remain possible.',
   'existing_controller':{'path':str(OLD),'sha256':OLD_SHA},'layer_APK':c['layer_apk'],
   'scope':'API structure/state/offset/group sizes only; imported HOST_ALLOCATION payload and replay correctness unproven',
   'no_replay':True,'not_performance_or_thermal':True,'capture_before_save_stop_then_bulk_pull':True}
@@ -40,7 +44,8 @@ class Capture:
   self.dev,self.p,self.pid,self.save=dev,p,pid,save;self.out=out/'official-api-frame';self.out.mkdir()
   self.prefix='q735-f830-api-'+token;self.report=self.out/'capture.json';self.own=None
   self.settings={};self.props={};self.touched=False
-  self.props_new={'debug.gfxrecon.capture_process_name':PKG,
+  self.props_new={'debug.gfxrecon.memory_tracking_mode':'assisted',
+   'debug.gfxrecon.capture_process_name':PKG,
    'debug.gfxrecon.capture_file':'/data/user/0/'+PKG+'/files/runtime/'+self.prefix+'.gfxr',
    'debug.gfxrecon.capture_frames':'','debug.gfxrecon.capture_file_timestamp':'false',
    'debug.gfxrecon.capture_file_flush':'true','debug.gfxrecon.capture_android_trigger':'false',
@@ -75,11 +80,30 @@ class Capture:
   for k,v in self.props_new.items():self.prop(k,v)
   require(all(self.dev.adb('shell','getprop',k)==v for k,v in self.props_new.items()),'official capture property did not apply')
   self.r['stage']='configured-before-launch';self.write()
+ def wait_ready(self,own,endpoint):
+  # Same original CPU-helper readiness:30 bounded observations,4 distinct ticks.
+  self.own=own;previous=None;stable=0;last_tick=None;self.r['pre_trigger_cache_states']=[]
+  for attempt in range(30):
+   self.same();v=endpoint('api-cache-ready-'+str(attempt))
+   require(v['valid']and v['world_input_ready']and v['area']==1 and v['guest_heap']['shared']is True and
+    v['scale_3d']==.60 and v['pool_windows']['window_bytes']==self.p['pool_window_bytes']and
+    v['game_output']==v['surface_output']=={'width':2750,'height':1260}and
+    not v['world_freeze']['host_frozen']and not v['runtime_extrap']['enabled'],'API frame scene/provider readiness changed')
+   key=(v['pipeline_prepare']['pipelines'],v['uniform_specialization']['variants'])
+   self.r['pre_trigger_cache_states'].append({'time_ns':v['time_ns'],'tick':v['tick'],'PSO':key[0],'variants':key[1],'target_fps':v['frame_pacing']['target_fps']});self.write()
+   if v['tick']!=last_tick:stable=stable+1 if key==previous else 1;previous=key;last_tick=v['tick']
+   if stable>=4:break
+   time.sleep(.4)
+  require(stable>=4,'PSO/variant readiness never stabilized')
+  require(v['frame_pacing']['target_fps']==60,'Target is not60 before API frame; do not override')
+  self.r['pre_trigger_cache_ready']=True;self.write()
  def trigger(self,own):
   self.own=own;self.same();maps=self.dev.app('cat','/proc/'+own+'/maps');(self.out/'maps.txt').write_text(maps)
   require('libVkLayer_gfxreconstruct.so'in maps and 'libvulkan_freedreno.so'in maps and
    all(x not in maps.lower()for x in ['renderdoc','libvklayerlwi','libvulkan_panfrost']), 'wrong/missing API layer or f830 driver')
   log=self.dev.adb('logcat','-d','--pid='+own,'-v','brief');(self.out/'before-trigger-logcat.txt').write_text(log)
+  require('Settings Loader: Found option "debug.gfxrecon.memory_tracking_mode" with value "assisted"'in log,'official layer did not log assisted selection; no trigger')
+  self.r['official_layer_logged_memory_tracking_mode']='assisted';self.write()
   require('Recording graphics API capture to'not in log and
    not any(n.startswith(self.prefix)and n.endswith('.gfxr')for n in self.dev.app('ls','files/runtime').splitlines()),'capture started before explicit trigger')
   closed=log.count('Finished recording graphics API capture');self.same()
@@ -143,6 +167,9 @@ class Capture:
    with (self.out/(key+'.log')).open('x')as log:subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,check=True,timeout=180 if not n else 900)
    if not n:
     result=json.loads(info.read_text());f=result['general-info']['frames']
+    operations=result.get('gfxr-operations',[])
+    require(any(x.get('tool')=='capture'and x.get('capture-parameters',{}).get('memory-tracking-mode')=='assisted'for x in operations),'official trace does not confirm assisted memory tracking')
+    self.r['official_recorded_memory_tracking_mode']='assisted'
     require(result['detected-apis']==['Vulkan']and result['exe']['name']==PKG and
      f['actual-count']==f['total-count']==1 and f['blank-count']==0,'official info is not one nonblank original-app Vulkan frame')
   require(api.stat().st_size>0,'empty official API conversion')

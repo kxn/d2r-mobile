@@ -411,6 +411,7 @@ def phase_game(dev, out, phase, p, token):
             m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
         if api_frame is not None:
+            api_frame.wait_ready(own, lambda name: read_state(dev, out, name))
             api_frame.trigger(own)
             current = read_state(dev, out, 'after-api-frame')
         if p.get('official_gpu_tools') and p.get('_official_gpu_disabled'):

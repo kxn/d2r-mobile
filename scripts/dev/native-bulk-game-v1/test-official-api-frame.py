@@ -8,7 +8,7 @@ spec=importlib.util.spec_from_file_location('api_frame',D/'official_api_frame.py
 RAW=b'GFXR'+b'host-fake-not-device-proof'*10
 class Device:
  def __init__(self):
-  self.settings={k:('0'if k=='enable_gpu_debug_layers'else'null')for k in api.SETTINGS};self.props={k:''for k in ['debug.gfxrecon.capture_process_name','debug.gfxrecon.capture_file','debug.gfxrecon.capture_frames','debug.gfxrecon.capture_file_timestamp','debug.gfxrecon.capture_file_flush','debug.gfxrecon.capture_android_trigger','debug.gfxrecon.capture_trigger_frames','debug.gfxrecon.quit_after_capture_frames']};self.conflicts={k:''for k in api.CONFLICT};self.current='';self.triggered=False;self.prefix='';self.events=[];self.failure=None;self.closed=True
+  self.settings={k:('0'if k=='enable_gpu_debug_layers'else'null')for k in api.SETTINGS};self.props={k:''for k in ['debug.gfxrecon.memory_tracking_mode','debug.gfxrecon.capture_process_name','debug.gfxrecon.capture_file','debug.gfxrecon.capture_frames','debug.gfxrecon.capture_file_timestamp','debug.gfxrecon.capture_file_flush','debug.gfxrecon.capture_android_trigger','debug.gfxrecon.capture_trigger_frames','debug.gfxrecon.quit_after_capture_frames']};self.conflicts={k:''for k in api.CONFLICT};self.current='';self.triggered=False;self.prefix='';self.events=[];self.failure=None;self.closed=True
  def pid(self):return self.current
  def adb(self,*a):
   self.events.append(a)
@@ -26,7 +26,7 @@ class Device:
    return''
   if a[:2]==('shell','sha256sum'):
    return (api.LAYER_SHA if a[-1]=='/official-layer.apk'else hashlib.sha256(RAW).hexdigest())+'  '+a[-1]
-  if a[0]=='logcat':return 'Finished recording graphics API capture'if self.triggered and self.closed else''
+  if a[0]=='logcat':return 'Settings Loader: Found option \"debug.gfxrecon.memory_tracking_mode\" with value \"assisted\"\n'+('Finished recording graphics API capture'if self.triggered and self.closed else'')
   if a[:2]==('shell','df'):return 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 9000000 100 8000000 1% /data'
   if a[0]=='shell'and a[1].startswith('set -eu; test ! -e '):return''
   if a[0]=='pull':
@@ -42,17 +42,34 @@ class Device:
 class Flow(unittest.TestCase):
  def setup_capture(self,root):
   def pin(p):return {'path':str(p),'sha256':api.sha(p)}
-  p={'runtime_commit':'533820e6d3a76325f93b08e123a0118f00098c31','new_elf':'a'*64,'driver':{'sha256':'b'*64},'native_host_experiment':True,'native_candidate_validation':True,'official_api_frame':{'tool':'gfxreconstruct','frames':1,'timeout_seconds':90,'layer_apk':pin(api.LAYER_APK),'info':pin(api.INFO),'convert':pin(api.CONVERT)}}
+  p={'runtime_commit':'533820e6d3a76325f93b08e123a0118f00098c31','pool_window_bytes':1048576,'new_elf':'a'*64,'driver':{'sha256':'b'*64},'native_host_experiment':True,'native_candidate_validation':True,'official_api_frame':{'tool':'gfxreconstruct','frames':1,'timeout_seconds':90,'memory_tracking_mode':'assisted','layer_apk':pin(api.LAYER_APK),'info':pin(api.INFO),'convert':pin(api.CONVERT)}}
   p['_official_api_frame']=api.validate(p,lambda r:Path(r['path']));dev=Device();cap=api.Capture(dev,root,p,'a'*32,dev.pid,lambda:None);dev.prefix=cap.prefix;return dev,cap,p
  def test_complete_closed_then_save_stop_pull_export(self):
   with tempfile.TemporaryDirectory()as t:
-   d,c,p=self.setup_capture(Path(t));original=copy.deepcopy((d.settings,d.props));c.configure();d.current='12345';c.trigger('12345');c.restore();self.assertEqual((d.settings,d.props),original)
+   d,c,p=self.setup_capture(Path(t));original=copy.deepcopy((d.settings,d.props));c.configure();self.assertEqual(d.props['debug.gfxrecon.memory_tracking_mode'],'assisted');d.current='12345';c.trigger('12345');c.restore();self.assertEqual((d.settings,d.props),original)
    with self.assertRaisesRegex(RuntimeError,'already stopped'):c.export_after_stop()
    d.current=''
    def official(argv,**kw):
-    output=Path(argv[argv.index('--output')+1]);output.write_text(json.dumps({'detected-apis':['Vulkan'],'exe':{'name':api.PKG},'general-info':{'frames':{'actual-count':1,'total-count':1,'blank-count':0}}})if argv[0]==str(api.INFO)else'{"official_fake_API":true}\n')
+    output=Path(argv[argv.index('--output')+1]);output.write_text(json.dumps({'detected-apis':['Vulkan'],'exe':{'name':api.PKG},'gfxr-operations':[{'tool':'capture','capture-parameters':{'memory-tracking-mode':'assisted'}}],'general-info':{'frames':{'actual-count':1,'total-count':1,'blank-count':0}}})if argv[0]==str(api.INFO)else'{"official_fake_API":true}\n')
    with patch.object(api.subprocess,'run',official):c.export_after_stop()
    self.assertEqual(c.r['stage'],'complete-API-structure-only-not-replay');self.assertFalse(c.r['replay_correctness_proven']);self.assertFalse(c.r['imported_host_payload_proven']);self.assertTrue(c.r['owned_raw_copy']['removed'])
+ def test_official_annotation_wrong_mode_is_not_success(self):
+  with tempfile.TemporaryDirectory()as t:
+   d,c,p=self.setup_capture(Path(t));c.configure();d.current='12345';c.trigger('12345');c.restore();d.current=''
+   def wrong_mode(argv,**kw):
+    output=Path(argv[argv.index('--output')+1]);output.write_text(json.dumps({'detected-apis':['Vulkan'],'exe':{'name':api.PKG},'gfxr-operations':[{'tool':'capture','capture-parameters':{'memory-tracking-mode':'page_guard'}}],'general-info':{'frames':{'actual-count':1,'total-count':1,'blank-count':0}}}))
+   with patch.object(api.subprocess,'run',wrong_mode),self.assertRaisesRegex(RuntimeError,'confirm assisted'):c.export_after_stop()
+   self.assertNotEqual(c.r['stage'],'complete-API-structure-only-not-replay');self.assertTrue(c.r['owned_raw_copy']['removed']);self.assertTrue(c.r['properties_restored'])
+ def test_existing_bounded_readiness_requires_distinct_ticks_and_rejects_change(self):
+  with tempfile.TemporaryDirectory()as t:
+   d,c,p=self.setup_capture(Path(t));c.configure();d.current='12345'
+   state={'valid':True,'world_input_ready':True,'area':1,'guest_heap':{'shared':True},'scale_3d':.60,'pool_windows':{'window_bytes':1048576},'game_output':{'width':2750,'height':1260},'surface_output':{'width':2750,'height':1260},'world_freeze':{'host_frozen':False},'runtime_extrap':{'enabled':False},'pipeline_prepare':{'pipelines':180},'uniform_specialization':{'variants':33},'frame_pacing':{'target_fps':60},'tick':0,'time_ns':0}
+   def next_state(name):state['tick']+=1;state['time_ns']+=1;return state
+   with patch.object(api.time,'sleep'):c.wait_ready('12345',next_state)
+   self.assertTrue(c.r['pre_trigger_cache_ready']);self.assertEqual(len(c.r['pre_trigger_cache_states']),4)
+   state['area']=2
+   with self.assertRaisesRegex(RuntimeError,'readiness changed'):c.wait_ready('12345',next_state)
+   c.restore()
  def test_partial_configuration_restores_exactly(self):
   with tempfile.TemporaryDirectory()as t:
    d,c,p=self.setup_capture(Path(t));old=copy.deepcopy((d.settings,d.props));d.failure='debug.gfxrecon.capture_file'
@@ -86,6 +103,11 @@ class Flow(unittest.TestCase):
    for key,value in [('performance_tools',True),('official_cpu_aa',True),('counter_snapshot',True),('sustained_play',True)]:
     q=copy.deepcopy(p);q[key]=value
     with self.assertRaisesRegex(RuntimeError,'separate'):api.validate(q,lambda r:Path(r['path']))
+   for mode in ['page_guard','userfaultfd','unassisted','']:
+    q=copy.deepcopy(p);q['official_api_frame']['memory_tracking_mode']=mode
+    with self.assertRaisesRegex(RuntimeError,'explicit assisted'):api.validate(q,lambda r:Path(r['path']))
+   q=copy.deepcopy(p);q['official_api_frame'].pop('memory_tracking_mode')
+   with self.assertRaisesRegex(RuntimeError,'fields differ'):api.validate(q,lambda r:Path(r['path']))
    q=copy.deepcopy(p);q['official_api_frame']['frames']=2
    with self.assertRaisesRegex(RuntimeError,'one bounded'):api.validate(q,lambda r:Path(r['path']))
  def test_original_finally_and_helpers_preserved(self):
