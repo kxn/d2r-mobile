@@ -52,6 +52,51 @@ static void registration_identity_boundaries(int id,const tex_t *texture) {
   mtl_set_tex_pool_n(512);CHECK(vk_texture_descriptor_epoch()!=epoch);
   CHECK(vk_texture_descriptor(id,&observed)&&!memcmp(&observed,texture,sizeof observed));
 }
+// Reuse the existing published recipe HIT/MISS counters only as a bounded
+// fixture oracle. No new counter/getter or target diagnostic is introduced.
+static void recipe_epoch_revalidation_boundaries(const tex_t *texture,const tex_t *other,int reference) {
+  uint64_t hits0,prepares,misses0,hits,misses;int mode;tex_t observed;
+  enum { first=320,count=32,unrelated=400,id=37,collision=270 };
+  const view_t mip0={.set_levels=1,.base_level=0,.nlevels=1};
+  VkImageView views[count];
+  vk_texture_binding_stats(&hits0,&prepares,&misses0,&mode);
+  mtl_sub_begin();vk_texture_lookup_scope_begin();
+  for(unsigned k=0;k<count;k++) {
+    mtl_reg_tex(first+k,texture,&mip0);views[k]=vk_texture_view(first+k,0);CHECK(views[k]);
+  }
+  // A real registration of another id advances the global epoch. The existing
+  // logical-source phase rechecks each live value before physical consumption.
+  mtl_reg_tex(unrelated,other,NULL);
+  for(unsigned k=0;k<count;k++) {
+    CHECK(vk_texture_descriptor(first+k,&observed));
+    CHECK(vk_texture_view(first+k,0)==views[k]);
+  }
+  vk_texture_lookup_scope_end();vk_internal_wait(vk_internal_commit());
+  vk_texture_binding_stats(&hits,&prepares,&misses,&mode);CHECK(mode==reference);
+  CHECK(hits-hits0==(reference?0:count));CHECK(misses-misses0==(reference?count*2:count));
+  // A stale snapshot for a colliding id cannot prove this recipe's old input.
+  vk_texture_binding_stats(&hits0,&prepares,&misses0,&mode);
+  mtl_sub_begin();vk_texture_lookup_scope_begin();
+  mtl_reg_tex(id,texture,&mip0);VkImageView original=vk_texture_view(id,0);CHECK(original);
+  CHECK(vk_texture_descriptor(collision,&observed));
+  mtl_reg_tex(unrelated,texture,NULL);
+  CHECK(vk_texture_descriptor(id,&observed));CHECK(vk_texture_view(id,0)==original);
+  // Matching serial is insufficient: observe a different complete texture
+  // value, then restore before physical use. Both changes must reject refresh.
+  tex_t changed=*texture;changed.L.size++;
+  mtl_reg_tex(id,&changed,&mip0);CHECK(vk_texture_descriptor(id,&observed));
+  mtl_reg_tex(id,texture,&mip0);CHECK(vk_texture_descriptor(id,&observed));
+  CHECK(vk_texture_view(id,0)==original);
+  // A true view change with the same texture serial is also a different key.
+  view_t changed_view=mip0;changed_view.nlevels=2;
+  mtl_reg_tex(id,texture,&changed_view);CHECK(vk_texture_descriptor(id,&observed));
+  mtl_reg_tex(id,texture,&mip0);CHECK(vk_texture_descriptor(id,&observed));
+  CHECK(vk_texture_view(id,0)==original);
+  vk_texture_lookup_scope_end();vk_internal_wait(vk_internal_commit());
+  vk_texture_binding_stats(&hits,&prepares,&misses,&mode);
+  CHECK(hits-hits0==0);CHECK(misses-misses0==4);
+  mtl_reg_tex(id,texture,NULL);
+}
 #endif
 static void logical_lookup_boundaries(int id,const tex_t *a,const tex_t *b) {
   tex_t value;view_t view;int has_view;
@@ -152,6 +197,7 @@ static void logical_preflight_test(const void *vertex,const void *fragment) {
     mtl_reg_tex(ordinary,cpu,NULL);mtl_reg_tex(collision,(const tex_t *)&textures[2],NULL);
 #ifndef DM_ANDROID_APP
     registration_identity_boundaries(ordinary,cpu);
+    recipe_epoch_revalidation_boundaries(cpu,(const tex_t *)&textures[2],reference);
 #endif
     S=(vk_state){.program=(const prog_t *)&program,.depth_range={0,1},.chmask={~0u}};
     S.poly=*(const poly_st *)&polygon;S.ds=*(const ds_st *)&ds;S.color=*(const color_st *)&color;S.ms=*(const ms_st *)&ms;
