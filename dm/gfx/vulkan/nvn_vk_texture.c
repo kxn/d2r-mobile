@@ -2078,7 +2078,8 @@ int vk_test_shared_alias_negative_prime(uint64_t address,uint64_t bytes) {
   if(!bytes || bytes>UINT64_MAX-address)return 0;
   if(alias_negative_overlap(&shared_alias_negative,shared_gpu_alias_ranges,
       address,address+bytes,image_shared_alias_eligible,vk_pool_shared_active()))return 0;
-  return alias_negative_matches(&shared_alias_negative,address,address+bytes);
+  return alias_negative_matches(&shared_alias_negative,address,address+bytes) ||
+      alias_negative_gap_matches(&shared_alias_negative,address,address+bytes);
 }
 #endif
 static int image_copy_encoding_eligible(const alias_range_node *node,int ignored) {
