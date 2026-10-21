@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One reversible original-BC original022 driver compatibility start. Offline by default.
+"""One reversible unmodified PUBLIC RC3 original-BC original022 compatibility start. Offline by default.
 Uses existing directory CAS, ordinary first-PID ownership and original save2 helper.
 Original BC/current-identical upstream UI overlay only; no APK/module changes, old capture, measurement or GPU-import.
 """
@@ -9,9 +9,9 @@ R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport'
 OLD=R/'.local/worktrees/panvk-replay-rebind-alloc-v2/scripts/dev/run-panvk-layered-offscreen-game-diagnostic.py'
 spec=importlib.util.spec_from_file_location('existing_original_game_transaction',OLD);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
 require=old.require;sha=old.sha;read=old.read;journal=old.journal
-READY=R/'.local/logs/panvk-minegraph-703db0e-static-hardware-v2-source-ready-agent.json'
-READY_SHA='edcbcc0f465f712c889e51daf64b767b6b136699a47f5c464d78e048d62b9930'
-DRIVER_SHA='df9ba8326b353812bbe36b3306f9ce6c833764c2538e85cacf91a12ccd9566a9'
+READY=R/'.local/logs/panvk-public-rc3-driver-source-ready-agent.json'
+READY_SHA='3afc572d5b8956abcfc9a4607d74217a959ffb62ab4fcdd037c1cb1a69a0caaa'
+DRIVER_SHA='b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445'
 SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
 APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
 LOCK='files/runtime/.astc6-full-controller-lock'
@@ -45,17 +45,19 @@ def rename_dir(dev,src,dst,expected):
 def record(p):p=Path(p).resolve();return {'path':str(p),'sha256':sha(p),'bytes':p.stat().st_size}
 def proof():
  require(sha(READY)==READY_SHA,'driver ready changed');d=read(READY)
- require(d['upstream_commit']=='703db0ebb9afb2c97ae31f24dba5981c7c765fc1' and d['target']['parallel_jobs']==2,'wrong source/build')
- require('libhardware.so'not in d['needed'] and d['only_delta_from_full_v1_driver_source']==['src/android_stub/meson.build'],'not the static unsupported-HAL platform candidate')
- for key in ['source_identity','build_only_adaptation','generated_version','host_codegen','ELF','driver']:
-  r=d[key];require(sha(r['path'])==r['sha256'],'driver provenance changed: '+key)
- require(d['driver']['sha256']==DRIVER_SHA and set(d['ICD_exports_verified'])=={'HMI','vk_icdGetInstanceProcAddr','vk_icdGetPhysicalDeviceProcAddr','vk_icdNegotiateLoaderICDInterfaceVersion'},'wrong ICD')
- for r in d['actual_compiler_dependencies'].values():
-  require(sha(r['path'])==r['sha256'],'dependency report changed');q=read(r['path']);require(not q['missing'],'missing build dependencies')
-  for f in q['files']:require(sha(f['path'])==f['sha256'],'compiler dependency changed: '+f['path'])
- for row in read(d['source_identity']['path'])['files']:
-  p=Path(d['source_root'])/row['path'];a=row['actual']
-  require((p.is_symlink() and str(p.readlink())==a['target']) if a['kind']=='symlink' else (p.is_file() and not p.is_symlink() and sha(p)==a['sha256']),'driver source changed: '+row['path'])
+ require(d['status']=='PUBLIC_RELEASE_DRIVER_BYTES_UNMODIFIED_SOURCE_ONLY_NO_DEVICE' and d['associated_source_commit']=='fd6ed91eff1c8d3a83307a2348b959bb93797011','wrong published RC3 source')
+ require(d['ELF_BuildID']=='4ec75e25deca57c27fb1e0872fdbf58473d41527' and d['driver']['sha256']==DRIVER_SHA,'wrong public ELF')
+ require(d['needed']==['liblog.so','libnativewindow.so','libsync.so','libm.so','libz.so','libdl.so','libc.so'],'unexpected namespace dependency')
+ require(set(d['ICD_exports_verified'])=={'vk_icdGetInstanceProcAddr','vk_icdGetPhysicalDeviceProcAddr','vk_icdNegotiateLoaderICDInterfaceVersion'},'wrong ICD exports')
+ for row in [d['driver'],d['associated_source_archive'],*d['public_receipts'],*d['ELF_reports']]:require(sha(row['path'])==row['sha256'],'published identity changed: '+row['path'])
+ sums=Path(next(x['path']for x in d['public_receipts']if Path(x['path']).name=='SHA256SUMS')).read_text()
+ require(DRIVER_SHA+'  libvulkan_panfrost-android-aarch64.so' in sums,'published sum missing')
+ download=read(next(x['path']for x in d['public_receipts']if Path(x['path']).name=='download-receipt.json'))
+ require(download['published_SHA256SUMS_verified'] and any(x['sha256']==DRIVER_SHA and x['github_digest_verified']for x in download['assets']),'GitHub public digest mismatch')
+ cold=R/'.local/logs/panvk-existing-progress-originalBC-original022-mali-v1/cold-original-pause-no-world-proof-agent.json'
+ require(sha(cold)=='8d4069268ce944774f19019da244fcd2afb39706a629c6376e9ce0b15d0f83bb','original conditional save proof changed');cold=read(cold)
+ require(cold['exact_canonical_APK_SHA256']==APK and cold['exact_ELF']==ELF,'cold source target mismatch')
+ for n,h in cold['compiled_producer_source_hashes'].items():require(sha(SOURCE/n)==h,'original lifecycle source changed: '+n)
  p=read(old.PROMOTION);require(p['production_promoted_and_stopped'] and p['source_revision']=='022d6254d9de565852fa22394b6403491db86707' and not p['rollback_errors'],'production promotion mismatch')
  require(p['canonical_APK_SHA256']==APK and p['host_ELF_SHA256']==ELF and len(p['promoted_module_and_resource_hashes'])==35,'original APK/35 set')
  ap=R/'.local/build/image-binding-022d625-canonical-source/canonical.apk';require(sha(ap)==APK,'canonical APK changed')
@@ -93,6 +95,30 @@ def owned(values,d,label,partial=False):
  if label=='driver':require((values.get('libvulkan_panfrost.so')in(None,DRIVER_SHA) if partial else values.get('libvulkan_panfrost.so')==DRIVER_SHA) and all(k in (OWNER,'libvulkan_panfrost.so')or k.startswith('shader-cache/')for k in values),'candidate driver differs')
  return True
 
+def native_log_text(dev,*args):
+ # Bounded log byte ranges may end/start inside a UTF-8 character. Preserve
+ # strict Device text decoding for all identities/hashes/JSON; only diagnostic
+ # native-log display and ASCII sentinel matching replace partial characters.
+ data=subprocess.check_output(dev.command+['shell',shlex.join(['run-as',PKG,*args])],timeout=180)
+ return data.decode('utf-8',errors='replace').strip()
+
+def activity_stopped(activities,pid):
+ # Exact target record only; whitespace never consumes the next line/block.
+ for block in re.split(r'(?=^[ \t]*\*[ \t]+Hist[ \t]+#[0-9]+:)',activities,flags=re.M):
+  head=block.splitlines()[0]if block.splitlines()else''
+  if not re.match(r'^[ \t]*\*[ \t]+Hist[ \t]+#[0-9]+:',head):continue
+  if not re.search(re.escape(PKG)+r'/\.MainActivity(?:[ \t}]|$)',head):continue
+  if re.search(r'\bapp=ProcessRecord\{[^\n]*[ \t]'+re.escape(pid)+':'+re.escape(PKG)+r'/',block) and re.search(r'^[ \t]*(?:mState|state)=STOPPED\b',block,re.M):return True
+ return False
+
+def cold_pause_proof(before,after,activities,pid):
+ # Exact frozen original022 JNI: if dm_ingame_now(), its unconditional save
+ # LOG precedes dm_gfx_suspend(). LOG is unbuffered stderr. Fresh positive
+ # drain completion + no save LOG proves that branch was not taken on pause.
+ if 'Android native start pid='+pid+'\n'not in before or not after.startswith(before):return False
+ fresh=after[len(before):]
+ return ('[dm] [nvn] 图形挂起：在途 GPU 工作已清空' in fresh and 'Android background save 'not in fresh and activity_stopped(activities,pid))
+
 def launch_once(dev,path,d,out):
  own=None;client=None;ambiguous=False
  def current():return dev.adb('shell','pidof '+PKG+' || true')
@@ -113,7 +139,7 @@ def launch_once(dev,path,d,out):
    client=subprocess.Popen(d['launch_command'],stdout=log,stderr=subprocess.STDOUT,cwd=R);deadline=time.monotonic()+100
    while client.poll()is None:
     now=observe()
-    native=dev.app('sh','-c','if test -f files/runtime/native.log; then cat files/runtime/native.log; fi')
+    native=native_log_text(dev,'sh','-c','if test -f files/runtime/native.log; then cat files/runtime/native.log; fi')
     if own and 'Android native start pid='+own+'\n'in native:
      (out/'native.log').write_text(native)
      if 'FATAL'in native or 'Vulkan PanVK ICD load:'in native:d['native_failure_seen']=True;break
@@ -124,7 +150,7 @@ def launch_once(dev,path,d,out):
   d['launcher_returncode']=client.returncode;journal(path,d)
   require(not d.get('native_failure_seen') and client.returncode==0,'original native startup failed, preserve diagnostic')
   require(own and observe()==own,'original game PID absent/replaced')
-  native=dev.app('cat','files/runtime/native.log');(out/'native.log').write_text(native)
+  native=native_log_text(dev,'cat','files/runtime/native.log');(out/'native.log').write_text(native)
   raw=dev.app('cat','files/runtime/game-state.jsonl');(out/'game-state.jsonl').write_text(raw)
   state=json.loads(raw.splitlines()[-1]);(out/'HUD-state.json').write_text(json.dumps(state,indent=2)+'\n')
   # Preserve actual image before later assertions, even if a mode assertion fails.
@@ -137,11 +163,14 @@ def launch_once(dev,path,d,out):
   require(state['game_output']==state['surface_output']=={'width':2772,'height':1240}and state['guest_heap']['shared']is False,'output/shared mode mismatch')
   require('[vulkan loader] provider=panvk direct ICD='in native and 'driverID=20'in native and 'FATAL'not in native,'provider/driver identity mismatch')
   require(read(out/'launch.json')['actual_vulkan_provider']=='panvk' and read(out/'launch.json')['requested_legacy_astc_copy']is False,'legacy/resource mode mismatch')
+  require('PanVK-kbase RC3' in native,'actual driverInfo is not RC3')
   d['actual_original_game_HUD_reached']=True;d['real_game_modules_executed']=True;d['namespace_load_succeeded']=True;d['visual_acceptance_pending']=True;journal(path,d)
+ except BaseException as e:
+  d['primary_launch_error']=repr(e);journal(path,d);raise
  finally:
   if client and client.poll()is None:client.terminate();client.wait(timeout=10)
   for remote,local in [('files/runtime/native.log','native.log'),('files/runtime/game-state.jsonl','game-state.jsonl')]:
-   try:(out/local).write_text(dev.app('sh','-c','if test -f "$1"; then cat "$1"; fi','sh',remote))
+   try:(out/local).write_text((native_log_text if remote.endswith('native.log') else lambda d,*a:d.app(*a))(dev,'sh','-c','if test -f "$1"; then cat "$1"; fi','sh',remote))
    except Exception as e:d.setdefault('log_errors',[]).append(repr(e))
   try:(out/'crash-logcat.txt').write_text(dev.adb('logcat','-b','crash','-d','-v','threadtime','-t','200'))
   except Exception as e:d.setdefault('log_errors',[]).append(repr(e))
@@ -152,9 +181,25 @@ def launch_once(dev,path,d,out):
   if now:
    require(not ambiguous and own and now==own,'unowned/replacement PID: preserve transaction')
    cmd=[sys.executable,str(R/'scripts/dev/android-game-background-save.py'),'--serial',d['serial'],'--report',str(out/'fresh-save.json')]
-   with(out/'fresh-save.txt').open('w')as f:subprocess.run(cmd,check=True,stdout=f,stderr=subprocess.STDOUT,timeout=45)
-   f=read(out/'fresh-save.json');require(f['fresh_original_lifecycle_save']and f['save_commits']==2 and f['pid']==int(own),'no fresh original save2')
-   require(current()==own,'PID changed during save');dev.adb('shell','am','force-stop',PKG);dev.stopped();d['fresh_save2_then_stopped']=True
+   before_save=native_log_text(dev,'cat','files/runtime/native.log')
+   require('Android native start pid='+own+'\n'in before_save,'same-PID save log absent')
+   try:
+    with(out/'fresh-save.txt').open('w')as f:save_result=subprocess.run(cmd,check=False,stdout=f,stderr=subprocess.STDOUT,timeout=45)
+    save_rc=save_result.returncode
+   except subprocess.TimeoutExpired:
+    d['original_save_helper_timed_out']=True;save_rc=None
+   after_pid=current()
+   if not after_pid:d['already_exited_during_pause_no_save_restart']=True
+   else:
+    require(after_pid==own,'PID changed after original pause attempt')
+    if save_rc==0:
+     f=read(out/'fresh-save.json');require(f['fresh_original_lifecycle_save']and f['save_commits']==2 and f['pid']==int(own),'no fresh original save2')
+     d['fresh_save2_then_stopped']=True
+    else:
+     after_save=native_log_text(dev,'cat','files/runtime/native.log');activities=dev.adb('shell','dumpsys','activity','activities');(out/'pause-activities.txt').write_text(activities);(out/'pause-native.log').write_text(after_save)
+     require(cold_pause_proof(before_save,after_save,activities,own),'original save failed without exact same-PID positive no-world suspend proof')
+     d['cold_original_pause_no_world_save_required']=True
+    require(current()==own,'PID changed during save');dev.adb('shell','am','force-stop',PKG);dev.stopped()
   else:d['already_exited_no_save_restart']=True
   native=(out/'native.log').read_text()if(out/'native.log').exists()else''
   d['namespace_load_blocked']=('Vulkan PanVK ICD load:'in native);d['libhardware_load_error']=('libhardware.so'in native and d['namespace_load_blocked']);journal(path,d)
@@ -193,7 +238,7 @@ def clean(dev,path,d):
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE original022 original-BC/current-identical-upstreamUI real-game compatibility baseline; new driver requirements; no oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ plan={'scope':'ONE unmodified PUBLIC RC3 original022 original-BC/current-identical-upstreamUI compatibility baseline; no TRACE/DUMP/debug properties, oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
  d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
@@ -201,6 +246,8 @@ def main():
  for sig in(signal.SIGINT,signal.SIGTERM):signal.signal(sig,interrupt)
  try:
   d['baseline_before']=baseline(dev,expected);d['settings_before']=layers(dev);require(no_layers(d['settings_before']),'external GPU layer active')
+  sdk=dev.adb('shell','getprop','ro.build.version.sdk');require(sdk.isdecimal()and int(sdk)>=35,'public RC3 needs Android API35')
+  d['debug_property_before']=dev.adb('shell','getprop','debug.mesa.panvk.debug');require(not d['debug_property_before'],'external PanVK debug flags active')
   dev.stopped()
   for label,target in DIRS.items():d['old_'+label]=inventory(dev,target)
   journal(path,d);require(inventory(dev,stage)is None,'transaction exists');dev.app('mkdir',LOCK);d['lock_claimed']=True;dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',LOCK+'/owner',token);dev.app('mkdir',stage);claimed=True;dev.app('sh','-c','printf "%s\\n" "$2" > "$1"','sh',stage+'/'+OWNER,token);dev.app('mkdir',stage+'/incoming',stage+'/backup')
@@ -214,7 +261,7 @@ def main():
    d['intent']='backup-'+label;journal(path,d)
    if d['old_'+label]is not None:rename_dir(dev,target,stage+'/backup/'+label,d['old_'+label])
    v=inventory(dev,stage+'/incoming/'+label);owned(v,d,label);d['intent']='publish-'+label;journal(path,d);rename_dir(dev,stage+'/incoming/'+label,target,v)
-  d['phase']='published';journal(path,d);launch_once(dev,path,d,a.output);d['phase']='actual-original-HUD-pending-visual-review'
+  d['phase']='published';journal(path,d);launch_once(dev,path,d,a.output);d['phase']='actual-unmodified-public-RC3-original-HUD-pending-visual-review'
  except BaseException as e:d['phase']='failed-preserved';d['error']=repr(e)
  finally:
   if claimed:
@@ -225,7 +272,7 @@ def main():
     require(dev.app('cat',LOCK+'/owner')==token,'controller lock owner changed');dev.app('rm',LOCK+'/owner');dev.app('rmdir',LOCK)
    except BaseException as e:d['cleanup_errors'].append(repr(e))
   try:
-   d['baseline_after']=baseline(dev,expected);require(d['baseline_after']==d['baseline_before'],'original APK/modules/resources/shaders changed');require(layers(dev)==d['settings_before'],'GPU layer settings changed');dev.stopped();d['original_APK_modules_resources_shaders_preserved']=True;d['game_stopped']=True
+   d['baseline_after']=baseline(dev,expected);require(d['baseline_after']==d['baseline_before'],'original APK/modules/resources/shaders changed');require(layers(dev)==d['settings_before'],'GPU layer settings changed');require('debug_property_before'not in d or dev.adb('shell','getprop','debug.mesa.panvk.debug')==d['debug_property_before'],'PanVK debug property changed');dev.stopped();d['original_APK_modules_resources_shaders_preserved']=True;d['game_stopped']=True
   except BaseException as e:d['cleanup_errors'].append(repr(e))
   journal(path,d)
  print(json.dumps({k:v for k,v in d.items()if k not in('baseline_before','baseline_after')},indent=2))
