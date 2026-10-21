@@ -8,10 +8,10 @@ for key,value in [('runtime_commit','bad'),('scope','wrong'),('preferred_block_M
  try:m.proof(c)
  except RuntimeError:count+=1
  else:raise AssertionError('unsafe or incomplete input admitted '+key)
-c=copy.deepcopy(config);c.update(runtime_commit='463bbfccd32bfa658a14c7492ebecde7731bca78',preferred_block_MiB=16,artifact_records_ready=True)
+c=copy.deepcopy(config);c.update(runtime_commit='463bbfccd32bfa658a14c7492ebecde7731bca78',preferred_block_MiB=16,artifact_records_ready=False)
 try:m.proof(c)
 except RuntimeError as e:assert 'DRAFT'in str(e);count+=1
-else:raise AssertionError('unreviewed16MiB can reach Device')
+else:raise AssertionError('incomplete16MiB input can reach Device')
 for commit,row in m.RUNTIMES.items():
  cmd=m.command(config['serial'],Path('/not-executed'),row['source']);assert cmd[1]==str(row['source']/'scripts/dev/android-game-launch.py')and cmd[cmd.index('--scale-3d')+1]=='0.65'and'--fixed-3d'in cmd and'--no-shared-guest-heap'in cmd and'--no-legacy-astc-copy'in cmd and'--native-resource-table'not in cmd;count+=1
 original=(R/'.local/worktrees/mali-vma-single-foreground-v3/scripts/dev/mali-vma-paused-capture-v1/run-game.py').read_text();current=P.read_text()
@@ -21,4 +21,4 @@ for name in ['baseline','owned','showmap','original_save','vma_pause_capture','r
 normalized=current.replace("command(d['serial'],out,Path(p.get('runtime_source',SOURCE)))","command(d['serial'],out)").replace("str(Path(p.get('runtime_source',SOURCE))/'scripts/dev/android-game-walk-to.py')","str(SOURCE/'scripts/dev/android-game-walk-to.py')")
 assert fn(original,'launch')==fn(normalized,'launch');count+=1
 helper=P.parent.parent/'android-game-background-save.py';oldhelper=R/'.local/worktrees/mali-vma-single-foreground-v3/scripts/dev/android-game-background-save.py';assert helper.read_bytes()==oldhelper.read_bytes();count+=1
-print(json.dumps({'passed':True,'checks':count,'unchanged_lifecycle_CAS_helpers':6,'launch_only_pinned_SOURCE_selection':True,'helper_byte_identical':True,'candidate16_missing_review_refused_before_Device':True,'device_access':False}))
+print(json.dumps({'passed':True,'checks':count,'unchanged_lifecycle_CAS_helpers':6,'launch_only_pinned_SOURCE_selection':True,'helper_byte_identical':True,'incomplete_candidate16_input_refused_before_Device':True,'device_access':False}))

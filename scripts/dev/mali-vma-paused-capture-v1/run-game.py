@@ -4,7 +4,7 @@ from pathlib import Path
 import argparse, hashlib, importlib.util, json, os, re, shlex, signal, subprocess, sys, tarfile, time, uuid, zipfile
 R=Path('/home/dl/d2r-mobile');PKG='com.d2rmobile.nativeport';HERE=Path(__file__).resolve().parent
 SOURCE=R/'.local/worktrees/vma-one-shot-dump-noembed-v2';COMMIT='7225d7f7ca6d435d59a3cfb102eabbc59a619592'
-RUNTIMES={COMMIT:{'source':SOURCE,'block_MiB':32,'root_review_SHA256':'65c435649cc86f60c3434ea58cf4ed7c4153dc7d5f2c58ae603c623e0971348c'},'463bbfccd32bfa658a14c7492ebecde7731bca78':{'source':R/'.local/worktrees/vma-block16m-experiment-v1','block_MiB':16,'root_review_SHA256':None}}
+RUNTIMES={COMMIT:{'source':SOURCE,'block_MiB':32,'root_review_SHA256':'65c435649cc86f60c3434ea58cf4ed7c4153dc7d5f2c58ae603c623e0971348c'},'463bbfccd32bfa658a14c7492ebecde7731bca78':{'source':R/'.local/worktrees/vma-block16m-experiment-v1','block_MiB':16,'root_review_SHA256':'188b23a256e1957dd8ce9cc495b3036d97e68e6619d78bc938dc978c147f2177'}}
 def module(name,path):
  s=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 base=module('accepted_mali_CAS',R/'.local/worktrees/panvk-minegraph-static-hardware-game-v4/scripts/dev/run-panvk-minegraph-game.py')
