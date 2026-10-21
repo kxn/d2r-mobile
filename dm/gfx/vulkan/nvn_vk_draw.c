@@ -1311,7 +1311,7 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   // it must never demand/commit inside an outer draw's borrowed resources.
   if(cpu_preflight && !vk_ghost_replaying())vk_shader_cpu_sources(list,&S,0);
   draw_pool_plan pool_plan={idx};
-  int pool_operation=vk_pool_operation_begin(draw_pool_collect,&pool_plan);
+  int pool_operation=vk_pool_draw_operation_begin(draw_pool_collect,&pool_plan);
   vk_texel_storage_selection texel_selection;
   if(list[1] && list[1]->texel_storage_alternative) {
     uint32_t storage_descriptors=0;

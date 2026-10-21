@@ -64,6 +64,10 @@ static void lazy_alias_read(vk_buffer buffer,uint64_t offset,uint8_t *address,un
 static void lazy_alias_words(const uint8_t *memory,unsigned size,uint32_t value) {
   for(unsigned n=0;n<size;n+=4) {uint32_t actual;memcpy(&actual,memory+n,4);CHECK(actual==value);}
 }
+static unsigned lazy_alias_collect_calls;
+static int lazy_alias_collect(void *context,vk_pool_requirement_sink sink,void *out) {
+  lazy_alias_collect_calls++;return sink(out,context);
+}
 static void shared_lazy_alias_gpu_test(void) {
   enum {W=65536,SIZE=64};
   CHECK(vk_pool_shared_mode() && V.options.pool_window_bytes==W);
@@ -74,6 +78,36 @@ static void shared_lazy_alias_gpu_test(void) {
   CALL(nvnMemoryPoolBuilderSetStorage,&builder,bytes,4u<<20);
   CALL(nvnMemoryPoolBuilderSetFlags,&builder,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
   CHECK(CALL(nvnMemoryPoolInitialize,&owned,&builder));
+  // Actual copy/dispatch admission must establish full backing BEFORE an
+  // observation; draw alone is allowed to leave the same untouched range cold.
+  vk_pool_requirement need={(uintptr_t)bytes+5*W-64,192,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0};
+  vk_pool_span_info prerequisite;
+  CHECK(vk_pool_span_query(need.address,need.size,&prerequisite)==VK_POOL_SPAN_UNBACKED);
+  int draw_only=vk_pool_draw_operation_begin(lazy_alias_collect,&need);
+  CHECK(!lazy_alias_collect_calls);
+  CHECK(vk_pool_span_query(need.address,need.size,&prerequisite)==VK_POOL_SPAN_UNBACKED);
+  vk_pool_operation_end(draw_only);
+  // A later malformed range must reject the WHOLE batch without importing
+  // the earlier valid range. Also retain native-kind/prefix validation.
+  vk_pool_requirement invalid[2]={need,need};invalid[1].prefix_alignment=3;
+  vk_pool_reserve_result rejected;
+  CHECK(vk_pool_reserve_ranges(invalid,2,W,&rejected)==VK_POOL_RESERVE_INVALID);
+  CHECK(vk_pool_span_query(need.address,need.size,&prerequisite)==VK_POOL_SPAN_UNBACKED);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  invalid[1].prefix_alignment=W;invalid[1].binding_kind=VK_POOL_REQUIRE_NATIVE_IMAGE;
+  CHECK(vk_pool_reserve_ranges(invalid,2,W,&rejected)==VK_POOL_RESERVE_INVALID);
+  CHECK(vk_pool_span_query(need.address,need.size,&prerequisite)==VK_POOL_SPAN_UNBACKED);
+#endif
+  int copy_ready=vk_pool_operation_begin(lazy_alias_collect,&need);
+  CHECK(lazy_alias_collect_calls==1);
+  CHECK(vk_pool_span_query(need.address,need.size,&prerequisite)==VK_POOL_SPAN_SINGLE);
+  CHECK(vk_pool_shared_materialized(need.address,need.size));
+  CHECK(vk_pool_shared_cpu_observe_prepare(need.address,need.size));
+  nvn_dirty_scope *observed_scope=nvn_dirty_scope_acquire((void *)(uintptr_t)need.address,need.size);
+  CHECK(observed_scope);vk_shared_cpu_observation observation;
+  CHECK(vk_pool_shared_cpu_observe_begin(need.address,need.size,&observation));
+  CHECK(observation.stamp);vk_pool_shared_cpu_observe_end(&observation);
+  nvn_dirty_scope_release(observed_scope);vk_pool_operation_end(copy_ready);
   uint8_t *address=bytes+W+128;uint64_t old_offset,cover_offset,cross_offset;
   uint8_t forward[SIZE],reverse[SIZE],nested[SIZE],later[SIZE];
   // Original timeline gate pattern: keep a real earlier submit pending while
@@ -118,6 +152,13 @@ static void shared_lazy_alias_gpu_test(void) {
   CHECK((uintptr_t)address>=(uintptr_t)bytes+range.logical_begin);
   cover_offset=(uintptr_t)address-((uintptr_t)bytes+range.logical_begin);
   CHECK(cover_offset<=cover.size && SIZE<=cover.size-cover_offset);
+  if(getenv("DM_SHARED_LAZY_ALIAS_NEGATIVE")) {
+    CHECK(!strcmp(getenv("DM_SHARED_LAZY_ALIAS_NEGATIVE"),"overlap-copy"));
+    // Same logical Pool, but source's old complete span and destination's
+    // crossing cover may be different buffers. Overlap remains forbidden.
+    mtl_sub_copy((uintptr_t)bytes+W+64,(uintptr_t)bytes+W-64,192);
+    die("Shared lazy overlapping copy unexpectedly returned");
+  }
   CHECK(!atomic_load(&lazy_alias_old_destroyed) && !atomic_load(&lazy_alias_cover_destroyed));
   lazy_alias_read(cover,cover_offset,address,SIZE,forward);
   lazy_alias_fill(cover,cover_offset,address,SIZE,0x98a9bacb);
@@ -196,6 +237,6 @@ static void shared_lazy_alias_gpu_test(void) {
   if(gate)vkDestroySemaphore(V.device,gate,NULL);
   CHECK(vk_pool_span_query((uintptr_t)address,SIZE,&range)==VK_POOL_SPAN_NONE);
   CHECK(!vk_validation_error_count());
-  printf("{\"test\":\"shared-lazy-coherent-alias\",\"checks\":%u,\"result\":\"passed\",\"actual_GPU_bidirectional_bytes\":true,\"warm_proof_global\":true,\"old_writer_pending_during_cover_import\":%s,\"unknown_visibility_fallback\":true,\"old_physical_writer_after_cover\":true,\"HOST_publication_bytes\":true,\"nested_logical_scopes\":true,\"address_only_remaining_extent_and_ledger\":true,\"address_only_RAW_precise_vertex_dependency\":true,\"old_buffers_retained_through_completion\":true,\"actual_borrow_to_commit_pin_upgrade\":true,\"pool_close_destroyed_once\":true,\"game_modules_executed\":false}\n",checks,pending_gate?"true":"false");
+  printf("{\"test\":\"shared-lazy-coherent-alias\",\"checks\":%u,\"result\":\"passed\",\"generic_admission_before_observation\":true,\"draw_only_demand_admission\":true,\"invalid_batch_unchanged_coverage\":true,\"actual_GPU_bidirectional_bytes\":true,\"warm_proof_global\":true,\"old_writer_pending_during_cover_import\":%s,\"unknown_visibility_fallback\":true,\"old_physical_writer_after_cover\":true,\"HOST_publication_bytes\":true,\"nested_logical_scopes\":true,\"address_only_remaining_extent_and_ledger\":true,\"address_only_RAW_precise_vertex_dependency\":true,\"old_buffers_retained_through_completion\":true,\"actual_borrow_to_commit_pin_upgrade\":true,\"pool_close_destroyed_once\":true,\"game_modules_executed\":false}\n",checks,pending_gate?"true":"false");
 }
 #endif

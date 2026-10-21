@@ -4332,6 +4332,12 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t size) {
         (unsigned long long)size);
   // vkCmdCopyBuffer 按字节定义范围，沿原 Metal 拷贝语义保留未对齐首尾。
   // vkCmdCopyBuffer ranges are byte-addressed, matching original Metal copies.
+#ifdef DM_VULKAN_SHARED_POOLS
+  // Covering imports can give overlapping logical bytes different handles.
+  // Preserve the original refusal by payload rather than physical identity.
+  if(shared_lazy_active && range_overlap(src,size,dst,size))
+    die("Vulkan overlapping buffer copy");
+#endif
   if (s == d && so < doff + size && doff < so + size)
     die("Vulkan overlapping buffer copy");
   const uint8_t *known=NULL;

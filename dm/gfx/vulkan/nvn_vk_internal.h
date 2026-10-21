@@ -159,6 +159,8 @@ typedef int (*vk_pool_operation_collect)(void *context,vk_pool_requirement_sink 
 // Collection is logical and may be retried after explicit owner maintenance.
 // A nonzero token owns an immutable physical topology until operation_end.
 int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context);
+// Draw only: complete live consumers can import on demand in the opt-in mode.
+int vk_pool_draw_operation_begin(vk_pool_operation_collect collect,void *context);
 int vk_pool_operation_begin_ranges(const vk_pool_requirement *ranges,size_t count);
 void vk_pool_operation_end(int token);
 int vk_pool_maintenance_active(void);

@@ -254,15 +254,18 @@ static void pool_window_before_submission(void) {
   }
   die("Vulkan whole-reference pool registry did not settle");
 }
-int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
+static int pool_operation_begin(vk_pool_operation_collect collect,void *context,int lazy_draw) {
   if(!V.options.pool_window_bytes)return 0;
   if(!collect || pool_operation_depth==POOL_OPERATION_DEPTH)
     die("Vulkan invalid/nested pool operation plan");
   pool_operation_plan **slot=&pool_operation_plans[pool_operation_depth];
   if(!*slot) {*slot=calloc(1,sizeof **slot);if(!*slot)die("Vulkan pool operation scratch allocation");}
   pool_operation_plan *plan=*slot;
+#ifndef DM_VULKAN_SHARED_POOLS
+  (void)lazy_draw;
+#endif
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(shared_lazy_active) {
+  if(shared_lazy_active && lazy_draw) {
     if(pool_window_full_reference())die("Shared lazy imports cannot enable whole-pool sync reference");
     if(plan->pin_count || plan->owned_pin_count)die("Shared lazy stale operation borrows");
     plan->count=0;plan->geometry_registry_epoch=0;
@@ -303,6 +306,14 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
     return (int)++pool_operation_depth;
   }
   die("Vulkan pool operation registry did not settle");return 0;
+}
+// Generic copy/transfer/dispatch admission must precede physical observation.
+// Only draw's complete actual-consumer path opts into demand-only imports.
+int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
+  return pool_operation_begin(collect,context,0);
+}
+int vk_pool_draw_operation_begin(vk_pool_operation_collect collect,void *context) {
+  return pool_operation_begin(collect,context,1);
 }
 typedef struct {const vk_pool_requirement *ranges;size_t count;} pool_range_batch;
 static int pool_collect_batch(void *context,vk_pool_requirement_sink sink,void *out) {
