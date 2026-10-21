@@ -33,3 +33,14 @@ host-only fixture 复用原真实 memfd import、RGBA clear/readback 和 GPU tim
 测试握手/getter 仅 host test 编译，实际 Android APP 对象中不存在。
 
 此候选仅 source/host/ASan/实际 NDK 对象验证；尚未 canonical、真机或 FPS/热验收。
+
+
+## Android 真机短测与主线合入
+
+`633ea750561f3cc3b072acc82e44a444cb25b045` 已完成完整 canonical Android 构建（API29/O3、native jobs 2），APK SHA256 `d45d489a6f051cffd2653ded6eb7ee2a680edae207d2ee2acfb08c853c2c7ec9`，宿主 ELF Build ID `813b080460461f7c705465e1d25f4558aa061448`。原始三份 NSO 重新加工、28 产物独立 verify-only 通过。APP 中不含 host 握手及 getter；保留的 Android fixture selector 拒绝 stub 仅直接报错，不能将同名 stub 当作执行了宿主用例。
+
+Q735 真机 PID 11645 完成真实游戏模块、原三段营地步行与 simpleperf/Perfetto 采集。实际 HUD 前后截图未见明显新增黑块或几何错误，原绿色地面斑点仍在；不是全场景视觉验收。原生命周期 fresh save2 后停止，原 APK、驱动、模块、资源及缓存恢复，清理错误为空。模式仍为 native6217/f830/sharedON、0.60 fixed、2750×1260、1 MiB 导入窗口，不代表默认 0.75 或实际 6 GB 长期游玩。
+
+原 collector 路径 13/633 个用户态样本，在本次 644 个样本中未采到（self 与保留的 inclusive 均为零）。这与无释放时跳过扫描的机制相符，但不能称零调用或把原 13 样本全换算成省下的时间。整翻译线程 Running 为每个有效 Surface 间隔 27.2190 ms，前次 10c 为 26.6791 ms；replay 为 26.0830 / 25.4849 ms，加权频率为 1618.20 / 1626.66 MHz。本轮 PSO/variants 174/31 全窗稳定，前次 record/scheduler 为 182/33，且前次 stat 不稳定，因此不是相同工作量 A/B。没有整线程净 CPU、FPS 或温度收益证明；保留依据是已证明的扫描工作消除、明确的小额成本和正确性/真机短测通过，不能将本项作为持续散热或低内存目标的完成证据。
+
+根证据：`.local/logs/native-retirement-event-gate-633ea75-root-canonical-raw-review.json`、`.local/logs/native-candidate-short-633-Q735-v1-root-actual-review.json`、`.local/logs/native-candidate-short-633-Q735-v1-analysis/actual633-vs10c-official-summary-agent.json`。内存端点 PSS 约少 2.02 MiB，仅作独立端点记录，不归因于新增 8B/Pool 的本改动。
