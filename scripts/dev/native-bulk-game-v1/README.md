@@ -324,3 +324,19 @@ actuald5，此源码还合入773预算与主线文档，不能把两次短测称
 当时工作集，不能保证新run绝不触发；本次读取原有预算计账确认。短测频率、
 PSO/variants、路线视角与工作量需实报；未测候选收益，不能把写指令减少直接
 称CPU/FPS/热改善。DRAFT execution_ready=false，root另建ROOT授权输入。
+
+
+### 633ea75 native retirement 通知门短验证
+
+此 tools-only 后继基于实际通过的0e1c3a3，仅更新严格candidate/artifact gate、对应
+离线负控和此文档；原3walk、独立8s stat/99Hz record/Perfetto、CPUhelper、save2
+与6dir CAS恢复全部逐字节保留。仍验证native6217/f830/sharedON/.60fixed/
+2750×1260/1MiB；不增加SDP/LLDB/ADPF或运行时测量器。actual80a/6f资格门保留，
+另pin真实10c短测、633源审/完整canonical与freshraw28 rootreceipt。
+
+633相对exact10c仅增加每Pool8B功能通知计数：无release时collect不扫native链；
+release登记在ref--前，store2最后访问，真实ready2摘除才减。原索引/资源锁/fence/
+销毁与Poolclose次序不变。10c已有773预算，本次也保留并读既有字段，不混VMA。
+采样13/633仅定位历史扫描，不等于全可省；实际PC/工作量/频率/PSO及预算释放要
+按当前官方窗口记录，不能把历史短测称匹配A/B或先宣称净CPU/FPS/热收益。
+DRAFT execution_ready=false，root另建唯一ROOT输入授权；不覆盖旧工具/报告。

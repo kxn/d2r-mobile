@@ -24,10 +24,10 @@ def pinned(row):
 
 class Gate(unittest.TestCase):
  def config(self):
-  p=read(R/'.local/build/native-candidate-short-10c-v1/inputs-DRAFT.json')
+  p=read(R/'.local/build/native-candidate-short-633-v1/inputs-DRAFT.json')
   p['phases'][1]['composition_data']=read(pinned(p['phases'][1]['composition']))
   return p
- def test_actual_reviewed10c_80a_and6f_refs_are_accepted(self):
+ def test_actual_reviewed633_80a_and6f_refs_are_accepted(self):
   g.validate(self.config(),pinned,read,require)
  def test_wrong_runtime_provider_window_or_selection_rejected(self):
   for key,value in [('runtime_commit',g.BASE),('driver',{'sha256':'0'*64}),('pool_window_bytes',16777216)]:
@@ -83,7 +83,7 @@ class Gate(unittest.TestCase):
     with self.assertRaises(RuntimeError):g.validate(p,pinned,altered,require)
  def test_root_artifact_extent_exact(self):
   p=self.config();q=Path(p['native_candidate_validation']['root_review']['path'])
-  for key,value in [('raw_deployment_files',27),('base',g.BASE),('device_access',True),('six_native_library_sha256',{}),('APK',{}),('host_ELF_sha256','0'*64),('host_ELF_BuildID','0'*40)]:
+  for key,value in [('base',g.BASE),('actual_device_authorized',True),('tool_ready_authorized',False),('APK',{}),('host_ELF_SHA256','0'*64),('host_ELF_BuildID','0'*40)]:
    def altered(path):
     data=read(path)
     if Path(path)==q:data[key]=value
@@ -93,7 +93,7 @@ class Gate(unittest.TestCase):
  def test_actual_complete_build_and_separate_verify_required(self):
   p=self.config();review=read(pinned(p['native_candidate_validation']['root_review']))
   q=Path(review['complete_audit']['path'])
-  for key,value in [('commit',g.BASE),('separate_fresh_original_NSO_and_verify_only',False),('actual_APP_test_observer_absent',False),('raw_deployment_files',27)]:
+  for key,value in [('commit',g.BASE),('separate_fresh_original_NSO_and_verify_only',False),('actual_APP_host_test_symbols_excluded',[]),('six_library_hashes_and_LOAD_alignment',[]),('raw_deployment_files',27)]:
    def altered(path):
     data=read(path)
     if Path(path)==q:data[key]=value
