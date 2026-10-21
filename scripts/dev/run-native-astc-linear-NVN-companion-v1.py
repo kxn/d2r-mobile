@@ -6,12 +6,18 @@ Default is an offline plan. No game launch, system setting changes or profiler.
 """
 from types import SimpleNamespace
 import linear_NVN_installer
+import qualified_astc6_NVN
 import argparse,hashlib,io,json,re,subprocess,time,uuid,signal,zipfile,os,xml.etree.ElementTree as ET
 from pathlib import Path
 def validate_native_rows(rows,manifest):
+ expected_format=158
+ if manifest.get('linear_candidate_mode')=='qualified-ASTC6':
+  expected_format=manifest['native_fixture_expected_format']
+  assert expected_format in (165,166) and manifest['qualified_ASTC6']['VkFormat']==expected_format
+ else:assert manifest.get('native_fixture_expected_format',158)==158
  passed=[r for r in rows if r.get('test')=='native-resource-original-NVN']
  assert len(passed)==1 and passed[0]['result']=='passed' and passed[0]['checks']==447
- assert passed[0]['format']==158 and passed[0]['mips']==9 and passed[0]['family_version']==2 and passed[0]['tail_levels']==5
+ assert passed[0]['format']==expected_format and passed[0]['mips']==9 and passed[0]['family_version']==2 and passed[0]['tail_levels']==5
  assert passed[0]['no_pool_shadow'] is True and passed[0]['full_all_mips'] is True and passed[0]['tail_packaged_and_B2T'] is True
  assert passed[0]['native_offset']==1056768 and passed[0]['pool_bytes']==4194304 and passed[0]['game_modules_executed'] is False
  image_only=[r for r in rows if r.get('test')=='native-image-only-original-NVN']
@@ -56,12 +62,15 @@ with zipfile.ZipFile(a.artifact/'candidate.apk') as z:
  for name,digest in m['native_library_sha256'].items():assert hashlib.sha256(z.read('lib/arm64-v8a/'+name)).hexdigest()==digest
 assert len(m['native_library_sha256'])==6
 assert sha(a.driver)==m['driver_sha256']=='f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
-assert m['linear_candidate_mode']in('old-AA-negative','new-positive')and m['source_runtime_unmodified']=='0a54ef2ce1902f1967f00ee28d8765fa7a978942'
+assert m['linear_candidate_mode']in('old-AA-negative','new-positive','qualified-ASTC6')and m['source_runtime_unmodified']=='0a54ef2ce1902f1967f00ee28d8765fa7a978942'
 negative=m['linear_candidate_mode']=='old-AA-negative'
+qualified=m['linear_candidate_mode']=='qualified-ASTC6'
+if qualified:qualified_astc6_NVN.validate_artifact(a.artifact,m)
+else:assert 'qualified_ASTC6'not in m and m.get('native_fixture_expected_format',158)==158
 if a.execute:
  assert a.matrix_acceptance is not None
  matrix=json.loads(a.matrix_acceptance.read_text());assert matrix['stage']=='actual-native-ASTC-fully-linear-API-matrix-passed-not-game'and not matrix['cleanup_errors']and matrix['original_unchanged']and matrix['driver_sha256']==m['driver_sha256']and matrix['selected_shapes']==list(range(8))
-if not negative:
+if not negative and not qualified:
  receipt=m['actual_producer_receipt'];assert sha(receipt['path'])==receipt['sha256']
  actual=json.loads(Path(receipt['path']).read_text());assert actual['stage']=='actual-native-ASTC-fully-linear-real-firepit-producer-passed-not-NVN'and not actual['cleanup_errors']and actual['original_unchanged']
 resource_inputs=m['owned_resource_inputs']
@@ -71,7 +80,7 @@ if negative:
  assert resource_inputs=={'native-layouts.bin':'d61c38b5bcbac469f9a111e6b239fada4b7fb2c5b86f33aec3810661215b8e55','native-resource.bin':'de206d467fc9dd74de9e957e432cf2470512dc6825caceff40d89a7260e5e418','resource-input.bin':'d078631c7797b699200230a09533c9ad394a40fb9244fe0f75d905974ca49354'}
  assert m['native_payload_bytes']==135168
 else:
- assert m['native_payload_bytes']==94208 and (a.artifact/'resource4/native-resource.bin').stat().st_size==94208
+ assert m['native_payload_bytes']==(53248 if qualified else 94208) and (a.artifact/'resource4/native-resource.bin').stat().st_size==m['native_payload_bytes']
  table=(a.artifact/'resource4/native-layouts.bin').read_bytes();assert table[64:96].hex()==m['driver_sha256']and table[32:64].hex()==m['native_resource_pack_sha256']and table[96:128].hex()==m['native_resource_producer_sha256']
 shader_files=m['shader_files'];assert shader_files
 assert all(Path(n).name==n and sha(a.artifact/'vulkan-fixture'/n)==h for n,h in shader_files.items())
@@ -112,7 +121,8 @@ plan={'scope':'ONE cold original-NVN native image ONLY then late realBuffer+orig
  'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,
  'module_report_sha256':sha(a.module_report),'module_count':len(module_items),
  'resource_report_sha256':sha(a.resource_report) if a.resource_report else None,'expected_shaderchain':a.expected_shaderchain,
- 'controller_revision':'v3-exact-private-alias-device-inode-size-sha',
+ 'controller_revision':'v3-exact-private-alias-device-inode-size-sha-qualified-ASTC6',
+ 'qualified_ASTC6':m.get('qualified_ASTC6'),'native_fixture_expected_format':m.get('native_fixture_expected_format',158),
  'functional_timeout_seconds':90,'installation_timeout_seconds':70,'launches_allowed':1,
  'writes_only':'new independent package + unique tmp directory, original package read-only','settings_changes':False}
 if not a.execute:
@@ -343,7 +353,7 @@ try:
  assert ad('exec-out','run-as',pkg,'sha256sum','files/runtime/driver/libvulkan_freedreno.so').split()[0]==sha(a.driver)
  for name,digest in resource_inputs.items():assert ad('exec-out','run-as',pkg,'sha256sum','files/runtime/resource4/'+name).split()[0]==digest
  phase.update(result='passed',actual_driver_sha256=sha(a.driver),identity=identities[0]);save()
- stop_owned(phase);result['stage']='actual-original-NVN-native-window-family-owned-passed'
+ stop_owned(phase);result['stage']='actual-qualified-ASTC6-original-NVN-native-window-family-owned-passed' if qualified else 'actual-original-NVN-native-window-family-owned-passed'
  result.update(no_game_acceptance=True,performance_claim=False)
 except ExpectedOldTableRefusal:result['stage']='actual-old-AA-native-table-refused-by-original-runtime'
 except BaseException as e:result.update(stage='failed-preserved',error=repr(e))

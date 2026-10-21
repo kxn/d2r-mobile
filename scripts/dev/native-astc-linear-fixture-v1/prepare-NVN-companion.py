@@ -6,7 +6,7 @@ HOST=Path('/home/dl/d2r-mobile');DRIVER='f830285fe68f0a744792269da5f160ed8636c17
 def sha(p):
  with Path(p).open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def rec(p):p=Path(p).resolve();return dict(path=str(p),sha256=sha(p),bytes=p.stat().st_size)
-p=argparse.ArgumentParser(description=__doc__);p.add_argument('--mode',choices=['old-AA-negative','new-positive'],required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--producer-receipt',type=Path);p.add_argument('--source-texture',type=Path,default=HOST/'.local/build/nvn-native-resource-runtime-v1/source4.texture');a=p.parse_args();assert not a.output.exists()
+p=argparse.ArgumentParser(description=__doc__);p.add_argument('--mode',choices=['old-AA-negative','new-positive','qualified-ASTC6'],required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--producer-receipt',type=Path);p.add_argument('--source-texture',type=Path,default=HOST/'.local/build/nvn-native-resource-runtime-v1/source4.texture');p.add_argument('--qualified-format',type=int,choices=[165,166]);a=p.parse_args();assert not a.output.exists()
 base=HOST/'.local/build/native-image-only-app-0a54ef2-candidate';canonical=base/'candidate.apk';assert sha(canonical)=='0c5fbf472fcb3b597100de0c02cddebb3ee679d883ce63d23354b2fd62ed459f';m=json.loads((base/'candidate.apk.build.json').read_text());source=HOST/'.local/build/turnip-real-native-resource-v1-input'
 for n,h in {'resource-input.bin':'d078631c7797b699200230a09533c9ad394a40fb9244fe0f75d905974ca49354','resource-source.json':'5d2e767a618a805d412f86c70be6f3c926897e5085621461390386f368e6d269'}.items():assert sha(source/n)==h
 assert m['package']=='com.d2rmobile.nativewindowfamilyfixture'and m['contains_game_binary']is False and m['original_game_classes_assets_packaged']is False
@@ -14,6 +14,13 @@ with zipfile.ZipFile(canonical)as apk:
  dex=apk.read('classes.dex');assert b'Lcom/d2rmobile/nativewindowfamilyfixture/MainActivity;'in dex and b'Lcom/d2rmobile/nativeport/MainActivity;'not in dex
  for n,h in m['native_library_sha256'].items():assert hashlib.sha256(apk.read('lib/arm64-v8a/'+n)).hexdigest()==h
  assert not any(n.startswith('assets/')and n!='assets/licenses/opus-1.5.2.txt'for n in apk.namelist())
+if a.mode=='qualified-ASTC6':
+ import sys
+ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+ import qualified_astc6_NVN
+ assert a.qualified_format is not None and a.producer_receipt is None,'qualified mode uses the exact reviewed actual32 receipt'
+ print(json.dumps(qualified_astc6_NVN.prepare(a,base,canonical,m)));raise SystemExit(0)
+assert a.qualified_format is None,'qualified format is only valid in explicit ASTC6 mode'
 receipt=None
 if a.mode=='new-positive':
  assert a.producer_receipt is not None,'actual original producer output required; no predicted opaque payloads'
