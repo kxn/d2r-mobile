@@ -11,3 +11,11 @@ ID与epoch证明的只有注册值不变，不证明CPU/GPU数据ready。每次C
 验证为host软件GPU：normal与ASan/UBSan各4个Core/SYNC原功能用例，覆盖真实graphics/compute/ghost/promotion、FS/CS/TRANSFER、CPU同值/noFlush及nativeImage→Buffer GPU payload，ordinaryOFF原路；新功能oracle核相邻相同值不refresh、count缩小/增长/新增尾部、换shader/stage/id、register/limit invalidation。refresh观测仅EMBED&&!APP，不是APP性能counter。原f830 table1216B/payload94208B经原Builder输出非空collector metadata仍验证，未冒称LVP ASTC执行。两必要变异：恢复每op清id须被新重复工作oracle拒绝；去epoch须被注册失效oracle拒绝。未访问设备、未声称Android性能提高。
 
 一次host编排在ASan二进制尚未完成链接时提前进入该组，产生FileNotFoundError；原4个normal成功记录保留。随后等待同一ASan构建完成，只补其4组，不重复normal。该工具错误不是运行时失败，最终汇总引用两份真实输出与各自binary SHA。
+
+## Android 短测
+
+精确 `8480a53` 已完成 canonical、原始3NSO重新加工与独立verify28，在Q735/f830/native6217、固定0.60/1MiB窗口执行真实游戏，完成三段原摇杆路线、原生命周期存档及原包/数据恢复。所见营地截图没有明显缺图；不代表战斗、全部地图或持续温度验收。
+
+官方Simpleperf为605个NvN用户态样本、无丢失；`vk_texture_source_resolve` self占比0.99%，此前独立ebe窗口为2.58%。当前stat/record/Perfetto三个窗口PSO均稳定，但旧窗口非匹配对照，不能把self占比差当净CPU收益。当前Perfetto同234个完整游戏Surface间隔内，NvN Running为27.776ms/次呈现、平均间隔33.238ms、运行时加权CPU频率1587.9MHz。上一轮26.584ms也不是可直接相减的匹配基线。保留本优化的依据是已验证删除重复逻辑lookup/144B复制且不增加生产内存，而非已获得FPS或温度收益。
+
+原始工具结果、源码/产物与清理证据见 `.local/logs/native-candidate-source-reuse-8480-Q735-v1-root-actual-review.json`。本次额外使用系统 `showmap` 取得一次营地内存端点，分项与边界见 `ANDROID_NATIVE_SHARED_MEMORY_ENDPOINT_2026-10-21.zh-CN.md`。
