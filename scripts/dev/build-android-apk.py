@@ -13,6 +13,7 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
+parser.add_argument('--thinlto',action='store_true',help='experimental Clang ThinLTO for host C/C++, lld backends limited to2')
 parser.add_argument('--native-resources',action='store_true',help='compile default-OFF host-native texture protocol; requires shared pools')
 parser.add_argument('--shared-pools',action='store_true',help='compile default-OFF fixed shared Pool/early guest heap experiment')
 parser.add_argument('--shared-import-windows',action='store_true',help='compile experimental shared range imports; requires --shared-pools and cold nonzero pool window bytes')
@@ -43,6 +44,7 @@ def run(*args):
 
 run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-native',
     '-DDM_ANDROID_TLS_DESC=' + ('ON' if args.tlsdesc else 'OFF'),
+    '-DDM_NATIVE_THINLTO=' + ('ON' if args.thinlto else 'OFF'),
     '-DDM_VULKAN_SHARED_IMPORT_WINDOWS=' + ('ON' if args.shared_import_windows else 'OFF'),
     '-DDM_VULKAN_SHARED_POOLS=' + ('ON' if args.shared_pools else 'OFF'),
     '-DDM_VULKAN_NATIVE_RESOURCES=' + ('ON' if args.native_resources else 'OFF'),
@@ -131,7 +133,7 @@ inputs.update(path for path in SOURCE.rglob('*') if path.is_file())
 inputs.add(Path(__file__).resolve())
 for name in ['volk','libadrenotools','opus']:
     inputs.update(p for p in (ROOT/'dm/third_party'/name).rglob('*') if p.is_file())
-inputs.update([ROOT/'dm/host/android/CMakeLists.txt',ROOT/'dm/gfx/vulkan/CMakeLists.txt'])
+inputs.update([ROOT/'dm/host/android/CMakeLists.txt',ROOT/'dm/host/native_thin_lto.cmake',ROOT/'dm/gfx/vulkan/CMakeLists.txt'])
 inputs.update([ROOT/'dm/gfx/vulkan/builtins.cmake',ROOT/'dm/gfx/vulkan/build_builtin.py'])
 inputs.update(p for p in (ROOT/'dm/gfx/vulkan/shaders').iterdir() if p.is_file())
 inputs.update(native_build.glob('nvn_vk_*_spv.json'))
@@ -157,6 +159,10 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'shared_import_windows_compiled':args.shared_import_windows,
           'native_resources_compiled':args.native_resources,
           'native_jobs':args.native_jobs,
+          'host_thinlto':args.thinlto,
+          'host_thinlto_backend_jobs':2 if args.thinlto else None,
+          'host_extra_compile_options':['-flto=thin'] if args.thinlto else [],
+          'host_extra_link_options':['-flto=thin','-O'+args.opt_level,'-fuse-ld=lld','-Wl,--thinlto-jobs=2'] if args.thinlto else [],
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,
           'native_library_sha256':{p.name:sha(p) for p in

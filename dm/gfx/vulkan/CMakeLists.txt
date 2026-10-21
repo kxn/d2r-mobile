@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(d2r_vulkan_validation C CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../host/native_thin_lto.cmake")
 set(CMAKE_CXX_STANDARD 17)
 add_executable(alias_interval_test tests/alias_interval.c)
 target_compile_options(alias_interval_test PRIVATE -UNDEBUG -Wall -Wextra)
@@ -49,6 +50,7 @@ target_compile_definitions(vulkan_host_test PRIVATE _GNU_SOURCE DM_STRICT_HLE=1 
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SUBPASS_TEST_SHADERS=1 DM_DIRTY_RANGE_TEST_HOOKS=1 DM_VULKAN_SCAN_PAIR_ORACLE=1)
 target_compile_options(vulkan_host_test PRIVATE -g -O1 -Wall -Wno-format -Wno-unused-function)
 target_link_libraries(vulkan_host_test PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+dm_native_thinlto(vulkan_host_test)
 # Owned fixture observes actual require calls, without production counters.
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_VERTEX_REQUIRE_WRAP=1)
 target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_buffer_vertex_require")
