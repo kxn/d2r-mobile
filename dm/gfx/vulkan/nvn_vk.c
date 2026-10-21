@@ -15,7 +15,7 @@
 #include "nvn_vk_freeze.h"
 #include "nvn_vk_system_trace.h"
 #include "nvn_vk_pool_copy_stats.h"
-#ifdef DM_VULKAN_NATIVE_RESOURCES
+#if defined(DM_VULKAN_SHARED_POOLS) || defined(DM_VULKAN_NATIVE_RESOURCES)
 #include "nvn_vk_alias_interval.h"
 #endif
 #include "nvn_vk_bitmap.h"
