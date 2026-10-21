@@ -125,7 +125,8 @@ def proof(path, digest):
     require(p['schema'] == 1 and p['serial'] == '10CG570J59001U1', 'Q735 scope')
     p['pool_window_bytes'] = p.get('pool_window_bytes', 16777216)
     require(type(p['pool_window_bytes']) is int and
-            p['pool_window_bytes'] in (1048576, 16777216),
+            (p['pool_window_bytes'] in (1048576, 16777216) or
+             (p.get('shared_whole_policy_probe') and p['pool_window_bytes']==0)),
             'reviewed finite shared-window size required')
     baseline = read(pinned(p['baseline']))
     require(baseline['game_PID_absent'] is True, 'baseline must be stopped')
@@ -262,9 +263,17 @@ def proof(path, digest):
         p['_execution_phases'] = [p['phases'][1]]
     if 'native_candidate_validation' in p:
         candidate = module('source_pinned_native_candidate_gate', HERE / 'candidate_gate.py')
-        candidate.validate(p, pinned, read, require)
+        if p.get('shared_whole_policy_probe'):
+            whole=module('source_pinned_whole_policy', HERE / 'whole_policy_gate.py')
+            whole.validate(p,pinned,read,require,candidate)
+            p['controller_sources'].update({str(q):sha(q) for q in
+                (HERE / 'whole_policy_gate.py',HERE / 'scheduling_snapshot.py')})
+        else:
+            candidate.validate(p, pinned, read, require)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
+    require(not p.get('shared_whole_policy_probe') or p.get('shared_whole_policy_scope'),
+            'whole-policy marker requires its independent qualification gate')
     return p
 
 
@@ -302,7 +311,9 @@ def phase_game(dev, out, phase, p, token):
                '--no-astc-decode-unorm8', '--no-defer-pool-publication', '--scale-3d', '.60',
                '--fixed-3d', '--pool-copy-accounting', '--game-res', '2750x1260',
                '--timeout', '90', '--report', str(out / 'launch.json'),
-               '--pool-window-bytes', str(p['pool_window_bytes']), '--expect-shared-import-windows']
+               '--pool-window-bytes', str(p['pool_window_bytes'])]
+    if not p.get('shared_whole_policy_probe'):
+        command.append('--expect-shared-import-windows')
     if phase['kind'] == 'native':
         command += ['--native-resource-table', '/data/user/0/' + PKG + '/' + DIRS[-1][1] + '/native-layouts.bin',
                     '--native-resource-pack-sha256', phase['pack_sha'],
@@ -353,6 +364,16 @@ def phase_game(dev, out, phase, p, token):
                 and launch['actual_vulkan_provider'] == 'adreno'
                 and launch['requested_legacy_astc_copy'] is False, 'shared/provider contract mismatch')
         initial = read_state(dev, out, 'before-route')
+        if p.get('shared_whole_policy_probe'):
+            require(initial['guest_heap']['shared'] is True and initial['pool_windows']['window_bytes']==0,
+                    'whole policy did not reach actual shared/window0')
+            require('[shared pool] immutable startup shared; import_window_bytes=0 no online mirror fallback'
+                    in dev.app('cat','files/runtime/native.log'),'whole policy startup contract absent')
+            snapshot=module('source_pinned_ready_sched',HERE / 'scheduling_snapshot.py')
+            d['ready_scheduling_snapshot']=snapshot.collect(dev,own,out,require)
+            require(pid()==own,'PID changed during ready scheduling snapshot')
+            d['shared_whole_policy_scope']=p['shared_whole_policy_scope']
+            save()
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
         if p.get('sustained_play'):
             sustained = module('source_pinned_sustained_play_run', HERE / 'sustained_play.py')
@@ -493,6 +514,8 @@ def phase_game(dev, out, phase, p, token):
                       'Native-only sustained original-input route, sparse official Perfetto; '
                       'no combat or whole-game acceptance implied' if p.get('sustained_play') else
                       'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance')
+        if p.get('shared_whole_policy_probe'):
+            d['scope']=p['shared_whole_policy_scope']['scope']
         save()
     finally:
         if launcher is not None and launcher.poll() is None:
@@ -539,11 +562,15 @@ def read_state(dev, out, name):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--shared-whole-policy-probe',action='store_true',
+                        help='explicit independently authorized shared whole0 policy experiment')
     parser.add_argument('--inputs', type=Path, required=True)
     parser.add_argument('--inputs-sha256', required=True)
     parser.add_argument('--report', type=Path, required=True)
     args = parser.parse_args()
     p = proof(args.inputs, args.inputs_sha256)
+    require(args.shared_whole_policy_probe==bool(p.get('shared_whole_policy_probe')),
+            'explicit whole-policy CLI flag must match input marker')
     out = args.report.parent.resolve()
     require(out.is_relative_to(R / '.local/logs'), 'private report directory required')
     plan = {'offline': True, 'controller_sources': p['controller_sources'],
@@ -588,6 +615,10 @@ def main():
             'default': 'OFF unless source-pinned official_gpu_tools is supplied',
             'scope': 'Global hardware metrics, no exclusive draw/pass attribution'}
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['official_gpu_tools'].values()})
+    if p.get('shared_whole_policy_probe'):
+        plan['shared_whole_policy_scope']=p['shared_whole_policy_scope']
+        plan['scope']=p['shared_whole_policy_scope']['scope']
+        plan['ready_proc_scheduling_snapshot']=True
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -706,7 +737,9 @@ def main():
                 require(phase_result.get('sustained_play', {}).get('continuous_pass') is True,
                         '30min sustained route did not complete')
         owner.unlink()
-        d['stage'] = ('native-original-game-short-candidate-validation-complete'
+        d['stage'] = ('shared-whole-policy-original-game-bounded-probe-complete'
+                      if p.get('shared_whole_policy_probe') else
+                      'native-original-game-short-candidate-validation-complete'
                       if p.get('native_candidate_validation') else
                       'native-original-game-uninterrupted-sustained-route-complete'
                       if p.get('sustained_play') else
