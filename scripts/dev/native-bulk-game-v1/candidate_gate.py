@@ -142,7 +142,7 @@ STORE_CANONICAL='1b69f1455e775f42eb95833bb21ad4fbd3c35d059f791abbafbb1939dbf4c09
 STORE_RAW='225361b17da1deadc9f5b14d41a3c61c24b1ec41655b1b7fc54d02cdf053ca9c'
 
 
-def validate(p,pinned,read,require):
+def validate_d148(p,pinned,read,require):
     if p['runtime_commit']!=STORE_RUNTIME:
         return validate_959(p,pinned,read,require)
     import copy
@@ -182,3 +182,87 @@ def validate(p,pinned,read,require):
     control['runtime_commit']=COMBINED_RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
     control['native_candidate_validation']['root_review']=old_root
     validate_959(control,pinned,read,require)
+
+
+COLD_RUNTIME='53c7d26628142a383c9c5f8d39a3edc23a1674c3'
+# Independently checked root artifact card; source/host checks alone never
+# authorize this exact original-game transaction.
+COLD_REVIEW='f82925eda66e9d95556b9735d5c0624363d001b3fcb00a1dc19d59ab38152cce'
+COLD_CANONICAL='1a0603f36dbd374658d3fad6150da98c102e623a29cc1106b9c44b53473d3b14'
+COLD_RAW='124017148d6f61cfb97de618528c807d269ef20504df3e3891e94f2a99420541'
+COLD_SOURCE='3689dbbc35602f2b1c647eb7000c44434342211aacd475d898b8c43571c0077f'
+COLD_CONTROL_COMPOSITION='6592ab8446f0b655dac004db748b6c1412882294954187b6ed49dca8eb51e305'
+COLD_NATIVE_COMPOSITION='9c13e4a8eb2e72877e81f08026b29a6bb77933b5037484a1862a5261ff4b961a'
+
+
+def validate(p,pinned,read,require):
+    if p['runtime_commit']!=COLD_RUNTIME:
+        return validate_d148(p,pinned,read,require)
+    import copy
+    c=p['native_candidate_validation']
+    require(len(COLD_REVIEW)==64,'exact53c root artifact review remains pending')
+    require(c['root_review']['sha256']==COLD_REVIEW,'exact53c root review required')
+    review=read(pinned(c['root_review']))
+    require(review['status']=='ROOT_REVIEWED_53C_CANONICAL_AND_FRESH_RAW28'
+            and review['runtime']==COLD_RUNTIME and review['base']==STORE_RUNTIME
+            and review['tool_ready'] is True and review['actual_device_evidence'] is False,
+            'cold phase root source review differs')
+    require(p['canonical']['sha256']==COLD_CANONICAL and p['raw']['sha256']==COLD_RAW
+            and review['canonical_ready']==p['canonical'] and review['raw_ready']==p['raw'],
+            'cold phase canonical/raw differs')
+    require([v['composition']['sha256'] for v in p['phases']]==
+            [COLD_CONTROL_COMPOSITION,COLD_NATIVE_COMPOSITION],
+            'cold phase requires original6217 ASTC4 resources; ASTC6 is a separate qualification')
+    canonical=read(pinned(p['canonical']));raw=read(pinned(p['raw']))
+    require(canonical['commit']==raw['source_commit']==COLD_RUNTIME
+            and review['APK']==canonical['canonical_APK']['archive']
+            and review['host_ELF_SHA256']==canonical['canonical_native_library_sha256']['libdmhost_android.so']
+            and review['host_ELF_BuildID']==canonical['canonical_host_ELF_build_id']
+            and raw['all_23_module_rule_artifact_bytes_equal_d148'] is True
+            and raw['executables_equal_d148'] is True and raw['revision_provenance_fresh'] is True
+            and len(raw['28_deployment_file_hashes'])==28,
+            'cold phase actual APK/raw revision differs')
+    for key in ('raw28_hashes_verified','six_APK_libraries_verified','new_fixture_literals_absent_APP',
+                'compile_reference_OFF'):
+        require(review[key] is True,'cold phase root closure absent '+key)
+    require(review['source_ready']['sha256']==COLD_SOURCE,'cold phase source card differs')
+    source=read(pinned(review['source_ready']));pinned(review['APK'])
+    require(source['commit']==COLD_RUNTIME and source['base']==STORE_RUNTIME
+            and source['tracked_and_archive_hashes_verified'] is True,
+            'cold phase reviewed source chain differs')
+    effective=canonical['effective_build'];closure=canonical['new_APP_fixture_exclusion']
+    require(effective['cold_phase_compile_reference'] is False
+            and effective['cold_phase_default_outline'] is True
+            and effective['jobs']==2 and effective['opt_level']==3,
+            'cold phase canonical must be original default outline, not inline reference')
+    require({'DM_COLD_PHASE_FIXTURE','cold-phase-content'}<=set(closure['literals_absent'])
+            and len(canonical['canonical_native_library_sha256'])==6,
+            'cold phase private fixture APP closure missing')
+    units={row['source']:row for row in closure['actual_preprocessed_closure']}
+    require({'nvn_vk_draw.c','nvn_vk_shader.c','hle_nvn.c'}<=set(units),
+            'cold phase actual APP preprocessing closure incomplete')
+    for row in units.values():
+        require(row['new_fixture_closure_absent'] is True,'cold phase fixture reached APP')
+        pinned(row['output'])
+    for row in raw['source_and_rule_closure']:
+        pinned({'path':row['path'],'sha256':row['sha256']})
+        pinned({'path':row['archive'],'sha256':row['sha256']})
+    previous=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/native-cpu-combined-pair-v1-candidate-C-root-actual-review.json',
+                          'sha256':'2651316de29495dcd91aa6dbad791fc4d5445aaca21af6c08a268de98d600116'}))
+    require(previous['runtime']==STORE_RUNTIME and previous['game_modules_executed'] is True
+            and previous['route_completed']==3 and previous['fresh_save_then_stopped'] is True
+            and previous['visual_root_actually_viewed'] is True
+            and previous['cleanup_followup_all_owned_not_executing'] is True,
+            'actuald148 control prerequisite incomplete')
+    actual=read(pinned(previous['result']))
+    require(actual['original_restored'] and actual['cleanup_complete'] and actual['cleanup_errors']==[],
+            'actuald148 original restoration incomplete')
+    old_root={'path':'/home/dl/d2r-mobile/.local/logs/cpu-store-phase-combined-d14808f-root-canonical-raw-review.json',
+              'sha256':STORE_REVIEW}
+    old=read(pinned(old_root));control=copy.deepcopy(p)
+    control['runtime_commit']=STORE_RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
+    control['native_candidate_validation']['root_review']=old_root
+    validate_d148(control,pinned,read,require)
+    p['cold_phase_comparison']={'reference_runtime':STORE_RUNTIME,'candidate_runtime':COLD_RUNTIME,
+        'resource_scope':'original6217-native-ASTC4; ASTC6 is excluded','compile_reference':False,
+        'whole_thread_L1I_stalls_not_host_PC_attribution':True}

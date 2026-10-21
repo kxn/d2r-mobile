@@ -554,6 +554,8 @@ def main():
         plan.update(phases=['native-ASTC4'],
             scope='Shortcandidate originalgame threewalks plus existing officialCPU windows; prior6f pair referenced, no newpaired claim',
             native_candidate_validation=p['native_candidate_validation'])
+    if p.get('cold_phase_comparison'):
+        plan['runtime_comparison'] = p['cold_phase_comparison']
     if p.get('performance_tools'):
         plan['profiling'] = True
         plan['scope'] = ('Originalthreewalks and seven independent official8s CPU windows, including four PMU stat windows; no newpaired or thermal claim'
