@@ -2151,6 +2151,40 @@ typedef struct {
 } sampler_descriptor;
 static texture_descriptor *texture_descriptors;
 static sampler_descriptor *sampler_descriptors;
+// Reverse registration index, independent of descriptor snapshots. ID+1 is
+// the link token (zero is the sentinel). Pages are allocated only for IDs that
+// are actually registered: 8 bytes/ID, 2 KiB/page, at most 8 MiB plus 64 KiB
+// heads/page pointers on 64-bit hosts. All access holds V.resources.
+// Keep invalid registrations indexed too: retirement historically invalidates
+// every slot with the stored serial, including hidden/already-invalid slots.
+// The registry and this sidecar both have the original process lifetime.
+enum { TEXTURE_REG_BUCKETS=8192, TEXTURE_REG_PAGE_BITS=8,
+       TEXTURE_REG_PAGE_SIZE=1<<TEXTURE_REG_PAGE_BITS,
+       TEXTURE_REG_PAGES=1048576/TEXTURE_REG_PAGE_SIZE };
+typedef struct { uint32_t previous,next; } texture_registration_link;
+static uint32_t texture_registration_heads[TEXTURE_REG_BUCKETS];
+static texture_registration_link *texture_registration_pages[TEXTURE_REG_PAGES];
+static texture_registration_link *texture_registration_at(unsigned id) {
+  return &texture_registration_pages[id>>TEXTURE_REG_PAGE_BITS][id&(TEXTURE_REG_PAGE_SIZE-1)];
+}
+static void texture_registration_replace(unsigned id,uint64_t old_serial,uint64_t serial) {
+  unsigned page=id>>TEXTURE_REG_PAGE_BITS;
+  if(!texture_registration_pages[page]) {
+    texture_registration_pages[page]=calloc(TEXTURE_REG_PAGE_SIZE,sizeof(texture_registration_link));
+    if(!texture_registration_pages[page])die("Vulkan texture registration allocation");
+  }
+  texture_registration_link *link=texture_registration_at(id);
+  uint32_t token=id+1;
+  uint32_t *old_head=&texture_registration_heads[old_serial%TEXTURE_REG_BUCKETS];
+  if(old_serial==serial && (link->previous || link->next || *old_head==token))return;
+  if(link->previous)texture_registration_at(link->previous-1)->next=link->next;
+  else if(*old_head==token)*old_head=link->next;
+  if(link->next)texture_registration_at(link->next-1)->previous=link->previous;
+  uint32_t *head=&texture_registration_heads[serial%TEXTURE_REG_BUCKETS];
+  *link=(texture_registration_link){.next=*head};
+  if(*head)texture_registration_at(*head-1)->previous=token;
+  *head=token;
+}
 static atomic_uint_fast64_t sampler_registry_epoch;
 static atomic_int sampler_lookup_requested,sampler_lookup_active;
 static int sampler_lookup_reference;
@@ -2171,6 +2205,38 @@ static void sampler_registry_changed(void) {
 static int texture_capacity, sampler_capacity, texture_limit = 1048576;
 static atomic_uint_fast64_t descriptor_epoch;
 uint64_t vk_texture_descriptor_epoch(void) { return atomic_load(&descriptor_epoch); }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Owned functional oracle only; no production traversal/counters. Compare the
+// sidecar against the old full registry and validate both link directions.
+unsigned vk_test_texture_registration_index(uint64_t serial,uint64_t *bytes) {
+  unsigned matches=0,linear=0;pthread_mutex_lock(&V.resources);
+  uint8_t *seen=calloc(texture_capacity?texture_capacity:1,1);
+  if(!seen)die("Owned texture registration oracle allocation");
+  *bytes=sizeof texture_registration_heads+sizeof texture_registration_pages;
+  for(unsigned p=0;p<TEXTURE_REG_PAGES;p++)if(texture_registration_pages[p])
+    *bytes+=TEXTURE_REG_PAGE_SIZE*sizeof(texture_registration_link);
+  for(unsigned b=0;b<TEXTURE_REG_BUCKETS;b++) {
+    uint32_t previous=0;
+    for(uint32_t token=texture_registration_heads[b];token;) {
+      unsigned id=token-1;
+      if(id>=(unsigned)texture_capacity || seen[id]++)die("Owned texture registration duplicate/range");
+      texture_registration_link *link=texture_registration_at(id);
+      if(link->previous!=previous || texture_descriptors[id].texture.serial%TEXTURE_REG_BUCKETS!=b)
+        die("Owned texture registration links/serial");
+      matches+=texture_descriptors[id].texture.serial==serial;
+      previous=token;token=link->next;
+    }
+  }
+  for(int id=0;id<texture_capacity;id++) {
+    texture_descriptor *d=&texture_descriptors[id];
+    if(!!seen[id]!=!!(d->valid || d->texture.serial))die("Owned texture registration missing");
+    linear+=d->texture.serial==serial;
+  }
+  pthread_mutex_unlock(&V.resources);free(seen);
+  if(serial && matches!=linear)die("Owned texture registration count");
+  return matches;
+}
+#endif
 typedef struct retired_sampler {
   struct retired_sampler *next;
   VkSampler sampler;
@@ -2471,34 +2537,33 @@ void vk_texture_end_submit(void) {
       rp = &r->next;
       continue;
     }
-    image **ip = &images;
-    while (*ip && (*ip)->tex.serial != r->serial)
-      ip = &(*ip)->next;
+    image *i=image_buckets[r->serial%8192];
+    while(i && i->tex.serial!=r->serial)i=i->hash_next;
 #ifdef DM_VULKAN_SHARED_POOLS
     // Logical NVN retirement ends guest-byte authority after every previously
     // enqueued user has translated and every physical GPU user has completed.
     // The extra snapshot/cache grace retains the VkImage, not ownership of
     // recycled guest addresses. This owner-only list edit never writes bytes.
-    if (alias_mode && *ip && (*ip)->last_use <= done)
-      image_shared_alias_remove(*ip);
+    if (alias_mode && i && i->last_use <= done)
+      image_shared_alias_remove(i);
 #endif
     if (translated < r->at || translated - r->at < 8) {
       rp = &r->next;
       continue;
     }
-    if (*ip && (*ip)->last_use > done) {
+    if (i && i->last_use > done) {
       rp = &r->next;
       continue;
     }
-    if (*ip) {
-      image *i = *ip;
-      image_destroy(i);
-    }
-    for (int id = 0; id < texture_capacity; id++)
-      if (texture_descriptors[id].texture.serial == r->serial) {
-        texture_descriptors[id].valid = 0;
+    if(i)image_destroy(i);
+    for(uint32_t token=texture_registration_heads[r->serial%TEXTURE_REG_BUCKETS];token;) {
+      unsigned id=token-1;
+      token=texture_registration_at(id)->next;
+      if(texture_descriptors[id].texture.serial==r->serial) {
+        texture_descriptors[id].valid=0;
         atomic_fetch_add(&descriptor_epoch,1);
       }
+    }
     *rp = r->next;
     free(r);
   }
@@ -2609,6 +2674,7 @@ void mtl_reg_tex(int id, const tex_t *t, const view_t *v) {
     texture_capacity = n;
   }
   texture_descriptor *d = &texture_descriptors[id];
+  texture_registration_replace(id,d->texture.serial,t->serial);
   d->texture = *t;
   d->valid = 1;
   d->has_view = v != NULL;

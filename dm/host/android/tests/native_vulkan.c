@@ -946,6 +946,13 @@ int dm_vulkan_test_main(void) {
   CHECK(visit.pages == 0);
   CHECK(CALL(nvnCommandBufferInitialize, &cmd, &device));
   CALL(nvnCommandBufferAddCommandMemory, &cmd, &memory, 0, 1 << 20);
+#ifndef DM_ANDROID_APP
+  if(getenv("DM_TEXTURE_RETIREMENT_INDEX_FIXTURE")) {
+    texture_registration_retirement_test();image_retirement_test();
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"texture-retirement-index\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   uint32_t *src = (void *)(bytes + (1 << 20)),
            *dst = (void *)(bytes + (2 << 20)), *dst2 = dst + 512;
   for (unsigned i = 0; i < 256; i++)

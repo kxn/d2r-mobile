@@ -389,6 +389,58 @@ static void texture_snapshot_scope_test(int descriptor,const tex_t *texture) {
   CHECK(vk_texture_view(descriptor,0)==plain); // Outside all scopes.
   mtl_set_tex_pool_n(64);
 }
+#ifndef DM_ANDROID_APP
+extern unsigned vk_test_texture_registration_index(uint64_t,uint64_t *);
+static void texture_registration_retirement_test(void) {
+  // Real backend commits advance the existing grace; never edit a frontier.
+  for(unsigned n=0;n<9;n++){mtl_sub_begin();CHECK(mtl_wait(mtl_sub_commit(),UINT64_MAX));}
+  tex_t a={.serial=UINT64_C(0x1000000000008000)},b=a,c=a,zero={0},snapshot;
+  b.serial+=8192;c.serial+=17;uint64_t bytes_used,epoch;
+  enum { FIRST=73,OTHER=74,HIDDEN=65535,REPLACE=333 };
+  mtl_set_tex_pool_n(1048576);
+  mtl_reg_tex(FIRST,&a,NULL);mtl_reg_tex(OTHER,&a,NULL);mtl_reg_tex(HIDDEN,&a,NULL);
+  mtl_reg_tex(REPLACE,&a,NULL);mtl_reg_tex(REPLACE,&b,NULL); // same bucket, new serial
+  mtl_reg_tex(REPLACE+1,&c,NULL);mtl_reg_tex(REPLACE+2,&zero,NULL);
+  CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==3);
+  CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==1);
+  CHECK(bytes_used==65536+3*2048); // pages 0,1,255; snapshots did not grow
+  mtl_reg_tex(REPLACE+1,&a,NULL);CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==4);
+  mtl_reg_tex(REPLACE+1,&c,NULL);CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==3);
+  mtl_reg_tex(REPLACE+2,&b,NULL);CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==2);
+  mtl_reg_tex(REPLACE+2,&zero,NULL);CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==1);
+  mtl_set_tex_pool_n(4); // hidden registrations still retire
+  epoch=vk_texture_descriptor_epoch();mtl_tex_release(&a);vk_texture_end_submit();
+  CHECK(vk_texture_descriptor_epoch()==epoch+3);
+  mtl_set_tex_pool_n(1048576);
+  CHECK(!vk_texture_descriptor(FIRST,&snapshot));CHECK(!vk_texture_descriptor(OTHER,&snapshot));
+  CHECK(!vk_texture_descriptor(HIDDEN,&snapshot));CHECK(vk_texture_descriptor(REPLACE,&snapshot)&&snapshot.serial==b.serial);
+  CHECK(vk_texture_descriptor(REPLACE+1,&snapshot)&&snapshot.serial==c.serial);
+  CHECK(vk_texture_descriptor(REPLACE+2,&snapshot)&&!snapshot.serial);
+  mtl_reg_tex(REPLACE+2,&zero,NULL); // singleton zero-serial re-registration
+  CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==1);
+  // Original retirement also republishes invalid historical slots. Keep that
+  // exact epoch behavior while proving serial collision cannot invalidate b.
+  epoch=vk_texture_descriptor_epoch();mtl_tex_release(&a);vk_texture_end_submit();
+  CHECK(vk_texture_descriptor_epoch()==epoch+3);
+  CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==3);
+  mtl_reg_tex(FIRST,&b,NULL);mtl_reg_tex(HIDDEN,&a,NULL); // serial reuse and replacement
+  CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==2);
+  CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==2);
+  // eeb has the original binding scope, not mainline logical lookup scope.
+  vk_texture_binding_scope_begin();CHECK(vk_texture_descriptor(HIDDEN,&snapshot));
+  epoch=vk_texture_descriptor_epoch();mtl_tex_release(&a);vk_texture_end_submit();
+  CHECK(vk_texture_descriptor_epoch()==epoch+2);CHECK(!vk_texture_descriptor(HIDDEN,&snapshot));
+  CHECK(vk_texture_descriptor(FIRST,&snapshot)&&snapshot.serial==b.serial);
+  vk_texture_binding_scope_end();
+  // Re-registration repeatedly unlinks head, middle and tail in one bucket.
+  for(unsigned n=0;n<257;n++) {
+    unsigned id=FIRST+n%3;mtl_reg_tex(id,n%2?&a:&b,NULL);
+    CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)>0);
+  }
+  mtl_set_tex_pool_n(4);
+  LOG("[texture registration retirement] collisions, multi-ID, re-registration, hidden limits, invalid history, epoch/scope and sparse pages passed");
+}
+#endif
 static void image_retirement_test(void) {
   if (!V.timeline_semaphore) {
     LOG("[vulkan image retirement fixture] skipped: timeline semaphore unavailable");
