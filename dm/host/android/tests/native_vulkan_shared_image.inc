@@ -291,6 +291,9 @@ static void shared_image_dirty_test(void) {
   extern int vk_test_shared_alias_negative_prime(uint64_t,uint64_t);
   CHECK(vk_test_shared_alias_negative_prime((uintptr_t)data+65536,4096));
   CHECK(!vk_texture_shared_linear_conflict((uintptr_t)data+65536,4096));
+  // A distinct subrange shares only the pure geometric empty-gap proof. The
+  // real first GPU writer below must revoke that certificate too.
+  CHECK(!vk_texture_shared_linear_conflict((uintptr_t)data+65536+32,4));
   dirty_range_fill(data+65536,4096,red);
   uint64_t cu,cr,cu2,cr2;mtl_pkg_stats(&cu,&cr);
   mtl_sub_begin();

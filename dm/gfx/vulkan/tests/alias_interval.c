@@ -65,7 +65,7 @@ static void remove_item(unsigned k) {
 }
 int main(void) {
   _Static_assert(sizeof(alias_range_node)==64,"ARM64 and x86_64 node cost");
-  _Static_assert(sizeof(alias_negative_cache)==776,"global negative metadata cost");
+  _Static_assert(sizeof(alias_negative_cache)==800,"global negative metadata cost");
   query(0,0);query(UINT64_MAX,1);query(UINT64_MAX,0);
   add(0,4096,64,1);query(8192,64);
   CHECK(alias_negative_matches(&negative,8192,8256)); // actual cached empty geometry
@@ -79,11 +79,32 @@ int main(void) {
   items[0].initialized=1;items[0].astc=0;query(4096,64);items[0].astc=1;query(4096,64);
   query(4080,16);query(4080,17);query(4160,16); // growth/partial/endpoints
   uint64_t collide=8192+512;CHECK(alias_negative_slot(8192,8256)==alias_negative_slot(collide,collide+64));
-  query(collide,64);CHECK(!alias_negative_matches(&negative,8192,8256));query(8192,64);
+  query(8192,64);CHECK(alias_negative_gap_matches(&negative,8192,8256));
+  query(collide,64);CHECK(alias_negative_gap_matches(&negative,collide,collide+64));
+  // Same empty domain, distinct/colliding ranges: gap hits do not rewrite the
+  // original exact entry. Both answers still match the original list oracle.
+  CHECK(alias_negative_matches(&negative,8192,8256));query(8192,64);
   negative.epoch=UINT64_MAX;alias_negative_changed(&negative);CHECK(!negative.epoch);
   query(8192,64);CHECK(!alias_negative_matches(&negative,8192,8256));
   alias_negative_changed(&negative);CHECK(!negative.epoch); // never ABA-reenable
   negative=(alias_negative_cache){.epoch=1};remove_item(0);
+
+  // Nested/overlapping nodes bound the complement by the PREFIX maximum end,
+  // not merely the preceding start or a single predecessor's end.
+  add(0,1024,1024,1);add(1,1536,64,2);add(2,4096,128,3);add(3,4096,256,4);
+  query(2048,2048);CHECK(negative.gap.start==2048 && negative.gap.end==4096);
+  CHECK(alias_negative_gap_matches(&negative,2048,4096));
+  CHECK(!alias_negative_gap_matches(&negative,2047,4096));
+  CHECK(!alias_negative_gap_matches(&negative,2048,4097));
+  query(2304,16);query(4080,16); // both endpoints inside same empty domain
+  add(4,3000,32,5);CHECK(!alias_negative_gap_matches(&negative,2304,2320));
+  query(3000,1);query(3032,64);CHECK(negative.gap.start==3032 && negative.gap.end==4096);
+  remove_item(4);query(2048,2048);CHECK(negative.gap.start==2048 && negative.gap.end==4096);
+  for(unsigned k=0;k<4;k++)remove_item(k);
+  // Even wrapped stored intervals follow the old full-list predicate. Do not
+  // reinterpret them as saturated ranges when proving a complement gap.
+  add(0,UINT64_MAX-31,64,6);query(0,16);query(64,64);query(0,UINT64_MAX);
+  remove_item(0);
 
   // Duplicate starts/serials remain distinct pointer identities; insert sorted
   // and reverse keys, then delete roots with two children and each duplicate.
