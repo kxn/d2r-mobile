@@ -316,6 +316,25 @@ static VkPipelineStageFlags producer_stage(unsigned stage) {
   if(stage>=sizeof stages/sizeof *stages) die("Vulkan shader producer stage");
   return stages[stage];
 }
+// Compile the complete final binding schema once, as Metal's argument encoder
+// does for its immutable reflection. This stores no resource/dirty/ready fact:
+// every operation still consumes the current source through the original paths.
+// Direct state offsets are safe because S itself has process lifetime. Alternative
+// schemas must compile their own program rather than inherit a base program.
+enum { BIND_UNIFORM, BIND_STORAGE, BIND_IMAGE, BIND_PIXEL_LOCAL,
+       BIND_TEXEL_STORAGE, BIND_TEXEL, BIND_INVALID };
+enum { BIND_VALUE_BUFFER, BIND_VALUE_IMAGE, BIND_VALUE_TEXEL };
+// Upper opcode bits are immutable operation-specific parameters. Images use
+// storage/view/sampler/quad; storage buffers use writable; texels use storage
+// and writable. The low three bits select one ordinary switch operation.
+enum { BIND_OP_MASK=7,BIND_PARAM_STORAGE=16,BIND_PARAM_VIEW=32,
+       BIND_PARAM_SAMPLER=64,BIND_PARAM_QUAD=128 };
+struct vk_binding_consumer {
+  uint16_t source,aux; // state offset; sampler offset / constant bank / bias or input slot
+  uint8_t op,value,dynamic[2];
+};
+_Static_assert(sizeof(struct vk_binding_consumer)==8,"Immutable binding consumer cost");
+_Static_assert(sizeof(vk_state)<UINT16_MAX,"Binding consumer state offset width");
 #include "nvn_vk_image_source_flow.inc"
 #include "nvn_vk_shader_pool_ranges.inc"
 void vk_shader_writebacks(void) {
@@ -493,25 +512,6 @@ unsigned vk_test_shader_image_binding_indices(const vk_shader *s,unsigned *indic
   return n;
 }
 #endif
-// Compile the complete final binding schema once, as Metal's argument encoder
-// does for its immutable reflection. This stores no resource/dirty/ready fact:
-// every operation still consumes the current source through the original paths.
-// Direct state offsets are safe because S itself has process lifetime. Alternative
-// schemas must compile their own program rather than inherit a base program.
-enum { BIND_UNIFORM, BIND_STORAGE, BIND_IMAGE, BIND_PIXEL_LOCAL,
-       BIND_TEXEL_STORAGE, BIND_TEXEL, BIND_INVALID };
-enum { BIND_VALUE_BUFFER, BIND_VALUE_IMAGE, BIND_VALUE_TEXEL };
-// Upper opcode bits are immutable operation-specific parameters. Images use
-// storage/view/sampler/quad; storage buffers use writable; texels use storage
-// and writable. The low three bits select one ordinary switch operation.
-enum { BIND_OP_MASK=7,BIND_PARAM_STORAGE=16,BIND_PARAM_VIEW=32,
-       BIND_PARAM_SAMPLER=64,BIND_PARAM_QUAD=128 };
-struct vk_binding_consumer {
-  uint16_t source,aux; // state offset; sampler offset / constant bank / bias or input slot
-  uint8_t op,value,dynamic[2];
-};
-_Static_assert(sizeof(struct vk_binding_consumer)==8,"Immutable binding consumer cost");
-_Static_assert(sizeof(vk_state)<UINT16_MAX,"Binding consumer state offset width");
 static atomic_int binding_consumer_reference=-1;
 void vk_binding_consumer_reference(int reference) {atomic_store(&binding_consumer_reference,!!reference);}
 int vk_binding_consumer_reference_mode(void) {
@@ -589,6 +589,7 @@ static void shader_binding_consumers_build(vk_shader *s) {
 }
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 static uint64_t binding_consumer_test_compiled,binding_consumer_test_reference;
+void vk_test_binding_consumers_build(vk_shader *s) {shader_binding_consumers_build(s);}
 void vk_test_binding_consumer_counts(uint64_t *compiled,uint64_t *reference) {
   *compiled=binding_consumer_test_compiled;*reference=binding_consumer_test_reference;
 }
