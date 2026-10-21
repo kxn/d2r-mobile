@@ -511,6 +511,9 @@ static pthread_mutex_t completion_mu = PTHREAD_MUTEX_INITIALIZER;
 // GPU results into those two arrays. Never hold this lock across a GPU wait.
 static pthread_mutex_t pool_publication_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t completion_cv = PTHREAD_COND_INITIALIZER;
+// Guest fences advance only after GPU execution AND all CPU effects. Queue
+// work/reset notifications use completion_cv and cannot satisfy that predicate.
+static pthread_cond_t guest_fence_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t submitted, completed, queue_submitted, queue_completed;
 // GPU/CPU-effect completion is observable before driver cleanup. Only this
 // separate, ordered watermark proves a command pool can be reused/destroyed.
@@ -1285,12 +1288,14 @@ static void *completion_thread(void *unused) {
     atomic_fetch_sub(&in_flight, 1);
     if (!pending)
       pending_tail = &pending;
-    if (s->serial)
+    int guest_advanced = s->serial > completed;
+    if (guest_advanced)
       completed = s->serial;
     queue_completed = s->queue_serial;
     vkDestroyFence(V.device, s->fence, NULL);
     // Wake ordinary GPU/effect waiters before driver cleanup. A completed
     // queue serial does not yet make this resource set ready for reuse.
+    if (guest_advanced) pthread_cond_broadcast(&guest_fence_cv);
     pthread_cond_broadcast(&completion_cv);
     pthread_mutex_unlock(&completion_mu);
 #ifdef DM_VULKAN_TEST_EMBED
@@ -4501,8 +4506,8 @@ int mtl_wait(uint64_t fence, uint64_t timeout_ns) {
       break;
     int r =
         timeout_ns == UINT64_MAX
-            ? pthread_cond_wait(&completion_cv, &completion_mu)
-            : pthread_cond_timedwait(&completion_cv, &completion_mu, &deadline);
+            ? pthread_cond_wait(&guest_fence_cv, &completion_mu)
+            : pthread_cond_timedwait(&guest_fence_cv, &completion_mu, &deadline);
     if (r == ETIMEDOUT)
       break;
     if (r)
