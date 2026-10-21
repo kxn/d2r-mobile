@@ -4,6 +4,8 @@ import android.content.Context;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.util.TypedValue;
 import android.widget.*;
 import java.util.Locale;
 
@@ -20,6 +22,7 @@ final class DebugPanel extends FrameLayout {
         void manualCap(int fps);
     }
     private final TextView details;
+    private final ScrollView scroll;
     private final Switch cap, pause;
     private final Spinner manual;
     private final Settings settings;
@@ -36,29 +39,52 @@ final class DebugPanel extends FrameLayout {
         setBackgroundColor(0x33000000);
         setClickable(true);
         setOnClickListener(v -> actions.close());
-        ScrollView scroll = new ScrollView(context);
+        scroll = new ScrollView(context);
         LinearLayout body = new LinearLayout(context);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(16), dp(10), dp(16), dp(12));
+        body.setPadding(dp(10), dp(6), dp(10), dp(6));
         body.setBackgroundColor(0xf2222222);
         body.setClickable(true); // Blank panel space also consumes the gesture.
         scroll.addView(body);
-        LayoutParams position = new LayoutParams(dp(360), LayoutParams.MATCH_PARENT, Gravity.TOP | Gravity.LEFT);
-        position.leftMargin = dp(8); position.topMargin = dp(56); position.bottomMargin = dp(8);
+        LayoutParams position = new LayoutParams(dp(360), LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.LEFT);
+        position.leftMargin = dp(8); position.topMargin = dp(8); position.bottomMargin = dp(8);
         addView(scroll, position);
-        Button close = new Button(context); close.setText("调试信息 · 收起");
-        close.setOnClickListener(v -> actions.close()); body.addView(close);
+        LinearLayout header = new LinearLayout(context);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text(context, "调试");
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(36), 1));
+        Button reset = button(context, "默认");
+        header.addView(reset, new LinearLayout.LayoutParams(dp(68), dp(36)));
+        Button close = button(context, "收起");
+        close.setOnClickListener(v -> actions.close());
+        header.addView(close, new LinearLayout.LayoutParams(dp(68), dp(36)));
+        body.addView(header);
         details = text(context, "等待出图状态"); body.addView(details);
-        cap = new Switch(context); cap.setText("应用热限帧 / 热降分辨率"); cap.setTextColor(Color.WHITE);
-        pause = new Switch(context); pause.setText("应用过热自动存档暂停"); pause.setTextColor(Color.WHITE);
-        body.addView(cap); body.addView(pause);
-        body.addView(text(context, "手动应用帧率上限（不修改游戏设置）"));
+        cap = toggle(context, "热限帧（含热缩放）");
+        pause = toggle(context, "过热暂停");
+        body.addView(cap, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(36)));
+        body.addView(pause, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(36)));
+        LinearLayout capRow = new LinearLayout(context); capRow.setGravity(Gravity.CENTER_VERTICAL);
+        capRow.addView(text(context, "帧率上限"), new LinearLayout.LayoutParams(0, dp(36), 1));
         manual = new Spinner(context);
-        manual.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"跟随原游戏", "20 FPS", "30 FPS", "40 FPS", "60 FPS"}));
-        body.addView(manual);
-        Button reset = new Button(context); reset.setText("恢复应用默认"); body.addView(reset);
-        body.addView(text(context, "原游戏通常请求 60 FPS（省电设置为 30）。上限只减少应用出图；显示刷新率、系统温控和系统强制退出不受此面板控制。设置只保留在本次应用进程。"));
+        manual.setAdapter(new ArrayAdapter<String>(context, android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"跟随", "20 FPS", "30 FPS", "40 FPS", "60 FPS"}) {
+            private View compact(View v) {
+                TextView label = (TextView)v;
+                label.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+                label.setMinHeight(dp(36)); label.setPadding(dp(8), 0, dp(8), 0);
+                return v;
+            }
+            @Override public View getView(int position, View convert, ViewGroup parent) {
+                return compact(super.getView(position, convert, parent));
+            }
+            @Override public View getDropDownView(int position, View convert, ViewGroup parent) {
+                return compact(super.getDropDownView(position, convert, parent));
+            }
+        });
+        capRow.addView(manual, new LinearLayout.LayoutParams(dp(130), dp(36)));
+        body.addView(capRow);
+        body.addView(text(context, "仅本次运行"));
         sync();
         cap.setOnCheckedChangeListener((v, checked) -> { if (!syncing) actions.thermalCap(checked); });
         pause.setOnCheckedChangeListener((v, checked) -> { if (!syncing) actions.thermalPause(checked); });
@@ -74,9 +100,31 @@ final class DebugPanel extends FrameLayout {
         setVisibility(GONE);
     }
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
-    private static TextView text(Context context, String value) {
+    @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        LayoutParams position = (LayoutParams)scroll.getLayoutParams();
+        position.width = Math.max(1, Math.min(dp(360), w - dp(16)));
+        // WRAP_CONTENT is measured within the actual parent height minus margins.
+        // Scroll remains only as a fallback for unusually small windows.
+        scroll.setLayoutParams(position);
+    }
+    private TextView text(Context context, String value) {
         TextView v = new TextView(context); v.setText(value); v.setTextColor(Color.WHITE);
-        v.setTextSize(14); v.setPadding(0, 6, 0, 6); return v;
+        v.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        v.setIncludeFontPadding(false); v.setGravity(Gravity.CENTER_VERTICAL);
+        v.setPadding(0, dp(2), 0, dp(2)); return v;
+    }
+    private Button button(Context context, String value) {
+        Button v = new Button(context); v.setText(value);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        v.setMinHeight(0); v.setMinimumHeight(0); v.setMinWidth(0); v.setMinimumWidth(0);
+        v.setPadding(dp(6), 0, dp(6), 0); return v;
+    }
+    private Switch toggle(Context context, String value) {
+        Switch v = new Switch(context); v.setText(value); v.setTextColor(Color.WHITE);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        v.setMinHeight(dp(36)); v.setMinimumHeight(dp(36));
+        v.setPadding(0, 0, 0, 0); return v;
     }
     void sync() {
         syncing = true;
@@ -98,12 +146,13 @@ final class DebugPanel extends FrameLayout {
         previousCap = settings.thermalCap; previousPause = settings.thermalPause;
         previousManual = settings.manualCap; havePrevious = true;
         String[] names = {"无", "轻度", "中度", "严重", "危急", "紧急", "关机"};
-        String status = thermal >= 0 && thermal < names.length ? names[thermal] + " (" + thermal + ")" : "不可读取";
+        String status = thermal >= 0 && thermal < names.length ? names[thermal] : "--";
         String value = String.format(Locale.ROOT,
-                "实测 FPS：%s\n%s · 系统热状态：%s\n原始目标（含启动覆盖）：%.0f\n有效目标：%.0f FPS\n应用上限：手动 %s / 热 %s\n游戏输出：%.0f × %.0f\nSurface：%.0f × %.0f\n实际 3D 比例：%.2f",
-                fps > 0 ? String.format(Locale.ROOT, "%.1f", fps) : "--", battery, status,
-                state[0], state[1], limit(state[3]), limit(state[2]),
-                state[4], state[5], state[6], state[7], state[8]);
+                "FPS %s | %s | 温控%s\n目标 %.0f→%.0f | 手动%s / 热%s\n输出 %.0f×%.0f\n3D %.0f%%",
+                fps > 0 ? String.format(Locale.ROOT, "%.1f", fps) : "--", battery.replace("：", ""), status,
+                state[0], state[1], limit(state[3]), limit(state[2]), state[4], state[5], state[8]*100);
+        if (state[4] != state[6] || state[5] != state[7])
+            value += String.format(Locale.ROOT, "\nSurface %.0f×%.0f", state[6], state[7]);
         if (!value.equals(lastDetails)) { lastDetails = value; details.setText(value); }
     }
     private static String limit(float n) { return n > 0 ? String.format(Locale.ROOT, "%.0f", n) : "跟随"; }
