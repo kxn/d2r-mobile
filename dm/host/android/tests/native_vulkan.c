@@ -470,6 +470,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_prewarm.inc"
 #include "native_vulkan_pool_policy.inc"
 #include "native_vulkan_pool_finite.inc"
+#include "native_vulkan_pool_geometry.inc"
 #include "native_vulkan_pool_cache.inc"
 #include "native_vulkan_pool_address.inc"
 #include "native_vulkan_pool_authority_batch.inc"
@@ -891,6 +892,9 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_POOL_ADDRESS_DEATH"))pool_address_death_test(getenv("DM_POOL_ADDRESS_DEATH"));
   if(getenv("DM_POOL_ADDRESS_FIXTURE")) {pool_address_proof_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-address-proof\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_SPAN_CACHE_FIXTURE")) {pool_span_cache_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-span-cache\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_POOL_OPERATION_GEOMETRY_FIXTURE")) {pool_operation_geometry_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"operation-buffer-geometry\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;}
+#endif
   if(getenv("DM_POOL_FINITE_FIXTURE")) {pool_finite_consolidation_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-finite\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_VERTEX_REQUIRE_FIXTURE")) {vertex_require_dedup_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"vertex-require\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if (getenv("DM_VULKAN_ACQUIRE_TEST")) return acquire_sync_scope_test();
@@ -1027,6 +1031,13 @@ int dm_vulkan_test_main(void) {
   uint8_t controls[13][0x880];
   for (int i = 0; i < 13; i++)
     memset(controls[i], i, sizeof controls[i]);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_POOL_GEOMETRY_POLICY_FIXTURE")) {
+    pool_window_production_test(controls[0],controls[1],controls[5],controls[2]);
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"operation-geometry-production-policy\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   NVNshaderData sd[2] = {{.control = controls[0]}, {.control = controls[1]}};
   NVNprogram graphics, compute;
   CHECK(CALL(nvnProgramInitialize, &graphics, &device));
