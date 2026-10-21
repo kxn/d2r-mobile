@@ -11,10 +11,10 @@ _Static_assert(sizeof(vk_texture_source_value)==160,"Operation image source valu
 _Static_assert(sizeof(image_source_entry)==168,"Operation image source entry");
 typedef struct {const vk_shader *shader;unsigned begin,count;} image_source_stage;
 typedef struct {
-  image_source_entry *entries;unsigned capacity,count;int valid,compute,allocation_failed;
+  image_source_entry *entries;unsigned capacity,count,expected;int valid,compute,allocation_failed;
   image_source_stage stages[6];
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
-  uint64_t test_generation;
+  uint64_t test_generation;int test_collecting;
 #endif
 } image_source_plan;
 static image_source_plan image_source_plans[IMAGE_SOURCE_DEPTH];
@@ -38,6 +38,7 @@ int vk_shader_image_sources_begin(void) {
     image_source_plans[depth].valid=0;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
     image_source_plans[depth].test_generation=++image_source_test_generation;
+    image_source_plans[depth].test_collecting=0;
 #endif
   }
   return (int)image_source_depth;
@@ -47,14 +48,19 @@ void vk_shader_image_sources_end(int token) {
   if(token!=(int)image_source_depth)die("Vulkan image source operation scope");
   if(!image_source_depth)die("Vulkan image source operation underflow");
   unsigned depth=--image_source_depth;
-  if(depth<IMAGE_SOURCE_DEPTH)image_source_plans[depth].valid=0;
+  if(depth<IMAGE_SOURCE_DEPTH) {
+    image_source_plans[depth].valid=0;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    image_source_plans[depth].test_collecting=0;
+#endif
+  }
 }
 static image_source_plan *image_sources_current(void) {
   if(!image_source_depth || image_source_depth>IMAGE_SOURCE_DEPTH)return NULL;
   image_source_plan *plan=&image_source_plans[image_source_depth-1];
   return plan->valid?plan:NULL;
 }
-static image_source_plan *image_sources_build(vk_shader *const list[6],const vk_state *state,int compute) {
+static image_source_plan *image_sources_start(vk_shader *const list[6],const vk_state *state,int compute) {
   if(!image_sources_enabled() || state!=&S || !image_source_depth || image_source_depth>IMAGE_SOURCE_DEPTH)return NULL;
   image_source_plan *plan=&image_source_plans[image_source_depth-1];plan->valid=0;
   unsigned count=0;
@@ -70,28 +76,38 @@ static image_source_plan *image_sources_build(vk_shader *const list[6],const vk_
     if(!memory) {plan->allocation_failed=1;return NULL;} // retain the original path, never retry OOM each draw
     plan->entries=memory;plan->capacity=count;
   }
-  plan->count=0;plan->compute=compute;
+  plan->count=0;plan->expected=count;plan->compute=compute;
   for(unsigned stage=0;stage<6;stage++) {
     const vk_shader *s=stage>=(compute?5:0) && stage<(compute?6:5)?list[stage]:NULL;
-    image_source_stage *part=&plan->stages[stage];
-    *part=(image_source_stage){.shader=s,.begin=plan->count};
-    if(!s)continue;
-    for(vk_image_binding_iterator it=vk_image_binding_begin(s);;) {
-      unsigned k;if(!vk_image_binding_next(s,&it,&k))break;
-      const vk_binding *b=&s->bindings[k];if(b->kind!=3 && b->kind!=6)continue;
-      if(plan->count==count)return NULL;
-      image_source_entry *entry=&plan->entries[plan->count++];
-      entry->reg=b->reg;entry->source.id=-1;
-      part->count++;
-    }
-    if(part->count!=s->sampled_source_schema-1)return NULL;
+    plan->stages[stage]=(image_source_stage){.shader=s};
   }
-  plan->valid=plan->count==count;return plan->valid?plan:NULL;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  plan->test_collecting=1;
+#endif
+  return plan;
 }
+static void image_sources_finish(image_source_plan *plan,int complete) {
+  if(!plan)return;
+  for(unsigned stage=0;stage<6;stage++) {
+    const image_source_stage *part=&plan->stages[stage];
+    if(part->shader && part->count!=part->shader->sampled_source_schema-1)complete=0;
+  }
+  // Never expose a partially populated plan to callbacks during preflight.
+  plan->valid=complete && plan->count==plan->expected;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  plan->test_collecting=0;
+#endif
+}
+
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 // Functional observer for owned call-argument and lifetime oracles only.
 int vk_test_image_source_origin(const tex_t *texture,uint64_t *generation) {
-  image_source_plan *plan=image_sources_current();if(!plan)return 0;
+  image_source_plan *plan=image_sources_current();
+  if(!plan && image_source_depth && image_source_depth<=IMAGE_SOURCE_DEPTH) {
+    image_source_plan *building=&image_source_plans[image_source_depth-1];
+    if(building->test_collecting)plan=building;
+  }
+  if(!plan)return 0;
   for(unsigned n=0;n<plan->count;n++)if(&plan->entries[n].source.texture==texture) {
     *generation=plan->test_generation;return plan->entries[n].source.id+1;
   }
