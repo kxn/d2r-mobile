@@ -237,7 +237,7 @@ def validate(p,pinned,read,require):
     require(len(POOL_REVIEW)==64 and c['root_review']['sha256']==POOL_REVIEW,
             'exact179c82d actual root artifact review remains pending or differs')
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
-            and p.get('official_l1i_record') is True and p.get('performance_tools'),
+            and (p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa'))) and p.get('performance_tools'),
             'pool combined exact f830/1MiB only')
     require(p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
             'pool combined requires independent full2838 asset review')

@@ -64,6 +64,12 @@ class Compiler(unittest.TestCase):
     def test_actual179_baseline_and_synthetic_compiler_metadata(self):
         self.assertEqual(self.invoke(),self.runtime)
         self.assertNotIn('_validated_compiler_runtime',self.p)
+    def test_AA_uses_original_artifacts_without_independent_L1I_window(self):
+        self.p.pop('official_l1i_record')
+        self.p['official_cpu_aa'] = {'repetitions': 3, 'record_seconds': 30,
+            'sample_frequency_Hz': 99, 'DWARF_bytes': 65528, 'keep_failed_debug_info': True}
+        self.assertEqual(self.invoke(), self.runtime)
+
     def test_root_diff_and_closure_required(self):
         for key in ('compiler_only_changes','runtime_C_CPP_source_equal_base','raw28_hashes_verified',
                     'new_fixture_symbols_absent_APP','compile_reference_OFF'):
