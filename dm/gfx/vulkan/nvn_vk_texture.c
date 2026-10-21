@@ -50,6 +50,8 @@ typedef struct image {
   struct image *hash_next;
   tex_t tex;
   VkImage handle;
+  struct image *comparison; // owned physical D16 sampling snapshot, not a logical texture
+  uint64_t comparison_version,comparison_stamp;
   VkDeviceMemory memory;
   void *allocation;
   uint64_t allocation_bytes;
@@ -117,6 +119,8 @@ static image *private_image_cursor;
 static uint64_t private_image_budget=512ull<<20;
 static void image_rebuildable_set(image *i,int rebuildable) {
   i->cpu_rebuildable=rebuildable;
+  // A cold CPU-rebuildable logical texture evicts both physical allocations.
+  if(i->comparison)image_rebuildable_set(i->comparison,rebuildable);
   int account=!!rebuildable && !!i->allocation_bytes;
   if(account==i->accounted_rebuildable)return;
   i->accounted_rebuildable=account;
@@ -134,6 +138,9 @@ static void image_replacement_detach(image *i,image *old) {
     if(prior<old->allocation_bytes)die("Replaced private image accounting underflow");
     old->accounted_rebuildable=0;
   }
+  // Every physical clone leaves the unique comparison child with the logical
+  // owner; retired old storage must not free or account the child twice.
+  old->comparison=NULL;
   old->list_prev=NULL;i->allocation_bytes=0;i->accounted_rebuildable=0;
 }
 enum {
@@ -764,6 +771,7 @@ static void image_allocation_free(image *i) {
 }
 static void image_storage_destroy(void *context) {
   image *i = context;
+  if(i->comparison) {image *child=i->comparison;i->comparison=NULL;image_storage_destroy(child);}
   while (i->views) {
     image_view *view = i->views;
     i->views = view->next;
@@ -2541,8 +2549,9 @@ void vk_texture_budget_maintain(void) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
       if(i->native_entry)die("Native image cannot own private allocation bytes");
 #endif
-      freed+=i->allocation_bytes;
-      atomic_fetch_add(&private_cache_released_bytes,i->allocation_bytes);
+      uint64_t bytes=i->allocation_bytes+(i->comparison?i->comparison->allocation_bytes:0);
+      freed+=bytes;
+      atomic_fetch_add(&private_cache_released_bytes,bytes);
       image_destroy(i);removed++;
     }
     if(!private_image_cursor)break; // resume from head at the next boundary
@@ -2994,6 +3003,8 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
   }
   return handle;
 }
+#include "nvn_vk_depth_compare.inc"
+
 VkImageView vk_texture_view_binding(int id,int storage,VkShaderStageFlagBits stage,VkImageLayout *layout) {
   return texture_view_binding_impl(id,storage,stage,layout,0);
 }

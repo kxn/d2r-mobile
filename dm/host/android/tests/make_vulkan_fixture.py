@@ -374,6 +374,8 @@ void main(){value=color;}
     (2, 5, 'comp', compute, [[2, 1, 0, 0, 0, 1, 0, 0], [2, 2, 1, 0, 1, 1, 0, 0]]),
     (22, 5, 'comp', texel_compute, [[7,1,0,-1,0,1,2,3],[2,2,0,0,1,1,0,0]]),
     (23, 5, 'comp', sample_compute, [[6,1,0,-1,0,1,2,3],[5,2,0,-1,0,1,2,0],[2,3,0,0,1,1,0,0]]),
+    (81, 5, 'comp', sample_compute.replace('local_size_x=64','local_size_x=1').replace('uniform sampler filtering','uniform samplerShadow filtering').replace('sampler2D(source,filtering),vec2(.5)', 'sampler2DShadow(source,filtering),vec3(.5)').replace('.r*255.0', '*255.0'), [[6,1,0,-1,0,1,2,1027],[5,2,0,-1,0,1,2,0],[2,3,0,0,1,1,0,0]]),
+    (82, 5, 'comp', sample_compute.replace('texture2D source','textureCube source').replace('local_size_x=64','local_size_x=1').replace('uniform sampler filtering','uniform samplerShadow filtering').replace('sampler2D(source,filtering),vec2(.5)', 'samplerCubeShadow(source,filtering),vec4(.5,.5,1.,.5)').replace('.r*255.0', '*255.0'), [[6,1,0,-1,0,1,2,1029],[5,2,0,-1,0,1,2,0],[2,3,0,0,1,1,0,0]]),
     (24, 0, 'vert', storage_vertex, [[2,1,0,0,0,1,0,0]]),
     (25, 5, 'comp', storage_bounds, [[2,1,0,0,0,1,0,0],[2,2,1,0,1,1,0,0]]),
     (26, 5, 'comp', storage_copy, [[2,1,0,0,0,1,0,0],[2,2,1,0,1,1,0,0]]),

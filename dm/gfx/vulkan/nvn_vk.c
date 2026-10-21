@@ -1532,6 +1532,8 @@ static void init_device(void) {
   VK_CHECK(vkEnumerateDeviceExtensionProperties(
       V.physical, NULL, &extension_count_device, available));
   for (uint32_t i = 0; i < extension_count_device; i++) {
+    if (!strcmp(available[i].extensionName,VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME))
+      V.format_features2=1;
     if (!strcmp(available[i].extensionName,VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME))
       have_driver_properties=1;
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -1616,6 +1618,7 @@ static void init_device(void) {
     }
   }
   dc.ppEnabledExtensionNames = device_extensions;
+  if(V.format_features2)device_extensions[dc.enabledExtensionCount++]=VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME;
   if (V.surface) {
     device_extensions[dc.enabledExtensionCount++] =
         VK_KHR_SWAPCHAIN_EXTENSION_NAME;
@@ -1684,6 +1687,7 @@ static void init_device(void) {
 #endif
   vk_pipeline_cache_init();
   pthread_t t;
+  vk_texture_comparison_capabilities();
   if (pthread_create(&t, NULL, completion_thread, NULL))
     die("Vulkan completion worker");
   pthread_detach(t);

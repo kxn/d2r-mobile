@@ -694,6 +694,8 @@ static void fixed_shared_buffer_test(void) {
 #include "native_vulkan_native_retirement.inc"
 #include "native_vulkan_native_scope.inc"
 #endif
+#include "native_vulkan_color_comparison.inc"
+
 int dm_vulkan_test_main(void) {
   crash_thread_init();
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -773,6 +775,7 @@ int dm_vulkan_test_main(void) {
     printf("{\"test\":\"descriptor-shader-slot-hint\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
 #endif
+  if(getenv("DM_COLOR_DEPTH_COMPARISON_TEST")){if(!strcmp(getenv("DM_COLOR_DEPTH_COMPARISON_TEST"),"array"))color_comparison_array_test();else color_comparison_test();return 0;}
   if(getenv("DM_GPU_EVENT_PAYLOAD_FIXTURE")) {gpu_event_payload_test();return 0;}
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_FIXED_SHARED_QUERY_REPORT_TEST")) {

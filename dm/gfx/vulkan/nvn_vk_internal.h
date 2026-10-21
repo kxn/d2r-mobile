@@ -73,6 +73,8 @@ typedef struct {
   uint32_t queue_family;
   uint32_t timestamp_bits;
   VkPhysicalDeviceProperties props;
+  int format_features2; // negotiated KHR_format_feature_flags2 for API1.1
+  int color_r16_comparison,depth16_comparison;
   VkPhysicalDeviceMemoryProperties mem;
   VkPhysicalDeviceFeatures features;
   VkBool32 shader_draw_parameters;
@@ -454,3 +456,5 @@ int vk_pool_native_image_queue_resident(void *);
 void vk_native_images_release(void);
 uint64_t vk_buffer_native_image_read(uint64_t,uint64_t,VkPipelineStageFlags,uint64_t);
 #endif
+
+void vk_texture_comparison_capabilities(void);
