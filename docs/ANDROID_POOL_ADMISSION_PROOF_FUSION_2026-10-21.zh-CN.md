@@ -18,3 +18,5 @@
 现成 profile 里显著的是 CPU Running，不等于已排除所有细粒度同步成本。pin/unpin 每个 operation 仍分别持一次 `V.resources`，unpin 保留原引用递减和 `pool_cv` 广播。引用计数为锁内普通整数，registry epoch 是 acquire load，几何 generation 是普通读；这些不是每 binding 新增的原子 RMW。completion 也会更新同 Pool 引用，可能有 cacheline 迁移，但当前采样不具备其量化证据，不把未测 false-sharing 或锁等待当作 26–27ms 的主因。近期 shared native camp 已不是旧平板 startup 的整链扫描负载，历史 43% 不重复算作当前收益。
 
 成本边界：减少少量重复分支和地址运算，不新增 metadata；没有声称已降低整帧 CPU、带宽、发热或 FPS。后续若 root 采用，沿现成官方工具检验适用性，无需为此新建计时器。
+
+进一步按 inline PC 拆分 pin 的21个样本：只有4个归到 `geometry_remember`，其中2个明确在本次删除的重复 bounds（原50/51行），1个在仍保留的哈希写表（原58行），另1个无行号不可归属。2/605=0.331% 是本次采样的明确PC覆盖，不是测出的 CPU 节省。当前候选冻结为低成本正确性已证明的小修，因用户要求先审整个执行路径，暂停 Android 构建和真机部署，不能作为下一大收益方向。
