@@ -12,6 +12,36 @@ static void driver_schema_clone(vk_shader *dst,const vk_shader *src) {
     }
   }
 }
+// DSP1 is independent of the optional sparse equality key. Its all-path
+// bound includes zero-tail loads and every fingerprinted module variant.
+// Missing/old/invalid sidecars retain the original 64 KiB descriptor contract.
+static void driver_span_load(vk_shader *s) {
+  char path[2048];
+  if(!V.options.shader_root || snprintf(path,sizeof path,"%s/%s.dspan",V.options.shader_root,s->key)>=(int)sizeof path)return;
+  FILE *file=fopen(path,"rb");if(!file)return;
+  uint32_t data[25];size_t bytes=fread(data,1,sizeof data,file);fclose(file);
+  if(bytes!=96 || data[0]!=UINT32_C(0x31505344) || data[1]!=1 ||
+      data[2]!=s->stage || data[3]!=s->set || memcmp(data+4,s->fingerprint,32))return;
+  uint8_t digest[32];CC_SHA256(data,64,digest);if(memcmp(digest,data+16,32))return;
+  for(unsigned n=0;n<2;n++) {
+    uint32_t binding=data[12+n*2],end=data[13+n*2];unsigned slot=n*2,found=0;
+    if(end>65536 || (end&3) || binding>=128 || (slot==0 && s->stage!=0 && s->stage!=1 && s->stage!=5))continue;
+    for(unsigned k=0;k<s->nb;k++) {
+      const vk_binding *b=&s->bindings[k];
+      if(b->kind==1 && b->reg==(int)slot && b->binding==(int)binding && b->count==1)found++;
+    }
+    if(found==1 && end<=4096)s->driver_span[n]=4096;
+  }
+  s->driver_span_module=s->module;
+  // The paired texel-storage modules are part of the same DSP fingerprint.
+  // Other future/shallow module alternatives retain their old module token
+  // and cannot consume this authorization after installing a new module.
+  if(s->texel_storage_alternative) {
+    vk_shader *alt=s->texel_storage_alternative;
+    memcpy(alt->driver_span,s->driver_span,sizeof s->driver_span);
+    alt->driver_span_module=alt->module;
+  }
+}
 static void driver_schema_load(vk_shader *s) {
   char path[2048];
   if(!V.options.shader_root || snprintf(path,sizeof path,"%s/%s.dkey",V.options.shader_root,s->key)>=(int)sizeof path)return;

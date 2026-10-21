@@ -17,6 +17,16 @@ static void driver_sparse_key_test(void) {
     vk_shader *s=vk_shader_get(controls[n]);
     CHECK(vk_driver_schema_words(s,2)==(n==2||n>=4?UINT32_MAX:n==3?0:4));
     if(n<3)CHECK(vk_driver_schema_words(s,0)==6);
+#ifndef DM_ANDROID_APP
+    if(getenv("DM_DRIVER_SPAN_SHADER_FIXTURE")) {
+      // Use the original compiled shaders and production metadata loader.
+      // Dynamic c2 and the known-zero read at 65520 must retain 64 KiB;
+      // missing/damaged sparse keys do not invalidate an independent span.
+      CHECK(s->driver_span[0]==(n==3?0:4096));
+      CHECK(s->driver_span[1]==(n==2||n==3?0:4096));
+      CHECK(s->driver_span_module==s->module);
+    }
+#endif
 #endif
   }
   uint8_t *storage;CHECK(!posix_memalign((void **)&storage,65536,65536));memset(storage,0,65536);

@@ -54,6 +54,8 @@ typedef struct vk_shader {
   int specialization_integer_only,specialization_disabled,has_resource_writes;
   int has_writable_buffers; // immutable buffer-only classification; excludes image writes
   vk_driver_schema *driver_schema[2]; // c0 / c2, NULL keeps exact full key
+  uint32_t driver_span[2]; // optional all-module read bound; zero keeps 64 KiB
+  VkShaderModule driver_span_module; // new, unproved module alternatives cannot inherit a bound
   VkDescriptorSetLayout descriptors,dynamic_descriptors[2];
   VkDescriptorUpdateTemplate descriptor_templates[3];
   uint8_t dynamic_uniform_ordinals[2][128]; // narrow/extended, one-based binding order
