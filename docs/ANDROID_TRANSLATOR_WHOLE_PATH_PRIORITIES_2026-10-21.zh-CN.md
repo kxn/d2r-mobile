@@ -420,3 +420,13 @@ CPU预检候选成功时省去完整binding iterator、plan重建和逐源resolv
 真机候选后继 `dd4c694` 保留当前 Q `09a9` 的 lazy/coverage/JNI/UI 闭包，仅继承稳定 CV、span 及 main 的显式可选 ThinLTO 政策，不含 e2d 空预检。新增启动期 span-only reference，使同一 APK、同一完整 shader 资产只切换 4KiB／64KiB 范围；其他常量键、缓存、arena、依赖和分辨率保持。默认及 reference 的原 Uniform GPU 数值、串行／异步 arena 生命周期和 guest fence/reset 共 10 例已通过，尚待 Android 原游戏对照。新 shader 原入口自然生成的 DPL 版本与旧 950 不同，因此不能直接把换整库前后差值归因于 span。
 
 此阶段没有新的已证整帧提速、持续温度下降或 6GB 设备启动结论。Mali 按用户暂停，6GB 平板不新增设备实验；上机只在产物与原始 NSO 记录完整后进行。
+
+### 高层内存账本与独立范围证明交付
+
+现有同次 BASE1 官方 showmap/dumpsys 改变了内存调查顺序：总 PSS 约 1959.21MiB 中，guest memfd 为 1438.61MiB（73.43%）；同一 4GiB backing 的两次映射合计 8GiB 虚拟地址，不能把两个 RSS 或 Buffer/import extent 再加成另一份物理内存。328.22MiB private-image allocation、345MiB Buffer unique 和 570MiB import extent 是不同口径，不能叠加到 PSS。主堆是下一项数百 MiB 级调查的对象，driver arena 的 18.75MiB 理想预算不能替代它。
+
+原 SDK 日志已有约 685MiB free、约 680.46MiB 最大空闲块，但不含其页驻留、整页所有权、分配器元数据与未完成 GPU 引用交集。当前宿主主堆 resize 只改变保护，不删除 memfd backing；另一个 SDK alias 的既有 MADV_FREE 路径只对应约 4KiB PSS。没有证据证明可安全回收 685MiB，也不能从 PoolFinalize 推导 CPU 存储已释放。不实现没有生命周期证明的打洞或 Free 拦截。详细原始哈希和边界见 `.local/logs/Q-09a-BASE1-resident-memory-readonly-v1/{facts.json,recommendation.txt}`。
+
+新 shader 链 `8b016120f586` 已在原入口完成 6931/6931 构建；基础 SPIR-V、metadata、DDK1 和 specialization 全量字节与原 `9507875007c6` 相同。但是当前工具链的 DPL v2 增加 single-omission 变体，`.plocal` 从 54.656MiB 增至 310.921MiB，增加 256.265MiB；Android 启动默认开启 pixel-local，首次请求会保留该 shader 的整个 blob 与 record 元数据，不能按 C 层 unset=OFF 假定没有驻留代价。额外 driver module 虽按需创建，这个增长仍可能抵消常量槽的内存目标。
+
+因此完整新库不部署，保留其独立验证作为 DSP 证明来源。交付改为原 950 库全部原字节、原 `.chain`、JSON 与 DPL 不变，只增加 6927 份 96B DSP 和独立来源 manifest。补充合同须核原完整部署 receipt、已完成的新库 proof 验证、五类实际模块及指纹字节一致；不更换旧链标签，也不把补充产物冒称为原整库构建。现有整库部署工具没有独立 supplement 合同，新增工具仅覆盖这个产物组合缺口，复用原 proof 解析与原发布/恢复原语，不新增计时或采样。此时仍没有新的真机 PSS、CPU、FPS 或持续温度结论。
