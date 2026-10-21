@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""One reversible unmodified PUBLIC RC3 original-BC original022 compatibility start. Offline by default.
+"""One reversible unmodified PUBLIC RC3 original-BC HUD55 compatibility start. Offline by default.
 Uses existing directory CAS, ordinary first-PID ownership and original save2 helper.
-Original BC/current-identical upstream UI overlay only; no APK/module changes, old capture, measurement or GPU-import.
+Original BC/current-identical upstream UI overlay only; HUD55 APK/modules remain unchanged, old capture, measurement or GPU-import.
 """
 from pathlib import Path
 import argparse,hashlib,importlib.util,json,re,shlex,signal,subprocess,sys,time,uuid,zipfile,tarfile
@@ -12,8 +12,12 @@ require=old.require;sha=old.sha;read=old.read;journal=old.journal
 READY=R/'.local/logs/panvk-public-rc3-driver-source-ready-agent.json'
 READY_SHA='3afc572d5b8956abcfc9a4607d74217a959ffb62ab4fcdd037c1cb1a69a0caaa'
 DRIVER_SHA='b46b9f0416f207a05482349dffb37b6f3d84c20762151c623774831ce3939445'
-SOURCE=R/'.local/worktrees/readback-fixture-class-restore-v1'
-APK='a0bc159c20acc85fe2178a73d3e9f889d23e9422c0bb883982136cafa0f7f4ff';ELF='38d4b04de9eafdc5ec3495a4af2ee4391579b534ceb094b77355d01ab76ed4fc'
+SOURCE=R/'.local/worktrees/debug-overlay-panel-v1'
+SOURCE_COMMIT='55a11129069bb0145414804eccb9787900264e4a'
+APK='bcfdd9a495988caacdacd07627b87c237fa78cfea5798de09311d2422f44d05a';ELF='5ed7df9d4cd28ec0972e414ee9d584bd1dda394ad71bbe43899efbe258d64757'
+BASELINE_ROOT_SHA=None # Final HUD55 actual receipt is not yet available; execute is blocked.
+CANONICAL_APK=R/'.local/build/debug-overlay-scale-55a1112-canonical-source-final/canonical.apk'
+LIFECYCLE_SOURCE_HASHES={'dm/host/android/jni.c': '149b7543f47ecd9c74b08014816f1841e72ca3a14636205d6b5f7432e3c0a825', 'dm/host/diag.c': '1f3bec4bfb2380e77024500f5d6259e5850d44fa70afba721e234b1b90b7a4e4', 'dm/host/dm.h': 'e71013417b320fc1714c55266cd8fe24dee8d3f95e00d5d99ff1c40c6a8c8a42', 'dm/gfx/nvn/hle_nvn.c': '8d378bce01788b270e60354143bdde16e3b6997e765e74619a7cf077d558b9e3', 'scripts/dev/android-game-launch.py': 'f424840a0b4138a624ffc16919b9218b7ee6547d7c319fbbc6815dcad626458d'}
 LOCK='files/runtime/.astc6-full-controller-lock'
 CHAIN='cbd8d2da0b0f';OWNER='.minegraph-game-owner';DIRS={'driver':'files/runtime/vulkan-panfrost','temp':'files/runtime/temp','cache':'cache','overlay':'files/runtime/romfs_overlay'}
 RESOURCE_READY=R/'.local/build/panvk-minegraph-original-bc-control-v5/composition.json'
@@ -54,15 +58,24 @@ def proof():
  require(DRIVER_SHA+'  libvulkan_panfrost-android-aarch64.so' in sums,'published sum missing')
  download=read(next(x['path']for x in d['public_receipts']if Path(x['path']).name=='download-receipt.json'))
  require(download['published_SHA256SUMS_verified'] and any(x['sha256']==DRIVER_SHA and x['github_digest_verified']for x in download['assets']),'GitHub public digest mismatch')
- cold=R/'.local/logs/panvk-existing-progress-originalBC-original022-mali-v1/cold-original-pause-no-world-proof-agent.json'
- require(sha(cold)=='8d4069268ce944774f19019da244fcd2afb39706a629c6376e9ce0b15d0f83bb','original conditional save proof changed');cold=read(cold)
- require(cold['exact_canonical_APK_SHA256']==APK and cold['exact_ELF']==ELF,'cold source target mismatch')
- for n,h in cold['compiled_producer_source_hashes'].items():require(sha(SOURCE/n)==h,'original lifecycle source changed: '+n)
- p=read(old.PROMOTION);require(p['production_promoted_and_stopped'] and p['source_revision']=='022d6254d9de565852fa22394b6403491db86707' and not p['rollback_errors'],'production promotion mismatch')
- require(p['canonical_APK_SHA256']==APK and p['host_ELF_SHA256']==ELF and len(p['promoted_module_and_resource_hashes'])==35,'original APK/35 set')
- ap=R/'.local/build/image-binding-022d625-canonical-source/canonical.apk';require(sha(ap)==APK,'canonical APK changed')
- with zipfile.ZipFile(ap) as z:require(hashlib.sha256(z.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()==ELF,'canonical ELF changed')
- return d,p
+ # The old022 cold observation is historical only. HUD55 uses its own pinned
+ # compiled source contract; the live no-world predicate remains unchanged.
+ require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=SOURCE,text=True).strip()==SOURCE_COMMIT,'HUD55 source revision changed')
+ for n,h in LIFECYCLE_SOURCE_HASHES.items():require(sha(SOURCE/n)==h,'HUD55 source changed: '+n)
+ require(sha(CANONICAL_APK)==APK,'HUD55 canonical APK changed')
+ with zipfile.ZipFile(CANONICAL_APK) as z:require(hashlib.sha256(z.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()==ELF,'HUD55 canonical ELF changed')
+ return d
+
+def baseline_proof(row,execute=False):
+ require(row is not None,'HUD55 actual receipt and selected baseline pending; DRAFT only')
+ require(sha(row['path'])==row['sha256'],'HUD55 baseline Ready changed');p=read(row['path'])
+ require(p['source_revision']==SOURCE_COMMIT and p['APK']==APK and p['ELF']==ELF,'HUD55 baseline identity mismatch')
+ expected=p['selected_module_resource_hashes']
+ require(isinstance(expected,dict) and len(expected)==35 and all(re.fullmatch('[a-f0-9]{64}',h) and n.startswith('files/runtime/') and '..'not in Path(n).parts for n,h in expected.items()),'HUD55 selected35 invalid')
+ require(p['shader_chain']==CHAIN,'HUD55 baseline shader chain changed')
+ actual=p['root_actual_receipt'];require(sha(actual['path'])==actual['sha256'],'HUD55 actual receipt changed')
+ if execute:require(BASELINE_ROOT_SHA is not None and actual['sha256']==BASELINE_ROOT_SHA and p['execution_ready']is True and p['root_actual_complete']is True,'HUD55 actual baseline not approved')
+ return expected
 
 def resource_proof():
  require(sha(RESOURCE_READY)==RESOURCE_SHA,'BC resource composition changed');c=read(RESOURCE_READY)
@@ -84,7 +97,7 @@ def no_layers(v):return v['enable_gpu_debug_layers']in('null','0') and all(v[k]i
 def baseline(dev,expected):
  dev.stopped();path=dev.adb('shell','pm','path',PKG).removeprefix('package:');require(path.startswith('/')and'\n'not in path,'unknown split APK')
  require(dev.adb('shell','sha256sum',path).split()[0]==APK,'installed APK differs')
- raw=dev.app('sha256sum',*expected);got={n:h for h,n in(line.split()for line in raw.splitlines())};require(got==expected,'original35 changed')
+ raw=dev.app('sha256sum',*expected);got={n:h for h,n in(line.split()for line in raw.splitlines())};require(got==expected,'HUD55 selected35 changed')
  require(dev.app('cat','files/runtime/shaders/.chain')==CHAIN,'shader chain differs')
  return {'APK':APK,'ELF':ELF,'files35':got,'shader_chain':CHAIN,'shaders':inventory(dev,'files/runtime/shaders')}
 def owned(values,d,label,partial=False):
@@ -112,7 +125,7 @@ def activity_stopped(activities,pid):
  return False
 
 def cold_pause_proof(before,after,activities,pid):
- # Exact frozen original022 JNI: if dm_ingame_now(), its unconditional save
+ # Exact pinned HUD55 JNI: if dm_ingame_now(), its unconditional save
  # LOG precedes dm_gfx_suspend(). LOG is unbuffered stderr. Fresh positive
  # drain completion + no save LOG proves that branch was not taken on pause.
  if 'Android native start pid='+pid+'\n'not in before or not after.startswith(before):return False
@@ -237,11 +250,15 @@ def clean(dev,path,d):
  d['owned_staging_and_transfer_cleaned']=True;journal(path,d)
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',default='10.10.10.44:34455');p.add_argument('--output',type=Path,required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();driver,promotion=proof();resources=resource_proof()
- plan={'scope':'ONE unmodified PUBLIC RC3 original022 original-BC/current-identical-upstreamUI compatibility baseline; no TRACE/DUMP/debug properties, oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--serial',required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--baseline-ready',type=Path);p.add_argument('--baseline-ready-sha256');p.add_argument('--execute',action='store_true');a=p.parse_args();driver=proof();resources=resource_proof()
+ require(bool(a.baseline_ready)==bool(a.baseline_ready_sha256),'baseline path/hash must be supplied together')
+ baseline_row={'path':str(a.baseline_ready.resolve()),'sha256':a.baseline_ready_sha256} if a.baseline_ready else None
+ expected=baseline_proof(baseline_row,a.execute) if baseline_row else None
+ if a.execute:require(expected is not None,'DRAFT: HUD55 actual receipt/selected35 missing')
+ plan={'scope':'ONE unmodified PUBLIC RC3 HUD55 original-BC/current-identical-upstreamUI compatibility baseline; no TRACE/DUMP/debug properties, oldcapture/APK/module mutation, ASTC performance or sharing claim','driver':driver['driver'],'driver_ready_sha256':READY_SHA,'serial':a.serial,'fixed_mode':{'scale_3d':.6,'output':[2772,1240],'shared':False,'legacy_ASTC_copy':False},'launch':command(a.serial,a.output),'directories_CAS_isolated':DIRS,'resource_composition_sha256':RESOURCE_SHA,'candidate_overlay':resources['deploy_files'],'resource_transfer_sha256':resources['transfer_archive']['sha256'],'original_APK':APK,'original_ELF':ELF,'baseline_ready':baseline_row,'execution_ready':bool(expected and a.execute),'missing_inputs':[]if expected else['HUD55 root actual receipt + selected35 baseline Ready'],'tools':{str(x):sha(x)for x in [Path(__file__),OLD,old.COMMON,SOURCE/'scripts/dev/android-game-launch.py',R/'scripts/dev/android-game-background-save.py']}}
  if not a.execute:print(json.dumps(plan,indent=2));return
  a.output.mkdir(parents=True,exist_ok=False);path=a.output/'result.json';token=uuid.uuid4().hex;stage='files/runtime/.minegraph-game-'+token;transfer='/data/local/tmp/minegraph-driver-'+token+'.so'
- d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);expected=promotion['promoted_module_and_resource_hashes'];claimed=False
+ d={**plan,'token':token,'stage':stage,'transfer':transfer,'resource_transfer':transfer+'.resources.tar','owner_sha256':hashlib.sha256((token+'\n').encode()).hexdigest(),'cleanup_errors':[],'phase':'preflight'};journal(path,d);dev=old.common.Device(a.serial);claimed=False
  def interrupt(sig,frame):raise RuntimeError('interrupted; owned save/stop+restore only')
  for sig in(signal.SIGINT,signal.SIGTERM):signal.signal(sig,interrupt)
  try:
