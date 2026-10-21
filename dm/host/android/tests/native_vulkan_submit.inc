@@ -404,6 +404,10 @@ static void texture_registration_retirement_test(void) {
   CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==3);
   CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==1);
   CHECK(bytes_used==65536+3*2048); // pages 0,1,255; snapshots did not grow
+  mtl_reg_tex(REPLACE+1,&a,NULL);CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==4);
+  mtl_reg_tex(REPLACE+1,&c,NULL);CHECK(vk_test_texture_registration_index(a.serial,&bytes_used)==3);
+  mtl_reg_tex(REPLACE+2,&b,NULL);CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==2);
+  mtl_reg_tex(REPLACE+2,&zero,NULL);CHECK(vk_test_texture_registration_index(b.serial,&bytes_used)==1);
   mtl_set_tex_pool_n(4); // hidden registrations still retire
   epoch=vk_texture_descriptor_epoch();mtl_tex_release(&a);vk_texture_end_submit();
   CHECK(vk_texture_descriptor_epoch()==epoch+3);
