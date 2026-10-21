@@ -1,0 +1,57 @@
+{
+  "status": "SOURCE_FUNCTION_AND_AARCH64_TU_TESTED_NOT_LINKED_NOT_DEPLOYED",
+  "date": "2026-10-21",
+  "base_driver_sha256": "f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce",
+  "base_TU_sha256": "691fcd1f5b90643da3165c3329fd939a86d662646a7802845a1578c1a5ed48c7",
+  "patched_TU_sha256": "f50908760fe3152038422fcb8a85d6933425ea921b331631edec87f3202ff9fb",
+  "patch_sha256": "6cc3ce6166fb95689ab2abf938dd958fa6ef48ceac037da0096625d924be2f24",
+  "test_sha256": "c86037b08db5e20b084383e8e414f148f4d9484590f2f06436be95c62b0920a2",
+  "runner_sha256": "63f972357b7ad183e1ce6a5559c59904ea7f057a8bd8c6e76cb4eaa966ed78c1",
+  "tests": [
+    {
+      "mode": "patched",
+      "result": {
+        "test": "exact-wait-timestamp-safe-scripted-ioctl",
+        "cases": 13,
+        "result": "passed",
+        "sanitizers": "ASan+UBSan"
+      },
+      "binary_sha256": "78b75929463603dfd220152727b8fb7bc97f4441753b93573a878ab6c1f0eb44"
+    },
+    {
+      "mode": "original",
+      "result": {
+        "test": "original-release-negative-reference",
+        "EPROTO_wrongly_returns_TIMEOUT": true,
+        "checks": "passed"
+      },
+      "binary_sha256": "830285063c3ed003499f26520e0fc47b657d018eae6f0739a1f87bf58f2164b1"
+    }
+  ],
+  "runner_negative_tests": [
+    {
+      "case": "nonempty-output-refused",
+      "exit": 2,
+      "log_sha256": "47a0b41f712ee50598e98cfbd13d994aec58d2a750f40b667d36fc3ee03d7f9e"
+    },
+    {
+      "case": "different-source-refused-before-output-creation",
+      "exit": 2,
+      "log_sha256": "a1bb52af1684e6e64de5537717e0fabd28b5fe8d7757296c03b35de64e492042"
+    }
+  ],
+  "production_TU": {
+    "compiler": "Android NDK 28.2.13676358 / aarch64-linux-android34-clang++",
+    "flags": "Original f830 compile_commands entry; only source/object/dependency output arguments changed",
+    "object_sha256": "93b3fd4461af125d925b071a2d669b71bd91df93fc81ee6bfc64c3823138d00c",
+    "actual_dependency_count": 1091,
+    "unchanged_inputs_matching_original_producer": 1090,
+    "changed_inputs": 1,
+    "result": "passed, relocatable TU object only"
+  },
+  "local_full_result": ".local/build/turnip-wait-classification-archive-test-v1/result.json",
+  "local_full_result_sha256": "1432fb4092649167ba6b66bc4312264d73dd9d1478667f60541755d88f07c3e8",
+  "local_compiler_inputs_sha256": "90c858a509fef5f6060a44fcaee366b3546dddde8aa42e654d18ff14925f6533",
+  "prior_qualification_receipt_sha256": "e38951556ac7f47eaa4d020af256f5735dad17977f35eefb9d4771ffb02ca605",
+  "scope": "Archive only. No default builder integration, no source Mesa mutation, no linked SO or APK, no device activity. Corrects EPROTO error reporting, not GPU hang, recovery or performance. The mocked ioctl/deadline harness uses the actual extracted source functions; it is not a hardware test or runtime timer."
+}

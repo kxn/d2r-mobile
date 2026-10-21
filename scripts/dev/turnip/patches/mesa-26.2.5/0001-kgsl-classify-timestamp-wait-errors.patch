@@ -1,0 +1,24 @@
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -913,8 +913,19 @@
+ 
+          wait.timeout = timeout_ms;
+       } else if (ret == -1) {
+-         assert(errno == ETIMEDOUT);
+-         return VK_TIMEOUT;
++         /* KGSL reports recovered faults with EPROTO, and invalidated
++          * contexts with EDEADLK. Neither is an elapsed wait deadline.
++          * A recovered command may have been skipped, so do not accept it
++          * as successful GPU work or retry it as a harmless interruption.
++          */
++         const int wait_error = errno;
++         if (wait_error == ETIMEDOUT)
++            return VK_TIMEOUT;
++
++         mesa_loge("KGSL timestamp wait failed: context=%u timestamp=%u "
++                   "errno=%d (%s)", context_id, timestamp,
++                   wait_error, strerror(wait_error));
++         return VK_ERROR_DEVICE_LOST;
+       } else {
+          return VK_SUCCESS;
+       }

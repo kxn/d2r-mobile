@@ -1,0 +1,2 @@
+# Preserve required single-space context lines in the byte-exact unified patch.
+patches/mesa-26.2.5/*.patch whitespace=-blank-at-eol
