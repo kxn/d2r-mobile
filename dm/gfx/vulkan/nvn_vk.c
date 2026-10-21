@@ -17,6 +17,7 @@
 #endif
 #include "nvn_vk_bitmap.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdatomic.h>
 #include <unistd.h>
@@ -1027,6 +1028,50 @@ int mtl_trim_idle_resources(void) {
   if(reusable_bytes)die("Vulkan idle temporary accounting");
   vk_shader_trim_idle_arenas();vk_texture_trim_idle();return 1;
 }
+// Called only by the existing post-drain lifecycle owner job, before trim.
+// VMA's detailed dedicated-list statistics require allocation mutations idle.
+int mtl_memory_dump(void) {
+  if(!V.device || V.cmd || recording_resources) {
+    LOG("[vulkan VMA dump] failed: allocator/recording boundary not ready; request consumed");return 0;
+  }
+  pthread_mutex_lock(&completion_mu);
+  int drained=!pending && !atomic_load(&in_flight) && queue_reset_completed>=queue_submitted;
+  pthread_mutex_unlock(&completion_mu);
+  if(!drained) {LOG("[vulkan VMA dump] failed: completion/reset not drained; request consumed");return 0;}
+  const char *root=V.options.memory_dump_directory;
+  char path[1024],partial[1056];
+  int n=root?snprintf(path,sizeof path,"%s/vulkan-vma.json",root):-1;
+  if(n<=0 || n>=(int)sizeof path || !root || root[0]!='/') {
+    LOG("[vulkan VMA dump] failed: fixed private temp directory unavailable; request consumed");return 0;
+  }
+  snprintf(partial,sizeof partial,"%s.part",path);
+  // The game may finalize an unused ordinary Pool concurrently. Serialize its
+  // allocator mutation with the existing registry mutex, never a new hot lock.
+  pthread_mutex_lock(&V.resources);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint32_t observed_blocks,observed_allocations;uint64_t observed_bytes;
+  vk_memory_stats(&observed_blocks,&observed_allocations,&observed_bytes);
+  LOG("[VMA builtin fixture snapshot] blocks=%u allocations=%u bytes=%llu",observed_blocks,observed_allocations,(unsigned long long)observed_bytes);
+#endif
+  char *json=vk_memory_build_stats_string();
+  pthread_mutex_unlock(&V.resources);
+  int ok=0,created=0,failure_errno=json?0:ENOMEM;
+  if(json) {
+    int fd=open(partial,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0600);
+    if(fd>=0) {
+      created=1;FILE *file=fdopen(fd,"wb");
+      if(file) {size_t bytes=strlen(json);ok=fwrite(json,1,bytes,file)==bytes;if(fclose(file))ok=0;}
+      else close(fd);
+      if(ok && rename(partial,path))ok=0;
+      if(!ok)failure_errno=errno;
+    } else failure_errno=errno;
+  }
+  if(!ok && created)unlink(partial); // only this call's exclusive new file
+  vk_memory_free_stats_string(json);
+  LOG("[vulkan VMA dump] complete=%d errno=%d file=%s builtin_detailed_map=1 post_drain_before_this_job_trim=1 earlier_tail_FRAME_trim_not_excluded=1; Usage/Budget may be VMA estimates, not resident/mtrack",ok,failure_errno,path);
+  return ok;
+}
+
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_idle_temporaries(uint64_t *bytes,unsigned *count) {
   *bytes=reusable_bytes;*count=0;
@@ -1356,6 +1401,7 @@ static void init_options(void) {
   o->descriptor_sets=max_sets;
   if(!o->descriptor_sets||o->descriptor_sets>2048) die("Vulkan test descriptor capacity");
   o->shader_root=option_string("DM_VULKAN_SHADERS");
+  o->memory_dump_directory=option_string("DM_TEMP");
   o->pipeline_cache_directory=option_string("DM_VULKAN_PIPELINE_CACHE_DIR");
   if(!o->pipeline_cache_directory) o->pipeline_cache_directory=option_string("DM_TEMP");
   const char *frame=getenv("DM_VULKAN_TRACE_FRAME");o->trace_frame_set=frame!=NULL;

@@ -6431,6 +6431,7 @@ void mtl_alloc_stats(uint64_t *waits, uint64_t *grown, int *n) { *waits = g_allo
 
 // No new Metal cache policy; Android-only request uses the common control job.
 int mtl_trim_idle_resources(void) { return 1; }
+int mtl_memory_dump(void) { return 0; }
 
 // Native Metal already aliases guest CPU memory; no publication experiment.
 uint64_t mtl_pool_cpu_access_needed(uint64_t a,uint64_t n,uint64_t *b,uint64_t *z) { (void)a;(void)n;(void)b;(void)z;return 0; }

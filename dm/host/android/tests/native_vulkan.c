@@ -701,12 +701,13 @@ int dm_vulkan_test_main(void) {
 #endif
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
     extern void nvn_test_idle_trim_cold_poll(void);
-    CHECK(!V.device);dm_gfx_trim_memory_request();
+    CHECK(!V.device);CHECK(dm_gfx_vma_dump_request());CHECK(nvn_test_vma_dump_pending());dm_gfx_trim_memory_request();
     nvn_test_idle_trim_cold_poll();
     CHECK(!V.device && nvn_test_idle_trim_pending());
     extern int nvn_test_idle_trim_started(void);
     dm_gfx_suspend(1);
     CHECK(!V.device && !nvn_test_idle_trim_started() && nvn_test_idle_trim_pending());
+    CHECK(!nvn_test_vma_dump_pending()); // no GPU/thread startup just for optional dump
     dm_gfx_suspend(0);
   }
   vk_graphics_prepare_mode(2);

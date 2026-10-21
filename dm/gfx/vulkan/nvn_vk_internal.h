@@ -58,7 +58,7 @@ typedef struct {
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;
-  const char *shader_root,*trace_directory,*frame_dump,*pipeline_cache_directory;
+  const char *shader_root,*trace_directory,*frame_dump,*pipeline_cache_directory,*memory_dump_directory;
 } vk_startup_options;
 typedef struct {
   vk_startup_options options;

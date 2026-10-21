@@ -19,6 +19,8 @@ VkResult vk_memory_image(VkImage image, VkDeviceMemory *memory, void **allocatio
 void vk_memory_free(void *allocation);
 uint64_t vk_memory_allocation_bytes(void *allocation);
 void vk_memory_stats(uint32_t *blocks, uint32_t *allocations, uint64_t *bytes);
+char *vk_memory_build_stats_string(void);
+void vk_memory_free_stats_string(char *data);
 #ifdef __cplusplus
 }
 #endif
