@@ -29,6 +29,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeVmaMemoryDumpRequest();
     private static native void nativeThermalLimit(int limit);
     private static native void nativeManualLimit(int limit);
+    private static native void nativeManualScale(int percent);
     private static native void nativeDebugState(float[] output);
     private static final DebugPanel.Settings debugSettings = new DebugPanel.Settings();
     private DebugPanel debugPanel;
@@ -334,9 +335,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 debugSettings.thermalPause = enabled; thermalPolicy.setPauseEnabled(enabled);
             }
             @Override public void manualCap(int fps) { debugSettings.manualCap = fps; nativeManualLimit(fps); }
+            @Override public void scalePercent(int percent) { debugSettings.scalePercent = percent; nativeManualScale(percent); }
         });
         content.addView(debugPanel);
         nativeManualLimit(debugSettings.manualCap);
+        nativeManualScale(debugSettings.scalePercent);
         thermalPolicy.setLimitEnabled(debugSettings.thermalCap);
         thermalPolicy.setPauseEnabled(debugSettings.thermalPause);
         setContentView(content);

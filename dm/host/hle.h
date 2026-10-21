@@ -48,6 +48,7 @@ typedef struct { const char *name; void *fn; const char *why; } hle_force_ent;
 int dm_opmode(void);
 void dm_3d_scale_hot(int hot);      // 保留原前端兼容入口；当前不直接改比例 | Legacy frontend entry; currently does not change the scale
 #ifdef __ANDROID__
+void dm_android_3d_scale_manual(int percent); // 0 follows startup/auto; legal fixed UI percentages publish intent only
 void dm_android_3d_thermal_limit(int limit); // 0/30/20: constrain existing adaptive levels; explicit fixed modes remain fixed
 #endif
 ssize_t dm_data_pread(int fd, void *buf, size_t n, off_t off);   // 资源档案的读：有「.holes」区段表的剔零档案按表换算（hle_fs.c） | Resource archive reads: zero-stripped archives with a ".holes" extent table are translated through the table (hle_fs.c)

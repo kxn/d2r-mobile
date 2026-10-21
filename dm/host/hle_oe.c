@@ -173,6 +173,18 @@ static inline int scale3d_thermal_level(int level, int limit, int max_level, int
 }
 #ifdef __ANDROID__
 static _Atomic int g_scale3d_thermal_limit;
+static _Atomic int g_scale3d_manual_percent;
+static _Atomic int g_scale3d_level;
+void dm_android_3d_scale_manual(int percent) {
+    // UI publishes intent only. Ignore malformed requests without releasing a lock.
+    switch (percent) {
+    case 0: case 50: case 60: case 65: case 70: case 75: case 85: case 100:
+        atomic_store(&g_scale3d_manual_percent, percent);
+    }
+}
+static float scale3d_manual_want(float automatic, int percent) {
+    return percent ? percent / 100.f : automatic;
+}
 static _Atomic int g_scale3d_thermal_max = -1; // disabled until the adaptive options are latched
 void dm_android_3d_thermal_limit(int limit) {
     atomic_store(&g_scale3d_thermal_limit, limit == 20 || limit == 30 ? limit : 0);
@@ -197,6 +209,19 @@ static void scale3d_ctl_hold(scale3d_ctl *c, uint64_t now, uint64_t ns) {   // �
     if (now + ns > c->hold_until) c->hold_until = now + ns;
     c->win_ms = 0; c->win_n = c->win_d = 0; c->nw = 0; c->good_run = 0;
 }
+#ifdef __ANDROID__
+// Called only by the original presentation owner, never from JNI/game owner.
+static int scale3d_manual_feed(scale3d_ctl *c, int percent, int *previous, uint64_t now) {
+    if (percent != *previous) {
+        *previous = percent;
+        c->level = 0; c->last_up = 0; c->need_good = 0;
+        c->last_r10 = c->last_r60 = 0;
+        scale3d_ctl_hold(c, now, 3 * S3_SEC);
+        atomic_store(&g_scale3d_level, 0);
+    }
+    return percent != 0;
+}
+#endif
 static double s3_rate(const scale3d_ctl *c, int k) {   // 最近 k 窗的掉帧率（窗不足 k 个按已有的算；没有窗返回 0） | Dropped-frame rate over the last k windows (fewer than k windows: compute over those present; no windows returns 0)
     unsigned n = 0, d = 0; for (int i = 0; i < k && i < c->nw; i++) { n += c->wn[i]; d += c->wd[i]; } return n ? (double)d / n : 0;
 }
@@ -223,7 +248,9 @@ static int scale3d_ctl_step(scale3d_ctl *c, double iv_ms, uint64_t now) {   // �
 static _Atomic int g_3d_quality_mode;
 void dm_3d_quality_mode_set(int mode) { atomic_store(&g_3d_quality_mode, mode == 1 ? 1 : 0); }
 int dm_3d_quality_mode_get(void) { return atomic_load(&g_3d_quality_mode); }
+#ifndef __ANDROID__
 static _Atomic int g_scale3d_level;
+#endif
 static _Atomic int g_scale3d_resumed;
 void dm_3d_scale_resumed(void) { atomic_store(&g_scale3d_resumed, 1); }   // 前端：刚回前台。回来头几秒的慢帧是恢复（表面重建、缓存变冷），不是 GPU 吃紧：停判 3 秒 | front end: just returned to foreground. Slow frames in the first few seconds back are recovery (surface rebuild, caches gone cold), not GPU pressure: suspend judging for 3 seconds
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
@@ -236,6 +263,14 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
         atomic_store(&g_scale3d_thermal_max, on ? c.max_level : -1);
 #endif
         LOG("3D 比例控制：%s，下限 %.2f（第 %d 档）", on ? "开" : "关", c.max_level ? g_s3_levels[c.max_level - 1] : 0.0f, c.max_level); }
+#ifdef __ANDROID__
+    // Only this existing presentation owner mutates the controller. Fixed periods
+    // never enter its adaptive history; auto resumes with an empty held window.
+    { static int previous_manual;
+      int manual = atomic_load(&g_scale3d_manual_percent);
+      if (manual != previous_manual) scale3d_manual_feed(&c, manual, &previous_manual, now_ns());
+      if (manual) return; }
+#endif
     if (!on) return;
     if (atomic_load(&g_3d_quality_mode) == 1) { if (c.level) { c.level = 0; LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); return; }
     uint64_t now = now_ns();
@@ -275,6 +310,14 @@ static void scale3d_tick(void) {
                               atomic_load(&g_scale3d_thermal_max), atomic_load(&g_3d_quality_mode));
 #endif
     float dyn = lv <= 0 ? want_cfg : g_s3_levels[(lv > S3_NLV ? S3_NLV : lv) - 1]; if (dyn > want_cfg) dyn = want_cfg;
+#ifdef __ANDROID__
+    // Same notification/game owner and original resize call below; UI never writes guest memory.
+    // Also cover a brief manual episode observed here but between two present callbacks.
+    { static int previous_manual;
+      int manual = atomic_load(&g_scale3d_manual_percent);
+      if (manual != previous_manual) { previous_manual = manual; dm_3d_scale_resumed(); }
+      dyn = scale3d_manual_want(dyn, manual); }
+#endif
     float want = dm_nvn_ruler_truth() ? 1.0f : dyn;
     if (want == cur || !main || dm_nvn_frame_count() < 30) return;
     uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;

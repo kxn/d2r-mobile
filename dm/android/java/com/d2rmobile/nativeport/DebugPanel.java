@@ -13,18 +13,19 @@ import java.util.Locale;
 final class DebugPanel extends FrameLayout {
     static final class Settings {
         boolean thermalCap = true, thermalPause = true;
-        int manualCap;
+        int manualCap, scalePercent;
     }
     interface Actions {
         void close();
         void thermalCap(boolean enabled);
         void thermalPause(boolean enabled);
         void manualCap(int fps);
+        void scalePercent(int percent);
     }
     private final TextView details;
     private final ScrollView scroll;
     private final Switch cap, pause;
-    private final Spinner manual;
+    private final Spinner manual, renderScale;
     private final Settings settings;
     private final Actions actions;
     private boolean syncing;
@@ -34,6 +35,7 @@ final class DebugPanel extends FrameLayout {
     private boolean havePrevious, previousCap, previousPause;
     private int previousManual;
     private static final int[] LIMITS = {0, 20, 30, 40, 60};
+    private static final int[] SCALES = {0, 50, 60, 65, 70, 75, 85, 100};
     DebugPanel(Context context, Settings settings, Actions actions) {
         super(context); this.settings = settings; this.actions = actions;
         setBackgroundColor(0x33000000);
@@ -60,31 +62,22 @@ final class DebugPanel extends FrameLayout {
         header.addView(close, new LinearLayout.LayoutParams(dp(68), dp(36)));
         body.addView(header);
         details = text(context, "等待出图状态"); body.addView(details);
-        cap = toggle(context, "热限帧（含热缩放）");
+        cap = toggle(context, "热限帧");
         pause = toggle(context, "过热暂停");
         body.addView(cap, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(36)));
         body.addView(pause, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(36)));
         LinearLayout capRow = new LinearLayout(context); capRow.setGravity(Gravity.CENTER_VERTICAL);
         capRow.addView(text(context, "帧率上限"), new LinearLayout.LayoutParams(0, dp(36), 1));
         manual = new Spinner(context);
-        manual.setAdapter(new ArrayAdapter<String>(context, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"跟随", "20 FPS", "30 FPS", "40 FPS", "60 FPS"}) {
-            private View compact(View v) {
-                TextView label = (TextView)v;
-                label.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
-                label.setMinHeight(dp(36)); label.setPadding(dp(8), 0, dp(8), 0);
-                return v;
-            }
-            @Override public View getView(int position, View convert, ViewGroup parent) {
-                return compact(super.getView(position, convert, parent));
-            }
-            @Override public View getDropDownView(int position, View convert, ViewGroup parent) {
-                return compact(super.getDropDownView(position, convert, parent));
-            }
-        });
+        manual.setAdapter(options(context, new String[]{"跟随", "20 FPS", "30 FPS", "40 FPS", "60 FPS"}));
         capRow.addView(manual, new LinearLayout.LayoutParams(dp(130), dp(36)));
         body.addView(capRow);
-        body.addView(text(context, "仅本次运行"));
+        LinearLayout scaleRow = new LinearLayout(context); scaleRow.setGravity(Gravity.CENTER_VERTICAL);
+        scaleRow.addView(text(context, "3D比例"), new LinearLayout.LayoutParams(0, dp(36), 1));
+        renderScale = new Spinner(context);
+        renderScale.setAdapter(options(context, new String[]{"自动", "固定50%", "固定60%", "固定65%", "固定70%", "固定75%（iOS）", "固定85%", "固定100%"}));
+        scaleRow.addView(renderScale, new LinearLayout.LayoutParams(dp(175), dp(36)));
+        body.addView(scaleRow);
         sync();
         cap.setOnCheckedChangeListener((v, checked) -> { if (!syncing) actions.thermalCap(checked); });
         pause.setOnCheckedChangeListener((v, checked) -> { if (!syncing) actions.thermalPause(checked); });
@@ -94,10 +87,32 @@ final class DebugPanel extends FrameLayout {
                 if (!syncing && settings.manualCap != LIMITS[index]) actions.manualCap(LIMITS[index]);
             }
         });
+        renderScale.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int index, long id) {
+                if (!syncing && settings.scalePercent != SCALES[index]) actions.scalePercent(SCALES[index]);
+            }
+        });
         reset.setOnClickListener(v -> {
-            actions.thermalCap(true); actions.thermalPause(true); actions.manualCap(0); sync();
+            actions.thermalCap(true); actions.thermalPause(true); actions.manualCap(0); actions.scalePercent(0); sync();
         });
         setVisibility(GONE);
+    }
+    private ArrayAdapter<String> options(Context context, String[] labels) {
+        return new ArrayAdapter<String>(context, android.R.layout.simple_spinner_dropdown_item, labels) {
+            private View compact(View v) {
+                TextView label = (TextView)v;
+                label.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+                label.setMinHeight(dp(36)); label.setMinimumHeight(dp(36)); label.setPadding(dp(8), 0, dp(8), 0);
+                return v;
+            }
+            @Override public View getView(int position, View convert, ViewGroup parent) {
+                return compact(super.getView(position, convert, parent));
+            }
+            @Override public View getDropDownView(int position, View convert, ViewGroup parent) {
+                return compact(super.getDropDownView(position, convert, parent));
+            }
+        };
     }
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
@@ -130,6 +145,7 @@ final class DebugPanel extends FrameLayout {
         syncing = true;
         cap.setChecked(settings.thermalCap); pause.setChecked(settings.thermalPause);
         for (int i = 0; i < LIMITS.length; ++i) if (LIMITS[i] == settings.manualCap) manual.setSelection(i);
+        for (int i = 0; i < SCALES.length; ++i) if (SCALES[i] == settings.scalePercent) renderScale.setSelection(i);
         syncing = false;
     }
     void update(float fps, String battery, int thermal, float[] state) {

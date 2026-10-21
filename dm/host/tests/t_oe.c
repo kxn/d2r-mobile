@@ -152,8 +152,48 @@ static void test_scale3d(void) {
     printf("  （实玩第二段回放：慢帧均匀散开换级 %d 次，挤在一起换级 %d 次）\n", a, b);
     CHECK(a == 0 && b == 0, "动态比例：实玩第二段的慢帧序列（帧率 59+）不论散开还是挤在一起都不换级");
 }
+#ifdef __ANDROID__
+static void *manual_request_only(void *unused) {
+    (void)unused; dm_android_3d_scale_manual(75); return NULL;
+}
+static void test_manual_scale(void) {
+    scale3d_ctl c = {.level=2,.max_level=3,.win_ms=1500,.win_n=45,.win_d=40,
+                     .nw=20,.good_run=8,.need_good=45,.last_up=100,.last_r10=.9,.last_r60=.8};
+    scale3d_ctl before=c; int previous=0;
+    atomic_store(&g_scale3d_level,2); atomic_store(&g_scale3d_cur,.65f);
+    pthread_t ui; pthread_create(&ui,NULL,manual_request_only,NULL); pthread_join(ui,NULL);
+    CHECK(atomic_load(&g_scale3d_manual_percent)==75, "手动比例：UI线程仅发布合法75请求");
+    CHECK(!memcmp(&before,&c,sizeof c) && atomic_load(&g_scale3d_level)==2 && dm_3d_scale_cur()==.65f,
+          "手动比例：请求不改present控制器/游戏owner已生效比例");
+    const int invalid[]={-1,1,55,80,101,10000};
+    for(unsigned i=0;i<sizeof invalid/sizeof *invalid;i++) dm_android_3d_scale_manual(invalid[i]);
+    CHECK(atomic_load(&g_scale3d_manual_percent)==75, "手动比例：非法请求不解锁或修改既有75请求");
+    CHECK(scale3d_manual_feed(&c,75,&previous,1000*S3_SEC) && previous==75,
+          "手动比例：只有原present owner切入固定模式");
+    CHECK(c.level==0 && c.nw==0 && c.win_n==0 && c.win_d==0 && c.win_ms==0 &&
+          c.good_run==0 && c.need_good==0 && c.last_up==0 && c.hold_until==1003*S3_SEC,
+          "手动比例：清掉旧掉帧/恢复/惩罚窗口，复用原三秒hold");
+    CHECK(scale3d_manual_want(.60f,75)==.75f && scale3d_manual_want(.65f,100)==1.f,
+          "手动比例：固定75/100覆盖动态/热降档，不被旧配置上限截断");
+    const int legal[]={50,60,65,70,75,85,100};
+    for(unsigned i=0;i<sizeof legal/sizeof *legal;i++) {
+        dm_android_3d_scale_manual(legal[i]);
+        CHECK(atomic_load(&g_scale3d_manual_percent)==legal[i] &&
+              scale3d_manual_want(.6f,legal[i])==legal[i]/100.f, "手动比例：合法下拉档精确生效");
+    }
+    dm_android_3d_scale_manual(0);
+    CHECK(!scale3d_manual_feed(&c,0,&previous,2000*S3_SEC) && previous==0 &&
+          c.hold_until==2003*S3_SEC && c.nw==0 && c.win_n==0,
+          "手动比例：恢复自动从空窗起步，不累计固定比例期间慢帧");
+    CHECK(scale3d_manual_want(.7f,0)==.7f && scale3d_thermal_level(0,30,3,0)==2,
+          "手动比例：自动保留原动态/热策略，既有热FPS/暂停不混入比例请求");
+}
+#endif
 int main(void) {
     test_scale3d();
+#ifdef __ANDROID__
+    test_manual_scale();
+#endif
     unsetenv("DM_OE_SCRIPT"); reset();
     CHECK(empty(), "初始空队列：返回false且不改输出");
     dm_focus_set(1); dm_set_opmode(1); CHECK(empty(), "相同状态不发通知");

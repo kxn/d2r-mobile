@@ -776,6 +776,10 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeManualLi
     JNIEnv *env, jclass klass, jint limit) {
   (void)env; (void)klass; vk_set_manual_limit(limit);
 }
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeManualScale(
+    JNIEnv *env, jclass klass, jint percent) {
+  (void)env; (void)klass; dm_android_3d_scale_manual(percent);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeDebugState(
     JNIEnv *env, jclass klass, jfloatArray output) {
   (void)klass;
