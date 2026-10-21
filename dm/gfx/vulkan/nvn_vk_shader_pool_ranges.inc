@@ -24,6 +24,9 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
     // Consume each mask word locally instead of reloading/shifting it for
     // every selected binding. Mocks/unproved schemas keep the original scan.
     int masked=s->pool_binding_mask_ready;
+    // Reuse the descriptor consumer's final immutable offsets, not a second
+    // schema or a resource cache. The supplied live state can be a saved ghost.
+    const struct vk_binding_consumer *program=masked && !vk_binding_consumer_reference_mode()?s->binding_consumers:NULL;
     uint64_t remaining=masked?s->pool_binding_mask[0]:0;
     unsigned base=0,cursor=0;
     for(;;) {
@@ -40,9 +43,22 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
         k=cursor++;
       }
       const vk_binding *b=&s->bindings[k];
-      if(b->count!=1)return pool_range_fail("descriptor array count");
-      const p_bind_buf *buffer=NULL;uint64_t prefix=0;
-      if(b->kind==1) {
+      const struct vk_binding_consumer *consumer=program?program+k:NULL;
+      if(!consumer && b->count!=1)return pool_range_fail("descriptor array count");
+      const p_bind_buf *buffer=NULL;uint64_t prefix=0;int writable=0;
+      unsigned op=consumer?consumer->op&BIND_OP_MASK:BIND_INVALID;
+      if(consumer && (op==BIND_UNIFORM || op==BIND_STORAGE)) {
+        // These exact source offsets/register bounds were validated by the
+        // final shader constructor for the same descriptor consumer. Never
+        // retain addr/size or a backing: gather current values on every call.
+        if(consumer->source!=UINT16_MAX)
+          buffer=(const p_bind_buf *)((const uint8_t *)state+consumer->source);
+        if(op==BIND_STORAGE) {
+          writable=!!(consumer->op&BIND_PARAM_STORAGE);
+          if(s->storage_bias_mask&(UINT32_C(1)<<consumer->aux))
+            prefix=V.props.limits.minStorageBufferOffsetAlignment;
+        }
+      } else if(b->kind==1) {
         if(b->reg<0 || b->reg>=19)return pool_range_fail("uniform register range");
         // c0/c1/c2 are host-owned driver/embedded constants. Ordinary UBOs
         // still resolve their FULL declared size before alignment/copy logic;
@@ -51,6 +67,7 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
       } else if(b->kind==2 || b->kind==8) {
         if(b->reg<0 || b->reg>=16)return pool_range_fail("storage register range");
         buffer=b->kind==8?&state->ubo[stage][b->reg]:&state->ssbo[stage][b->reg];
+        writable=vk_binding_writable(b);
         unsigned bias=(unsigned)b->reg+(b->kind==8?16:0);
         if(s->storage_bias_mask&(UINT32_C(1)<<bias))
           prefix=V.props.limits.minStorageBufferOffsetAlignment;
@@ -69,7 +86,7 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
         // representation cannot prove complete window requirements.
         return pool_range_fail("unsupported physical alternative binding");
       }
-      if(buffer && !shader_pool_requirement(buffer,b->kind,vk_binding_writable(b),
+      if(buffer && !shader_pool_requirement(buffer,b->kind,writable,
           producer_stage(stage),prefix,sink,context))return 0;
     }
 #ifdef DM_VULKAN_NATIVE_RESOURCES

@@ -19,13 +19,46 @@ static int pool_operation_add(void *context,const vk_pool_requirement *range) {
   plan->ranges[plan->count++]=*range;return 1;
 }
 static void pool_operation_unpin(pool_operation_plan *plan) {
+  // No reference was added when all owners were already retained by the
+  // current recording. Commit upgrades them before it publishes that owner.
+  if(!plan->owned_pin_count) {plan->pin_count=0;return;}
   pthread_mutex_lock(&V.resources);
   while(plan->pin_count) {
-    pool *p=plan->pins[--plan->pin_count];
+    size_t k=--plan->pin_count;
+    if(!(plan->owned_pins[k/64]&(UINT64_C(1)<<(k%64))))continue;
+    pool *p=plan->pins[k];
     if(!p->references)die("Vulkan operation pool pin underflow");
-    p->references--;
+    p->references--;plan->owned_pin_count--;
   }
+  if(plan->owned_pin_count)die("Vulkan operation owned pin mismatch");
   pthread_cond_broadcast(&pool_cv);pthread_mutex_unlock(&V.resources);
+}
+// The ONLY transition that exposes recording refs to completion. Run before
+// enqueue (also for internal/reentrant submits), never after a fence can drain
+// the borrowed refs. No live operation means no lock and no Pool walk.
+static __attribute__((noinline)) void pool_operation_before_commit(void) {
+  int borrowed=0;
+  for(unsigned d=0;d<pool_operation_depth;d++) {
+    pool_operation_plan *plan=pool_operation_plans[d];
+    if(plan->pin_count!=plan->owned_pin_count) {borrowed=1;break;}
+  }
+  if(!borrowed)return;
+  pthread_mutex_lock(&V.resources);
+  for(unsigned d=0;d<pool_operation_depth;d++) {
+    pool_operation_plan *plan=pool_operation_plans[d];
+    if(plan->pin_count==plan->owned_pin_count)continue;
+    if(!recording_resources || plan->borrowed_recording_serial!=recording_resources->queue_serial)
+      die("Vulkan operation borrowed recording lifetime mismatch");
+    for(size_t k=0;k<plan->pin_count;k++) {
+      uint64_t bit=UINT64_C(1)<<(k%64);
+      if(plan->owned_pins[k/64]&bit)continue;
+      pool *p=plan->pins[k];
+      if(!p->references || p->access_serial!=plan->borrowed_recording_serial)
+        die("Vulkan operation borrowed Pool reference missing");
+      p->references++;plan->owned_pins[k/64]|=bit;plan->owned_pin_count++;
+    }
+  }
+  pthread_mutex_unlock(&V.resources);
 }
 // Unknown legal representations cannot use a partially collected list. The
 // conservative path admits complete registered pools, never truncated ranges.
@@ -93,7 +126,17 @@ static int pool_operation_pin(pool_operation_plan *plan) {
     pool_span_piece span;int native=p && pool_native_requirement(p,r);
     if(!p || (!native &&
         !pool_span_resolve_operation(p,r->address-(uintptr_t)p->guest,r->size,&span,&geometry_epoch_checked))) {good=0;break;}
-    if(j==plan->pin_count) {p->references++;plan->pins[plan->pin_count++]=p;}
+    if(j==plan->pin_count) {
+      uint64_t bit=UINT64_C(1)<<(j%64);
+#ifndef DM_VULKAN_POOL_PIN_REFERENCE
+      if(recording_resources && p->access_serial==recording_resources->queue_serial && p->recording_access) {
+        plan->owned_pins[j/64]&=~bit;
+        plan->borrowed_recording_serial=recording_resources->queue_serial;
+      } else
+#endif
+      {p->references++;plan->owned_pins[j/64]|=bit;plan->owned_pin_count++;}
+      plan->pins[plan->pin_count++]=p;
+    }
     if(!native)pool_operation_geometry_remember(plan,k,j,&span);
   }
   if(good)plan->geometry_registry_epoch=atomic_load_explicit(&pool_registry_epoch,memory_order_relaxed);

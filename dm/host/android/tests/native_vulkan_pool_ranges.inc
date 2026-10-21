@@ -10,6 +10,51 @@ static int pool_range_collect(void *context,const vk_pool_requirement *range) {
   out->ranges[out->count++]=*range;
   return 1;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static void pool_consumer_ranges_compare(vk_shader *vertex,vk_shader *fragment) {
+  extern void vk_test_binding_consumers_build(vk_shader *);
+  int reference=vk_binding_consumer_reference_mode();
+  vk_test_binding_consumers_build(vertex);vk_test_binding_consumers_build(fragment);
+  CHECK(vertex->binding_consumers && fragment->binding_consumers);
+  vk_shader *list[6]={vertex,fragment};
+  // State is deliberately NOT &S. Compare the same original ordered outputs,
+  // including a sink failure, while live addresses/sizes change under one schema.
+  for(unsigned variant=0;variant<4;variant++)for(unsigned capacity=1;capacity<=32;capacity+=31) {
+    vk_state live=S;
+    if(variant==1) {
+      live.ubo[0][0]=(p_bind_buf){.addr=0x410007,.size=65537};
+      live.ssbo[0][1]=(p_bind_buf){.addr=0x420003,.size=103};
+      live.ubo[1][2]=(p_bind_buf){.addr=0x430009,.size=117};
+    } else if(variant==2) {
+      live.ubo[0][0]=(p_bind_buf){0};live.ssbo[0][1]=(p_bind_buf){0};
+      live.ubo[1][2]=(p_bind_buf){0};
+    } else if(variant==3)live.ssbo[0][1]=(p_bind_buf){.addr=UINT64_MAX-7,.size=16};
+    pool_range_fixture original={.capacity=capacity},compiled={.capacity=capacity};
+    vk_binding_consumer_reference(1);
+    int a=vk_shader_pool_ranges_state(list,&live,0,pool_range_collect,&original);
+    vk_binding_consumer_reference(0);
+    int b=vk_shader_pool_ranges_state(list,&live,0,pool_range_collect,&compiled);
+    CHECK(a==b && original.count==compiled.count);
+    for(unsigned k=0;k<original.count;k++) {
+      const vk_pool_requirement *x=&original.ranges[k],*y=&compiled.ranges[k];
+      CHECK(x->address==y->address && x->size==y->size && x->stages==y->stages);
+      CHECK(x->prefix_alignment==y->prefix_alignment && x->writable==y->writable &&
+          x->binding_kind==y->binding_kind);
+    }
+    if(variant==1 && capacity==32) {
+      CHECK(b && compiled.count==5);
+      CHECK(compiled.ranges[0].address==0x410007 && compiled.ranges[0].size==65537);
+      CHECK(compiled.ranges[1].address==0x420003 && compiled.ranges[1].size==103);
+      CHECK(compiled.ranges[1].writable && compiled.ranges[1].prefix_alignment==V.props.limits.minStorageBufferOffsetAlignment);
+      CHECK(compiled.ranges[2].address==0x430009 && compiled.ranges[2].size==117 && compiled.ranges[2].binding_kind==8);
+      CHECK(compiled.ranges[2].writable && compiled.ranges[2].prefix_alignment==V.props.limits.minStorageBufferOffsetAlignment);
+    }
+  }
+  free(vertex->binding_consumers);vertex->binding_consumers=NULL;
+  free(fragment->binding_consumers);fragment->binding_consumers=NULL;
+  vk_binding_consumer_reference(reference);
+}
+#endif
 static void shader_pool_ranges_test(void) {
   vk_state saved=S;memset(&S,0,sizeof S);
   uint8_t *storage;CHECK(!posix_memalign((void **)&storage,65536,65536));
@@ -79,6 +124,9 @@ static void shader_pool_ranges_test(void) {
     CHECK(masked.ranges[k].stages==out.ranges[k].stages && masked.ranges[k].writable==out.ranges[k].writable);
     CHECK(masked.ranges[k].binding_kind==out.ranges[k].binding_kind);
   }
+#if !defined(DM_ANDROID_APP)
+  pool_consumer_ranges_compare(&vertex,&fragment);
+#endif
   // Real Vulkan device limits need not allow128 simultaneous descriptors.
   // Exercise immutable index boundaries through the same cold builder, then
   // validate its observable logical ranges, not the mask's implementation bits.
@@ -152,14 +200,26 @@ static void shader_pool_ranges_test(void) {
   for(unsigned stage=0;stage<6;stage++) {
     vk_shader shader={.stage=stage,.nb=1,.bindings=&one};
     memset(list,0,sizeof list);list[stage]=&shader;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    vk_test_shader_pool_binding_mask_build(&shader);
+    extern void vk_test_binding_consumers_build(vk_shader *);
+    vk_test_binding_consumers_build(&shader);CHECK(shader.binding_consumers);
+#endif
     S.ssbo[stage][15]=(p_bind_buf){.addr=0x500000+stage*4096,.size=32+stage};
     out=(pool_range_fixture){.capacity=32};
     CHECK(vk_shader_pool_ranges(list,stage==5,pool_range_collect,&out));CHECK(out.count==1);
     CHECK(out.ranges[0].address==0x500000+stage*4096&&out.ranges[0].size==32+stage);
     CHECK(out.ranges[0].stages==stages[stage]&&!out.ranges[0].writable);
     one.flags=1;out.count=0;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    free(shader.binding_consumers);shader.binding_consumers=NULL;
+    vk_test_binding_consumers_build(&shader);CHECK(shader.binding_consumers);
+#endif
     CHECK(vk_shader_pool_ranges(list,stage==5,pool_range_collect,&out));CHECK(out.ranges[0].writable);
     one.flags=4;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    free(shader.binding_consumers);
+#endif
   }
   memset(list,0,sizeof list);list[0]=&vertex;list[1]=&fragment;
   out=(pool_range_fixture){.capacity=1};
