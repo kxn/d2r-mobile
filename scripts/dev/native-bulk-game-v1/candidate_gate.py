@@ -9,7 +9,7 @@ SOURCE_READY='0af59a7d79f3a0226020b816d952e07a7529a76879c6334fd3966784c0f4ca8d'
 BASE='6f8188e392f21ff045ef640ad8c4f184de048806'
 
 
-def validate(p,pinned,read,require):
+def validate_8480(p,pinned,read,require):
     c=p['native_candidate_validation']
     require(set(c)=={'root_review','qualified_base_pair','qualified_predecessor_short'},'candidate gate fields')
     require('sustained_play' not in p and 'official_gpu_tools' not in p and
@@ -83,3 +83,54 @@ def validate(p,pinned,read,require):
             and phase['official_performance_complete'] is True and phase['cpu_validity'] is True,
             'actualebe originalgame/CPU/save qualification incomplete')
     # Actualebe is functional/tool qualification, not a matched CPU/FPS/heat baseline.
+
+
+COMBINED_RUNTIME='9592893578e56e11c463445592d1e10f1f2e7c5c'
+COMBINED_REVIEW='447e9699ac286b0e67a2d789addd6ae08ffda946a4aa1f44a0459b0e9d8468e1'
+COMBINED_RAW_PRODUCER='b16184c232b540b92e843be00137b262ae36841d'
+COMBINED_RAW='5cbf65d16d01aca261f90691d6a72549ecae737139e3a8487dc2f26da4284700'
+COMBINED_CANONICAL='7543b6cf98ed70c5cc41ce959795f85cbe4ccd9abc341408c879a2780ce7a248'
+
+
+def validate(p,pinned,read,require):
+    if p['runtime_commit']!=COMBINED_RUNTIME:
+        return validate_8480(p,pinned,read,require)
+    import copy
+    c=p['native_candidate_validation']
+    require(set(c)=={'root_review','qualified_base_pair','qualified_predecessor_short'},'combined gate fields')
+    require(c['root_review']['sha256']==COMBINED_REVIEW,'exact959 root review required')
+    review=read(pinned(c['root_review']))
+    require(review['status']=='ROOT_REVIEWED_959_CANONICAL_AND_VERIFIED_RAW_CACHE28'
+            and review['runtime']==COMBINED_RUNTIME and review['tool_ready'] is True
+            and review['actual_device_evidence'] is False,'combined source review differs')
+    require(p['canonical']['sha256']==COMBINED_CANONICAL and p['raw']['sha256']==COMBINED_RAW
+            and review['canonical_ready']==p['canonical'] and review['raw_ready']==p['raw'],
+            'combined canonical/raw differs from actual root review')
+    canonical=read(pinned(p['canonical']));raw=read(pinned(p['raw']))
+    require(canonical['commit']==COMBINED_RUNTIME
+            and review['APK']==canonical['canonical_APK']['archive']
+            and review['host_ELF_SHA256']==canonical['canonical_native_library_sha256']['libdmhost_android.so']
+            and review['host_ELF_BuildID']==canonical['canonical_host_ELF_build_id'],
+            'combined actual APK identity differs')
+    for key in ('same_rewriter_rules_current_source_verified','raw_provenance_not_relabelled',
+                'raw28_hashes_verified','six_APK_libraries_verified','new_fixture_literals_absent_APP'):
+        require(review[key] is True,'combined root closure absent '+key)
+    pinned(review['source_ready']);pinned(review['APK'])
+    require(raw['guarded_runtime_commit']==COMBINED_RUNTIME and raw['raw_producer_commit']==COMBINED_RAW_PRODUCER
+            and review['raw_producer_commit']==COMBINED_RAW_PRODUCER
+            and raw['all_28_before_after_legal_cache_and_separate_verify_exact'] is True
+            and raw['all_23_module_rule_artifact_bytes_equal8480'] is True
+            and raw['source_revision_provenance_preserved_not_relabelled'] is True
+            and len(raw['source_and_rule_closure'])==3,'reviewed legal raw cache closure differs')
+    for row in raw['source_and_rule_closure']:
+        require(row['same_current_guarded_source'] is True,'raw rewriter/rules compatibility differs')
+        pinned(row['source']);pinned(row['archive'])
+    # Keep the full previous asset/provider/qualification gate. Only the host
+    # and its honestly recorded compatible raw bundle are different; no old
+    # proof is relabelled as a run of the new runtime.
+    old_root={'path':'/home/dl/d2r-mobile/.local/logs/operation-source-identity-reuse-8480a53-root-canonical-raw-review.json',
+              'sha256':ROOT_REVIEW}
+    old=read(pinned(old_root));control=copy.deepcopy(p)
+    control['runtime_commit']=RUNTIME;control['canonical']=old['canonical_ready'];control['raw']=old['raw_ready']
+    control['native_candidate_validation']['root_review']=old_root
+    validate_8480(control,pinned,read,require)
