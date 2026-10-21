@@ -260,7 +260,8 @@ def proof(path, digest):
         candidate.validate(p, pinned, read, require)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
-    if p['phases'][1]['composition']['sha256'] == '8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3':
+    if p['phases'][1]['composition']['sha256'] in ('8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3',
+            'ffd05d83cba41506e41a374b92372a52b8ad14f7385a4ca50fa3844ffd8fdfe4'):
         require('qualified_native_asset_validation' in p, 'mixed32 assets require explicit bounded resource qualification')
     if 'qualified_native_asset_validation' in p:
         asset = module('source_pinned_qualified_native_asset_gate', HERE / 'qualified_asset_gate.py')
@@ -583,7 +584,7 @@ def main():
             'scope': 'Global hardware metrics, no exclusive draw/pass attribution'}
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['official_gpu_tools'].values()})
     if p.get('_asset_validation'):
-        plan.update(phases=['native6217-with32-qualified-ASTC6-replacements'],
+        plan.update(phases=[f"native6217-with{p['_asset_validation']['replacements']}-qualified-ASTC6-replacements"],
                     qualified_native_asset_validation=p['_asset_validation'],
                     scope=p['_asset_validation']['scope'])
     if not args.execute:
