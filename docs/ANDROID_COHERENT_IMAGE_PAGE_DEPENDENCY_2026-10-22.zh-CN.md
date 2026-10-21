@@ -45,10 +45,14 @@
 
 ## 实现与当前验证
 
-核心 `d5f9b9b2` 已实现，Android 启动传输及 APP 测试代码排除后的候选为独立分支 `codex/shared-image-observe-android-transport-v1` 的 `4eb7c1b84201993d95b5861cc9532e70b64b0b00`。尚未合入或默认启用。启动开关缓存一次；首状态只报告政策是否启用，不把它当成每个范围均已合格。
+核心 `d5f9b9b2` 已实现，Android 启动传输及 APP 测试代码排除后的候选为独立分支 `codex/shared-image-observe-android-transport-v1` 的 `09a9ad03558b2f97f39cac7dde558e19bbeff570`，基于原 `4422f768`。尚未合入或默认启用。启动开关缓存一次；首状态只报告政策是否启用，不把它当成每个范围均已合格。
 
 有一项实际测试发现并修正了分类遗漏：当前 recording 的共享 GPU 写入，flush 前也暂存在名为 `writebacks` 的链表；flush 对这些节点只做 GPU 依赖及转入 `shared_publishes`，不执行 CPU 回拷。因此，这类共享节点也使用 GPU 字节范围；非共享的真实 CPU writeback 仍使用整页。
 
 22 项宿主 GPU 内容／异步依赖测试通过，包含同二进制 ON/OFF、相邻／真实重叠、同页 CPU effect、负缓存隔离、强制 cache／prewrite gate、CPU-only 图像源、原别名及 BC 拷贝用例；其中相应用例也经过 ASan/UBSan。另有两个合法编译配置对象通过。这些是后端语义验证，不是 Android 原游戏或实际非一致缓存硬件验收。
 
-原正式 APK／原始 NSO 构建入口已开始构建该候选，严格先 canonical、再 fresh RAW／独立核验。此时尚无该候选的真机 CPU、FPS、PSS 或散热收益。源审记录：`.local/logs/shared-image-observe-4eb7c1b-root-source-review.json`。
+原正式 APK／原始 NSO 构建入口已经完成该候选，严格先 canonical、再 fresh RAW／独立核验。六库、实际 APP 预处理排除、签名及 16KiB 对齐通过；28 项部署文件核验通过，23 项模块／规则产物与原 `4422f768` 字节相同，来源记录为本次新构建。根代理重新核对 5,694 项文件哈希；只有一个新增 JNI 导出，旧导出没有删除。实际游戏尚未证明 CPU、FPS、PSS 或散热净收益。
+
+前一版 `4eb7c1b` 的 Android 链接确实失败：APP 包含的旧测试入口仍调用新宿主测试 helper。`09a9ad0` 只为该调用补齐 APP 排除，不改变生产依赖逻辑；失败源码与日志保留，没有用失败产物部署。
+
+源审：`.local/logs/shared-image-observe-09a9ad0-root-source-review.json`。实际产物根审：`.local/logs/shared-image-observe-09a9ad0-root-canonical-raw-review.json`（SHA256 `048904cd572229059b6b54df464a5418f5f4f5b7d905eaab0fd986a0867ab56a`）。后续在同一 APK 内固定 f830、完整 2,838 项 ASTC6 资源、0.60 比例、1MiB 窗口与 lazy ON，只切换本项冷启动政策；沿用原三段移动、官方 Simpleperf／Perfetto、存档两次、退出及原包恢复。所有独立窗口须保留，不将一次调试命中外推为每帧等待。
