@@ -212,7 +212,8 @@ static int bq_shadow(vk_state *state,uint32_t op,const void *payload) {
   }
 }
 static int bq_half(unsigned small,unsigned large) { return small && (small==large/2 || small==(large+1)/2); }
-static int bq_prove(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx,bq_chain *out) {
+// Keep the large lookahead snapshots in the optional proof's own frame.
+static __attribute__((noinline)) int bq_prove(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx,bq_chain *out) {
   const uint8_t *current;int samples_live;bq_failure=1;bq_failure_shader[0]=0;
   if(!vk_pass_future_op(0,&current,&samples_live) || samples_live || !bq_target(&out->b0) ||
       !bq_covers(list,draw,idx,&out->b0,0) || !bq_input(list[1],&out->source_handle,&out->source,NULL) ||
