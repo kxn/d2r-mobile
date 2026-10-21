@@ -2111,10 +2111,12 @@ void mtl_pkg_stats(uint64_t *u, uint64_t *r) {
 }
 static void sampler_shutdown(void);
 static void texture_binding_scope_shutdown(void);
+static void texture_lookup_scope_shutdown(void);
 void vk_texture_shutdown(void) {
   mtl_finish();
   sampler_shutdown();
   texture_binding_scope_shutdown();
+  texture_lookup_scope_shutdown();
   while (images) {
     image *i = images;
     image_destroy(i);
@@ -2324,6 +2326,77 @@ static void texture_binding_scope_shutdown(void) {
     texture_binding_scopes[n]=(texture_binding_scope){0};
   }
   texture_binding_scope_depth=0;texture_binding_scope_clock=0;texture_binding_scope_overflow=0;
+}
+// Pure registry values shared across all phases of one draw/dispatch. These
+// arrays belong to the single recording owner, but only its TLS scope may use
+// them: producer/game threads must always acquire the registry lock. Unlike
+// binding_scope this holds no backend resource borrow and never blocks Pool
+// admission/promotion. Nested ghost draws/retries get independent tables.
+#define TEXTURE_LOOKUP_DEPTH 8
+#define TEXTURE_LOOKUP_SLOTS 128
+typedef struct {
+  uint64_t generation,epoch;
+  int id;
+  texture_descriptor descriptor;
+} texture_lookup_snapshot;
+typedef struct {
+  uint64_t generation;
+  texture_lookup_snapshot *snapshots;
+  int allocation_attempted;
+} texture_lookup_scope;
+static texture_lookup_scope texture_lookup_scopes[TEXTURE_LOOKUP_DEPTH];
+static uint64_t texture_lookup_clock;
+static _Thread_local unsigned texture_lookup_depth;
+static _Thread_local texture_lookup_scope *texture_lookup_current;
+void vk_texture_lookup_scope_begin(void) {
+  unsigned depth=texture_lookup_depth++;
+  texture_lookup_current=NULL;
+  if(depth>=TEXTURE_LOOKUP_DEPTH)return;
+  texture_lookup_scope *scope=&texture_lookup_scopes[depth];
+  // Disable reuse on generation wrap; a zero generation can never match.
+  scope->generation=texture_lookup_clock==UINT64_MAX?0:++texture_lookup_clock;
+  if(!scope->allocation_attempted) {
+    scope->allocation_attempted=1;
+    scope->snapshots=calloc(TEXTURE_LOOKUP_SLOTS,sizeof *scope->snapshots);
+  }
+  if(scope->generation && scope->snapshots)texture_lookup_current=scope;
+}
+void vk_texture_lookup_scope_end(void) {
+  if(!texture_lookup_depth)die("Vulkan texture lookup scope underflow");
+  unsigned depth=--texture_lookup_depth;
+  texture_lookup_current=depth && depth<=TEXTURE_LOOKUP_DEPTH?
+      &texture_lookup_scopes[depth-1]:NULL;
+  if(texture_lookup_current && (!texture_lookup_current->generation ||
+      !texture_lookup_current->snapshots))texture_lookup_current=NULL;
+}
+static void texture_lookup_scope_shutdown(void) {
+  for(unsigned n=0;n<TEXTURE_LOOKUP_DEPTH;n++) {
+    free(texture_lookup_scopes[n].snapshots);
+    texture_lookup_scopes[n]=(texture_lookup_scope){0};
+  }
+  texture_lookup_current=NULL;texture_lookup_depth=0;texture_lookup_clock=0;
+}
+// Returned values are copied by the caller before any callback. Never expose
+// a table/registry pointer through the public API or retain CPU-ready proofs.
+static const texture_descriptor *texture_descriptor_lookup(int id,
+    texture_descriptor *fallback,uint64_t *epoch) {
+  texture_lookup_scope *scope=texture_lookup_current;
+  texture_lookup_snapshot *slot=scope?
+      &scope->snapshots[(uint32_t)id*UINT32_C(2654435761)>>25]:NULL;
+  if(slot && slot->generation==scope->generation && slot->id==id &&
+      slot->epoch==atomic_load(&descriptor_epoch)) {
+    if(epoch)*epoch=slot->epoch;
+    return slot->descriptor.valid?&slot->descriptor:NULL;
+  }
+  pthread_mutex_lock(&V.resources);
+  int valid=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
+  uint64_t observed=slot || epoch?atomic_load(&descriptor_epoch):0;
+  texture_descriptor *out=slot?&slot->descriptor:fallback;
+  if(valid)*out=texture_descriptors[id];else out->valid=0;
+  if(slot) {slot->epoch=observed;slot->id=id;slot->generation=scope->generation;}
+  pthread_mutex_unlock(&V.resources);
+  if(epoch)*epoch=observed;
+  return valid?out:NULL;
 }
 static _Atomic uint64_t texel_view_hits,texel_view_creates;
 void vk_texel_view_stats(uint64_t *hits,uint64_t *creates) {
@@ -2665,30 +2738,45 @@ static VkImageViewType view_type(int target) {
   }
 }
 int vk_texture_descriptor(int id,tex_t *out) {
+  if(texture_lookup_current) {
+    texture_descriptor local;
+    const texture_descriptor *d=texture_descriptor_lookup(id,&local,NULL);
+    if(d)*out=d->texture;
+    return d!=NULL;
+  }
   pthread_mutex_lock(&V.resources);
   int ok=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
-  if(ok) *out=texture_descriptors[id].texture;
+  if(ok)*out=texture_descriptors[id].texture;
   pthread_mutex_unlock(&V.resources);return ok;
 }
 void vk_texture_packaged_cpu_preflight(int id) {
-  // Private stock images without packaged CPU contents cannot enter the
-  // source-conversion phase. Read that logical fact in the SAME registry
-  // snapshot as validity/limit, before copying the full texture descriptor.
-  // Never cache it by id: registrations may replace has_layout/mem/size.
-  tex_t snapshot;
-  pthread_mutex_lock(&V.resources);
-  int needed=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
-  if(needed) {
-    const tex_t *t=&texture_descriptors[id].texture;
-    needed=t->has_layout && t->mem && t->L.size;
-    if(needed)snapshot=*t;
+  tex_t snapshot;int needed;
+  if(texture_lookup_current) {
+    texture_descriptor local;
+    const texture_descriptor *d=texture_descriptor_lookup(id,&local,NULL);
+    needed=d && d->texture.has_layout && d->texture.mem && d->texture.L.size;
+    if(needed)snapshot=d->texture;
+  } else {
+    pthread_mutex_lock(&V.resources);
+    needed=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
+    if(needed) {
+      const tex_t *t=&texture_descriptors[id].texture;
+      needed=t->has_layout && t->mem && t->L.size;
+      if(needed)snapshot=*t;
+    }
+    pthread_mutex_unlock(&V.resources);
   }
-  pthread_mutex_unlock(&V.resources);
-  // Publication may wait/replay: retain the old by-value lifetime contract,
-  // and do not hold the registry lock or a physical image/view across it.
+  // Publication may wait/replay. Keep only the original value copy across it;
+  // every access still performs CPU publication/dirty/ownership checks.
   if(needed)vk_texture_cpu_preflight(&snapshot);
 }
 int vk_texture_descriptor_footprint(int id,vk_texture_footprint *out) {
+  if(texture_lookup_current) {
+    texture_descriptor local;
+    const texture_descriptor *d=texture_descriptor_lookup(id,&local,NULL);
+    if(d) {const tex_t *t=&d->texture;*out=(vk_texture_footprint){t->serial,(uintptr_t)t->mem,t->L.size};}
+    return d!=NULL;
+  }
   pthread_mutex_lock(&V.resources);
   int ok=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
   if(ok) {
@@ -2704,6 +2792,12 @@ int vk_sampler_descriptor(int id,samp_par *out) {
   pthread_mutex_unlock(&V.resources);return ok;
 }
 int vk_texture_descriptor_view(int id,tex_t *out,view_t *view,int *has_view) {
+  if(texture_lookup_current) {
+    texture_descriptor local;
+    const texture_descriptor *d=texture_descriptor_lookup(id,&local,NULL);
+    if(d) {*out=d->texture;*view=d->view;*has_view=d->has_view;}
+    return d!=NULL;
+  }
   pthread_mutex_lock(&V.resources);
   int ok=id>=0 && id<texture_capacity && id<texture_limit && texture_descriptors[id].valid;
   if(ok) {
@@ -2798,14 +2892,10 @@ void vk_texture_prepare_binding(int id,int storage,VkShaderStageFlagBits stage) 
       vk_mip_clear_texture_access(t,has_view?&view:NULL,0);
     } else t=&known->tex;
   } else {
-    pthread_mutex_lock(&V.resources);
-    if(id<0 || id>=texture_capacity || id>=texture_limit || !texture_descriptors[id].valid)
-      die("Vulkan unbound texture descriptor %d",id);
-    desc=texture_descriptors[id];
-    // Preserve the consumer's ordering: descriptor and epoch are captured
-    // together under the registry lock, never by a pointer into its vector.
-    uint64_t epoch=texture_binding_scope_current()?atomic_load(&descriptor_epoch):0;
-    pthread_mutex_unlock(&V.resources);
+    uint64_t epoch;
+    const texture_descriptor *logical=texture_descriptor_lookup(id,&desc,&epoch);
+    if(!logical)die("Vulkan unbound texture descriptor %d",id);
+    if(logical!=&desc)desc=*logical;
     texture_binding_snapshot_save(id,storage,&desc,epoch);
     view=desc.view;has_view=desc.has_view;
     vk_mip_clear_texture_access(t,has_view?&view:NULL,0);
@@ -2875,13 +2965,9 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
     texture_binding_misses++;
     texture_descriptor desc;
     if(!texture_binding_snapshot_copy(id,storage,&desc,&epoch)) {
-      pthread_mutex_lock(&V.resources);
-      if (id < 0 || id >= texture_capacity || id >= texture_limit ||
-          !texture_descriptors[id].valid)
-        die("Vulkan unbound texture descriptor %d", id);
-      desc=texture_descriptors[id];
-      epoch=atomic_load(&descriptor_epoch);
-      pthread_mutex_unlock(&V.resources);
+      const texture_descriptor *logical=texture_descriptor_lookup(id,&desc,&epoch);
+      if(!logical)die("Vulkan unbound texture descriptor %d",id);
+      if(logical!=&desc)desc=*logical;
     }
     view=desc.view;has_view=desc.has_view;
     vk_render_texture_read(&desc.texture,stage);

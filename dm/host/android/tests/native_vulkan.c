@@ -768,6 +768,13 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
+  if(getenv("DM_TEXTURE_LOOKUP_FIXTURE")) {
+    uint8_t controls[13][0x880];for(unsigned n=0;n<13;n++)memset(controls[n],n,sizeof controls[n]);
+    logical_preflight_test(controls[3],controls[4]);
+    recipe_reentrant_test(controls[12],controls[4]);
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"draw-logical-lookup\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
   if(getenv("DM_DESCRIPTOR_SHADER_HINT_FIXTURE")) {
     uint8_t vertex[0x880]={0};descriptor_shader_hint_test(vertex);
     dynamic_uniform_test(vertex);CHECK(vk_validation_error_count()==0);

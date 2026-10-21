@@ -318,6 +318,8 @@ void vk_texture_shutdown(void);
 uint32_t vk_texture_count(void);
 uint32_t vk_sampler_count(void);
 void vk_sampler_lookup_reference(int reference);
+void vk_texture_lookup_scope_begin(void);
+void vk_texture_lookup_scope_end(void);
 void vk_texture_binding_scope_begin(void);
 void vk_texture_binding_scope_end(void);
 void vk_texture_binding_reference(int reference);
