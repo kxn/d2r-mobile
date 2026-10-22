@@ -565,3 +565,11 @@ SDK／NVN 同一 PID15201、stop2、memfd inode79735 的快照成功；540 份�
 上述源码已备份到fork的独立分支，未默认启用或替换手机上的手动游戏。Q735实际PID32633仍为用户进程，未安装、模拟操作、attach或停止；此前可用性询问待答。没有新增Android游戏CPU／FPS／PSS／发热结果，持续游玩与6GB验收仍未完成。
 
 证据（均在`.local/logs/`）：`host-sample-profile-33d2d8a-root-canonical-raw-review-v2.json`、`host-sample-profile-33d2d8a-root-canonical-review.json`、`host-sample-profile-33d2d8a-GPU-qualification-v1/ready.json`、`sample-profile-AA-tools-2e984b8-root-review.json`。候选和对照的待执行输入位于`.local/build/host-sample-profile-33d2d8a-AA2-actual-inputs/`，目前`execution_ready=false`，离线通过不代表已经执行真机。
+
+### 日常版本交付缺口：先让正常启动使用实际验证过的组合
+
+只读核实当前桌面进程32633的实际安装APK SHA为`d7f9a720…83587`，native日志使用system provider及16MiB窗口。官方DEX输出确认它缺少新的shared heap／native resource入口。原测试事务成功后会恢复这个旧包和旧目录；恢复机制本身正确，但不能把测试期间的组合当作已经交付的日常版本，也不能用用户在旧包上的体感推断新候选收益。`pool_uploads.used_bytes`是请求检查范围，不是真实上传／DRAM流量。证据为`.local/logs/desktop-qualified-launch-readonly-v1/{root-current-device-identity.json,facts.json,report.txt}`。未安装、点击、attach或停止该用户进程；既有设备可用性询问仍待答。
+
+独立运行时`a322113`只增加普通MAIN／LAUNCHER无extras冷启动的私有配置读取和校验；显式测试绕过，冷配置绑定实际APK、设备build、driver、module manifest、shader chain、native table及交付收条，原native认证保留。配置进程内只读一次，不增加draw循环工作、镜像或新线程；HUD的比例、限帧和温控不被覆盖。原SDK36 Java编译及独立源码审查通过，原Android完整canonical构建／冻结均退出0。APK为`fe4af8a1…ae4c5b5d`；1025 producer、1771 NDK归档和实际7个APP预处理单元已核验，除MainActivity和新Java类外producer内容与f75相同。C／C++／ASM、Shader及游戏规则没有改变；保留默认O3、无LTO／PGO。根审为`.local/logs/verified-user-launch-a322113-root-canonical-review.json`，原始NSO fresh rebuild仍需完成。
+
+独立发布工具`c2b038b`复用原installer、inventory及目录CAS，不改原测试finally。整组APK／原始模块／f830／native overlay/table验证后最后发布配置；两次普通无extras冷启动必须观察到真实Java选中记录和native shared状态，再走原存档退出。失败保留最新存档，成功形成可由原工具读取的新基线。12项host离线控制通过，原runner／资格门／采集器／安装器字节不变；这仅是交付工具资格，尚未执行Android发布。源码分别已备份到fork的`codex/verified-user-launch-v1`及`codex/q-local-desktop-publisher-v1`。PGO候选仍独立待测，没有默认启用；本节没有新增CPU、FPS、PSS或持续温度收益，6GB稳定游玩也未验收。
