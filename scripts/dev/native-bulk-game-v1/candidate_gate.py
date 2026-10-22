@@ -325,6 +325,61 @@ def prior_actual_memory_scope(p,pinned,read,require):
     return True
 
 
+SAMPLE_BASE='f75de421d0558c746ffc9cd4fee2e1a66c5e9c40'
+SAMPLE_BASE_REVIEW={'path':'/home/dl/d2r-mobile/.local/logs/driver-proof-fingerprint-f75de42-root-canonical-raw-review.json',
+                    'sha256':'9dfe36b908f8f189e25ff94598900854287f257a3f498fe71269685be6c3a09b'}
+SAMPLE_DIAGNOSTICS=['-Rpass-analysis=sample-profile.*','-Rpass=sample-profile.*',
+                    '-fsave-optimization-record','-foptimization-record-passes=sample-profile.*']
+
+
+def validate_sample_profile(p, review, canonical, manifest, base_review, pinned, read, require):
+    mode=p['native_compiler_experiment'];profile=mode['sample_profile'];producer=mode['producer_provenance']
+    pinned(profile);proof=read(pinned(producer))
+    require(proof.get('completed') is True and proof.get('source_revision')==SAMPLE_BASE
+            and proof['sample_profile']['sha256']==profile['sha256']
+            and proof['ELF']['sha256']==base_review['host_ELF_SHA256'], 'sample producer/profile base differs')
+    sample=manifest.get('host_sample_profile',{});flags=canonical['effective_build']
+    require(sample.get('enabled') is True and sample.get('strategy')=='sample-profile'
+            and sample.get('base_runtime')==SAMPLE_BASE
+            and sample.get('profile',{}).get('sha256')==profile['sha256']
+            and sample.get('producer_provenance',{}).get('sha256')==producer['sha256'],
+            'sample compiler manifest inputs differ')
+    compiled=sample['compiled_profile'];pinned(compiled)
+    require(compiled['sha256']==profile['sha256'], 'compiled sample bytes differ')
+    expected=['-fprofile-sample-use='+compiled['path'],*SAMPLE_DIAGNOSTICS]
+    require(flags.get('host_compiler_strategy')=='sample-profile' and flags.get('thinlto',False) is False
+            and flags.get('sample_profile_compile_options')==expected
+            and flags.get('sample_profile_link_options')==[]
+            and manifest.get('host_thinlto') is False
+            and manifest.get('host_extra_compile_options')==expected
+            and manifest.get('host_extra_link_options')==[], 'sample effective compile/link options differ')
+    for row in [sample['profile'],sample['producer_provenance'],*sample['producer_files']]:pinned(row)
+    archive=read(pinned(canonical['external_compiler_input_archive']))
+    wanted={row['path']:row['sha256'] for row in [compiled,*manifest['external_compiler_inputs']]}
+    require(archive.get('strategy')=='sample-profile' and len(archive.get('files',[]))==len(wanted)
+            and {row['source']['path'] for row in archive['files']}==set(wanted),
+            'external sample compiler archive is incomplete')
+    for row in archive['files']:
+        require(row['source']['sha256']==row['archive']['sha256']==wanted[row['source']['path']],
+                'external sample compiler archive bytes differ')
+        pinned(row['archive'])
+    consumed=read(pinned(review['sample_profile_consumption']))
+    require(consumed.get('status')=='ACTUAL_NDK19_F75_APP_TWO_TU_PROFILE_CONSUMPTION_COMPLETE'
+            and consumed['profile']['sha256']==profile['sha256']
+            and consumed['producer_provenance']['sha256']==producer['sha256']
+            and {row['source'] for row in consumed['TUs']}=={'nvn_vk_draw.c','nvn_vk_shader.c'},
+            'actual APP sample consumption/profile differs')
+    for row in consumed['TUs']:
+        require(row.get('formal_APP_byteequal') is True and row.get('positive_AppliedSamples',0)>0,
+                'sample APP compile did not positively consume matching profile')
+        for key in ('argv','object','optimization_record','stderr'):pinned(row[key])
+    # Reuse the actual completed f75 paired-game qualification and its original
+    # source/raw/inputs/save2 validation, substituting only its known base IDs.
+    base_inputs=dict(p,runtime_commit=SAMPLE_BASE,canonical=base_review['canonical_ready'],raw=base_review['raw_ready'],
+                     native_candidate_validation={'root_review':SAMPLE_BASE_REVIEW})
+    prior_actual_memory_scope(base_inputs,pinned,read,require)
+
+
 def validate_compiler(p,pinned,read,require,resource_preparation=False,
                       readonly_memory_snapshot_validated=False):
     """Reviewed source successor, retaining original179 build/assets/raw reference.
@@ -333,8 +388,12 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
     source equivalence is the root's independent diff finding, not self-approval.
     """
     mode = ('native_host_experiment' if resource_preparation else 'native_compiler_experiment')
-    source_base = p[mode].get('base_runtime') if resource_preparation else POOL_RUNTIME
+    sample_profile = not resource_preparation and p[mode].get('strategy')=='sample-profile'
+    source_base = (SAMPLE_BASE if sample_profile else p[mode].get('base_runtime') if resource_preparation else POOL_RUNTIME)
     expected = ({'kind':'resource-preparation','base_runtime':source_base} if resource_preparation
+                else {'strategy':'sample-profile','base_runtime':SAMPLE_BASE,
+                      'sample_profile':p[mode].get('sample_profile'),
+                      'producer_provenance':p[mode].get('producer_provenance')} if sample_profile
                 else {'strategy':'thinlto','base_runtime':POOL_RUNTIME})
     require(p[mode]==expected
             and set(p['native_candidate_validation'])=={'root_review'}
@@ -351,6 +410,7 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
             'compiler experiment requires original f830/1MiB/full2838 and official tools or verified prior-game memory scope')
     review=read(pinned(p['native_candidate_validation']['root_review']))
     status = ('ROOT_REVIEWED_HOST_RESOURCE_PREPARATION_CANONICAL_AND_FRESH_RAW28' if resource_preparation
+              else 'ROOT_REVIEWED_HOST_SAMPLE_PROFILE_CANONICAL_AND_FRESH_RAW28' if sample_profile
               else 'ROOT_REVIEWED_HOST_THINLTO_CANONICAL_AND_FRESH_RAW28')
     require(review['status']==status
             and review['runtime']==p['runtime_commit'] and review['base']==source_base
@@ -366,10 +426,11 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
     source=read(pinned(review['source_ready']))
     require(source['commit']==p['runtime_commit'] and source['base']==source_base,
             'compiler source-ready revision/base differs')
-    base_review=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/cpu-pool-pin-coherent-179c82d-root-canonical-raw-review.json',
-                            'sha256':POOL_REVIEW}))
+    base_review=(read(pinned(SAMPLE_BASE_REVIEW)) if sample_profile else
+                 read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/cpu-pool-pin-coherent-179c82d-root-canonical-raw-review.json',
+                            'sha256':POOL_REVIEW})))
     base=read(pinned(base_review['canonical_ready']));base_raw=read(pinned(base_review['raw_ready']))
-    require(base_review['canonical_ready']['sha256']==POOL_CANONICAL and base_review['raw_ready']['sha256']==POOL_RAW
+    require((sample_profile or (base_review['canonical_ready']['sha256']==POOL_CANONICAL and base_review['raw_ready']['sha256']==POOL_RAW))
             and raw['raw_original_inputs']==base_raw['raw_original_inputs'], 'original NSO inputs differ from179')
     stable={k:v for k,v in base_raw['28_deployment_file_hashes'].items()
             if not k.endswith('.provenance.json') and k not in ('build_src.sha256','rewrite-manifest.json')}
@@ -394,6 +455,8 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
                 and not flags.get('thinlto_link_options') and manifest.get('host_thinlto',False) is False
                 and not manifest.get('host_extra_compile_options') and not manifest.get('host_extra_link_options'),
                 'host preparation retains original179 O3 compiler policy without LTO or extra flags')
+    elif sample_profile:
+        validate_sample_profile(p,review,canonical,manifest,base_review,pinned,read,require)
     else:
         require(flags['host_compiler_strategy']=='thinlto' and flags['thinlto'] is True
             and flags['thinlto_backend_jobs']==2 and flags['thinlto_compile_options']==THIN_COMPILE
