@@ -77,10 +77,27 @@ def snapshot(debugger):
         require(process.IsValid() and process.GetState()==lldb.eStateStopped and process.GetProcessID()==pid,
                 'no matching initial owned live stop')
         require(target.GetTriple().startswith('aarch64'), 'not native AArch64')
-        # Remote attach must identify the real process executable first. Formal
-        # host symbols remain unloaded until Android's actual dlopen event.
-        require(target.GetExecutable().IsValid() and target.GetExecutable().GetFilename()!='libdmhost_android.so',
-                'formal host SO was incorrectly selected as process executable')
+        # Real app_process target, remote file hashes verified by the wrapper.
+        # These checks raise here (CLI Python assertions do not abort command files).
+        require(target.GetExecutable().IsValid() and target.GetExecutable().GetFilename()=='app_process64',
+                'actual app_process64 was not selected as process executable')
+        manifest=json.loads(Path(config['debuggee_inputs']['path']).read_text())
+        expected_UUID={'/system/bin/app_process64':'9350e31b559c63b148098d9a0a5815a1',
+                       '/apex/com.android.runtime/bin/linker64':'a777fd79d81c0e2d3ea2181ce66b26af'}
+        before_maps=sdk.parse_maps((output/'native-debugger-maps-before-JDWP.txt').read_text())
+        debuggee=[]
+        for item in manifest['files']:
+            mappings=[r for r in before_maps if r['name']==item['remote'] and r['offset']==0]
+            require(len(mappings)==1, 'missing/ambiguous actual executable/linker mapping')
+            module=target.FindModule(lldb.SBFileSpec(item['path']))
+            require(module.IsValid() and module.GetPlatformFileSpec().fullpath==item['remote']
+                    and module.GetUUIDString().replace('-','').lower()==expected_UUID[item['remote']],
+                    'actual executable/linker UUID differs')
+            loaded=module.GetObjectFileHeaderAddress().GetLoadAddress(target)
+            require(loaded==mappings[0]['start'], 'actual executable/linker load address differs from process map')
+            debuggee.append(dict(remote=item['remote'],UUID=module.GetUUIDString(),header_address=loaded,
+                                 mapping=mappings[0]))
+        result['actual_debuggee']=debuggee
         formal=target.FindModule(lldb.SBFileSpec(config['ELF']))
         require(formal.IsValid() and formal.GetUUIDString().replace('-','').lower()==config['ELF_BuildID']
                 and formal.GetObjectFileHeaderAddress().GetLoadAddress(target)==lldb.LLDB_INVALID_ADDRESS,

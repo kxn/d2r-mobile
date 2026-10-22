@@ -140,3 +140,36 @@ requires the next bounded device transaction and is not claimed here.
 All failed V1/V3 artifacts remain unchanged. The fixed consumer only removes
 host orchestration blockers and does not qualify target allocation origins,
 performance, page reclamation or a successful game execution.
+
+### V5: exact actual Android executable and linker
+
+V4's remote empty target never acquired an executable. CLI `script` assertions
+printed an error but continued; adding the host then selected the wrong main.
+The hook rejected this and original restoration completed. That failed run is
+preserved as `sdk-startup-large-allocation-f75-restore-a322-Q735-v4`.
+
+V5 requires `debuggee_inputs={path,sha256}` for the exact acquired Q system
+executable/linker manifest (`36842fa9...`). The wrapper verifies that manifest,
+both local byte hashes and sizes, and both actual remote byte hashes before
+starting its server. Frozen tool inputs pin the manifest and both actual files.
+It creates `app_process64` as the main executable using `remote-android` and its
+acquired-file sysroot. Official `SetPlatformFileSpec` associates the local
+copies with their exact `/system/bin/app_process64` and actual APEX linker
+paths; the linker is added as a module, and formal host symbols only afterward.
+No target code or file is modified.
+
+The official CLI `--remote-file` attempt could not open the unconnected remote
+file; that local failure is preserved. V5 uses the locally proven
+`SetPlatformFileSpec` API instead. Both calls returned true locally; the main
+remained app_process64, all three UUIDs matched and the host breakpoint had no
+load address. The .gnu_debugdata LZMA warning remains in the official output.
+This establishes local setup only, not Android dynamic-loader success.
+
+All decisive checks now raise inside the acquisition hook: real main filename,
+main/linker exact UUID and remote platform path, unique file-offset-zero maps
+from the current owned PID, each module header load address equal to its actual
+mapping, and formal host still unloaded before startup. The existing actual
+loaded host UUID, original main ancestry, module table and 244-byte original
+SDK code checks still apply. A failed CLI operation cannot authorize arming.
+No guessed slide, synthetic executable identity or ignored unrelated stop is
+accepted. Allocation/JDB/cleanup bounds and original controller are unchanged.

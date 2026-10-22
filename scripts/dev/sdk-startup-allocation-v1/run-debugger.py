@@ -176,6 +176,29 @@ def release_official_jdb(child, log, timeout=20):
         child.stdout.close()
 
 
+def validate_debuggee(config):
+    row=config.get('debuggee_inputs')
+    require(isinstance(row,dict) and set(row)=={'path','sha256'}
+            and row['sha256']=='36842fa98552992494970e0d57fc2572ffbdd01f478c111a561ae025049e5c76'
+            and sha(row['path'])==row['sha256'], 'exact Q executable manifest required')
+    manifest=json.loads(Path(row['path']).read_text())
+    require(manifest['serial']==config['serial'] and len(manifest['files'])==2,
+            'Q executable manifest scope differs')
+    expected={'/system/bin/app_process64':('7b55c308878ad23b287ff371a23499f1bab4e0cdcd41560ecda6ccb448d64ef2','9350e31b559c63b148098d9a0a5815a1'),
+              '/apex/com.android.runtime/bin/linker64':('b3f3d269d5df6d8ea76e71d179fc5d8ec076a9e06b4f155ef9cbb921cb4c36bf','a777fd79d81c0e2d3ea2181ce66b26af')}
+    files={}
+    for item in manifest['files']:
+        remote=item['remote']
+        require(remote in expected and remote not in files and item['sha256']==expected[remote][0]
+                and sha(item['path'])==item['sha256'] and Path(item['path']).stat().st_size==item['bytes'],
+                'actual Q executable/linker input changed')
+        require(Path(item['path']).resolve()==Path(row['path']).parent.resolve()/remote.lstrip('/'),
+                'Q sysroot path differs from acquired mirror')
+        files[remote]=dict(item,build_id=expected[remote][1])
+    require(set(files)==set(expected), 'missing Q executable/linker')
+    return dict(sysroot=str(Path(row['path']).parent.resolve()),files=files)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('pid');parser.add_argument('output',type=Path)
@@ -187,7 +210,7 @@ def main():
     require(args.config and args.config_sha256 and sha(args.config)==args.config_sha256,'exact caller-owned config hash required')
     config=json.loads(Path(args.config).read_text())
     required={'schema','serial','APK_sha256','ELF','ELF_sha256','ELF_BuildID','canonical_source_ready','canonical_source_ready_sha256','tool_inputs_sha256','sdk_original','sdk_flat'}
-    require(required <= set(config) <= required|{'startup_allocation'},'unknown/missing config fields')
+    require(required <= set(config) <= required|{'startup_allocation','debuggee_inputs'},'unknown/missing config fields')
     require(config['schema']==1 and config['serial']=='10CG570J59001U1','schema/Q device mismatch')
     for key in ['APK_sha256','ELF_sha256','canonical_source_ready_sha256','tool_inputs_sha256']:
         require(re.fullmatch('[0-9a-f]{64}',config[key]), 'invalid '+key)
@@ -201,6 +224,7 @@ def main():
     for row in inputs['tools']:
         require(sha(row['path'])==row['sha256'],'official tool input changed: '+row['path'])
     validate_startup(config)
+    debuggee=validate_debuggee(config)
     ELF=Path(config['ELF']).resolve();ELF_SHA=config['ELF_sha256'];BUILD_ID=config['ELF_BuildID'];APK_SHA=config['APK_sha256'];SERIAL=config['serial']
     require(sha(ELF)==ELF_SHA and sha(config['canonical_source_ready'])==config['canonical_source_ready_sha256'],'local canonical input changed')
     ready=json.loads(Path(config['canonical_source_ready']).read_text())
@@ -239,6 +263,10 @@ def main():
         path = adb('shell', 'pm', 'path', PKG)
         require(path.startswith('package:') and '\n' not in path, 'ambiguous installed APK')
         require(adb('shell', 'sha256sum', path[8:]).split()[0] == APK_SHA, 'installed APK identity mismatch')
+        for item in debuggee['files'].values():
+            require(adb('shell','sha256sum',item['remote']).split()[0]==item['sha256'],
+                    'actual device executable/linker differs from pinned Q input')
+        d['actual_debuggee_inputs_verified']=debuggee
         uid = adb('shell', 'run-as', PKG, 'id', '-u')
         status = adb('exec-out', 'run-as', PKG, 'cat', '/proc/' + pid + '/status')
         (out / 'native-debugger-owned-status.txt').write_text(status + '\n')
@@ -280,12 +308,17 @@ def main():
                 break
             require(time.monotonic() < ready_deadline, 'owned server listen socket readiness deadline')
             time.sleep(.1)
+        main_exe=debuggee['files']['/system/bin/app_process64']
+        linker=debuggee['files']['/apex/com.android.runtime/bin/linker64']
         commands = '\n'.join([
-            'script e=lldb.SBError();t=lldb.debugger.CreateTarget(None,"aarch64-linux-android",None,False,e);assert e.Success() and t.IsValid() and not t.GetExecutable().IsValid()',
+            'target create --arch aarch64 --platform remote-android --sysroot '
+                + shlex.quote(debuggee['sysroot']) + ' ' + shlex.quote(main_exe['path']),
+            'script lldb.debugger.GetSelectedTarget().GetModuleAtIndex(0).SetPlatformFileSpec(lldb.SBFileSpec("/system/bin/app_process64"))',
+            'target modules search-paths add /system/bin/linker64 ' + shlex.quote(linker['path']),
+            'target modules add ' + shlex.quote(linker['path']),
+            'script lldb.debugger.GetSelectedTarget().FindModule(lldb.SBFileSpec(' + repr(linker['path']) + ')).SetPlatformFileSpec(lldb.SBFileSpec("/apex/com.android.runtime/bin/linker64"))',
             'gdb-remote 127.0.0.1:' + PORT,
-            'script t=lldb.debugger.GetSelectedTarget();assert t.GetExecutable().IsValid() and t.GetExecutable().GetFilename()!="libdmhost_android.so"',
             'target modules add ' + shlex.quote(str(ELF)),
-            'script t=lldb.debugger.GetSelectedTarget();m=t.FindModule(lldb.SBFileSpec(' + repr(str(ELF)) + '));assert m.IsValid() and m.GetUUIDString().replace("-", "").lower()==' + repr(BUILD_ID) + ' and m.GetObjectFileHeaderAddress().GetLoadAddress(t)==lldb.LLDB_INVALID_ADDRESS',
             'settings set auto-confirm true',
             'process handle SIGSEGV -s false -n false -p true',
             'process handle SIGBUS -s false -n false -p true',

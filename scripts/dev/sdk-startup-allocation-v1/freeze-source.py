@@ -13,7 +13,10 @@ TOOLS=(R/'.local/tools/lldb19/usr/lib/llvm-19/bin/lldb',R/'.local/tools/lldb19/u
  R/'.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/19/lib/linux/aarch64/lldb-server',
  R/'.local/android-sdk/ndk/28.2.13676358/prebuilt/linux-x86_64/bin/ndkgdb.pyz',R/'.local/android-sdk/platform-tools/adb',
  Path('/usr/lib/jvm/java-21-openjdk-amd64/bin/jdb'),Path('/usr/lib/jvm/java-21-openjdk-amd64/bin/java'),
- Path('/usr/lib/jvm/java-21-openjdk-amd64/lib/modules'),Path(sys.executable).resolve())
+ Path('/usr/lib/jvm/java-21-openjdk-amd64/lib/modules'),Path(sys.executable).resolve(),
+ R/'.local/logs/sdk-startup-large-allocation-tools-v5-device-exe/actual-device-inputs.json',
+ R/'.local/logs/sdk-startup-large-allocation-tools-v5-device-exe/system/bin/app_process64',
+ R/'.local/logs/sdk-startup-large-allocation-tools-v5-device-exe/apex/com.android.runtime/bin/linker64')
 def rec(p):
  p=Path(p).resolve()
  with p.open('rb') as f:d=hashlib.file_digest(f,'sha256').hexdigest()
