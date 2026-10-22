@@ -573,3 +573,13 @@ SDK／NVN 同一 PID15201、stop2、memfd inode79735 的快照成功；540 份�
 独立运行时`a322113`只增加普通MAIN／LAUNCHER无extras冷启动的私有配置读取和校验；显式测试绕过，冷配置绑定实际APK、设备build、driver、module manifest、shader chain、native table及交付收条，原native认证保留。配置进程内只读一次，不增加draw循环工作、镜像或新线程；HUD的比例、限帧和温控不被覆盖。原SDK36 Java编译及独立源码审查通过，原Android完整canonical构建／冻结均退出0。APK为`fe4af8a1…ae4c5b5d`；1025 producer、1771 NDK归档和实际7个APP预处理单元已核验，除MainActivity和新Java类外producer内容与f75相同。C／C++／ASM、Shader及游戏规则没有改变；保留默认O3、无LTO／PGO。三个实际原始NSO fresh rebuild与独立verify28随后均完成，23份稳定产物及build_src与f75相同，三份provenance及manifest记录新revision；辅助审计中过强的“五份都必须变化”断言失败单独保留，没有重建或修改有效产物。根审为`.local/logs/verified-user-launch-a322113-root-canonical-raw-review.json`。原控制器的整套离线资格退出0，准备的输入仍明确execution_ready=false，尚未执行Android游戏或永久发布。
 
 独立发布工具`c2b038b`复用原installer、inventory及目录CAS，不改原测试finally。整组APK／原始模块／f830／native overlay/table验证后最后发布配置；两次普通无extras冷启动必须观察到真实Java选中记录和native shared状态，再走原存档退出。失败保留最新存档，成功形成可由原工具读取的新基线。12项host离线控制通过，原runner／资格门／采集器／安装器字节不变；这仅是交付工具资格，尚未执行Android发布。源码分别已备份到fork的`codex/verified-user-launch-v1`及`codex/q-local-desktop-publisher-v1`。PGO候选仍独立待测，没有默认启用；本节没有新增CPU、FPS、PSS或持续温度收益，6GB稳定游玩也未验收。
+
+### 日常版本已经实际发布；新受控采集没有显示CPU差距消失
+
+沿已有真机调试授权完成当前进程的保存和退出，不再把存在进程本身当作缺少授权。实际截图确认32633停在选角界面，因此首次后台保存asked=0；经原Play进入角色，原生命周期实际确认两次存档后停止，保留失败记录。随后重新记录八目录基线，固定模块／资源／原950 Shader与历史字节一致，新PSO、缓存和存档保留。未访问Mali或6GB平板。
+
+`a322113`实际原游戏受控事务7890退出0：PID14339、三段行走、3份30秒FP和5份8秒Perfetto、两次存档及原包／六目录恢复全部完成；根查看前后营地截图，未见明显黑块或缺几何。五个完整Surface窗的NvN Running为27.772／26.990／27.094／26.911／27.598ms，Surface均值33.22–33.27ms，runnable约0.176–0.241ms；没有证据表明约27ms的CPU差距已消失。实际新BuildID、三份完整外层调用链及官方时钟重叠均核验。meminfo PSS为2,100,575KiB（约2.00GiB）；后续showmap PSS为1,850,001KiB，属于不同时点／口径，不能相减作收益。该采集是固定0.60／2750×1260的营地短测，没有匹配净提速、持续降温或6GB结论。根审为`.local/logs/verified-user-launch-a322113-controlled-analysis-root-review.json`。
+
+修复验证工具的一处实际阻断：原观察模式attach无条件把共享窗口当成whole0，且禁止传冷启动窗口参数，会拒绝正常1MiB桌面配置。`e3bd334`只给该requested-policy检查增加`not args.attach`；冷启动检查和publisher真实策略验收保留。完整helper重放15项和发布工具12项离线回归通过，未改变原runner／安装器。
+
+独立日常发布事务48474随后实际退出0。两个普通MAIN／LAUNCHER无extras冷启动PID23630／24187均由真实Java日志确认读取私有配置，并进入原游戏，验证f830／shared1MiB／lazy／native table／pixel-local及原2次存档后停止。日常默认输出2750×1260、初始3D比例0.75；它与受控0.60性能数据分开，不覆盖HUD动态设置。发布保留新APK及整组资源，不再恢复旧桌面包；28模块、实际APK／配置／收条／驱动／表哈希由根额外重核，锁、传输及标记已清理。新基线为`.local/logs/verified-user-launch-a322113-desktop-Q735-v1/delivered-baseline.json`，后续测试必须以该基线和新APK作为恢复目标。旧备份仅作明确回滚保留。根验收为`.local/logs/verified-user-launch-a322113-desktop-Q735-v1-root-actual-review.json`；游戏已停止，持续发热和6GB稳定游玩仍待实际验证。
