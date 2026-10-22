@@ -11,9 +11,9 @@ import sys
 HERE = Path(__file__).resolve().parent
 ROOT = Path('/home/dl/d2r-mobile')
 CAPTURE_FILES = {
-    'run-debugger.py': (HERE / 'run-debugger.py', '3242c479b5e4d3419b680a3ababe3c8cd7adec34ae3ad87a40f25a1385a41bc0'),
-    'sdk_free_resident.py': (HERE / '../sdk_free_resident.py', '82ab628b0fad3f298c0a334ae911abb0eafafd686fd6ff37c8cb8da83dee6817'),
-    'sdk_nvn_pool_registry.py': (HERE / '../sdk_nvn_pool_registry.py', '3ef3ee3e02daa71e788b72f18f4cb90065a56a79bc6450939d96a70d8297324f'),
+    'run-debugger.py': (HERE / 'run-debugger.py', '8ba456e50b794fdd7d8acf955329af4cbb741e095df405daac47041e71a00455'),
+    'sdk_free_resident.py': (HERE / '../sdk_free_resident.py', 'e5fdfc1fa788e34c08e10bfe28d7f0c76a734d8fcb3c243d3ddec863a8c51e92'),
+    'sdk_nvn_pool_registry.py': (HERE / '../sdk_nvn_pool_registry.py', 'f8b13cc1b514514e849e1ccf5dc0b8855d470ae608a7618effae51ea903fb839'),
 }
 TOOLS = [
     ROOT / '.local/tools/lldb19/usr/lib/llvm-19/bin/lldb',
@@ -45,7 +45,7 @@ def main():
         row = record(path)
         original = subprocess.check_output(['git', '-C', str(source), 'show', commit + ':' + str(path.relative_to(source))])
         if row['sha256'] != expected or hashlib.sha256(original).hexdigest() != expected:
-            parser.error('capture source differs from reviewed Pool successor: ' + name)
+            parser.error('capture source differs from reviewed same-stop metadata successor: ' + name)
         source_records[name] = row
     tools = [record(path) for path in TOOLS]  # Hash files only; no tool/device is executed.
     output = args.output.resolve()
@@ -66,7 +66,7 @@ def main():
         'source_provenance': {
             'accepted_owned_cleanup_revision': '4984509f629b9ec71b3a3b6366fee7895f83bd02',
             'accepted_owned_cleanup_sha256': '86eb7fae482a52da56de766d068cfc5c7c049c45302b21d5049cc4657cb2b10c',
-            'reviewed_capture_revision': '4446ce5 successor: explicit declined-stop resume and exact API36 Q735 libc state16 mode; old captures unchanged',
+            'reviewed_capture_revision': '44c1d4e successor: preserve explicit declined-stop resume and exact Q735 libc ABI; optional fixed930 main-arena provenance adds no target calls or allocator traps',
             'readiness': 'Observe named official server socket before first LLDB connection; never consume its sole client slot with a probe.',
             'binary_transport': 'Existing Android dd status=none option suppresses transfer summaries; no guessed binary suffix removal.',
         },

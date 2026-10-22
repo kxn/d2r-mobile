@@ -71,6 +71,22 @@ class ConfigTests(unittest.TestCase):
         self.c['nvn_pools']['libc_sha256'] = m.Q735_LIBC_SHA
         with self.assertRaisesRegex(RuntimeError, 'old mutex mode'): m.validate_optional_nvn(self.c, self.inputs)
 
+    def test_930_mode_requires_its_exact_ELF_pair(self):
+        self.c.update(ELF_sha256='bfbcdae5a4cb03ae81a102d61495276163c738e2ac65e62938d8b10d3b33b41f',
+                      ELF_BuildID='dadc99a83587a0606369d35ac3b0abc0eb357d0e')
+        self.c['nvn_pools'].update(mode=m.Q735_930_MUTEX_MODE, libc_sha256=m.Q735_LIBC_SHA,
+            ELF_sha256=self.c['ELF_sha256'], ELF_BuildID=self.c['ELF_BuildID'])
+        m.validate_optional_nvn(self.c,self.inputs)
+        self.c['nvn_pools']['mode']=m.Q735_MUTEX_MODE
+        with self.assertRaisesRegex(RuntimeError,'ELF identity'):m.validate_optional_nvn(self.c,self.inputs)
+
+    def test_arena_absent_does_not_load_companion_or_add_reads(self):
+        m.validate_optional_arena(self.c,self.inputs)
+
+    def test_arena_requires_exact_qualified_NVN_mode(self):
+        self.c['main_arena_origins']={}
+        with self.assertRaisesRegex(RuntimeError,'qualified930'):m.validate_optional_arena(self.c,self.inputs)
+
     def test_wrong_mode_rejected(self):
         self.c['nvn_pools']['mode'] = 'unreviewed'
         with self.assertRaisesRegex(RuntimeError, 'mode/enable'):

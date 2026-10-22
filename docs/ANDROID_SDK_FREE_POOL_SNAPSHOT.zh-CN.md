@@ -76,3 +76,29 @@ SDK `GetMemStats_`停点持有的是SDK分配器中央锁，不是Vulkan资源�
 ## 资格拒绝事件竞态修正
 
 首轮工具把被拒绝的callback returnFalse自动继续的中间stop误当成unrelated stop，因此未获得有效SDK/Pool快照；这属于工具控制缺陷。新控制不放宽unrelated/callback_error：明确拒绝停点经官方SBThread stop reason数据与寄存器核验后才继续，过期、旧stopID、其他断点/信号或多停因全部失败并走原detach/清理。新增离线用例覆盖拒绝→一次显式继续→接受及这些负控。无新的目标计时器、轮询器或运行时修改。
+
+
+## 930 固定 arena 归属（可选、同停点）
+
+`main_arena_origins` 是独立可选结果，默认不存在。原 SDK snapshot 和 NVN registry
+结果的成功语义不变；arena 失败会明确 `complete=false/errors`，不能把 SDK 成功当
+arena 归属成功。它仅接受 exact930 canonical ELF/BID、同一已资格Q735 libc及
+`930-q735-libc-02969f76-state16-v1`，旧f75两种模式未改变。
+
+固定读取：原main三条 owner/pointer/size/TLSF-control record（250/260/40MiB），
+两条原label指针、原指令480B、三原字符串90B，前后记录/label/容量复读合计810B；
+独立4KiB上限且进一步限制本固定计划不超过850B，全部计入原40MiB/60s预算。
+不读取TLSF块链、payload或owner指针目标，不新增每次分配断点、采样/回收逻辑。
+原 SDK mutex自然资格、V.resources资格拒绝显式Continue、owned detach/server/forward
+及原save2/CAS均不变。
+
+wrapper `--plan` 必须核原main NSO/flat、930 fresh原NSO `main.patched.bin`及原
+RAW-ready SHA；关键指令和名称在原main与正式改写结果完全相同。实际stop仍核live
+这些字节和相对本次g_mod/main base的label指针，不使用历史绝对地址。snapshot须完整
+取得同stop SDK allocated分区、两个同backing-offset alias pagemap及NVN registry，
+再报告fixed record与SDK span/Pool区间的关系。PTE present OR只按backing offset计一次，
+不等于PSS、唯一物理RAM或可回收量；SDK whole arena也不等于TLSF内部已用字节。
+
+精确静态指令、字段与原始SHA证据见工作区
+`.local/logs/sdk-large-nonpool-origin-static-v2/`；正式工具source-ready包含新冻结入口/
+三脚本/config和actual official LLDB离线类型核验，当前未由该工具访问设备。

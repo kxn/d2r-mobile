@@ -538,6 +538,16 @@ def run(debugger, config):
         snap.check()
         if 'nvn_pools' in config:
             r['nvn_pools'] = _optional_nvn_pools(target, snap, config['nvn_pools'], primary, primary + cur)
+        if 'main_arena_origins' in config:
+            r['main_arena_origins'] = dict(complete=False, inferior_calls=False,
+                status='SAME_SDK_STOP_MAIN_ARENA_ORIGINS_UNAVAILABLE', errors=[])
+            try:
+                require('nvn_pools' in config, 'arena ownership needs same-stop Pool metadata')
+                companion = _load_nvn_companion(config['nvn_pools'], config)
+                r['main_arena_origins'].update(companion.capture_main_arenas(target, snap,
+                    config['main_arena_origins'], main, heap, spans, host_page, pp, ap, r['nvn_pools']))
+            except Exception as error:
+                r['main_arena_origins']['errors'].append(repr(error))
         snap.check()
         r.update(complete=True, same_debugger_stop=True, metadata_bytes=snap.metadata_bytes,
                  raw_acquisition_bytes=snap.raw_bytes, raw_files=snap.files)

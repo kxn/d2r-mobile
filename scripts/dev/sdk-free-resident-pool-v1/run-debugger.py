@@ -20,6 +20,7 @@ PKG = 'com.d2rmobile.nativeport'
 PORT = '39486'
 SOCKET = 'd2r-sdk-free-owned-' + str(os.getpid())
 Q735_MUTEX_MODE = 'f75-q735-libc-02969f76-state16-v2'
+Q735_930_MUTEX_MODE = '930-q735-libc-02969f76-state16-v1'
 Q735_LIBC_SHA = '02969f76be8e6ed8a44be78083735801448a6e0f972792da63b93e4a6de8d5b0'
 Q735_LIBC_PATH = '/apex/com.android.runtime/lib64/bionic/libc.so'
 
@@ -57,19 +58,36 @@ def validate_optional_nvn(config, inputs):
             {'enabled','mode','module','ELF_sha256','ELF_BuildID'} <= set(p) <=
             {'enabled','mode','module','ELF_sha256','ELF_BuildID','qualify_unlocked','libc_sha256'},
             'unknown/missing optional NVN config fields')
-    require(p['enabled'] is True and p['mode'] in ('f75-bionic-normal-resources-zero-v1', Q735_MUTEX_MODE), 'unqualified optional NVN mode/enable')
-    if p['mode'] == Q735_MUTEX_MODE:
+    require(p['enabled'] is True and p['mode'] in ('f75-bionic-normal-resources-zero-v1', Q735_MUTEX_MODE, Q735_930_MUTEX_MODE), 'unqualified optional NVN mode/enable')
+    if p['mode'] in (Q735_MUTEX_MODE, Q735_930_MUTEX_MODE):
         require(p.get('libc_sha256') == Q735_LIBC_SHA, 'actual Q735 libc ABI pin missing/differs')
     else:
         require('libc_sha256' not in p, 'old mutex mode must not imply another libc ABI')
     require(type(p.get('qualify_unlocked',False)) is bool, 'optional NVN entry qualification is not bool')
-    require(p['ELF_sha256']==config['ELF_sha256']=='4a8420209e2ac6c71c161626472458ac498ee844bdce58677c8e2769b5ec4618' and
-            p['ELF_BuildID']==config['ELF_BuildID']=='6e6f12c5c5f7a858704a84ee294b19d95aa3f894', 'optional NVN ELF identity differs from reviewed f75')
+    expected_sha, expected_id = (('bfbcdae5a4cb03ae81a102d61495276163c738e2ac65e62938d8b10d3b33b41f', 'dadc99a83587a0606369d35ac3b0abc0eb357d0e')
+                                 if p['mode'] == Q735_930_MUTEX_MODE else
+                                 ('4a8420209e2ac6c71c161626472458ac498ee844bdce58677c8e2769b5ec4618', '6e6f12c5c5f7a858704a84ee294b19d95aa3f894'))
+    require(p['ELF_sha256']==config['ELF_sha256']==expected_sha and
+            p['ELF_BuildID']==config['ELF_BuildID']==expected_id, 'optional NVN ELF identity differs from reviewed mode')
     m=p['module']; name='sdk_nvn_pool_registry.py'
     require(isinstance(m,dict) and set(m)=={'path','sha256'} and
             Path(m['path']).resolve()==(HERE/name).resolve() and name in inputs['files'] and
             m['sha256']==inputs['files'][name]['sha256']==sha(HERE/name), 'optional NVN source is not the frozen companion')
 
+
+
+def validate_optional_arena(config, inputs):
+    if 'main_arena_origins' not in config:
+        return
+    p = config.get('nvn_pools', {})
+    require(p.get('mode') == Q735_930_MUTEX_MODE and p.get('qualify_unlocked') is True,
+            'arena provenance requires qualified930 same-stop NVN gate')
+    validate_optional_nvn(config, inputs)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('frozen_sdk_arena_config', p['module']['path'])
+    companion = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(companion)
+    companion.validate_main_arena_pin(config['main_arena_origins'])
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -82,7 +100,7 @@ def main():
     require(args.config and args.config_sha256 and sha(args.config)==args.config_sha256,'exact caller-owned config hash required')
     config=json.loads(Path(args.config).read_text())
     required={'schema','serial','APK_sha256','ELF','ELF_sha256','ELF_BuildID','canonical_source_ready','canonical_source_ready_sha256','tool_inputs_sha256','sdk_original','sdk_flat'}
-    require(required <= set(config) <= required|{'nvn_pools'},'unknown/missing config fields')
+    require(required <= set(config) <= required|{'nvn_pools', 'main_arena_origins'},'unknown/missing config fields')
     require(config['schema']==1 and config['serial']=='10CG570J59001U1','schema/Q device mismatch')
     for key in ['APK_sha256','ELF_sha256','canonical_source_ready_sha256','tool_inputs_sha256']:
         require(re.fullmatch('[0-9a-f]{64}',config[key]), 'invalid '+key)
@@ -96,6 +114,7 @@ def main():
     for row in inputs['tools']:
         require(sha(row['path'])==row['sha256'],'official tool input changed: '+row['path'])
     validate_optional_nvn(config,inputs)
+    validate_optional_arena(config,inputs)
     ELF=Path(config['ELF']).resolve();ELF_SHA=config['ELF_sha256'];BUILD_ID=config['ELF_BuildID'];APK_SHA=config['APK_sha256'];SERIAL=config['serial']
     require(sha(ELF)==ELF_SHA and sha(config['canonical_source_ready'])==config['canonical_source_ready_sha256'],'local canonical input changed')
     ready=json.loads(Path(config['canonical_source_ready']).read_text())
@@ -131,7 +150,7 @@ def main():
         path = adb('shell', 'pm', 'path', PKG)
         require(path.startswith('package:') and '\n' not in path, 'ambiguous installed APK')
         require(adb('shell', 'sha256sum', path[8:]).split()[0] == APK_SHA, 'installed APK identity mismatch')
-        if config.get('nvn_pools',{}).get('mode') == Q735_MUTEX_MODE:
+        if config.get('nvn_pools',{}).get('mode') in (Q735_MUTEX_MODE, Q735_930_MUTEX_MODE):
             actual_libc = adb('shell', 'sha256sum', Q735_LIBC_PATH).split()[0]
             require(actual_libc == config['nvn_pools']['libc_sha256'] == Q735_LIBC_SHA,
                     'actual device libc differs from qualified state16 ABI')
