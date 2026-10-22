@@ -707,7 +707,9 @@ def phase_game(dev, out, phase, p, token):
                     'native table unexpectedly present in standard control')
         d['original_HUD_reached'] = True
         d['game_modules_executed'] = True
-        d['scope'] = ('Native-only shortcandidate functional/officialCPU validation; not matchedpair or thermalproof'
+        d['scope'] = ('Original-game B2T correctness successor, original threewalks and system residency; no CPU/GPU timing or sustained-play acceptance'
+                      if p.get('native_functional_validation') else
+                      'Native-only shortcandidate functional/officialCPU validation; not matchedpair or thermalproof'
                       if p.get('native_candidate_validation') else
                       'Native-only sustained original-input route, sparse official Perfetto; '
                       'no combat or whole-game acceptance implied' if p.get('sustained_play') else
@@ -861,6 +863,9 @@ def main():
         plan['native_host_experiment'] = {**p['native_host_experiment'],
             'game_logic_unchanged': True, 'compiler_policy': 'original179 O3 / no LTO',
             'root_review': p['native_candidate_validation']['root_review']}
+    if p.get('native_functional_validation'):
+        plan['scope'] = 'Original-game B2T correctness successor, original threewalks and system residency; no CPU/GPU timing or sustained-play acceptance'
+        plan['native_functional_validation'] = p['native_functional_validation']
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))

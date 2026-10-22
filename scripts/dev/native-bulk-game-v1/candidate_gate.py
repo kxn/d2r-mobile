@@ -340,13 +340,28 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
             and set(p['native_candidate_validation'])=={'root_review'}
             and source_base and p['runtime_commit']!=source_base, 'reviewed source parent / experiment mode differs')
     official_cpu=(p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa'))) and p.get('performance_tools')
+    functional = p.get('native_functional_validation')
+    if functional is not None:
+        # A correctness successor needs the same artifact/provider/asset and
+        # save/restore checks, not an unrelated CPU profiling session. This
+        # exception is deliberately limited to the reviewed B2T fix; it does
+        # not supply prior game qualification or performance acceptance.
+        require(functional == {'purpose': 'shared-B2T-ordered-source-correctness'}
+                and resource_preparation
+                and p['runtime_commit'] == '930ac8fd367007c35261eb0e1c398445087a25f6'
+                and source_base == 'a322113a45394a93e905dc541b37344ef90f4260'
+                and not any(k in p for k in ('performance_tools','official_l1i_record',
+                    'official_cpu_aa','official_gpu_tools','counter_snapshot',
+                    'sustained_play','startup_allocation_capture',
+                    'prior_actual_game_qualification','readonly_memory_snapshot')),
+                'functional validation only covers the exact B2T successor without profiling')
     prior_memory=False
     if resource_preparation and not official_cpu and 'prior_actual_game_qualification' in p:
         require(readonly_memory_snapshot_validated is True and bool(p.get('readonly_memory_snapshot')),
                 'prior actual memory scope requires validated read-only snapshot')
         prior_memory=prior_actual_memory_scope(p,pinned,read,require)
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
-            and (official_cpu or prior_memory)
+            and (official_cpu or prior_memory or functional)
             and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
             'compiler experiment requires original f830/1MiB/full2838 and official tools or verified prior-game memory scope')
     review=read(pinned(p['native_candidate_validation']['root_review']))
@@ -364,8 +379,15 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
                 'independently reviewed compiler-only source diff required')
     canonical,raw=reviewed_artifacts(p,review,pinned,read,require)
     source=read(pinned(review['source_ready']))
-    require(source['commit']==p['runtime_commit'] and source['base']==source_base,
-            'compiler source-ready revision/base differs')
+    if functional:
+        require(source['runtime_commit']==p['runtime_commit']
+                and source['base_runtime']==source_base
+                and source['Android_canonical_built'] is False
+                and source['device_accessed'] is False,
+                'original host-only B2T source-ready revision/base differs')
+    else:
+        require(source['commit']==p['runtime_commit'] and source['base']==source_base,
+                'compiler source-ready revision/base differs')
     base_review=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/cpu-pool-pin-coherent-179c82d-root-canonical-raw-review.json',
                             'sha256':POOL_REVIEW}))
     base=read(pinned(base_review['canonical_ready']));base_raw=read(pinned(base_review['raw_ready']))
