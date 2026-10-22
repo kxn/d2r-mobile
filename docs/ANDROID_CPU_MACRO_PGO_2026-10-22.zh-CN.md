@@ -75,13 +75,13 @@ Q735 按父／候选／候选／父顺序执行。每轮原游戏三段移动、
 
 同 Clang 19.1.7、原 host O1/no-LTO 的实际 x86-64 机器码显示：主 Draw 23,723→15,041B，减少 8,682B；四个独立函数合计 9,099B，合并计算总代码反而增加 417B。主函数栈仅减少 16B。机制是缩小普通绘制路径所混入的代码体积，不是删除真实绘制计算；完整正分支新增函数调用，最坏总栈深可能上升。这些不是 Android AArch64 数值，尚无 CPU/FPS 或散热收益证明。原内容／GPU／sanitizer 资格正在独立进行，结果及命令位于 `.local/logs/draw-cold-positive-phases-v1/`；静态合同在 `.local/logs/f75-draw-cold-stages-readonly-v1/`。
 
-后续源码已冻结并推送 `cb297f8`，六个原 host GPU 内容／Core/SYNC／sanitizer 用例通过。原 Android canonical 构建和六库、7 个 APP 预处理单元、ABI、签名核验也已完成，根实际核验 76 项引用及 2,796 个归档 producer/NDK 输入。**实际 AArch64** 主 Draw 为 22,356→15,612B，减少 6,744B；四独立函数为 8,288B，五函数合计增加 1,544B，全库 `.text` 增加 1,008B。主函数栈为 4,224→4,160B；正分支调用链额外栈分别为 BQ 1,728B、实例展开 128B、PL 准备 112B、PL 消费 64B（不含双方相同的深层被调用函数）。不将 host 尺寸代替 Android，也不把静态文本减少称为 CPU 时间减少。根记录在 `.local/logs/draw-cold-positive-phases-cb297f8-root-canonical-review.json`；接着重新生成原 NSO 产物后才进行真机对照，尚未部署该 CPU 候选。
+后续源码已冻结并推送 `cb297f8`，六个原 host GPU 内容／Core/SYNC／sanitizer 用例通过。原 Android canonical 构建和六库、7 个 APP 预处理单元、ABI、签名核验也已完成，根实际核验 76 项引用及 2,796 个归档 producer/NDK 输入。**实际 AArch64** 主 Draw 为 22,356→15,612B，减少 6,744B；四独立函数为 8,288B，五函数合计增加 1,544B，全库 `.text` 增加 1,008B。主函数栈为 4,224→4,160B；正分支调用链额外栈分别为 BQ 1,728B、实例展开 128B、PL 准备 112B、PL 消费 64B（不含双方相同的深层被调用函数）。不将 host 尺寸代替 Android，也不把静态文本减少称为 CPU 时间减少。根记录在 `.local/logs/draw-cold-positive-phases-cb297f8-root-canonical-review.json`；原 NSO 已重新生成并独立校验，随后完成下节的四轮原游戏对照；没有将该 CPU 候选静默替换为日常默认。
 
 ## 内存归属：从全分配器断点转为少量已证记录
 
 原 main 的静态调用链已确定三个 TLSF 子分配器的 backing 记录：250MiB 的 pointer/size 位于 `main+0x31162e8/+0x31162f0`；260MiB 的记录位于 `+0x31dafb0/+0x31dafb8`，原名称为 `Popcorn Asset Pool`；另有 40MiB `Popcorn Scratch Pool`。分配参数、返回值存储、TLSF 初始化及两个原名称的关联均有原始指令／字符串证据，不能再将其仅描述为按尺寸猜测。
 
-但历史 SDK 快照没有读取这些全局，尚未证明其指针就是先前的两个大 allocated span。下一次只在原 SDK/Pool 同停点补读这些固定记录并归一 backing offset，额外读取不超过 850B；原始指令、930 正式 ELF/DWARF 和本次前后记录均须核验。不会重新布置高频 Allocate 断点，也不遍历 TLSF。大 arena 是子分配器 backing，不意味着其中所有子块有效，更不意味着可直接释放；后续归属成功后才调查内部利用率。静态证据和待实施捕获合同位于 `.local/logs/sdk-large-nonpool-origin-static-v2/`。
+历史 SDK 快照没有读取这些全局，不能跨 PID 关联旧指针。本次已在原 SDK/Pool 同停点补读固定记录，额外 810B，归一 backing offset 并核对前后记录、原始指令和 930 ELF/DWARF；三个实际指针均与本次 SDK allocated span 精确匹配，无当前 NVN Pool 交集。没有重新布置高频 Allocate 断点，也没有遍历 TLSF。大 arena 是子分配器 backing，不意味着其中所有子块有效，更不意味着可直接释放。静态证据见 `.local/logs/sdk-large-nonpool-origin-static-v2/`，实际捕获和根复核见 `.local/logs/sdk-main-arena-provenance-930-Q735-v1/root-actual-memory-review.json`。
 
 另一项预算修正：在本次 f75 PMU 日志实际出现的 110 个 Shader key 中，旧 950 库的 33 个非空 DPL 文件总计 3,326,480B，新 8b 库对应文件为 13,912,752B。它们仍只是所有这些 key 均实际请求 lazy recipe 时的 blob 上界，不是已观测常驻量／PSS；新库全库存约 256MiB 的磁盘增长不能直接写成实际多驻留 256MiB。新 subset 模块、元数据和驱动分配仍须单独验证，当前未部署新库。原文件哈希与统计在 `.local/logs/f75-loaded-shader-DPL-residency-budget-v1/facts.json`。
 
@@ -90,3 +90,32 @@ Q735 按父／候选／候选／父顺序执行。每轮原游戏三段移动、
 V5 恢复期间的实际 f75 崩溃位于 B2T 调用的 `image_upload` 源预检保护。原 GPU 夹具能通过真实 clean 查询后发生真实同值 CPU 写，复现相同 FATAL；窄修 `930ac8f` 只要求 B2T 在借用物理图像前完成既有源可见性准备，保护条件及普通采样 clean 快速路径不变。八项原 GPU 内容／ASan 用例通过，旧生产代码在相同最终夹具上仍失败；真实最初崩溃的具体纹理 serial 和暂停因果仍未知。
 
 930 已由原 Android 入口构建，并从三个未修改 NSO 重新生成、独立校验全部 28 个交付文件，游戏可执行字节与 a322 相同。Q735 原游戏 PID 3782 已完成三段真实输入跑动、营地画面查看、原生命周期存档两次和退出，控制器终态 0、原日常 a322 APK／配置／资源恢复，cleanup 为空。此轮仅验证正确性与系统内存报告，没有 CPU/GPU 计时采集，不宣称提升帧率、持续散热或 6GB 稳定运行。证据为 `.local/logs/shared-b2t-ordered-preflight-930ac8f-root-actual-functional-review.json`；分支 `codex/shared-b2t-ordered-preflight-v1` 已备份到 fork，当前日常包没有被静默替换。
+
+## 热路径拆分的四轮原游戏对照已完成
+
+对比父版 `930ac8f` 与拆分版 `cb297f8`，保持原 O3、无 LTO/PGO、0.60 比例、2750×1260 输出、target60、f830、full2838/950、1MiB/lazy、span reference 和 ADPF reference。按父／候选／候选／父顺序，每轮原三段移动、三份 30 秒 99Hz FP 记录、五份 8 秒 Perfetto、原存档两次、停止及恢复均实际完成。四轮控制器退出 0，根核验 945 个原始／官方工具／分析文件。
+
+| 顺序 | 完整 Surface 数 | NvN Running ms/Surface | Surface 平均 ms | NvN Sleep ms/Surface |
+| --- | ---: | ---: | ---: | ---: |
+| 父版 1 | 1176 | 26.802 | 33.043 | 6.013 |
+| 候选 1 | 1140 | 26.672 | 34.014 | 7.038 |
+| 候选 2 | 1163 | 26.867 | 33.499 | 6.379 |
+| 父版 2 | 1182 | 26.819 | 32.993 | 5.939 |
+
+没有证明稳定的整线程 CPU、FPS 或发热收益；不能将主函数体积减少 6,744B 当作运行时间减少三成。所有 20 窗均保留，不挑选较好的候选 1。CPU7 分布、频率、坐标和睡眠有差异；前三轮 scheduler bracket 为 181PSO，父版 2 前三窗 172、后两窗 179，30 秒 record2 还可跨越准备工作。不能声称完全同工作量，也不按 MHz 线性修正。
+
+12 份原记录 lost/truncated 为 0，官方时钟映射均覆盖相应 Perfetto。父版 1 record2 有一个样本缺少 `x_thread`；保留真实父链，不补造。现有完整职责仍以资源绑定、源准备、附件与访问依赖等必要消费为主；不能把其中某个叶节点份额降低解释为整个职责被省掉。保留拆分源码、内容资格和静态工作集证据，不因 FPS 单独撤回，也不宣传已省 CPU。实际日常 a322 APK、私有配置和收条经根 ADB 哈希复核未变，游戏已停止。
+
+证据：`.local/logs/cpu-draw-cold-cb297f8-pair-analysis-v2/{comparison-ready.json,comparison-all20-windows.json,summary-all4-rounds.md}`、`.local/logs/cpu-draw-cold-cb297f8-ABBA-root-review.json`。首次离线编排误将字节相同的脚本也要求发生变化，导致 binary cache 尚未创建就中断；v1 失败保留，v2 仅修主机路径／身份配置，全部原始采集未改，不额外采集。
+
+## 当前内存分账与两个独立候选
+
+930 的 PID14215 原 SDK 自然锁定停点已完成三个 main arena 关联。容量 250/260/40MiB，CPU 两映射 PTE-present 并集分别 206.777/132.375/7.977MiB，合计 347.129MiB，全部位于当前 NVN Pool 之外。它们不是图形层重复镜像；也未取得 TLSF 内部活对象或回收权限。
+
+同次官方系统统计总 PSS 为 1959.871MiB，guest heap 两 alias 的 PSS 合计 1391.590MiB，约占 71%。SDK allocated PTE 并集 1374.008MiB，其中 Pool 内 448.477、Pool 外 925.531；扣除三个已关联 arena 后，仍有 578.402MiB 非 Pool 并集未归属。系统统计与 SDK 停点不是同时采样，PSS、PTE 并集及 VMA/import allocation 不能直接相加。逻辑 free 684.449MiB 只有 8.695MiB CPU PTE-present，不能据其逻辑容量预支回收收益。
+
+私有图像 allocation 330.176MiB，其中 CPU-rebuildable 为 120.945MiB。原预算 512MiB 只比较后者，因此这次 released 为 0。独立 64MiB 预算候选的当前 allocation 减少上界约 56.945MiB，下界仍为 0，实际 PSS 和重建开销待测。只沿用原非 external、可重建、已完成且至少冷 256 个完成 chunk 的资格，不删除 native imports 或 GPU 写入结果，不增加 GPU 等待。32 次扫描、4 次移除有计数上限；8MiB 是循环前检查，整图释放可越过该阈值。VMA 保留空 block 也可能使 allocation 下降却未减少驻留。该候选与 CPU 候选分开，不改变当前日常默认。
+
+CPU 的 `88620ec` 候选则将提示未命中的物理 Buffer 选择从逐节点扫描换成复用已有区间树。它保留最新 cover 优先、否则单个 canonical、原提示／零长度／维护路径以及全部初始化、依赖和寿命。节点仍 64B、span 仍 152B，没有新缓存或分配。10 项原 GPU 内容、异步、非 lazy 与 sanitizer 回归通过；实际 Android canonical、7 APP、六库 16KiB 及三个原 NSO 重新生成／独立校验 28 产物均已完成，尚未有这项的真机 CPU 收益。预算仅为 resolver 自身约 2～3% 样本的一部分，不是整个 pool_address 的约 9%，最坏嵌套区间仍可能线性。
+
+内存来源和原冷预算合同见 `.local/logs/sdk-main-arena-930-memory-budget-v1/`、`.local/logs/private-image-budget-vma-contract-930-cb-readonly-v1/`。区间索引源码已备份 `codex/lazy-physical-span-index-v1`，根源码／canonical／RAW 复核见 `.local/logs/lazy-physical-span-index-88620ec-root-canonical-raw-review.json`。本轮没有新的持续散热或真实 6GB 稳定游玩验收，目标仍未完成；没有访问暂停的 Mali 或平板。
