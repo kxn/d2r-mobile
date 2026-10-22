@@ -938,7 +938,7 @@ static int shared_image_backing(uint64_t address,uint64_t bytes) {
 #endif
 // Only logical copies of textures are used across a visibility callback.
 // Callers must invoke this before borrowing any image/view/descriptor/temp.
-void vk_texture_cpu_preflight(const tex_t *t) {
+static void texture_cpu_preflight(const tex_t *t,int require_source) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(t && t->has_layout && nvn_native_layout_is_marker(t->layout))return; // no CPU deswizzle/dirty-source observation
 #endif
@@ -955,7 +955,7 @@ void vk_texture_cpu_preflight(const tex_t *t) {
     }
     // A queued CPU effect has no dirty generation until completion. Publish
     // it even for an initialized/clean image, before any image/view borrows.
-    if((read || vk_pool_texture_cpu_effect_pending((uintptr_t)t->mem,t->L.size)) && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
+    if((require_source || read || vk_pool_texture_cpu_effect_pending((uintptr_t)t->mem,t->L.size)) && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
       die("Shared packaged image source outside live shared Pool");
   }
 #endif
@@ -963,6 +963,7 @@ void vk_texture_cpu_preflight(const tex_t *t) {
       t->mem && t->L.size && vk_pool_cpu_prepare((uintptr_t)t->mem,t->L.size)<0)
     die("Vulkan texture CPU source lifetime changed during preflight");
 }
+void vk_texture_cpu_preflight(const tex_t *t) { texture_cpu_preflight(t,0); }
 static void image_upload(image *i);
 static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
   if (!V.cmd)
@@ -1709,7 +1710,12 @@ void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   vk_mip_clear_drain();vk_render_end();
   int operation=copy_pool_operation(p,row,img,0);
   // Admission may migrate storage and replay a deferred render pass.
-  vk_render_end();vk_texture_cpu_preflight(p->tex);
+  // A partial B2T preserves the rest of a packaged image. A clean observation
+  // is not a lease: a CPU store can invalidate it before image_upload decides
+  // whether to convert. Complete prior source writers before physical borrows,
+  // even when that first dirty query is clean. Native/no-layout paths retain
+  // their original exclusions; sampling keeps its original clean fast path.
+  vk_render_end();texture_cpu_preflight(p->tex,1);
   if(V.options.pool_defer_publication && p->tex && p->tex->d.format>=0x41 && p->tex->d.format<=0x50)
     vk_pool_cpu_prepare(p->src,copy_pool_footprint(p,row,img));
 #ifdef DM_VULKAN_SHARED_POOLS
