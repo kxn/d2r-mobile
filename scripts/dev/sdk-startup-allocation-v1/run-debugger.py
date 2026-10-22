@@ -139,6 +139,43 @@ def wait_jdwp_pid(adb_base, pid, out, timeout=20):
     return result
 
 
+def release_official_jdb(child, log, timeout=20):
+    """NDK SocketAttach/print/settle/exit sequence, with both writes flushed."""
+    magic = b'__verify_jdb_has_started__'
+    selector = selectors.DefaultSelector()
+    selector.register(child.stdout, selectors.EVENT_READ)
+    os.set_blocking(child.stdout.fileno(), False)
+    deadline = time.monotonic() + timeout
+    output = bytearray()
+    acknowledged = False
+    try:
+        child.stdin.write(b'print "' + magic + b'"\n')
+        child.stdin.flush()
+        while True:
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, 'official JDB readiness/exit deadline')
+            require(selector.select(remaining), 'official JDB readiness/exit deadline')
+            chunk = os.read(child.stdout.fileno(), 4096)
+            if not chunk:
+                break
+            log.write(chunk); log.flush()
+            require(len(output) + len(chunk) <= 65536, 'official JDB output exceeded bound')
+            output.extend(chunk)
+            if magic in output and not acknowledged:
+                acknowledged = True
+                time.sleep(.3)  # Original NDK settling delay for Android debugger polling.
+                child.stdin.write(b'exit\n')
+                child.stdin.flush()
+        child.wait(timeout=max(.01, deadline-time.monotonic()))
+        require(acknowledged and child.returncode == 0, 'official JDB release not acknowledged')
+        return dict(command_writes_flushed=True,magic_observed=True,
+                    settle_seconds=.3,returncode=child.returncode,output_bytes=len(output))
+    finally:
+        selector.close()
+        child.stdin.close()
+        child.stdout.close()
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('pid');parser.add_argument('output',type=Path)
@@ -180,9 +217,8 @@ def main():
     server = client = java_release = None
     java_forward_owned = False
     forward = False
-    java_argv = [sys.executable, str(R/'.local/android-sdk/ndk/28.2.13676358/prebuilt/linux-x86_64/bin/ndkgdb.pyz'),
-                 '--internal-wakeup-pid-with-jdb', adb_base[0], SERIAL,
-                 '/usr/lib/jvm/java-21-openjdk-amd64/bin/jdb', pid, 'True']
+    java_argv = ['/usr/lib/jvm/java-21-openjdk-amd64/bin/jdb', '-connect',
+                 'com.sun.jdi.SocketAttach:hostname=localhost,port=65534']
     d = {'PID': int(pid), 'ELF_sha256': sha(ELF), 'ELF_BuildID': BUILD_ID,
          'capture_protocol': 'sdk-startup-large-returns-v1', 'config_sha256': args.config_sha256,
          'scope': 'Only bounded official startup debugger; caller owns original game/save/restore', 'cleanup_errors': []}
@@ -245,8 +281,11 @@ def main():
             require(time.monotonic() < ready_deadline, 'owned server listen socket readiness deadline')
             time.sleep(.1)
         commands = '\n'.join([
-            'target create --arch aarch64 ' + shlex.quote(str(ELF)),
+            'script e=lldb.SBError();t=lldb.debugger.CreateTarget(None,"aarch64-linux-android",None,False,e);assert e.Success() and t.IsValid() and not t.GetExecutable().IsValid()',
             'gdb-remote 127.0.0.1:' + PORT,
+            'script t=lldb.debugger.GetSelectedTarget();assert t.GetExecutable().IsValid() and t.GetExecutable().GetFilename()!="libdmhost_android.so"',
+            'target modules add ' + shlex.quote(str(ELF)),
+            'script t=lldb.debugger.GetSelectedTarget();m=t.FindModule(lldb.SBFileSpec(' + repr(str(ELF)) + '));assert m.IsValid() and m.GetUUIDString().replace("-", "").lower()==' + repr(BUILD_ID) + ' and m.GetObjectFileHeaderAddress().GetLoadAddress(t)==lldb.LLDB_INVALID_ADDRESS',
             'settings set auto-confirm true',
             'process handle SIGSEGV -s false -n false -p true',
             'process handle SIGBUS -s false -n false -p true',
@@ -278,22 +317,19 @@ def main():
             require(owned_pid(current(),pid), 'owned PID changed before JDWP release')
             require('tcp:65534' not in adb('forward','--list'), 'JDWP port changed ownership before official release')
             d['official_JDWP_release_argv']=java_argv
-            with (out/'official-NDK-jdb-release.log').open('w') as jlog:
-                # NDK start_jdb itself sets a new process group; the direct pyz
-                # entry (no shell) keeps its PID as the owned group identity.
-                java_release=subprocess.Popen(java_argv,stdin=subprocess.DEVNULL,stdout=jlog,stderr=subprocess.STDOUT)
-                java_forward_owned=True
-                try:
-                    client.wait(timeout=110)
-                except subprocess.TimeoutExpired:
-                    d['bounded_tool_timeout']=True
-            try:
-                java_release.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError('official NDK jdb release did not finish')
+            adb('forward', 'tcp:65534', 'jdwp:' + pid)
+            java_forward_owned=True
+            with (out/'official-NDK-jdb-release.log').open('wb') as jlog:
+                # Official JDB, same original NDK SocketAttach/print/settle/exit.
+                # Explicit pipe flush avoids the packaged NDK28 buffered-write block.
+                java_release=subprocess.Popen(java_argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                                              stderr=subprocess.STDOUT,start_new_session=True)
+                d['official_JDWP_release'] = release_official_jdb(java_release,jlog)
             d['official_JDWP_release_returncode']=java_release.returncode
-            require(java_release.returncode==0 and 'JDB finished unblocking application.' in
-                    (out/'official-NDK-jdb-release.log').read_text(), 'official NDK jdb release not acknowledged')
+            try:
+                client.wait(timeout=110)
+            except subprocess.TimeoutExpired:
+                d['bounded_tool_timeout']=True
             try:
                 client.wait(timeout=1)
             except subprocess.TimeoutExpired:

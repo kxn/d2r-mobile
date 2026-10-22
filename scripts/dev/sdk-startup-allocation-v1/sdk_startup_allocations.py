@@ -77,7 +77,14 @@ def snapshot(debugger):
         require(process.IsValid() and process.GetState()==lldb.eStateStopped and process.GetProcessID()==pid,
                 'no matching initial owned live stop')
         require(target.GetTriple().startswith('aarch64'), 'not native AArch64')
-        # Formal local host module is loaded by the target loader after JDWP release.
+        # Remote attach must identify the real process executable first. Formal
+        # host symbols remain unloaded until Android's actual dlopen event.
+        require(target.GetExecutable().IsValid() and target.GetExecutable().GetFilename()!='libdmhost_android.so',
+                'formal host SO was incorrectly selected as process executable')
+        formal=target.FindModule(lldb.SBFileSpec(config['ELF']))
+        require(formal.IsValid() and formal.GetUUIDString().replace('-','').lower()==config['ELF_BuildID']
+                and formal.GetObjectFileHeaderAddress().GetLoadAddress(target)==lldb.LLDB_INVALID_ADDRESS,
+                'formal host symbols already have a load address before native startup')
         bp=target.BreakpointCreateByName('guest_thread_init','libdmhost_android.so')
         require(bp.IsValid(), 'could not create pending host startup breakpoint')
         result['pending_host_breakpoint']=dict(id=bp.GetID(),name='guest_thread_init',locations_before_load=bp.GetNumLocations())

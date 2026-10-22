@@ -109,7 +109,7 @@ class Control(unittest.TestCase):
         self.assertIn("'early_no_native_start_stopped_without_save_claim'",text)
     def test_only_official_NDK_JDWP_client_no_custom_protocol(self):
         text=(D/'run-debugger.py').read_text()
-        self.assertIn('ndkgdb.pyz',text);self.assertIn('--internal-wakeup-pid-with-jdb',text)
+        self.assertIn('com.sun.jdi.SocketAttach:hostname=localhost,port=65534',text);self.assertIn('release_official_jdb',text);self.assertIn('child.stdin.flush()',text)
         self.assertNotIn('JDWP-Handshake',text)
         hook=(D/'sdk_startup_allocations.py').read_text()
         self.assertNotIn('EvaluateExpression(',hook)

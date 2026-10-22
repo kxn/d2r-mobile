@@ -108,3 +108,35 @@ startup or successful allocation capture. A character-select `save asked=0`
 still fails closed and cannot authorize unsaved stopping/restoration.
 
 Host regression: `python3 scripts/dev/sdk-startup-allocation-v1/test-jdwp-readiness.py -v`.
+
+
+### V4: flushed official JDB and a genuinely unloaded host module
+
+Actual V3 observed the JDWP PID and safely detached/saved/restored, but no
+startup breakpoint or JDB magic appeared. The packaged NDK28 `start_jdb`
+function writes both `print` and `exit` to buffered stdin without flushing.
+The unchanged extracted function and a real host child reproduced that no
+command arrived before the child deadline; a flush-only variant delivered it.
+V4 directly runs the same official JDK JDB SocketAttach arguments, same print
+magic, 0.3-second settling delay and exit command, with both writes flushed.
+Output is bounded to 64KiB and the sequence to20s. The original wrapper owns
+its separate process group and JDWP forward and keeps its original cleanup.
+A real local official JVM/JDI attach completed this flushed sequence. That is
+host tool qualification, not Android qualification.
+
+`target create formal-host.so` misidentified the not-yet-loaded SO as process
+executable in V3. Official LLDB rejects no-file CLI `target create`; the SB API
+can create an empty AArch64 target. Importantly, pre-attach `modules add` makes
+GetExecutable nonempty again. V4 therefore creates the empty target, attaches
+first so the server establishes the real executable, then adds exact host
+symbols. Before continuing, it rejects a formal SO selected as executable or
+any already-assigned host load address; UUID must match the exact f75 file.
+The later original `guest_thread_init` path still requires the actual loaded
+UUID, `dm_android_main` ancestry, actual module table and unchanged244 SDK bytes.
+No guessed slide is applied. Local LLDB proves empty target creation, source
+lookup/UUID and unloaded-address behavior; real remote dlopen resolution still
+requires the next bounded device transaction and is not claimed here.
+
+All failed V1/V3 artifacts remain unchanged. The fixed consumer only removes
+host orchestration blockers and does not qualify target allocation origins,
+performance, page reclamation or a successful game execution.

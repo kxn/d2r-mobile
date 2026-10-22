@@ -33,7 +33,7 @@ def main():
         tools=[rec(q) for q in TOOLS],freeze_producer=rec(__file__),
         scope='Official LLDB original SDK allocation return provenance, bounded conditional software traps; no CPU profile/no inferior calls/no memory writes beyond official breakpoints',
         provenance={'runner_base':'9d8ea6f751e5b1eb6aebcec9ee9af43b70121e6f','owned_cleanup':'44c1d4e6982a06d4a7c87fb937e2b30ee4484e60',
-                    'SDK_decoder_unchanged':True,'NDK_JDWP':'Original NDK28 start_jdb: SocketAttach, readiness print token, 0.3s settling delay, exit'},
+                    'SDK_decoder_unchanged':True,'NDK_JDWP':'Official JDB using original NDK28 SocketAttach/print token/0.3s/exit sequence; explicit flushed bounded pipe orchestration (packaged start_jdb buffering reproduced)'},
         controller_source={str(q.relative_to(source)):rec(q) for q in (source/'scripts/dev/native-bulk-game-v1/run-game.py',source/'scripts/dev/android-game-launch.py')})
  (out/'tool-inputs.json').write_text(json.dumps(j,indent=2)+'\n');print(json.dumps(rec(out/'tool-inputs.json')))
 if __name__=='__main__':main()
