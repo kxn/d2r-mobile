@@ -477,3 +477,45 @@ Q735 的 REFERENCE1 与 SPAN0 两次原游戏事务均实际退出 0。使用同
 最大四个已分配span贡献约798.97MiB CPU-view present，约占已分配并集57.07%。缺少同次运行NVN Pool归属，不能按块大小猜用途、拼旧进程地址或直接打洞。这项是工作集/内存生命周期调查，不冒称已缩短翻译CPU。原游戏移动、存档2次、退出及原包资源恢复完成；最终核实游戏PID为空，调试器自有forward已移除。工具源码独立备份于`codex/sdk-free-resident-tools-v1`的`118920a`。
 
 原始快照、离线重放和根核验分别为`.local/logs/sdk-free-resident-Q735-v1/game-v4/native/readonly-memory-snapshot/sdk-free-resident.json`、`.local/logs/sdk-free-resident-Q735-v1-offline-analysis-v1/report.md`、`.local/logs/sdk-free-resident-Q735-v1-root-completed-review.json`。本节没有新增CPU提速、FPS或持续温度收益结论。
+
+
+### 2026-10-22：重复记录压缩的实际上限，以及下一步的改前预算
+
+当前 Q735 翻译线程约 27ms Running／完整 Surface，压到 16.7ms 需要约 38% 的 CPU 时间下降；这只是翻译线程必要目标，不保证 GPU／整帧已到 60FPS。当前没有一个已证明可删除的 38% 重复工作块。后续先解释完整职责的必要工作量、指令／数据访问成本及串行边界，再决定改动，不能因一个叶函数高频就实施。
+
+| 方向 | 已有预算或证据 | 实施前结论 |
+| --- | --- | --- |
+| 减少错误对象的通知／唤醒 | 已实测 guest wait CPU 约 0.30–0.35→0.08–0.10ms／Surface | 确定的重复工作例子，已保留；不是约 10ms 差距的解释 |
+| 压缩附件 store 使用记录 | 改前整个 planning 约 5–6% NvN 用户样本，候选仅触及追加、scatter 和部分查询 | 不能把整段 planning 当预期收益；不得按记录数量降幅预报 CPU |
+| 改变每 Draw 的资源表示与交付 | binding 整职责约 21–24%；旧表示／descriptor 构造／set bind 混合包络约 7.55–8.99%，其中仍含必要工作 | 优先研究如何降低必要操作成本；共同资源表需要新 shader ABI、物理版本退休和 GPU 索引读取，尚无净预算，不直接大改 |
+| 合并合法的连续绘制 | 现有 2312 Draw 记录严格相同状态连续组为 0；仅放松 IBO offset 最多 174 个入口 | 174 不是已证明合法合批数，更不是可省 7.5% CPU；不重排透明、query、Storage 或 alias 依赖 |
+| 指令和数据局部性 | 已有历史 d148 官方 PMU 可用于线索；尚不能套成当前 f75 的比例 | 独立只读复核整条热路径、编译内联／代码体积和既有实验；先给可触及预算，不先加缓存 |
+
+`dc515d0` 已实现不跨 clear 边界的同类使用记录压缩：查询需要的是覆盖前是否发生过使用，保留同一连续段的最后序号即可。真实 Draw、资源消费、同步与 GPU 生命周期不变；复用旧 bucket 字段，额外全局状态 12B，无新增线程、GPU Buffer 或常驻缓存。6 项宿主 GPU/CoreSYNC/ASan 正例与必要负例通过，原始 NSO 重新生成并独立 verify28，Android canonical 及完整实际 APP 预处理闭包均核验。
+
+Q735 候选与紧邻父版两次真实游戏事务已完成原三段移动、各 3 份 30 秒 FP／5 份 8 秒 Perfetto、save2／停止／原包资源恢复。根查看四张实际 HUD，未见明显黑块或缺画面；不是全场景验收。257 个分析与原始引用独立核对，官方工具均终态 0。
+
+| 全部窗口 | 候选 dc515d0 | 紧邻父版 f75 |
+| --- | --- | --- |
+| 五窗 NvN Running／Surface，ms | 27.751 / 27.379 / 27.280 / 26.884 / 27.820 | 27.908 / 27.446 / 27.666 / 27.944 / 27.777 |
+| 三个独立 FP 的完整 planning 用户样本占比 | 5.810 / 6.112 / 5.135% | 5.875 / 5.527 / 5.708% |
+| 原端点 bracket 的存储记录／guest submit | 716–721 | 14355–14405 |
+| 同 bracket 的真实 Draw／guest submit | 2337–2343 | 2311–2318 |
+
+记录约少 95%，但正向状态／descriptor 解释仍存在，planning 占比重叠。五窗加权描述性 CPU 为 27.422 对 27.748ms，差约 0.326ms；无 record 的两个 bookend 仅差 0.057ms。候选坐标 5224/6295、PSO181，父版 5221/6300、PSO180，虽然各轮固定 .60／2750×1260／target60，实际工作仍不同；不宣称净 CPU、FPS、PSS 或温度收益。保留已证明减少表示工作的独立候选，不用未涨帧否决机制，也不把它升格为主要提速成果。尚未合入默认运行时。
+
+补正之前的 queue-lock 数据缺口：实际 marker 是 `Vulkan submit queue lock`，旧 SQL 查 `Vulkan queue lock` 导致空结果。复用原十窗修正 selector 后，其获取锁 scope 约 0.0142–0.0157ms／Surface；最新候选也约 0.0141–0.0148ms。不能再说此 marker 未采到，也不能据此排除其他资源或驱动锁。最新五窗回放主要处于 Running，而非长时间睡眠，不继续把该提交锁当主要 CPU 差距。
+
+证据：`.local/logs/store-use-frontier-dc515d0-analysis-v1/ready-agent.json`、`store-use-frontier-dc515d0-root-actual-analysis-review.json`、`f75-submission-representation-readonly-v1/queue-lock-selector-correction/ready-agent.json`（后两项同在 `.local/logs/`）。
+
+### 同停点主堆／NVN 归属：内存优先级单独核算
+
+SDK／NVN 同一 PID15201、stop2、memfd inode79735 的快照成功；540 份原文件 SHA／长度核对，原 SDK 分区解码和官方 LLDB 本地 DWARF 字段重放完成。SDK allocated 的两处 CPU 映射 present 并集约 1415.379MiB，其中当前 7 个 NVN Pool 内 447.016MiB（31.58%）、外 968.363MiB（68.42%）。根重算所有 allocated span 的逻辑／present 及 Pool 交集、互不重叠和 Buffer 合并总数，精确一致。
+
+最大的两个非 Pool span 为 250MiB 全 present 与 260MiB 中 132.363MiB present，合计 382.363MiB；快照没有分配调用栈或对象类型，不能按尺寸称作材质／缓存。当前已 free 的 684.746MiB 中两 CPU view 的 present 并集仅 11.637MiB，不能从逻辑 free 直接预支数百 MiB 回收。Buffer 导入范围相加 569MiB、合并后 347MiB，其差 222MiB 是区间重叠，不能当双份物理 RAM。
+
+原设备 API36 libc 的 mutex 解锁只清首 16bit，+2 的诊断半字保留；已通过实际 libc SHA 和官方 LLVM 指令核验，采集工具改为该设备精确 ABI 限定，保留首轮失败记录。没有改运行时锁／游戏分配器，没有目标函数调用、写入或回收。当前缺分配发生前的来源栈，事后 attach 不能补出旧分配；可用官方 LLDB 原 Allocate 公共返回点只读取参数／返回值／caller 栈，但软件条件断点会对每次分配陷入，不能混入 CPU 对照采集。
+
+这些是内存所有权调查结果，不是翻译线程 CPU 优化成果；CPU 和内存账不能互相冒充。PTE present 不是 PSS、唯一物理 RAM、GPU 全驻留或可回收证明；当前 registry 不含已移除但仍在途的 Pool。Q 原包／资源恢复且 PID 已核为空；Mali 仍暂停，A650 不新增设备实验。
+
+证据：`.local/logs/sdk-free-pool-ownership-Q735-v2-offline-analysis-v1/report.md`、`sdk-free-pool-ownership-Q735-v1/root-actual-review.json`、`sdk-large-nonpool-origin-readonly-v1/report.txt`（后两项同在 `.local/logs/`）。
