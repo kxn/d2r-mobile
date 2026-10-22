@@ -98,6 +98,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeQueryPerDrawReference(boolean reference);
     private android.window.OnBackInvokedCallback backCallback;
     private static boolean hostStarted, readbackBatchFixtureStarted;
+    private static boolean desktopProfileResolved;
+    private static VerifiedStartupProfile desktopProfile;
+    private boolean desktopProfileRejected;
     private boolean started, resumed;
     private SurfaceHolder surfaceHolder;
     private TouchControls touchControls;
@@ -147,8 +150,52 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         android.util.Log.i("D2RDisplay", "requested refresh=" + hz +
                 " mode=" + params.preferredDisplayModeId + " observed=" + display.getRefreshRate());
     }
+    private boolean applyDesktopStartupProfile() {
+        android.content.Intent incoming = getIntent();
+        boolean explicit = incoming.getExtras() != null && !incoming.getExtras().isEmpty();
+        if (!VerifiedStartupProfile.ordinaryLauncher(incoming.getAction(),
+                incoming.hasCategory(android.content.Intent.CATEGORY_LAUNCHER), explicit)) return true;
+        // An explicitly launched native host cannot acquire a new cold policy
+        // through a later Activity recreation or a launcher tap.
+        if (!desktopProfileResolved && hostStarted) return true;
+        try {
+            if (!desktopProfileResolved) {
+                desktopProfile = VerifiedStartupProfile.load(new File(getFilesDir(), "runtime"),
+                        new File(getApplicationInfo().sourceDir), android.os.Build.FINGERPRINT);
+                String[] splits = getApplicationInfo().splitSourceDirs;
+                if (desktopProfile != null && splits != null && splits.length != 0)
+                    throw new java.io.IOException("Installed startup profile requires a monolithic APK");
+                desktopProfileResolved = true;
+                android.util.Log.i("D2RLaunchProfile", desktopProfile == null
+                        ? "Desktop launch: original platform defaults; no installed profile"
+                        : "Desktop launch: " + desktopProfile.name);
+            }
+            if (desktopProfile != null) {
+                android.content.Intent selected = new android.content.Intent(incoming);
+                for (java.util.Map.Entry<String, Object> row : desktopProfile.extras.entrySet()) {
+                    Object value = row.getValue();
+                    if (value instanceof Boolean) selected.putExtra(row.getKey(), ((Boolean)value).booleanValue());
+                    else if (value instanceof Long) selected.putExtra(row.getKey(), ((Long)value).longValue());
+                    else selected.putExtra(row.getKey(), (String)value);
+                }
+                setIntent(selected);
+            }
+            return true;
+        } catch (java.io.IOException error) {
+            desktopProfileRejected = true;
+            android.util.Log.e("D2RLaunchProfile", "Desktop launch profile rejected", error);
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("启动配置 / Launch profile")
+                    .setMessage("运行配置与当前安装不匹配，请重新部署。\nProfile mismatch. Please redeploy.")
+                    .setCancelable(false)
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> finish())
+                    .show();
+            return false;
+        }
+    }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        if (!applyDesktopStartupProfile()) return;
         if (getIntent().getBooleanExtra("readback_batch_test", false)) {
             if (saved != null || hostStarted || readbackBatchFixtureStarted || sharedImageFixtureStarted ||
                     !getIntent().hasExtra("run_game") || getIntent().getBooleanExtra("run_game", true) ||
@@ -414,7 +461,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         input.requestFocus();
     }
     @Override protected void onDestroy() {
-        if (sharedImageFixture) { super.onDestroy(); return; }
+        if (sharedImageFixture || desktopProfileRejected) { super.onDestroy(); return; }
         if (android.os.Build.VERSION.SDK_INT >= 33 && backCallback != null)
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
         keyboardHandler.removeCallbacks(keyboardPoll);
@@ -425,6 +472,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (desktopProfileRejected) return;
         if (readbackBatchFixtureStarted || intent.hasExtra("readback_batch_test")) {
             android.util.Log.w("D2RVulkan", "Readback oracle is cold-process-only; ignoring new Intent");
             return;
@@ -639,7 +687,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onResume() {
         super.onResume();
-        if (sharedImageFixture) return;
+        if (sharedImageFixture || desktopProfileRejected) return;
         resumed = true;
         lastThermalStatus = -1;
         thermalPolicy.setActive(started);
@@ -671,16 +719,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (sharedImageFixture) return;
+        if (sharedImageFixture || desktopProfileRejected) return;
         nativeTrimMemory();
     }
     @Override public void onLowMemory() {
         super.onLowMemory();
-        if (sharedImageFixture) return;
+        if (sharedImageFixture || desktopProfileRejected) return;
         nativeTrimMemory();
     }
     @Override protected void onPause() {
-        if (sharedImageFixture) { super.onPause(); return; }
+        if (sharedImageFixture || desktopProfileRejected) { super.onPause(); return; }
         resumed = false;
         thermalPolicy.setActive(false);
         if (textDialog != null) textDialog.dismiss();
