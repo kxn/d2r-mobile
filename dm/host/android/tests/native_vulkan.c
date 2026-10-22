@@ -2490,7 +2490,9 @@ int dm_vulkan_test_main(void) {
   deferred_mip_clear_test(controls[0],controls[1],controls[5],controls[9],controls[2]);
   logical_preflight_test(controls[3],controls[4]);
   pending_cpu_read_test();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   driver_compact_key_test();
+#endif
   buffer_visibility_intersection_test(controls[0],controls[5]);
   texel_storage_bits_test(controls[0]);
   compute_sample_layout_test();

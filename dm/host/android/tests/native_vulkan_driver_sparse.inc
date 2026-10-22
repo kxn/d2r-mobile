@@ -80,23 +80,23 @@ static void driver_sparse_key_test(void) {
     uint64_t before_last,before_content,before_misses;
     vk_driver_constant_stats(&before_last,&before_content,&before_misses,&reference);
     mtl_sub_begin();S=(vk_state){0};driver_fixture_seed(5,0,storage);
-    S.tex[5][0]=2;S.tex[5][1]=0x10203040;S.tex[5][4]=0x50607080;S.samp[5][0]=0xabcdef;
+    driver_fixture_bind_handle(5,0,0,2);driver_fixture_bind_handle(5,0,1,0x10203040);driver_fixture_bind_handle(5,0,4,0x50607080);driver_fixture_bind_handle(5,1,0,0xabcdef);
     vk_state initial=S;
     for(unsigned seq=0;seq<12;seq++) {
       unsigned which=seq>=10?seq-6:seq==3?1:seq==6||seq==7?2:seq>=8?3:0;
       if(seq==1) {
         // Same shader/read-set, every other binding can legitimately change.
-        S.tex[5][87]^=0x1223;S.samp[5][37]^=0x4567;S.img[5][6]^=0x8899;
-        S.ssbo[5][2].addr^=UINT64_C(1)<<40;S.ubo[5][8].size^=0x7788;
+        driver_fixture_bind_handle(5,0,87,S.tex[5][87]^0x1223);driver_fixture_bind_handle(5,1,37,S.samp[5][37]^0x4567);driver_fixture_bind_handle(5,2,6,S.img[5][6]^0x8899);
+        driver_fixture_bind_buffer(5,2,0,S.ssbo[5][2].addr^(UINT64_C(1)<<40),S.ssbo[5][2].size);driver_fixture_bind_buffer(5,8,1,S.ubo[5][8].addr,S.ubo[5][8].size^0x7788);
       }
-      if(seq==2){S.tex[5][0]^=1;S.tex[5][1]^=0x31415;S.ubo[5][3].size^=0x9292;}
-      if(seq==4)S=initial; // Direct upstream-style restore: no dirty epoch.
-      if(seq==5){S.tex[5][0]^=UINT64_C(1)<<60;S.ssbo[5][4].size^=UINT64_C(1)<<48;}
-      if(seq==6)S.tex[5][0]=18;
-      if(seq==7){S.tex[5][0]=23;S.tex[5][87]^=0x5a5a;} // Unknown indexing keeps full-key path.
-      if(seq==9){S.tex[5][30]^=0xffff;S.samp[5][1]^=0xeeee;}
+      if(seq==2){driver_fixture_bind_handle(5,0,0,S.tex[5][0]^1);driver_fixture_bind_handle(5,0,1,S.tex[5][1]^0x31415);driver_fixture_bind_buffer(5,3,1,S.ubo[5][3].addr,S.ubo[5][3].size^0x9292);}
+      if(seq==4)vk_state_restore(&initial); // Direct upstream-style restore: no dirty epoch.
+      if(seq==5){driver_fixture_bind_handle(5,0,0,S.tex[5][0]^(UINT64_C(1)<<60));driver_fixture_bind_buffer(5,4,0,S.ssbo[5][4].addr,S.ssbo[5][4].size^(UINT64_C(1)<<48));}
+      if(seq==6)driver_fixture_bind_handle(5,0,0,18);
+      if(seq==7){driver_fixture_bind_handle(5,0,0,23);driver_fixture_bind_handle(5,0,87,S.tex[5][87]^0x5a5a);} // Unknown indexing keeps full-key path.
+      if(seq==9){driver_fixture_bind_handle(5,0,30,S.tex[5][30]^0xffff);driver_fixture_bind_handle(5,1,1,S.samp[5][1]^0xeeee);}
       S.program=(const prog_t *)&programs[which];
-      S.ssbo[5][15]=(p_bind_buf){.addr=(uintptr_t)(storage+seq*256),.size=16};
+      driver_fixture_bind_buffer(5,15,0,(uintptr_t)(storage+seq*256),16);
       uint32_t a=(uint32_t)S.tex[5][0];
       if(which<2 || which>=4) {
         unsigned other=which==1,reg=other?6:4,uboreg=other?5:3;
@@ -143,6 +143,6 @@ static void driver_sparse_key_test(void) {
   CHECK(mode_misses[1]<mode_misses[0]);
   for(unsigned n=0;n<6;n++)CALL(nvnProgramFinalize,&programs[n]);
   CALL(nvnMemoryPoolFinalize,&pool);free(storage);
-  vk_driver_constant_reference(original_reference);vk_descriptor_template_reference(original_template);S=saved;
+  vk_driver_constant_reference(original_reference);vk_descriptor_template_reference(original_template);vk_state_restore(&saved);
   LOG("[vulkan sparse driver fixture] opposite branches, disjoint shader schemas, observed/unobserved changes, direct restore, CS address/UBO banks, dynamic fallback and zero-tail; actual GPU results match full reference and plain/template writes");
 }

@@ -250,6 +250,7 @@ struct vk_shader_submission {
   constant_copy *constant_copies[1024], *readonly_storage_copies[1024];
   driver_constant *driver_constants[1024];
   driver_constant *driver_last[6][2];
+  uint64_t driver_last_version[6][2];
   driver_arena *driver_arenas[2],*driver_arena_current[2];
   descriptor_content descriptor_last[6];
   descriptor_history_entry *descriptor_history[DESCRIPTOR_HISTORY_SLOTS];
@@ -1009,6 +1010,7 @@ void vk_shader_recycle(vk_shader_submission *state) {
   if (binding_state == state)
     die("Vulkan recycling recording descriptor resources");
   memset(state->driver_last,0,sizeof state->driver_last);
+  memset(state->driver_last_version,0,sizeof state->driver_last_version);
   memset(state->descriptor_last,0,sizeof state->descriptor_last);
   memset(state->descriptor_shader_hints,0,sizeof state->descriptor_shader_hints);
   if(!++state->descriptor_history_epoch)die("Vulkan descriptor history epoch overflow");
@@ -1233,8 +1235,8 @@ void vk_test_idle_driver_store(const uint8_t *data,size_t bytes,vk_buffer *buffe
   driver_arena_store(&copy,data,bytes);*buffer=*copy.buffer;*offset=copy.offset;
 }
 #endif
-// Only these bytes vary in the driver ABI. Build exact keys from current S on
-// every call, including direct state restores; no dirty-generation prediction.
+// Only these bytes vary in the driver ABI. Build exact keys from current S
+// when a state version rejects the last immutable table, including restores.
 // c0 packs address:u64,size:u32 (the ABI record's remaining u32 is zero).
 // c2 packs low-u32 handles (the ABI cell's upper u32 and all gaps are zero).
 static size_t driver_key_build(int slot,unsigned stage,uint8_t key[1056]) {
@@ -1402,14 +1404,26 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset,uint64_t *ran
   // Immutable host-generated tables: keys and GPU bytes remain frozen until
   // this physical submission completes. Slot/stage are independent identities.
   if (slot == 0 || slot == 2) {
-    // Key dies at a hit, or is frozen in copy before miss expansion. Share
-    // scratch storage so hits do not add another 1056 bytes to the stack.
-    union { uint8_t key[1056],data[0xa00]; } scratch;
-    uint8_t *key=scratch.key,*driver_data=scratch.data;
     int reference=binding_state->driver_reference;
     if(!binding_state->driver_span_reference && !reference && !driver_arena_reference() && s->driver_span_module==s->module &&
         s->driver_span[slot/2]==4096 && V.props.limits.minUniformBufferOffsetAlignment<=4096)*range=4096;
     const vk_driver_schema *schema=reference?NULL:s->driver_schema[slot/2];
+    driver_constant **last=&binding_state->driver_last[s->stage][slot/2];
+    uint64_t version=vk_driver_state_versions[s->stage][slot/2];
+    uint64_t *last_version=&binding_state->driver_last_version[s->stage][slot/2];
+    // Only this submission owns these immutable bytes/arenas. Schema and
+    // effective range are selected afresh (including module span authority).
+    // Resource consumers still run in the surrounding binding path.
+    if(!reference && *last && *last_version==version &&
+        (*last)->schema==schema && (*last)->range==*range) {
+      shader_recorded.driver_last_hits += 1;
+      *offset=(*last)->offset;return (*last)->buffer;
+    }
+    if(reference)*last_version=0;
+    // Key dies at a hit, or is frozen in copy before miss expansion. Share
+    // scratch storage so hits do not add another 1056 bytes to the stack.
+    union { uint8_t key[1056],data[0xa00]; } scratch;
+    uint8_t *key=scratch.key,*driver_data=scratch.data;
     size_t bytes;
     const uint8_t *content;
     if(reference) {
@@ -1418,8 +1432,8 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset,uint64_t *ran
     } else {
       bytes=schema?driver_sparse_key_build(schema,slot,s->stage,key):driver_key_build(slot,s->stage,key);content=key;
     }
-    driver_constant **last=&binding_state->driver_last[s->stage][slot/2];
     if(!reference&&*last&&(*last)->schema==schema&&(*last)->range==*range&&!memcmp((*last)->data,content,bytes)) {
+      *last_version=version;
       shader_recorded.driver_last_hits += 1;
       *offset=(*last)->offset;
       return (*last)->buffer;
@@ -1439,11 +1453,14 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset,uint64_t *ran
       if (copy->hash == hash && copy->slot == slot && copy->stage == s->stage && copy->schema==schema && copy->range==*range &&
           !memcmp(reference?copy->buffer->map+copy->offset:copy->data,content,bytes)) {
         *last=copy;
+        if(!reference)*last_version=version;
         shader_recorded.driver_content_hits += 1;
         *offset=copy->offset;
         return copy->buffer;
       }
-    return driver_constant_create(s,slot,offset,*range,reference,schema,hash,content,bytes,driver_data,bucket,last);
+    vk_buffer *buffer=driver_constant_create(s,slot,offset,*range,reference,schema,hash,content,bytes,driver_data,bucket,last);
+    if(!reference)*last_version=version;
+    return buffer;
   }
   vk_buffer *b = vk_temp_buffer(65536);
   memset(b->map, 0, 65536);

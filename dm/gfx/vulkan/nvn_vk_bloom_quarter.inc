@@ -32,6 +32,19 @@ static int bq_restore_reg=-1;
 static uint64_t bq_restore_handle;
 static int bq_restore_color;
 static color_st bq_original_color;
+static void bq_bind_texture(unsigned reg,uint64_t handle) {
+  if((uint32_t)S.tex[1][reg]!=(uint32_t)handle)vk_driver_state_invalidate(1,2);
+  S.tex[1][reg]=handle;
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static int bq_driver_fixture_reg=-1;
+static uint64_t bq_driver_fixture_handle;
+void vk_test_driver_bloom_begin(unsigned reg,uint64_t handle) {
+  if(reg>=128 || bq_restore_reg>=0 || bq_restore_color || bq_driver_fixture_reg>=0)
+    die("Vulkan driver bloom fixture ownership");
+  bq_driver_fixture_reg=reg;bq_driver_fixture_handle=handle;
+}
+#endif
 static unsigned bq_failure;
 static char bq_failure_shader[17];
 void vk_bloom_quarter_enabled(int enabled) { atomic_store(&bq_requested,!!enabled); }
@@ -192,8 +205,8 @@ static int bq_shadow(vk_state *state,uint32_t op,const void *payload) {
   case OP_BIND_VATTR:{const p_bind_vattr *p=payload;if(p->first<0||p->n<0||p->first+p->n>16)return 0;memcpy(state->attr+p->first,p->st,p->n*sizeof *p->st);return 1;}
   case OP_BIND_VSTREAM:{const p_bind_vstream *p=payload;if(p->first<0||p->n<0||p->first+p->n>16)return 0;memcpy(state->stream+p->first,p->st,p->n*sizeof *p->st);return 1;}
   case OP_BIND_VBUF:{const p_bind_vbuf *p=payload;if(p->first<0||p->n<0||p->first+p->n>16)return 0;memcpy(state->vertex+p->first,p->r,p->n*sizeof *p->r);return 1;}
-  case OP_BIND_UBO:case OP_BIND_SSBO:{const p_bind_buf *p=payload;if(p->stage<0||p->stage>=6||p->index<0||p->index>=16)return 0;(op==OP_BIND_UBO?state->ubo:state->ssbo)[p->stage][p->index]=*p;return 1;}
-  case OP_BIND_TEX:case OP_BIND_SAMP:case OP_BIND_IMG:{const p_bind_handles *p=payload;int max=op==OP_BIND_IMG?32:128;if(p->stage<0||p->stage>=6||p->first<0||p->n<0||p->first+p->n>max)return 0;if(op==OP_BIND_IMG)memcpy(state->img[p->stage]+p->first,p->h,p->n*8);else memcpy((op==OP_BIND_TEX?state->tex:state->samp)[p->stage]+p->first,p->h,p->n*8);return 1;}
+  case OP_BIND_UBO:case OP_BIND_SSBO:{const p_bind_buf *p=payload;if(p->stage<0||p->stage>=6||p->index<0||p->index>=16)return 0;if(state==&S && (op==OP_BIND_SSBO || p->stage==5))vk_driver_state_invalidate(p->stage,0);(op==OP_BIND_UBO?state->ubo:state->ssbo)[p->stage][p->index]=*p;return 1;}
+  case OP_BIND_TEX:case OP_BIND_SAMP:case OP_BIND_IMG:{const p_bind_handles *p=payload;int max=op==OP_BIND_IMG?32:128;if(p->stage<0||p->stage>=6||p->first<0||p->n<0||p->first+p->n>max)return 0;if(state==&S && p->n && p->first<(op==OP_BIND_IMG?8:128))vk_driver_state_invalidate(p->stage,2);if(op==OP_BIND_IMG)memcpy(state->img[p->stage]+p->first,p->h,p->n*8);else memcpy((op==OP_BIND_TEX?state->tex:state->samp)[p->stage]+p->first,p->h,p->n*8);return 1;}
   case OP_VIEWPORTS:{const p_viewports *p=payload;if(p->first<0||p->n<0||p->first+p->n>16)return 0;memcpy(state->viewport+p->first,p->v,p->n*sizeof *p->v);state->has_viewport=1;return 1;}
   case OP_DEPTH_RANGE:{const p_depth_range *p=payload;state->depth_range[0]=p->n;state->depth_range[1]=p->f;return 1;}
   case OP_BLEND_COLOR:memcpy(state->blend_color,((const p_blend_color *)payload)->rgba,16);return 1;
@@ -298,7 +311,7 @@ static __attribute__((noinline)) int bq_prove(vk_shader *list[6],const p_draw *d
           (phase && bq_alias(S.targets.color[0],&out->b1)))break;
     } else if(!bq_shadow(&S,header.op,payload))break;
   }
-  S=original;
+  vk_state_restore(&original);
 
   return success;
 }
@@ -450,7 +463,8 @@ static VK_COLD_PHASE int bq_before_draw_cold(vk_shader *list[6],const p_draw *dr
         !bq_sampler_same(&parameters,&bq.overlay_sampler_parameters)) {
       atomic_fetch_add(&bq_fallbacks,1);return 0;
     }
-    bq_restore_reg=reg;bq_restore_handle=handle;S.tex[1][reg]=bq.b1_handle;
+    bq_restore_reg=reg;bq_restore_handle=handle;
+    bq_bind_texture(reg,bq.b1_handle);
     bq.overlay=NULL;atomic_fetch_add(&bq_redirected,1);return 0;
   }
   bq_chain candidate={0};
@@ -471,6 +485,12 @@ static VK_COLD_PHASE int bq_before_draw_cold(vk_shader *list[6],const p_draw *dr
 }
 static int bq_before_draw(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx) {
   if(bq_restore_reg>=0 || bq_restore_color)die("Vulkan bloom unfinished state restoration");
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(bq_driver_fixture_reg>=0) {
+    bq_restore_reg=bq_driver_fixture_reg;bq_restore_handle=S.tex[1][bq_restore_reg];
+    bq_bind_texture(bq_restore_reg,bq_driver_fixture_handle);bq_driver_fixture_reg=-1;return 0;
+  }
+#endif
   if(bq.generation!=vk_pass_generation())memset(&bq,0,sizeof bq);
   const void *payload=draw?(const void *)draw:(const void *)idx;
   // Keep ordinary/disabled draws in the existing cheap dispatcher. Pending
@@ -481,5 +501,7 @@ static int bq_before_draw(vk_shader *list[6],const p_draw *draw,const p_draw_idx
 }
 static void bq_after_draw(void) {
   if(bq_restore_color) { S.color=bq_original_color;bq_restore_color=0;vk_pipeline_state_changed(); }
-  if(bq_restore_reg>=0) { S.tex[1][bq_restore_reg]=bq_restore_handle;bq_restore_reg=-1; }
+  if(bq_restore_reg>=0) {
+    bq_bind_texture(bq_restore_reg,bq_restore_handle);bq_restore_reg=-1;
+  }
 }
