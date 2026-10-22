@@ -230,6 +230,21 @@ class Flow(unittest.TestCase):
         for extra in ({'DWARF_bytes': 49152}, {'keep_failed_debug_info': True}, {'callgraph': 'dwarf'}):
             bad = copy.deepcopy(fp); bad['official_cpu_aa'].update(extra)
             with self.assertRaises(AssertionError): exec(code, {'p': bad, 'require': require})
+        # This is the actual runner A/A block, not only candidate_gate.validate.
+        # A compiler candidate still passes that unchanged gate later in proof().
+        for protocol in (good, fp):
+            for strategy in ('thinlto', 'sample-profile'):
+                compiler = copy.deepcopy(protocol)
+                compiler.pop('native_host_experiment')
+                compiler['native_compiler_experiment'] = {'strategy': strategy, 'reviewed': True}
+                exec(code, {'p': compiler, 'require': require})
+                for option in ('official_gpu_tools', 'official_l1i_record', 'sustained_play', 'counter_snapshot'):
+                    bad = copy.deepcopy(compiler); bad[option] = True
+                    with self.assertRaises(AssertionError): exec(code, {'p': bad, 'require': require})
+            for modes in ({}, {'native_host_experiment': {'reviewed': True},
+                               'native_compiler_experiment': {'strategy': 'sample-profile'}}):
+                bad = copy.deepcopy(protocol); bad.pop('native_host_experiment'); bad.update(modes)
+                with self.assertRaises(AssertionError): exec(code, {'p': bad, 'require': require})
         for option in ('official_gpu_tools', 'official_l1i_record', 'counter_snapshot'):
             bad = copy.deepcopy(good); bad[option] = True
             with self.assertRaises(AssertionError): exec(code, {'p': bad, 'require': require})

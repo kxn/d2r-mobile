@@ -3,6 +3,7 @@ These tests are not canonical builds, real candidate receipts, or device proof.
 """
 from pathlib import Path
 import copy
+import ast
 import hashlib
 import importlib.util
 import json
@@ -47,6 +48,23 @@ class Sample(unittest.TestCase):
         self.p['prior_actual_game_qualification']=row(R/'.local/logs/driver-proof-fingerprint-f75de42-Q735-pair-root-functional-review.json')
     def test_same_source_profile_base_and_existing_qualification(self):
         self.assertEqual(self.invoke(),self.runtime)
+    def test_actual_runner_AA_block_and_unchanged_compiler_gate_both_required(self):
+        tree=ast.parse((D/'run-game.py').read_text())
+        node=next(n for n in ast.walk(tree) if isinstance(n,ast.If) and
+                  ast.unparse(n.test)=="'official_cpu_aa' in p")
+        code=compile(ast.Module(body=[node],type_ignores=[]),'<actual-runner-AA-block>','exec')
+        self.p.pop('official_l1i_record')
+        self.p['official_cpu_aa']={'repetitions':3,'record_seconds':30,'sample_frequency_Hz':99,'callgraph':'fp'}
+        self.assertEqual(self.invoke(),self.runtime)
+        exec(code,{'p':self.p,'require':old.require})
+        # Mere possession of the compiler-mode key must never grant qualification.
+        self.review['runtime_C_CPP_source_equal_base']=False
+        with self.assertRaises(RuntimeError):self.invoke()
+        self.review['runtime_C_CPP_source_equal_base']=True
+        self.p['native_host_experiment']={'kind':'resource-preparation','base_runtime':g.SAMPLE_BASE}
+        with self.assertRaises(RuntimeError):exec(code,{'p':self.p,'require':old.require})
+        with self.assertRaises(RuntimeError):self.invoke()
+
     def test_unknown_strategy_fields_or_wrong_parent_fail(self):
         for key,value in [('strategy','arbitrary'),('base_runtime',g.POOL_RUNTIME),('arbitrary_flags',['-O0'])]:
             original=copy.deepcopy(self.p['native_compiler_experiment']);self.p['native_compiler_experiment'][key]=value

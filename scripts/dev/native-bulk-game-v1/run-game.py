@@ -267,10 +267,12 @@ def proof(path, digest):
                 'sample_frequency_Hz': 99, 'DWARF_bytes': 49152, 'keep_failed_debug_info': True} or
                 p['official_cpu_aa'] == {'repetitions': 3, 'record_seconds': 30,
                 'sample_frequency_Hz': 99, 'callgraph': 'fp'})
-                and p.get('performance_tools') and p.get('native_host_experiment')
+                and p.get('performance_tools')
+                and (bool(p.get('native_host_experiment')) !=
+                     bool(p.get('native_compiler_experiment')))
                 and not any(p.get(k) for k in ('official_gpu_tools', 'official_l1i_record',
                     'sustained_play', 'counter_snapshot')),
-                'A/A requires original host qualification and fixed3x30s99Hz DWARF48KiB/debug or separateFP tools only')
+                'A/A requires one reviewed host or compiler qualification and fixed3x30s99Hz DWARF48KiB/debug or separateFP tools only')
     if 'official_gpu_tools' in p:
         gpu = p['official_gpu_tools']
         require(set(gpu) == {'helper', 'config', 'scheduler_helper'} and p.get('performance_tools'),
