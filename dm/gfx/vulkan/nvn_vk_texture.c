@@ -114,7 +114,7 @@ static _Atomic uint64_t rebuildable_private_bytes,private_cache_released_bytes;
 static image *private_image_cursor;
 // Provisional candidate policy, pending original-game footprint review. This
 // limits only live CPU-rebuildable private cache allocations, not RTs/native.
-static uint64_t private_image_budget=512ull<<20;
+static uint64_t private_image_budget=64ull<<20;
 static void image_rebuildable_set(image *i,int rebuildable) {
   i->cpu_rebuildable=rebuildable;
   int account=!!rebuildable && !!i->allocation_bytes;

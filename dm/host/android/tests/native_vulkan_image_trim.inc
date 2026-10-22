@@ -17,6 +17,14 @@ static void image_trim_pixels(NVNtexture *texture,unsigned level,unsigned layer,
   for(unsigned k=0;k<width*width;k++)CHECK(!memcmp(pixels+k*4,color,4));
 }
 static void image_pressure_trim_test(void) {
+#if !defined(DM_ANDROID_APP)
+  // Observe the real startup policy before this fixture overrides it with 0.
+  uint64_t default_total,default_rebuildable,default_budget,default_released;
+  vk_texture_cache_stats(&default_total,&default_rebuildable,&default_budget,&default_released);
+  CHECK(default_budget==(64ull<<20));
+  printf("{\"test_details\":\"private-image-cache-default-budget\",\"budget_bytes\":%llu}\n",
+         (unsigned long long)default_budget);
+#endif
   enum {stride=65536,pool_size=8*stride,id=80};
   uint8_t *storage;CHECK(!posix_memalign((void **)&storage,65536,pool_size));
   memset(storage,0,pool_size);
