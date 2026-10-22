@@ -436,3 +436,26 @@ CPU预检候选成功时省去完整binding iterator、plan重建和逐源resolv
 进一步核对真实 BASE1 日志中的 109 个已加载 shader，其中 108 个带 DDK：原 DDK 的五产物指纹全部与实际资源匹配，但与默认 pixel-local ON 时的 pipeline 指纹匹配数为 0/108；新 DSP 也有相同失配。原因是 public `vk_shader_fingerprint()` 在五产物摘要后追加 DPL，而 DDK/DSP 加载仍直接比较这个扩展后的字段。这是常量证明没有被采纳的静态激活根因，不是新采样或已测 CPU 收益。原始资产、日志及精确计算在 `.local/logs/driver-proof-fingerprint-root-actual-assets-mismatch.json`。
 
 候选 `f75de42` 从真实 dd4 源后继分离这两个身份：创建 shader 时保存额外 32B 原五产物 proof digest，DDK/DSP 比较它；原 public pipeline 指纹、DPL 变化失效及 DSP module token 不变。新的 DPL fragment module 在证明闭包外，保守清除继承的 DDK schema。draw 热路没有新增文件读取、hash 或原子操作。10 组最终实际宿主 GPU/CoreSYNC/ASan 测试通过，原 dd4 二进制对同有效 DPL 资源负控准确复现 schema assertion 失败；它们不代替 Android 验收。根审已核实际源与测试闭包，后续 canonical 和原始 NSO 重建使用新 f75 身份，不重标 dd4 旧产物。正式源记录为 `.local/logs/driver-proof-fingerprint-f75de42-source-ready-root-v3.json`；其中 direct base/source parent 为 dd4，真实 Q09a 比较谱系单列。
+
+### f75 真机范围对照完成：保留容量收益，常量路径退出 CPU 主攻方向
+
+Q735 的 REFERENCE1 与 SPAN0 两次原游戏事务均实际退出 0。使用同一 f75 APK、原始 NSO 重新加工并独立验证的模块、原 950 Shader 库加独立 DSP 补充、f830 驱动、full2838 资源、.60 比例和 2750×1260 输出；输入仅范围开关与输出目录不同。原三段移动、各三份 30 秒 FP 与五份 8 秒 Perfetto、原生命周期 save2、停止和资源恢复全部完成。四张实际 HUD 截图经根目视未见明显缺画面，不代表全部场景或战斗验收。
+
+| 实测项 | 64KiB 范围对照 | 证明合格时 4KiB 候选 | 判断 |
+| --- | --- | --- | --- |
+| after-tools 常量 arena 容量 | 4MiB，8 chunks | 256KiB，8 chunks | 确定少 3.75MiB，减少 93.75%；保留实现 |
+| NvN Running / 完整 Surface 间隔，全部五窗 | 25.983–27.911ms | 26.723–27.806ms | 仍约 26–28ms，未证明整线程提速 |
+| 同窗 CPU 加权频率 | 1473–1545MHz | 1540–1571MHz | 频率不同，不作线性归一或跨窗百分比换毫秒 |
+| Surface 平均间隔，全部五窗 | 33.098–33.186ms | 32.817–32.953ms | 仍约 30FPS，不能称已经解决帧率问题 |
+| 完整 host constant 父职责，占 NvN 用户采样 | 0.468 / 0.567 / 0.605% | 0.599 / 0.769 / 0.558% | 包含子调用及 LLVM 内联归属；不支持继续按大热点投入 |
+| meminfo PSS / swapPSS | 1961278 / 69485KiB | 2046579 / 149KiB | 交换驻留及工作量不同，不能用局部容量差声称整进程 RAM 改善 |
+
+两轮 DDK 激活均已修正，因此这个范围对照不隔离 DDK 修复相对历史 09a 的收益。arena slots 98272 / 100609 为累计工作量，不能当作活槽；不能用历史约 20MiB 与本次 256KiB 直接作同条件比较。两轮 private image allocation 精确同为 344166400B。采样下 draw 总职责仍约 72%，绑定约 21–24%，均含必须保留的实际资源消费。
+
+六份 FP 的实际 ELF BuildID 及完整祖先、六次 MONOTONIC→Perfetto 时钟重叠已核；376 个分析输出逐文件校验，保留全部十窗。present scope 的 wall 约 5.7–7.7ms，但实际 Running 仅约 0.61–0.67ms，不能当作提交 CPU 运算；queue-lock marker 没有数据，不能写成锁开销为零。原厂工具数据不支持再把完整常量路径包装成数毫秒 CPU 优化。
+
+下一项内存调查转向占用更大的 guest 主堆。原 SDK 仍报告约 685MiB 逻辑空闲，但缺少空闲 span 与实际驻留的交集。已准备复用官方 LLDB，在原有每 300 帧统计自然进入、SDK 分配器锁已持有的位置只读元数据，结合两个同 backing CPU 映射的 pagemap；不调用游戏函数或先行回收页面。即使观察到 free-present，也只是 CPU 映射驻留下界，不解除 GPU／文件引用，不直接授权打洞。该快照尚未执行，持续散热和 6GB 稳定启动仍未验收。
+
+原 APK、模块、设置和全部原 Shader 字节已恢复，测试游戏已停止；额外的设备端 Shader 副本也在完整库存核对后删除。Mali 与 6GB 平板未访问。候选仍是独立的已备份分支，不能将测试期间的临时安装说成主线默认包已更新。
+
+实际记录：`.local/logs/driver-proof-fingerprint-f75de42-Q735-pair-root-functional-review.json`、`driver-proof-fingerprint-f75de42-root-official-analysis-review.json`、`driver-proof-fingerprint-f75de42-analysis-v1/{comparison.json,summary.md}`、`SDK-free-resident-snapshot-plan-v1/{plan.md,facts.json}`（均在 `.local/logs/`）。
