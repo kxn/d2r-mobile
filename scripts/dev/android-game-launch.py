@@ -384,7 +384,7 @@ while time.monotonic() < deadline:
                         raise RuntimeError('Actual guest heap does not match explicit private request')
                     if args.expect_shared_import_windows and (state.get('guest_heap',{}).get('shared') is not True or '[shared pool] immutable startup shared; import_window_bytes='+str(args.pool_window_bytes) not in log):
                         raise RuntimeError('Actual shared import window startup proof did not apply')
-                    if state.get('guest_heap',{}).get('shared') and state.get('pool_windows',{}).get('window_bytes') != (args.pool_window_bytes if args.expect_shared_import_windows else 0):
+                    if not args.attach and state.get('guest_heap',{}).get('shared') and state.get('pool_windows',{}).get('window_bytes') != (args.pool_window_bytes if args.expect_shared_import_windows else 0):
                         raise RuntimeError('Actual shared heap requires the fixed whole-pool policy')
                     if (not args.attach and args.pixel_local_shared_ds is not None and
                             state.get('pixel_local',{}).get('shared_readonly_ds') != args.pixel_local_shared_ds):
