@@ -536,3 +536,20 @@ SDK／NVN 同一 PID15201、stop2、memfd inode79735 的快照成功；540 份�
 6GB 的目标仍是实际稳定游玩。旧 A650 记录已证明原游戏能进营地，未改 Mesa、sharedOFF／nativeOFF 时完成4段移动后也失败；另有同 PID GPU hardfault／skipcmd 和 WAITTIMESTAMP 返回 EPROTO71，不是已证 LMK／OOM 启动不足。A6xx＋KGSL4.19 与 Q735 的 A7xx＋6.1 存在真实差异，单靠共享关闭或 forcedSYSMEM 也未消除失败；当前缺 fault shader PC、真实输入 payload 与写入历史，不能凭近似 CP 前端位置指定错误 Draw／资源或盲改 preemption。没有再占用平板实验，也不拿 Q735 的内存端点代替6GB验收。
 
 证据（均在 `.local/logs/`）：`q735-current-locality-readonly-v1/ready.json`、`f75-link-order-feasibility-readonly-v1/ready.json`、`llvm-profgen-perf-prerequisite-retry-v1/ready.json`、`sdk-startup-large-allocation-tools-v1/{source-ready-agent,root-source-review}.json`、`a650-6gb-higher-level-blocker-readonly-v2/result.json`。
+
+### 重复操作之外：按执行次数、数据表示和单次执行成本分别预算
+
+当前没有证据证明还有一个足以解释约10ms差距的可删除重复块。约27ms Running降至16.7ms需要约38%的时间减少，不能以找到几个高频叶函数代替这个预算。以下比例来自既有官方调用树，是研究范围，不能直接兑换毫秒或彼此相加。
+
+| 层次 | 实施前预算 | 下一步及新增成本 |
+| --- | --- | --- |
+| 改变每draw资源表示 | binding总职责21–24%，但旧表示构造／descriptor交付的混合包络仅7.55–8.99%，仍含必要工作 | 研究长寿命typed资源表和每draw参数，使组合变化不必重建整份绑定；现有schema/history/dynamic UBO不重做。必须先界定物理版本、退休、shader ABI及新增GPU索引访存。假设能减半这个包络，也仅是约4%线程的条件估算，尚非预期收益。 |
+| 减少真正进入setup／driver的draw数 | 四类互斥driver记录职责合计7.09–8.86%；当前2312draw记录严格相同状态连续组为0，放松IBO offset最多174个入口 | 合批要同时证明拓扑、offset、query及Storage/alias顺序。跨提交复用已录好的secondary还缺命令generation、稳定descriptor／UBO位置及资源寿命合同，新增不透明驱动内存不能当作零成本；当前不实施命令缓存。 |
+| 降低必要代码本身的成本 | 历史版本L1I相关stall约占18%用户周期；不是当前f75的比例，更不是18%可得提速 | 先用实际样本指导编译器布局／内联，减少热路径取指和分支成本。不得以热函数体积单独下降作成功；完整text、慢路径及实际整线程Running共同核验。 |
+| 继续去重／压缩工作表示 | store记录已从约1.44万降到约720／submit，planning整体仍约5–6%；guest通知已证约0.2ms局部CPU减负 | 保留成立的工作减少，降低继续微调的优先级。新去重候选须先指出尚未覆盖的完整父链和可消除部分，不继续预支整个planning或binding比例。 |
+
+编译工具方面已有实质进展，补正上一节的阶段性限制：LLVM19的`llvm-profgen`原失败不变；另一路原Google AutoFDO `create_gcov --use_lbr=false`已经直接读取同一f75的三份原始FP记录，经NDK原`llvm-profdata`合并为非空sample profile，没有自造分支或手写profile。真实Android draw／shader两个TU使用原APP命令和相同预处理字节，官方优化记录分别出现131／81条正`AppliedSamples`；这是编译器已消费样本的证据，不是样本数、覆盖率或性能收益。两个对象的函数体积并非一致缩小。原转换器65／64／64%的全记录映射ERROR保留，profile含所记录全部APP线程的host DSO，不冒称完整分支或所有场景证明。
+
+默认OFF的原构建入口集成已做真实Android configure-only对照：归一化后的285条编译命令与f75零差异；ON仅为131个host C/C++单元增加显式profile和官方诊断选项，其余154条不变，回OFF恢复原命令。完整canonical、原始NSO重建和真机收益尚未验收，仍不能预报PGO会省多少CPU或达到60帧。CPU前端候选与数据表示研究分开，不把换编译策略当作大结构问题已解决。
+
+证据（均在`.local/logs/`）：`f75-retained-submission-readonly-v1/result.json`、`google-autofdo-nonlbr-f75-qualification-v1/ready.json`、`sample-profile-f75-root-profile-consumption-review.json`、`sample-profile-f75-2tu-independent-review-v1/ready.json`、`sample-profile-f75-2tu-root-machine-review-v1/result.json`、`host-sample-profile-integration-v1/actual-ON-versus-OFF-flags.json`。
