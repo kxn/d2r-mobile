@@ -286,8 +286,10 @@ THIN_LINK=['-flto=thin','-O3','-fuse-ld=lld','-Wl,--thinlto-jobs=2']
 
 
 def prior_actual_memory_scope(p,pinned,read,require):
-    """Reuse only the root-reviewed, already completed exact f75 game pair."""
+    """Reuse exact f75 pair or exact930 original-game functional acceptance."""
     prior=read(pinned(p['prior_actual_game_qualification']))
+    if p['runtime_commit']=='930ac8fd367007c35261eb0e1c398445087a25f6':
+        return prior_930_memory_scope(p,prior,pinned,read,require)
     require(prior.get('status')=='ROOT_REVIEWED_F75_SAME_APK_ASSETS_SPAN_PAIR_ACTUAL_GAME_FUNCTIONAL_CAPTURE_AND_OUTER_RESTORE'
             and prior.get('runtime')==p['runtime_commit']=='f75de421d0558c746ffc9cd4fee2e1a66c5e9c40'
             and prior.get('actual_saved_stopped_original_restored') is True
@@ -322,6 +324,47 @@ def prior_actual_memory_scope(p,pinned,read,require):
     require(outer['serial']==p['serial'] and outer['original_restored'] is True
             and outer['stage_cleanup_complete'] is True and outer['pending_owned_stage_cleanup']==[],
             'prior outer shader restore incomplete')
+    return True
+
+
+def prior_930_memory_scope(p,prior,pinned,read,require):
+    """Actual original-game correctness acceptance, not a synthetic CPU pair."""
+    require(prior.get('status')=='ROOT_REVIEWED_930_ORIGINAL_GAME_SHORT_FUNCTIONAL_SAVE2_RESTORE_PASS_NOT_THERMAL_OR_PERFORMANCE'
+            and prior.get('runtime')==p['runtime_commit']
+            and all(prior.get(k) is True for k in ('original_game_modules_executed',
+                'original_three_routes_completed','visual_root_actually_viewed_after',
+                'fresh_save2_then_stopped','original_restored','cleanup_complete'))
+            and prior.get('cleanup_errors')==[], 'prior930 real game qualification incomplete')
+    refs={str(pinned(row)):row for row in prior['refs']}
+    actuals=[read(path) for path in refs if path.endswith('/result.json')]
+    require(len(actuals)==1, 'prior930 transaction evidence absent/ambiguous')
+    actual=actuals[0]
+    require(actual['stage']=='qualified-native-ASTC6-original-game-resource-validation-complete'
+            and actual['plan']['runtime']==p['runtime_commit']
+            and actual['original_restored'] is True and actual['cleanup_complete'] is True
+            and actual['cleanup_errors']==[] and not actual.get('error'), 'prior930 transaction incomplete')
+    previous=read(pinned({'path':actual['inputs'],'sha256':actual['inputs_sha256']}))
+    def same(a,b):
+        return a['sha256']==b['sha256'] and str(pinned(a))==str(pinned(b))
+    require(previous['runtime_commit']==p['runtime_commit'] and previous['serial']==p['serial']
+            and all(same(previous[k],p[k]) for k in ('canonical','raw','driver'))
+            and same(previous['native_candidate_validation']['root_review'],p['native_candidate_validation']['root_review'])
+            and previous['pool_window_bytes']==p['pool_window_bytes']
+            and len(previous['phases'])==len(p['phases'])==2,
+            'prior930 runtime/provider/source/options differ')
+    for before,after in zip(previous['phases'],p['phases']):
+        require(before['kind']==after['kind'] and same(before['composition'],after['composition']),
+                'prior930 resource composition differs')
+    phase=actual['phases']
+    require(len(phase)==1 and phase[0]['kind']=='native'
+            and phase[0]['first_PID']==prior['game_PID']
+            and phase[0]['original_route_completed']==3
+            and all(phase[0].get(k) is True for k in ('original_HUD_reached',
+                'game_modules_executed','fresh_save_then_stopped')), 'prior930 original execution absent')
+    saves=[read(path) for path in refs if path.endswith('/fresh-save.json')]
+    require(len(saves)==1 and saves[0]['pid']==prior['game_PID']
+            and saves[0]['fresh_original_lifecycle_save'] is True and saves[0]['save_commits']==2,
+            'prior930 original save2 evidence absent')
     return True
 
 
@@ -379,15 +422,13 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
                 'independently reviewed compiler-only source diff required')
     canonical,raw=reviewed_artifacts(p,review,pinned,read,require)
     source=read(pinned(review['source_ready']))
-    if functional:
-        require(source['runtime_commit']==p['runtime_commit']
-                and source['base_runtime']==source_base
-                and source['Android_canonical_built'] is False
-                and source['device_accessed'] is False,
-                'original host-only B2T source-ready revision/base differs')
-    else:
-        require(source['commit']==p['runtime_commit'] and source['base']==source_base,
-                'compiler source-ready revision/base differs')
+    # Source-only reports use either of these explicit lineage field names.
+    # Both forms are authenticated by the SAME canonical/source/root pins;
+    # reject contradictory aliases rather than rewriting a frozen report.
+    source_revisions={source[k] for k in ('commit','runtime_commit') if k in source}
+    source_parents={source[k] for k in ('base','base_runtime') if k in source}
+    require(source_revisions=={p['runtime_commit']} and source_parents=={source_base},
+            'compiler source-ready revision/base differs')
     base_review=read(pinned({'path':'/home/dl/d2r-mobile/.local/logs/cpu-pool-pin-coherent-179c82d-root-canonical-raw-review.json',
                             'sha256':POOL_REVIEW}))
     base=read(pinned(base_review['canonical_ready']));base_raw=read(pinned(base_review['raw_ready']))

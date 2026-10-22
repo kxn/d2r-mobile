@@ -188,10 +188,19 @@ def startup_allocation_result(result, pid):
             'early allocator capture / owned cleanup incomplete')
 
 
-def readonly_memory_snapshot_result(result):
+def readonly_memory_snapshot_result(result, inputs=None):
     require(result.get('snapshot_complete') is True and result.get('inferior_calls') is False
             and result.get('owned_PID_TracerPid_zero_after_cleanup') is True
             and result.get('cleanup_errors') == [], 'read-only memory snapshot / detach incomplete')
+    if inputs is not None:
+        config=read(pinned(inputs['readonly_memory_snapshot']['config']))
+        if 'main_arena_origins' in config:
+            arena=result.get('snapshot',{}).get('main_arena_origins',{})
+            require(arena.get('complete') is True
+                    and arena.get('status')=='SAME_SDK_STOP_MAIN_ARENA_ORIGINS_COMPLETE'
+                    and arena.get('inferior_calls') is False and arena.get('errors')==[]
+                    and 0<arena.get('metadata_acquisition_bytes',0)<=850,
+                    'requested same-stop arena ownership incomplete; base SDK completeness is insufficient')
 
 
 def proof(path, digest):
@@ -654,7 +663,7 @@ def phase_game(dev, out, phase, p, token):
             with (snapshot_out / 'console.txt').open('w') as log:
                 subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
             snapshot_result = read(snapshot_out / 'debugger-result.json')
-            readonly_memory_snapshot_result(snapshot_result)
+            readonly_memory_snapshot_result(snapshot_result,p)
             d['readonly_memory_snapshot'] = snapshot_result
             if p.get('startup_allocation_capture'):
                 require(d['startup_allocation_capture']['PID']==snapshot_result['PID']==int(own),
@@ -707,7 +716,9 @@ def phase_game(dev, out, phase, p, token):
                     'native table unexpectedly present in standard control')
         d['original_HUD_reached'] = True
         d['game_modules_executed'] = True
-        d['scope'] = ('Original-game B2T correctness successor, original threewalks and system residency; no CPU/GPU timing or sustained-play acceptance'
+        d['scope'] = ('Prior-qualified original-game same-stop SDK/Pool/arena memory ownership; no CPU/GPU timing or reclaim permission'
+                      if p.get('readonly_memory_snapshot') and not p.get('performance_tools') else
+                      'Original-game B2T correctness successor, original threewalks and system residency; no CPU/GPU timing or sustained-play acceptance'
                       if p.get('native_functional_validation') else
                       'Native-only shortcandidate functional/officialCPU validation; not matchedpair or thermalproof'
                       if p.get('native_candidate_validation') else
@@ -824,7 +835,7 @@ def main():
             plan['official_performance'] = dict(p['official_cpu_aa'],
                 Perfetto_seconds=8, Perfetto_only_bookends=2, concurrent_record_traces=3,
                 overlap='Requires offline official sample MONOTONIC and Perfetto clock_snapshot mapping',
-                scope='Samebinary A/A and measurement disturbance; no new optimization or FPS gain claim')
+                scope='Three independent samples of this run binary; cross-version comparisons require separately pinned runs; no gain claim')
             plan['scope'] = 'Same runtime originalgame/PID/camp:3x30s officialrecord and5x8s Perfetto; original save2/CAS'
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
     if p.get('readonly_memory_snapshot'):
@@ -832,7 +843,7 @@ def main():
         plan['scope'] += '; pinned read-only LLDB snapshot after route/tools, before system residency'
     if 'driver_span_reference' in p:
         plan['driver_span_reference_requested'] = driver_span_policy(p)
-        plan['scope'] += '; cold span-only OFF/ON with identical APK/shader assets; shader deployment is external'
+        plan['scope'] += '; immutable startup driver-span policy; shader deployment is external'
     if 'shared_image_raw_observe' in p:
         plan['shared_image_raw_observe_requested'] = bool(p['shared_image_raw_observe'])
         plan['scope'] += '; cold shared-image-raw-observe OFF/ON; separate launches, no hot switch'
@@ -866,6 +877,8 @@ def main():
     if p.get('native_functional_validation'):
         plan['scope'] = 'Original-game B2T correctness successor, original threewalks and system residency; no CPU/GPU timing or sustained-play acceptance'
         plan['native_functional_validation'] = p['native_functional_validation']
+    if p.get('readonly_memory_snapshot') and not p.get('performance_tools'):
+        plan['scope'] = 'Prior-qualified original-game same-stop SDK/Pool/arena memory ownership; no CPU/GPU timing or reclaim permission'
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
