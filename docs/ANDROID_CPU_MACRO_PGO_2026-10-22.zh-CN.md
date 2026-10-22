@@ -287,4 +287,32 @@ BOS中池数也有13→8、16→1后再次增长，说明已有删除/重建，�
 
 物理描述符池512候选`52181dc`已完成原Android canonical构建和三个原始NSO的fresh改写、独立verify-only；28产物及全部构建输入经根复核。23项稳定模块/规则产物与父886逐字节相同，实际七个APP预处理单元和六库签名/16KiB/原导出闭包通过。唯一生产语义变化仍是`descriptor_create`物理增长块上限512，原2048留存阈值和异步资源寿命不变。正式APP未泄入新增测试helper、dispatch或错误注入。原GPU测试的Lavapipe不自然强制maxSets，故重试覆盖明确使用最小测试注入；不能把它写成Turnip自然溢出验证。候选分支及产物已备份，下一步用原工具进行真机内存对照；216→54MiB仍只是同16块条件算术，尚无此候选的真机PSS、CPU或帧率收益。
 
+## 512池块四轮实测与日常交付
+
+上述候选现已完成A1/B1/B2/A2四轮原路线、8秒官方Perfetto、meminfo/showmap、最后原暂停后的VMA，以及存档2次、停止和完整恢复。A为886，B为52181；固定.60、2750×1260、f830、全2838原生资源、950 shaders、1MiB/lazyON/rawOFF/span-referenceON和512MiB图像预算完全相同。
+
+| 端点 | A1 | B1 | B2 | A2 |
+| --- | ---: | ---: | ---: | ---: |
+| Native Heap PSS KiB | 166392 | 143111 | 142107 | 166655 |
+| 整进程PSS KiB | 2025400 | 2002171 | 1984583 | 2039332 |
+| 最后暂停后VMA块数 | 14 | 15 | 15 | 15 |
+| 最后暂停后VMA预留MiB | 380 | 412 | 412 | 412 |
+| NvN Running ms/Surface | 25.155 | 26.339 | 26.293 | 25.984 |
+
+CPU原生堆的减少重复出现，相邻对照分别少22.735/23.973MiB；不能将每个字节都归给描述符。首次B多出的32MiB VMA块同样在A2出现，不能认定为候选独有，也不能把它与不同时点的CPU堆直接相减。GL/EGL mtrack、showmap和前台PSS分别存在变化，未形成162MiB物理驻留节省的证据。候选的两个CPU不利差值亦原样保留；驻核、频率、位置和shader变体有差异，独立8秒窗口不足以隔离稳定CPU成本，不能写成无成本或涨帧。根复核四轮原报告及65项原分析引用，按明确的预留/CPU堆减少机制和无已见内容/生命周期错误保留该候选。原报告位于`.local/logs/descriptor-pool-memory-Q735-v2-analysis/four-round-summary.md`。
+
+Q735日常安装已通过原publisher76512实际终态0：52181完整APK/RAW/模块/profile配对交付，两次无Intent extras普通冷启动PID11113/11965均进原HUD、采用shared/native，并各完成原生命周期存档2次后停止。根随后独立重读八份设备库存、APK/ELF/profile/receipt哈希及无PID/控制器锁，全部与新交付baseline相符。当前APK `c5e953d9…`、ELF `7359af00…`、源码分支`codex/descriptor-pool-block-512-v1`；旧886仅作回退。普通启动仍为原.75/自适应/HUD策略，.60固定仅用于对照。此交付未完成新版本持续战斗、整游戏或6GB资格，不能继承886城镇30分钟的全部范围。
+
+## 外部85133c细节建议的当前核对
+
+已读取`d2r-mobile/d2r-mobile@85133c27f97f81f9ca5ba333975f1c1178675a2f`的原始compute-state、uniform、upload、Vulkan核心、dirty和thread文件；原URL/哈希留存在`.local/src/d2r-mobile-org-85133c-primary/source-records.json`。比较对象为实际52181源，不能只看备份主分支f4f1e38。
+
+- compute绑定去重确为缺口：guest dispatch及query/event/bright/retile共五条入口仍直接绑定；独立候选正在统一处理真实command-buffer begin、secondary执行和内部compute覆盖，不只给guest入口加last指针。
+- c0/c2常量表已有sparse key、last和内容缓存，但last判定仍在key构造后；独立候选研究真正状态变化的提前失效。必须覆盖ghost整体恢复、bloom临时改状态、schema/module/range/reference及异步submission寿命，不能只复制一个global valid位。
+- 非native上传仍逐mip/layer申请staging并Copy，独立候选按有界region合批；保留完整CPU观察/捕获stamp和原hazard，不增加中间像素复制。native直接路径不经过它，不预支稳态绑定收益。
+- 两处纯统计门控`44b072d`已完成源及六个host开/关功能用例：关闭现有bootprof时，mprotect不额外读两次时钟/更新三个统计原子，主线程yield不额外计时；真实保护、generation、2秒BUSY截止及yield原语不变。此时尚未并入新的Android产物，不宣称真机性能收益。
+- 临时Buffer容量分档暂不实施：当前精确尺寸缓存与异步回收已经存在，尚无接近尺寸miss的实证；向上取整增加内存占用，并须独立保留逻辑长度/实际容量，不能为凑优化清单扩大RAM。
+
+另用同一exact886六份原全栈复核Vulkan录制职责：driver self为12.03–14.86% NvN用户采样，已归属命令录制含pass/submit/query/transfer为10.12–12.84%，实际draw发射为3.16–4.00%。它们不是可删除预算，也没有与独立8秒时间相乘。现有pipeline/set/动态offset/VBO/IBO状态复用已生效，旧533严格同状态组为零的反例不能冒充新886帧。更宽间接绘制还需要GPU参数/资源表示合同，不把整个约73% draw父职责预支给换API。根核记录在`.local/logs/current886-vulkan-recording-budget-readonly-v1/root-review.json`。
+
 完整行修复的工具后继`b3137c3`已独立推送，58项相关检查通过。根复核原phase_game/main及持续run/validate等5个完整AST函数未变，原APK/NSO与运行时不变。实际主工作区的输入工具/解析器与后继逐字节相同。停止态八目录重新核实后，原1800秒持续测试以新事务53886启动，先前331段的失败不拼接；新输入SHA`b9261f784fe3162d68004470b1c76c93bbc504afbd8a38c95d2ade4c2c7238d1`，实际全offlineproof退出0。当前没有新的30分钟或战斗/6GB验收。
