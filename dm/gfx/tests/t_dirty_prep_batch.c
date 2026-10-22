@@ -135,6 +135,10 @@ int main(void) {
     CHECK(WIFEXITED(status) && WEXITSTATUS(status)==88);
 #endif
     nvn_dirty_remove_range(data);CHECK(!munmap(mapping,bytes+2*page));
+    uint64_t mp_calls,mp_pages,mp_ns;
+    nvn_dirty_mp_stats(&mp_calls,&mp_pages,&mp_ns);
+    if(getenv("DM_BOOTPROF")) CHECK(mp_calls>0 && mp_pages>=mp_calls);
+    else CHECK(mp_calls==0 && mp_pages==0 && mp_ns==0);
     printf("{\"test\":\"dirty-prep-batch\",\"contiguous_pages\":%u,\"RW_syscalls\":%u,\"result\":\"passed\"}\n",pages,contiguous_calls);
     return 0;
 }

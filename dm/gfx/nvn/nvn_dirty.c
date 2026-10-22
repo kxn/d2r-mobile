@@ -65,7 +65,9 @@ static _Atomic int g_overflow_logged;
 static pthread_cond_t gpu_host_cv=PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // 建池 / 销池（客体线程，可能并发）互斥选槽；缺页处理路径不碰它 | Pool creation / destruction (guest threads, possibly concurrent) pick slots under a mutex; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // 本模块的 mprotect：调用次数、覆盖页数、耗时（mach 时基，缺页路径里也安全） | This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
+static int mp_bootprof; // immutable after dirty_once; standalone tests need no g_flag
 static int mp(uintptr_t a, size_t len, int prot) {
+    if (!mp_bootprof) return mprotect((void *)a, len, prot);
     uint64_t t = nvn_clock_ticks(); int result = mprotect((void *)a, len, prot);
     atomic_fetch_add(&g_mp_ticks, nvn_clock_ticks() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift);
     return result;
@@ -215,6 +217,8 @@ static void prep_write(void *addr, size_t len) {
 
 static pthread_once_t dirty_once = PTHREAD_ONCE_INIT;
 static void dirty_init(void) {
+    // Same cold policy as host main, without a new standalone-link dependency.
+    mp_bootprof = getenv("DM_BOOTPROF") != NULL;
     g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg);
     dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write);
 }
