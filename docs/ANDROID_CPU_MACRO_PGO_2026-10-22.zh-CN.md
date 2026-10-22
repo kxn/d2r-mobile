@@ -75,6 +75,8 @@ Q735 按父／候选／候选／父顺序执行。每轮原游戏三段移动、
 
 同 Clang 19.1.7、原 host O1/no-LTO 的实际 x86-64 机器码显示：主 Draw 23,723→15,041B，减少 8,682B；四个独立函数合计 9,099B，合并计算总代码反而增加 417B。主函数栈仅减少 16B。机制是缩小普通绘制路径所混入的代码体积，不是删除真实绘制计算；完整正分支新增函数调用，最坏总栈深可能上升。这些不是 Android AArch64 数值，尚无 CPU/FPS 或散热收益证明。原内容／GPU／sanitizer 资格正在独立进行，结果及命令位于 `.local/logs/draw-cold-positive-phases-v1/`；静态合同在 `.local/logs/f75-draw-cold-stages-readonly-v1/`。
 
+后续源码已冻结并推送 `cb297f8`，六个原 host GPU 内容／Core/SYNC／sanitizer 用例通过。原 Android canonical 构建和六库、7 个 APP 预处理单元、ABI、签名核验也已完成，根实际核验 76 项引用及 2,796 个归档 producer/NDK 输入。**实际 AArch64** 主 Draw 为 22,356→15,612B，减少 6,744B；四独立函数为 8,288B，五函数合计增加 1,544B，全库 `.text` 增加 1,008B。主函数栈为 4,224→4,160B；正分支调用链额外栈分别为 BQ 1,728B、实例展开 128B、PL 准备 112B、PL 消费 64B（不含双方相同的深层被调用函数）。不将 host 尺寸代替 Android，也不把静态文本减少称为 CPU 时间减少。根记录在 `.local/logs/draw-cold-positive-phases-cb297f8-root-canonical-review.json`；接着重新生成原 NSO 产物后才进行真机对照，尚未部署该 CPU 候选。
+
 ## 内存归属：从全分配器断点转为少量已证记录
 
 原 main 的静态调用链已确定三个 TLSF 子分配器的 backing 记录：250MiB 的 pointer/size 位于 `main+0x31162e8/+0x31162f0`；260MiB 的记录位于 `+0x31dafb0/+0x31dafb8`，原名称为 `Popcorn Asset Pool`；另有 40MiB `Popcorn Scratch Pool`。分配参数、返回值存储、TLSF 初始化及两个原名称的关联均有原始指令／字符串证据，不能再将其仅描述为按尺寸猜测。
