@@ -553,3 +553,15 @@ SDK／NVN 同一 PID15201、stop2、memfd inode79735 的快照成功；540 份�
 默认OFF的原构建入口集成已做真实Android configure-only对照：归一化后的285条编译命令与f75零差异；ON仅为131个host C/C++单元增加显式profile和官方诊断选项，其余154条不变，回OFF恢复原命令。完整canonical、原始NSO重建和真机收益尚未验收，仍不能预报PGO会省多少CPU或达到60帧。CPU前端候选与数据表示研究分开，不把换编译策略当作大结构问题已解决。
 
 证据（均在`.local/logs/`）：`f75-retained-submission-readonly-v1/result.json`、`google-autofdo-nonlbr-f75-qualification-v1/ready.json`、`sample-profile-f75-root-profile-consumption-review.json`、`sample-profile-f75-2tu-independent-review-v1/ready.json`、`sample-profile-f75-2tu-root-machine-review-v1/result.json`、`host-sample-profile-integration-v1/actual-ON-versus-OFF-flags.json`。
+
+### 编译局部性候选已完成完整交付资格，尚无真机收益
+
+独立源码`33d2d8a`已完成原Android入口完整构建、三个原始NSO重新加工及独立verify-only28；23项稳定游戏／规则产物与f75相同。正式APK为`c5bfded5…348cfb4`，host ELF BuildID为`51f61ffc41ec37f981c778fdfd138b6b1965c60c`。根审核验原六库、16KiB LOAD／ZIP、1334项导出、1026项producer输入、1771项实际NDK依赖及129项外部编译输入归档。正式APP的draw／shader优化记录再次确认131／81条正AppliedSamples；七个实际APP预处理单元仅存在诊断`__FILE__`构建根路径差异，归一化该根路径后与f75相同，不声称七份原字节全部一致。
+
+独立Clang19／O1／Lavapipe构建通过原有四个GPU内容／CoreSYNC用例，覆盖有限共享别名串行／异步、先前GPU写入与native图像读取，以及异步回读／reset／guest等待。这是host正确性资格，不能替代Android O3／f830游戏验收。原63个profile函数中，`find_w`对应三个不同静态函数地址；没有重命名或改写权重，保留这一归属限制及非LBR映射警告。
+
+原采集工具后继`2e984b8`只让已经过原compiler资格门的候选使用同一固定A/A协议；资源／原始NSO／候选门、官方采集与分析helper均保持。原20项A/A和8项组合检查、真实候选与对照的完整离线资格均通过，仍为各3×30秒99Hz FP及5×8秒Perfetto，不新增计时／采样器。构建与离线资格的首轮失败、修复及真实终态分别保留，没有放宽排除或来源检查。
+
+上述源码已备份到fork的独立分支，未默认启用或替换手机上的手动游戏。Q735实际PID32633仍为用户进程，未安装、模拟操作、attach或停止；此前可用性询问待答。没有新增Android游戏CPU／FPS／PSS／发热结果，持续游玩与6GB验收仍未完成。
+
+证据（均在`.local/logs/`）：`host-sample-profile-33d2d8a-root-canonical-raw-review-v2.json`、`host-sample-profile-33d2d8a-root-canonical-review.json`、`host-sample-profile-33d2d8a-GPU-qualification-v1/ready.json`、`sample-profile-AA-tools-2e984b8-root-review.json`。候选和对照的待执行输入位于`.local/build/host-sample-profile-33d2d8a-AA2-actual-inputs/`，目前`execution_ready=false`，离线通过不代表已经执行真机。
