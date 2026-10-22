@@ -9,6 +9,8 @@ import re
 import subprocess
 import time
 
+from game_state_json import latest_complete_state
+
 p = argparse.ArgumentParser()
 p.add_argument('x', type=int)
 p.add_argument('y', type=int)
@@ -29,7 +31,7 @@ def adb(*parts):
 
 
 def state(require_ready=True):
-    result = json.loads(adb('exec-out', 'run-as', package, 'tail', '-n', '1',
+    result = latest_complete_state(adb('exec-out', 'run-as', package, 'tail', '-n', '2',
                             'files/runtime/game-state.jsonl'))
     if require_ready and (not result.get('valid') or not result.get('world_input_ready')):
         raise RuntimeError('original player/world UI is not ready')
