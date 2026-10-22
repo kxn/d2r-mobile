@@ -80,7 +80,7 @@ def main():
         row=config[name]
         require(set(row)=={'path','sha256'} and sha(row['path'])==row['sha256'], 'SDK input changed: '+name)
     if args.plan:
-        print(json.dumps({'status':'LOCAL_INPUTS_VALID_NO_ADB','config':str(args.config),'config_sha256':args.config_sha256,'ELF_sha256':ELF_SHA,'APK_sha256':APK_SHA,'scope':'early pending host breakpoint, official JDWP release, at most four large original-SDK allocator returns; no target calls/profile/reclamation'}));return 0
+        print(json.dumps({'status':'LOCAL_INPUTS_VALID_NO_ADB','config':str(args.config),'config_sha256':args.config_sha256,'ELF_sha256':ELF_SHA,'APK_sha256':APK_SHA,'scope':'early pending host breakpoint, official JDWP release, bounded configured (max16) original-SDK allocator returns; no target calls/profile/reclamation'}));return 0
     pid, out = args.pid, args.output.resolve()
     require(out.is_dir(), 'caller must create owned output directory')
     require(not (out / 'debugger-result.json').exists(), 'output already used')
