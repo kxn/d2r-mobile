@@ -259,3 +259,17 @@ CPU 的 `88620ec` 候选则将提示未命中的物理 Buffer 选择从逐节点
 原写端分多次fprintf，最后才写换行。已将原行走读取修为只消费最新换行终止的完整记录：`tail -n2`保留一条已完成记录，忽略尚未完成尾行；最新完整行若畸形仍立即失败，不回找更老的ready记录。实际主工作区commit`2d70fdd`含共享小解析器与原脚本回归，10项通过，覆盖中途失败释放触点、not-ready及原8秒停滞失败。这是观测工具修复，不改变游戏/运行时或证明长测成功。其他原采集入口的同类读取仍在独立后继接入，未重启长测。
 
 当前6份原FP又经官方Simpleperf annotate和精确LLVM linked指令核对：绑定SELF约3.76–4.88%；能单独识别的直接UBO handle/range小块仅0.045–0.313%，Buffer tuple0–0.134%且含driver constants。共有hash/history为1.434–1.820%，跨image/buffer/constants，原PC没有运行时类型，不能全部分给BDA。可定位子集不是总Buffer成本上界，也不是可省下界；此次审查没有证明足以启动大Shader ABI重写的净预算。68项原record/ELF/source/官方输出经根核，见`.local/logs/886-buffer-representation-cost-v1/root-review.json`。研究优先级因此转向仍占真实工作量的资源消费及驱动/内存生命周期，而非预支整段绑定21–24%的收益。
+
+## 原生驱动内存工具找到216MiB的描述符池预留
+
+现用f830已编入Mesa的BOS与RMV，无须新增追踪器或驱动构建。核实stock Android属性与日志出口后，根实际启用BOS/startup/file logging，复用已交付886的原`ordinary_round`无extras冷启动和原`save_owned`。PID25878实际到原HUD、共享/native/provider验收及两次存档后停止。未安装、改profile、换资源或改游戏。该次工具扰动大，不测FPS。
+
+原始日志17,887,154B、SHA`74b41719b1e36ebdf5fdccd0dc471e0639b4a2e3e2ab14e713390ba83962fc7f`，明确记录`TU_DEBUG=0x100001`。共14,203个完整命名BO表，逐块count/size与summary吻合，尾部完整。最终较大类别包括：imported host pages 652,408KiB、32MiB VkAllocation共12个/393,216KiB、descriptor pool16个/221,184KiB。总1,410,844KiB是BO逻辑extent；imports含重叠别名，不能当独占RAM或与PSS相加。所有表未见名为pvtmem/scratch的BO，不等于证明零spill。
+
+**新候选是物理描述符池分块尺寸与留存预算分离。** exact886默认及上限为2,048 sets（不是先前口头估计的4,096），每池对多种类型总预留6,912B/set，f830实际BO为13.5MiB；dynamic UBO另预留CPU host区域。当前descriptor_create/recycle共用同一容量选项。如果只降低这个选项，会同时降低留存阈值并可能破坏跨提交复用。因此独立候选仅将物理块上限缩至512，需求增加时沿原OUT_OF_POOL/FRAGMENTED和链式扩展逻辑增长；原2,048留存阈值、batch、immutable sets及完成后回收保持。若仍16块，BO条件预算216→54MiB，少162MiB；实际块数、CPU和PSS收益未知，不承诺四倍净RAM下降。原统计5675累计sets不是per-context峰值，不能据此认定512足够。
+
+BOS中池数也有13→8、16→1后再次增长，说明已有删除/重建，不能将216MiB解释成永久泄漏。候选先做真实池溢出、缓存留存和异步内容的原GPU测试，再进入Android构建与对照。仅BOS现有输出已改变内存研究优先级。数据和根复核为`.local/logs/current886-BOS-memory-analysis-v1/`。
+
+该短采集初次wrapper终态1的原因是ADB shell将恢复setprop的末尾空参数丢掉；采集及原存档停止已成功。根随后用明确shell引用和CAS恢复三个原空属性，核游戏、锁和唯一日志已退出/移除；失败记录与成功清理后继分开保留在`.local/logs/current886-BOS-memory-Q735-v1/{result.json,cleanup-followup.json}`，没有重复采集或改标失败。RMV虽已编入，但stock导出硬编码/tmp且tokens持续增长，现不优先。
+
+完整行修复的工具后继`b3137c3`已独立推送，58项相关检查通过。根复核原phase_game/main及持续run/validate等5个完整AST函数未变，原APK/NSO与运行时不变。实际主工作区的输入工具/解析器与后继逐字节相同。停止态八目录重新核实后，原1800秒持续测试以新事务53886启动，先前331段的失败不拼接；新输入SHA`b9261f784fe3162d68004470b1c76c93bbc504afbd8a38c95d2ade4c2c7238d1`，实际全offlineproof退出0。当前没有新的30分钟或战斗/6GB验收。
