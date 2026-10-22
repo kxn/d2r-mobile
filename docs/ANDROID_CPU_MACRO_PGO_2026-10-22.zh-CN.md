@@ -119,3 +119,31 @@ V5 恢复期间的实际 f75 崩溃位于 B2T 调用的 `image_upload` 源预检
 CPU 的 `88620ec` 候选则将提示未命中的物理 Buffer 选择从逐节点扫描换成复用已有区间树。它保留最新 cover 优先、否则单个 canonical、原提示／零长度／维护路径以及全部初始化、依赖和寿命。节点仍 64B、span 仍 152B，没有新缓存或分配。10 项原 GPU 内容、异步、非 lazy 与 sanitizer 回归通过；实际 Android canonical、7 APP、六库 16KiB 及三个原 NSO 重新生成／独立校验 28 产物均已完成，尚未有这项的真机 CPU 收益。预算仅为 resolver 自身约 2～3% 样本的一部分，不是整个 pool_address 的约 9%，最坏嵌套区间仍可能线性。
 
 内存来源和原冷预算合同见 `.local/logs/sdk-main-arena-930-memory-budget-v1/`、`.local/logs/private-image-budget-vma-contract-930-cb-readonly-v1/`。区间索引源码已备份 `codex/lazy-physical-span-index-v1`，根源码／canonical／RAW 复核见 `.local/logs/lazy-physical-span-index-88620ec-root-canonical-raw-review.json`。本轮没有新的持续散热或真实 6GB 稳定游玩验收，目标仍未完成；没有访问暂停的 Mali 或平板。
+
+## 索引四轮完成：相同父版的系统状态变化成为优先调查项
+
+物理 Buffer 区间索引已完成父／候选／候选／父四轮真实游戏事务，全部原存档两次、停止、恢复和 cleanup 通过。根复核全部 941 项原始、官方工具及分析文件；实际日常 a322 APK、私有启动配置和收条未变，游戏已停止。
+
+| 顺序 | NvN Running ms/Surface | Surface 平均 ms | NvN Running 加权 MHz | NvN CPU7 Running 占比 |
+| --- | ---: | ---: | ---: | ---: |
+| 父版 1 cb297 | 25.738 | 33.790 | 1677.3 | 15.03% |
+| 候选 1 886 | 26.996 | 33.434 | 1568.3 | 7.75% |
+| 候选 2 886 | 26.978 | 33.537 | 1556.0 | 6.35% |
+| 父版 2 cb297 | 35.520 | 48.110 | 1264.2 | 0.93% |
+
+上表按完整 Surface 数加权，仅作描述。两个**相同父版**的 Running 相差约 9.8ms，远大于此索引仅约 2–3% resolver SELF 子集的事前包络。不能用父版均值或较慢的末轮宣称候选节省约 9ms，也不能将末轮退化归为候选回归。候选中的递归查询和剩余 legacy resolver 仍有成本，内联选择仍在 `pool_address` 中；局部 PC 样本份额下降不等于净 CPU 时间下降。
+
+已对相同 20 条官方 Perfetto 做整机调度／频率 SQL 审计，无新增设备采集或自计时。末轮大核整体 Running 加权频率约 1.2–1.33GHz，首轮约 1.56–1.68GHz；CPU7 整机也几乎空闲，并非被别的进程占满。NvN Runnable 约 0.35ms，没有相应增加；末轮外部 CPU 占用亦未增加。已有 submit lock 约 0.02ms、present lock 约 0.003ms/Surface，量级不足解释这一差额。没有发现新出现的主导调用父链。
+
+这是频率／驻核状态变化的证据，**不是温控原因的证据**。末轮公开 thermal 日志为空，不能当作 status 0；窗口外相同的最大频率快照也不能排除窗口内或厂商内部策略。两父位置、PSO 和命令形态略有不同，没有相同指令数证明，不能按 MHz 线性归一，不能保证状态变化解释全部差额。睡眠及完成等待相位也变化；跨线程、可嵌套的 wall marker 不能再相加成串行帧时间。
+
+因此后续优先级调整为：
+
+1. 先解释并核对同父系统状态的可比性，区分必要工作量、实际执行速率和等待相位。现成 FP／Perfetto 已能暴露这一区别；不先绑核、升频或关闭温控。已有同机 ADPF 有效会话的 OFF／ON／OFF 未显示加速，不能把重复开启它当作尚未尝试的新方案。
+2. 结构改造只针对完整职责：长寿命资源表示与逐 Draw 参数分离是方向，但已有 schema、dynamic UBO、recipe、source_flow、history 必须扣除。绑定整块 21–24% 不是可删预算；旧表示／descriptor／set 交付混合包络仅 7.55–8.99%，即使假设减半，也只是约 4% 的条件预算，且尚未扣新增 GPU 索引访存、参数写入和版本退休成本。没有净预算前不进行大规模 shader ABI 改写。
+3. 缩小代码／数据工作集属于降低必要工作的执行成本。冷阶段外提与 PGO 均已有实际对照，没有稳定整线程收益，保留真实结果，不重新包装成未做的大收益。
+4. 继续降低内存驻留与搬运，但单独计账。64MiB 可重建私有图像预算已完成源码、canonical 和原始 NSO 资格；按现有 allocation 的减少上界约 56.945MiB、下界为 0，尚无真机净 PSS 或热收益。重建成本和 VMA 保留 block 可能抵消收益，不能将其当作直接减少翻译线程 10ms 的方案。
+
+当前没有另一块已证明可删除、足以消除约 10ms 的重复工作。已实现的 Store 记录从约 1.44 万减至约 720/submit、区间扫描改为查询既有索引，分别是减少表示工作和改变查找复杂度；它们有独立机制证据，但不能代替宏观预算。后续每个候选先列明完整父职责、可变部分、新成本、条件上界和净下界，再修改。
+
+证据：`.local/logs/cpu-lazy-physical-88620ec-pair-analysis-v1/`、`.local/logs/cpu-lazy-physical-88620ec-ABBA-root-review.json`、`.local/logs/index-ABBA-parent-DVFS-drift-readonly-v1/{ready.json,report.md,root-review.json}`。审计只读既有工具数据，没有访问 Mali／平板；本节不新增持续散热或 6GB 验收结论。
