@@ -32,10 +32,10 @@ static int pl_add_attachment(pl_job *p,const tex_t *t,const view_t *v,
     .initialLayout=a->layout,.finalLayout=a->layout};
   return n;
 }
-static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned width,unsigned height) {
-  if(active_job)return NULL;
-  uint64_t recording=vk_recording_serial(),passes=V.passes;
-  pl_candidate *candidate=pl_plan(draw,idx,width,height);if(!candidate)return NULL;
+// A rejected plan retains its original inline NULL return. Only the admitted
+// plan borrows physical attachments/tokens and allocates its existing job.
+static VK_COLD_PHASE pl_job *pl_prepare_candidate(pl_candidate *candidate,
+    uint64_t recording,uint64_t passes,unsigned width,unsigned height) {
   pl_job *p=calloc(1,sizeof *p);if(!p)return NULL;p->plan=*candidate;
   p->second_count=p->plan.second_targets.n;
   for(unsigned k=0;k<p->second_count;k++) {
@@ -74,6 +74,12 @@ static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned widt
       p->plan.descriptor_epoch!=vk_texture_descriptor_epoch())goto fail;
   return p;
 fail:free(p);return NULL;
+}
+static pl_job *pl_prepare(const p_draw *draw,const p_draw_idx *idx,unsigned width,unsigned height) {
+  if(active_job)return NULL;
+  uint64_t recording=vk_recording_serial(),passes=V.passes;
+  pl_candidate *candidate=pl_plan(draw,idx,width,height);if(!candidate)return NULL;
+  return pl_prepare_candidate(candidate,recording,passes,width,height);
 }
 static int pl_job_create(render_job *j,pl_job *p,VkAttachmentDescription descriptions[9],
     VkImageView handles[9],VkAttachmentReference colors[8],const VkAttachmentReference *depth,
@@ -238,9 +244,11 @@ static int pl_target_clear(const p_set_rt *rt,const p_scissor *sc,int index,
   vk_texture_attachment_record(rt->color[index],rt->has_cview[index]?&rt->cview[index]:NULL,0);
   return 1;
 }
-static const vk_pixel_local_proof *pl_consumer(vk_shader *vs,vk_shader *fs,VkShaderModule actual,
-    const p_draw *draw,const p_draw_idx *idx) {
-  render_job *j=active_job;if(!j || !j->local)return NULL;pl_job *p=j->local;
+// The no-local-job case stays inline; actual consumers keep their complete
+// callback/recording/physical-token checks in one cold stage.
+static VK_COLD_PHASE const vk_pixel_local_proof *pl_consumer_cold(render_job *j,
+    vk_shader *vs,vk_shader *fs,VkShaderModule actual,const p_draw *draw,const p_draw_idx *idx) {
+  pl_job *p=j->local;
   uint64_t recording=vk_recording_serial(),pass=V.passes;
   const void *payload=draw?(const void *)draw:(const void *)idx;
   if(!p->current || p->current+8!=payload || p->current!=p->plan.draw_op)return NULL;
@@ -267,6 +275,11 @@ static const vk_pixel_local_proof *pl_consumer(vk_shader *vs,vk_shader *fs,VkSha
   for(unsigned k=0;k<p->second_count;k++)if(p->plan.clears[k] && !(p->clear_seen&(1u<<k)))goto fail;
   return proof;
 fail:vk_render_end();return NULL;
+}
+static const vk_pixel_local_proof *pl_consumer(vk_shader *vs,vk_shader *fs,VkShaderModule actual,
+    const p_draw *draw,const p_draw_idx *idx) {
+  render_job *j=active_job;if(!j || !j->local)return NULL;
+  return pl_consumer_cold(j,vs,fs,actual,draw,idx);
 }
 static int pl_enter(render_job *j) {
   pl_job *p=j->local;if(!p || active_job!=j || V.cmd!=j->secondary)return 0;

@@ -415,10 +415,10 @@ static int bq_materialize_blit(const tex_t *input,const tex_t *target,const void
   vk_texture_copy_t2t(&copy);
   atomic_fetch_add(&bq_c_blits,1);return 1;
 }
-static int bq_before_draw(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx) {
-  if(bq_restore_reg>=0 || bq_restore_color)die("Vulkan bloom unfinished state restoration");
-  if(bq.generation!=vk_pass_generation())memset(&bq,0,sizeof bq);
-  const void *payload=draw?(const void *)draw:(const void *)idx;
+// Only real A/B/C/D handling owns the large logical snapshots and candidate.
+// The dispatcher retains all negative checks; no new draw packet is copied.
+static VK_COLD_PHASE int bq_before_draw_cold(vk_shader *list[6],const p_draw *draw,
+    const p_draw_idx *idx,const void *payload) {
   if(bq.replacement==payload) {
     // Verify only the identities actually used by this draw. Unrelated pool
     // registrations do not invalidate this proof or terminate the game.
@@ -453,7 +453,6 @@ static int bq_before_draw(vk_shader *list[6],const p_draw *draw,const p_draw_idx
     bq_restore_reg=reg;bq_restore_handle=handle;S.tex[1][reg]=bq.b1_handle;
     bq.overlay=NULL;atomic_fetch_add(&bq_redirected,1);return 0;
   }
-  if(!bq_fact(list[1],0) || !bq_enabled())return 0;
   bq_chain candidate={0};
   if(!bq_prove(list,draw,idx,&candidate)) {
     uint64_t rejected=atomic_fetch_add(&bq_fallbacks,1);
@@ -469,6 +468,16 @@ static int bq_before_draw(vk_shader *list[6],const p_draw *draw,const p_draw_idx
   // Mark the omitted query contribution dead through the existing proof API.
   if(vk_pass_samples_live(payload))die("Vulkan bloom query liveness changed");
   return 1;
+}
+static int bq_before_draw(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx) {
+  if(bq_restore_reg>=0 || bq_restore_color)die("Vulkan bloom unfinished state restoration");
+  if(bq.generation!=vk_pass_generation())memset(&bq,0,sizeof bq);
+  const void *payload=draw?(const void *)draw:(const void *)idx;
+  // Keep ordinary/disabled draws in the existing cheap dispatcher. Pending
+  // chain stages must still restore/materialize even when the option is OFF.
+  if(bq.replacement!=payload && bq.materialization!=payload && bq.overlay!=payload &&
+      (!bq_fact(list[1],0) || !bq_enabled()))return 0;
+  return bq_before_draw_cold(list,draw,idx,payload);
 }
 static void bq_after_draw(void) {
   if(bq_restore_color) { S.color=bq_original_color;bq_restore_color=0;vk_pipeline_state_changed(); }
