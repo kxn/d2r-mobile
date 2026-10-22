@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two fixed-.60 original-game resource phases; offline unless --execute."""
+"""Reviewed original-game resource phases and sustained routes; offline unless --execute."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -445,9 +445,12 @@ def proof(path, digest):
     if p.get('official_cpu_aa'):
         p['controller_sources'][str(HERE / 'official_cpu_aa.py')] = sha(HERE / 'official_cpu_aa.py')
     p['_execution_phases'] = p['phases']
+    sustained_runtime = None
+    p['_sustained_current'] = False
     if 'sustained_play' in p:
         sustained = module('source_pinned_sustained_play', HERE / 'sustained_play.py')
-        sustained.validate(p, pinned, read, require)
+        sustained_runtime = sustained.validate(p, pinned, read, require)
+        p['_sustained_current'] = sustained_runtime is not None
         p['controller_sources'].update({str(q): sha(q) for q in
             [HERE / 'sustained_play.py', HERE / 'capture-sustained-scheduler.py']})
         # Keep both compositions authenticated above; execute only native.
@@ -456,7 +459,7 @@ def proof(path, digest):
     if 'native_candidate_validation' in p:
         candidate = module('source_pinned_native_candidate_gate', HERE / 'candidate_gate.py')
         compiler_runtime = candidate.validate(p, pinned, read, require,
-            readonly_memory_snapshot_validated=memory_snapshot_validated)
+            readonly_memory_snapshot_validated=memory_snapshot_validated, sustained_runtime=sustained_runtime)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
     if p['phases'][1]['composition']['sha256'] in ('8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3',
@@ -464,7 +467,7 @@ def proof(path, digest):
         require('qualified_native_asset_validation' in p, 'mixed32 assets require explicit bounded resource qualification')
     if 'qualified_native_asset_validation' in p:
         asset = module('source_pinned_qualified_native_asset_gate', HERE / 'qualified_asset_gate.py')
-        p['_asset_validation'] = asset.validate(p, pinned, read, require, compiler_runtime=compiler_runtime)
+        p['_asset_validation'] = asset.validate(p, pinned, read, require, compiler_runtime=compiler_runtime, sustained_runtime=sustained_runtime)
         p['controller_sources'][str(HERE / 'qualified_asset_gate.py')] = sha(HERE / 'qualified_asset_gate.py')
     return p
 
@@ -500,10 +503,12 @@ def phase_game(dev, out, phase, p, token):
     command = [sys.executable, str(m.SOURCE / 'scripts/dev/android-game-launch.py'),
                '--serial', p['serial'], '--external-profile', '--custom-vulkan-driver',
                '--vulkan-provider', 'adreno', '--shared-guest-heap', '--no-legacy-astc-copy',
-               '--no-astc-decode-unorm8', '--no-defer-pool-publication', '--scale-3d', '.60',
-               '--fixed-3d', '--pool-copy-accounting', '--game-res', '2750x1260',
+               '--no-astc-decode-unorm8', '--no-defer-pool-publication',
+               '--game-res', '2750x1260',
                '--timeout', '90', '--report', str(out / 'launch.json'),
                '--pool-window-bytes', str(p['pool_window_bytes']), '--expect-shared-import-windows']
+    command += (['--scale-3d', '.75', '--no-pool-copy-accounting'] if p.get('_sustained_current')
+                else ['--scale-3d', '.60', '--fixed-3d', '--pool-copy-accounting'])
     if driver_span_policy(p):
         command += ['--driver-span-reference']
     if 'driver_span_reference' in p:
@@ -589,6 +594,11 @@ def phase_game(dev, out, phase, p, token):
         require(launch['actual_guest_heap']['shared'] is True
                 and launch['actual_vulkan_provider'] == 'adreno'
                 and launch['requested_legacy_astc_copy'] is False, 'shared/provider contract mismatch')
+        if p.get('_sustained_current'):
+            require(launch.get('requested_scale_3d') == .75 and launch.get('requested_fixed_3d') is False
+                    and launch.get('requested_pool_copy_accounting') is False
+                    and launch.get('actual_pool_copy_accounting') is False,
+                    'current sustained must start .75 adaptive/HUD with optional pool accounting OFF')
         initial = read_state(dev, out, 'before-route')
         driver_span_policy(p, initial, 'startup')
         if 'shared_image_raw_observe' in p:
@@ -771,8 +781,11 @@ def phase_game(dev, out, phase, p, token):
             save()
         m.screenshot_collect(dev, own, d, report, out, 'HUD-after-route')
         require(current['valid'] and current['world_input_ready'], 'original world not input-ready')
-        require(current['scale_3d'] == .60 and current['game_output'] == current['surface_output']
-                == {'width': 2750, 'height': 1260}, 'fixed resolution mismatch')
+        if p.get('_sustained_current'):
+            sustained.validate_state(current, p, require)
+        else:
+            require(current['scale_3d'] == .60 and current['game_output'] == current['surface_output']
+                    == {'width': 2750, 'height': 1260}, 'fixed resolution mismatch')
         require(current['pool_windows']['window_bytes'] == p['pool_window_bytes']
                 and current['guest_heap']['shared'] is True, 'actual shared-window mismatch')
         if 'driver_span_reference' in p:
@@ -796,13 +809,14 @@ def phase_game(dev, out, phase, p, token):
                       'Original-game B2T correctness successor, original threewalks and system residency; no CPU/GPU timing or sustained-play acceptance'
                       if p.get('native_functional_validation') else
                       'Native-only shortcandidate functional/officialCPU validation; not matchedpair or thermalproof'
-                      if p.get('native_candidate_validation') else
+                      if p.get('native_candidate_validation') and not p.get('sustained_play') else
                       'Native-only sustained original-input route, sparse official Perfetto; '
                       'no combat or whole-game acceptance implied' if p.get('sustained_play') else
                       'Functional original-game HUD/route and one system residency snapshot; not GPU sampling or FPS/heat acceptance')
         if p.get('_asset_validation'):
             d['qualified_native_asset_validation'] = p['_asset_validation']
-            d['scope'] = p['_asset_validation']['scope']
+            if not p.get('sustained_play'):
+                d['scope'] = p['_asset_validation']['scope']
         save()
     finally:
         if early_process is not None and early_process.poll() is None:
@@ -902,7 +916,9 @@ def main():
             scope='1800s uninterrupted original-input route plus four official8s Perfetto windows; not combat proof',
             sustained_play=p['sustained_play'], real_game_progress_saved=True,
             restart_or_thermal_pause_cannot_be_combined=True)
-    if p.get('native_candidate_validation'):
+    if p.get('_sustained_current'):
+        plan.update(scale_3d=.75, fixed_3d=False, scaling_policy='upstream adaptive and HUD settings live; actual changes recorded, not fixed AB')
+    if p.get('native_candidate_validation') and not p.get('sustained_play'):
         plan.update(phases=['native-ASTC4'],
             scope='Shortcandidate originalgame threewalks plus existing officialCPU windows; prior6f pair referenced, no newpaired claim',
             native_candidate_validation=p['native_candidate_validation'])
@@ -955,7 +971,7 @@ def main():
     if p.get('_asset_validation'):
         plan.update(phases=[f"native6217-with{p['_asset_validation']['replacements']}-qualified-ASTC6-replacements"],
                     qualified_native_asset_validation=p['_asset_validation'],
-                    scope=p['_asset_validation']['scope'])
+                    **({} if p.get('sustained_play') else {'scope': p['_asset_validation']['scope']}))
     if p['runtime_commit'] == '179c82dfa412153b6564974e29fc35036e0b3507':
         plan['combined_CPU_validation'] = {'runtime': p['runtime_commit'],
             'components': ['consumer-schema-admission', 'coherent-native-cache-walk', 'recording-Pool-pin-borrow'],
@@ -975,6 +991,10 @@ def main():
         plan['native_functional_validation'] = p['native_functional_validation']
     if p.get('readonly_memory_snapshot') and not p.get('performance_tools'):
         plan['scope'] = 'Prior-qualified original-game same-stop SDK/Pool/arena memory ownership; no CPU/GPU timing or reclaim permission'
+    if p.get('_sustained_current'):
+        plan.update(pool_copy_accounting=False,
+            scope='Current886 town-route attempt:1800s uninterrupted original input and four official8s Perfetto windows; '
+                  'startup.75 with adaptive/HUD live; not fixedAB, combat, whole-game or6GB acceptance')
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -1098,12 +1118,12 @@ def main():
                 require(phase_result.get('sustained_play', {}).get('continuous_pass') is True,
                         '30min sustained route did not complete')
         owner.unlink()
-        d['stage'] = ('qualified-native-ASTC6-original-game-resource-validation-complete'
+        d['stage'] = ('native-original-game-uninterrupted-sustained-route-complete'
+                      if p.get('sustained_play') else
+                      'qualified-native-ASTC6-original-game-resource-validation-complete'
                       if p.get('_asset_validation') else
                       'native-original-game-short-candidate-validation-complete'
                       if p.get('native_candidate_validation') else
-                      'native-original-game-uninterrupted-sustained-route-complete'
-                      if p.get('sustained_play') else
                       'matched-resource-original-game-functional-pair-complete')
         write()
     except BaseException as e:

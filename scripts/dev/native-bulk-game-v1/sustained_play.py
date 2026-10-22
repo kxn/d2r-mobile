@@ -10,31 +10,104 @@ import time
 HERE = Path(__file__).resolve().parent
 R = Path('/home/dl/d2r-mobile')
 RUNTIME = '6f8188e392f21ff045ef640ad8c4f184de048806'
+CURRENT_RUNTIME = '88620ec7c92edeb59512612cebf42906a4848509'
+CURRENT_DELIVERED = '28f3f9dd9763e4b7fb8cdd8caff24c94dc69b54d7a885a198dac755adcdebdb6'
 DRIVER = 'f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce'
 REVIEW_STATUS = 'ACTUAL_ORIGINAL_GAME_PAIRED_FUNCTIONAL_OFFICIAL_CPU_GPU_MEMORY_PASS_CLEANUP_FOLLOWUP_CONFIRMED'
-# B->C actually succeeded in v1. C->B is explicitly pending real validation;
-# a first reverse miss fails this test rather than inventing a detour.
+# Historical6f v2 completed this B<->C cycle (588 walks). Current886 must
+# prove its own first loop; any miss fails instead of inventing a detour.
 CAMP = [{'x': 5225, 'y': 6295, 'area': 1},
         {'x': 5235, 'y': 6289, 'area': 1}]
 
 
+def current_qualification(p, pinned, read, require):
+    c = p['sustained_play']
+    delivered = read(pinned(c['current_acceptance']))
+    require(c['current_acceptance']['sha256'] == CURRENT_DELIVERED
+            and p['baseline']['sha256'] == CURRENT_DELIVERED
+            and pinned(c['current_acceptance']) == pinned(p['baseline']),
+            'current sustained requires the actual delivered886 baseline')
+    require(p['runtime_commit'] == CURRENT_RUNTIME and delivered['game_PID_absent'] is True
+            and delivered['chain'] == '9507875007c6', 'current sustained runtime/chain differs')
+    publication = read(pinned(delivered['publication_receipt']))
+    require(publication['status'] == 'ROOT_REVIEWED_Q_LOCAL_DESKTOP_DELIVERY_CANDIDATE'
+            and publication['runtime'] == CURRENT_RUNTIME
+            and publication['Q_local_publish_allowed'] is True
+            and publication['global_default_enable'] is False
+            and publication['historical_asset_receipts_unchanged'] is True
+            and publication['default_cache_budget_bytes'] == 536870912,
+            'current delivered runtime/source qualification incomplete')
+    for key in ('canonical', 'raw'):
+        require(publication[key]['sha256'] == p[key]['sha256']
+                and pinned(publication[key]) == pinned(p[key]), 'delivered artifact differs ' + key)
+    require(publication['provider']['sha256'] == p['driver']['sha256'] == DRIVER
+            and publication['composition'] == p['phases'][1]['composition']
+            and delivered['APK_sha256'] == p['new_apk']
+            and delivered['host_ELF_SHA256'] == p['new_elf']
+            and p['original_apk']['sha256'] == delivered['APK_sha256']
+            and p['original_host_elf'] == delivered['host_ELF_SHA256']
+            and publication['dynamic_HUD_settings_not_overridden'] is True,
+            'delivered host/provider/assets or restore/startup policy differ')
+    profile = publication['profile']
+    require(profile['shared_guest_heap'] == profile['shared_lazy_windows'] == 'true'
+            and profile['shared_image_raw_observe'] == 'false'
+            and profile['driver_span_reference'] == 'true'
+            and p.get('shared_lazy_windows') == 1 and p.get('shared_image_raw_observe') == 0
+            and p.get('driver_span_reference') == 1, 'current delivered startup policy differs')
+    pinned(delivered['profile'])
+    require(len(delivered['desktop_rounds']) == 2 and all(
+        row['no_Intent_extras'] is True and row['original_HUD'] is True
+        and row['shared_native_policy_observed'] is True
+        and row['lifecycle']['fresh_original_lifecycle_save'] is True
+        and row['lifecycle']['save_commits'] == 2 for row in delivered['desktop_rounds']),
+        'current original desktop lifecycle evidence incomplete')
+    actual = read(pinned(publication['controlled_game_qualification']))
+    require(actual['status'] == 'ROOT_REVIEWED_886_ACTUAL_ORIGINAL_GAME_FUNCTIONAL_QUALIFICATION_FOR_Q_LOCAL_PUBLICATION'
+            and actual['runtime'] == CURRENT_RUNTIME and actual['actual_saved_stopped_original_restored'] is True
+            and actual['canonical_RAW_source_review']['sha256'] == p['native_candidate_validation']['root_review']['sha256']
+            and len(actual['actual_runs']) == 2, 'current original-game source qualification differs')
+    pinned(actual['canonical_RAW_source_review'])
+    for row in actual['actual_runs']:
+        inputs = read(pinned(row['input'])); result = read(pinned(row['result'])); phase = read(pinned(row['phase']))
+        pinned(row['HUD_after_route'])
+        require(inputs['runtime_commit'] == CURRENT_RUNTIME
+                and result['inputs_sha256'] == row['input']['sha256']
+                and result['plan']['runtime'] == CURRENT_RUNTIME
+                and result['phases'] == [phase]
+                and result.get('original_restored') is True
+                and result.get('cleanup_complete') is True and result.get('cleanup_errors') == []
+                and not result.get('error') and phase.get('original_route_completed') == 3
+                and all(phase.get(k) is True for k in ('original_HUD_reached', 'game_modules_executed', 'fresh_save_then_stopped')),
+                'current short original-game/lifecycle evidence incomplete')
+    return CURRENT_RUNTIME
+
+
 def validate(p, pinned, read, require):
     c = p['sustained_play']
-    require(set(c) == {'seconds', 'interval_seconds', 'trace_seconds', 'paired_acceptance',
+    current = 'current_acceptance' in c
+    require(set(c) == {'seconds', 'interval_seconds', 'trace_seconds',
+                        'current_acceptance' if current else 'paired_acceptance',
                         'route', 'resume_step', 'scheduler_helper'}, 'sustained config fields')
     require((c['seconds'], c['interval_seconds'], c['trace_seconds']) == (1800, 600, 8),
             'reviewed finite 30min / 10min / official8s only')
-    require(not any(k in p for k in ('counter_snapshot', 'performance_tools', 'official_gpu_tools')),
-            'sustained test excludes LLDB, extra CPU windows and SDP GUI')
-    require(p['runtime_commit'] == RUNTIME and p['driver']['sha256'] == DRIVER
-            and p['pool_window_bytes'] == 1048576, 'accepted exact resident f830 1MiB target')
+    require(not any(k in p for k in ('counter_snapshot', 'performance_tools', 'official_gpu_tools',
+                'official_cpu_aa', 'official_l1i_record', 'startup_allocation_capture',
+                'readonly_memory_snapshot', 'builtin_vma_on_suspend', 'official_memory_map',
+                'native_functional_validation', 'prior_actual_game_qualification')),
+            'sustained test excludes extra capture/diagnostic modes')
+    require(p['driver']['sha256'] == DRIVER and p['pool_window_bytes'] == 1048576,
+            'accepted exact resident f830 1MiB target')
     require(p['phases'][1]['composition_data']['entry_count'] == 6217, 'same6217 only')
-    review = read(pinned(c['paired_acceptance']))
-    require(review['status'] == REVIEW_STATUS and review['runtime'] == RUNTIME
-            and review['driver'] == DRIVER and review['visual_root_actually_viewed']
-            and review['cleanup_followup_all_owned_not_executing'], 'paired acceptance not closed')
-    for row in review['refs']:
-        pinned(row)
+    if current:
+        current_qualification(p, pinned, read, require)
+    else:
+        require(p['runtime_commit'] == RUNTIME, 'accepted exact6f sustained runtime')
+        review = read(pinned(c['paired_acceptance']))
+        require(review['status'] == REVIEW_STATUS and review['runtime'] == RUNTIME
+                and review['driver'] == DRIVER and review['visual_root_actually_viewed']
+                and review['cleanup_followup_all_owned_not_executing'], 'paired acceptance not closed')
+        for row in review['refs']:
+            pinned(row)
     require(pinned(c['scheduler_helper']) == HERE / 'capture-sustained-scheduler.py',
             'source-pinned official Perfetto orchestrator required')
     route = read(pinned(c['route']))
@@ -73,17 +146,34 @@ def validate(p, pinned, read, require):
         require(step.get('until_area', step['area']) == steps[(n + 1) % len(steps)]['area'],
                 'route area cycle not closed')
     p['_sustained_route'] = route
+    return CURRENT_RUNTIME if current else None
+
+
+def validate_state(state, p, require):
+    require(state['valid'] and state['world_input_ready'], 'sustained original world not ready')
+    if p.get('_sustained_current') is True:
+        # Original adaptive levels and existing HUD manual settings remain live.
+        # This is a startup .75 policy, never a fixed-resolution comparison.
+        require(type(state['scale_3d']) in (int, float) and .5 <= state['scale_3d'] <= 1.,
+                'current adaptive/HUD scale outside original supported policy')
+        require(state.get('shared_lazy_windows', {}).get('active') is True
+                and state.get('shared_image_raw_observe', {}).get('enabled_policy') is False
+                and state.get('driver_constants', {}).get('span_reference') is True
+                and state.get('private_image_cache', {}).get('budget_bytes') == 536870912
+                and state.get('pool_copy_accounting', {}).get('enabled', False) is False,
+                'current shared/lazy/raw/span/cache/accounting policy changed')
+    else:
+        require(state['scale_3d'] == .6, 'sustained fixed scale changed')
+    require(state['game_output'] == state['surface_output'] == {'width': 2750, 'height': 1260},
+            'sustained output resolution changed')
+    require(state['guest_heap']['shared'] is True and
+            state['pool_windows']['window_bytes'] == p['pool_window_bytes'], 'shared-window changed')
 
 
 def endpoint_state(dev, pid, p, m):
     m.require(dev.adb('shell', 'pidof ' + m.PKG + ' || true') == pid, 'sustained PID changed')
     state = json.loads(dev.app('tail', '-n', '1', 'files/runtime/game-state.jsonl'))
-    m.require(state['valid'] and state['world_input_ready'], 'sustained original world not ready')
-    m.require(state['scale_3d'] == .6 and state['game_output'] == state['surface_output'] ==
-              {'width': 2750, 'height': 1260}, 'sustained fixed resolution changed')
-    m.require(state['guest_heap']['shared'] is True and
-              state['pool_windows']['window_bytes'] == p['pool_window_bytes'], 'shared-window changed')
-    # Preserve all existing PSO/target counters verbatim; do not compute FPS here.
+    validate_state(state, p, m.require)
     return state
 
 
@@ -124,12 +214,25 @@ def run(dev, pid, d, report, out, initial, p, m):
               'completed_walks': 0, 'continuous_pass': False, 'snapshots': [],
               'game_progress': 'normal gameplay progress retained and original lifecycle saved',
               'resumed_segments_cannot_be_summed_as_continuous': True,
-              'requested_seconds': 1800, 'performance_measurement': 'official Perfetto only'}
+              'requested_seconds': 1800, 'performance_measurement': 'official Perfetto only',
+              'scaling_policy': 'startup .75, upstream adaptive and HUD settings live; not fixed AB'
+                  if p.get('_sustained_current') else 'legacy fixed .60'}
     d['sustained_play'] = result
     save = lambda: m.journal(report, d)
+    previous = initial
+
+    def state_now():
+        nonlocal previous
+        state = endpoint_state(dev, pid, p, m)
+        for key, field in (('scale_3d', 'observed_scale_changes'), ('frame_pacing', 'observed_target_changes')):
+            if state.get(key) != previous.get(key):
+                result.setdefault(field, []).append({'after_walks': result['completed_walks'],
+                    'game_time_ns': state['time_ns'], 'from': previous.get(key), 'to': state.get(key)})
+        previous = state
+        return state
 
     def snapshot(label):
-        state = endpoint_state(dev, pid, p, m)
+        state = state_now()
         (out / (label + '-state.json')).write_text(json.dumps(state, indent=2) + '\n')
         row = {'label': label, 'state': state, 'next_step': index,
                'thermal': thermal_log(dev, pid, out, label, m)}
@@ -157,7 +260,7 @@ def run(dev, pid, d, report, out, initial, p, m):
                   and m.sha(trace) == actual['trace_sha256'], 'official trace identity differs')
         m.require(not p.get('_operator_stop_requested'), 'operator requested save-stop; test incomplete')
         stop_requested(out, d['transaction_token'], m)
-        after = endpoint_state(dev, pid, p, m)
+        after = state_now()
         m.require(after['time_ns'] > before['time_ns'], 'game paused during official trace')
         row.update(complete=True, trace_sha256=m.sha(trace), actual_report=str(trace.with_suffix('.json')))
         thermal_log(dev, pid, out, label + '-after-tools', m)
@@ -171,7 +274,7 @@ def run(dev, pid, d, report, out, initial, p, m):
             while time.monotonic() < deadline:
                 m.require(not p.get('_operator_stop_requested'), 'operator requested save-stop; test incomplete')
                 stop_requested(out, d['transaction_token'], m)
-                before = endpoint_state(dev, pid, p, m)
+                before = state_now()
                 step = steps[index]
                 m.require(before['area'] == step['area'], 'unexpected area; route not extended')
                 cmd = [sys.executable, str(R / 'scripts/dev/android-game-walk-to.py'),
@@ -192,16 +295,11 @@ def run(dev, pid, d, report, out, initial, p, m):
                     result['termination_reason'] = 'Original walk tool failed or missed target; not by itself a game crash'
                     save()
                     raise
-                after = endpoint_state(dev, pid, p, m)
+                after = state_now()
                 m.require(after['time_ns'] > before['time_ns'], 'game state stopped advancing')
                 m.require(after['area'] == step.get('until_area', step['area']), 'unexpected area after input')
                 index = (index + 1) % len(steps)
                 result['last_walk_attempt']['after'] = after
-                old_target = result.get('last_actual_state', initial).get('frame_pacing')
-                if after.get('frame_pacing') != old_target:
-                    result.setdefault('observed_target_changes', []).append({
-                        'after_walk': number, 'game_time_ns': after['time_ns'],
-                        'from': old_target, 'to': after.get('frame_pacing')})
                 result.update(completed_walks=number + 1, next_step=index, last_actual_state=after)
                 save()
             m.require(not p.get('_operator_stop_requested'), 'operator requested save-stop; test incomplete')

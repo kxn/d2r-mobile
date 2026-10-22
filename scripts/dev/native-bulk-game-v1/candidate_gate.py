@@ -222,7 +222,12 @@ def reviewed_artifacts(p, review, pinned, read, require):
     return canonical,raw
 
 
-def validate(p,pinned,read,require,readonly_memory_snapshot_validated=False):
+def validate(p,pinned,read,require,readonly_memory_snapshot_validated=False,sustained_runtime=None):
+    if sustained_runtime is not None:
+        require(sustained_runtime == p['runtime_commit'] == '88620ec7c92edeb59512612cebf42906a4848509'
+                and p.get('sustained_play') and 'native_host_experiment' in p
+                and 'native_compiler_experiment' not in p, 'current sustained source scope differs')
+        return validate_compiler(p,pinned,read,require,resource_preparation=True,sustained_validated=True)
     if 'native_host_experiment' in p:
         require('native_compiler_experiment' not in p, 'choose one reviewed experiment kind')
         return validate_compiler(p,pinned,read,require,resource_preparation=True,
@@ -369,7 +374,7 @@ def prior_930_memory_scope(p,prior,pinned,read,require):
 
 
 def validate_compiler(p,pinned,read,require,resource_preparation=False,
-                      readonly_memory_snapshot_validated=False):
+                      readonly_memory_snapshot_validated=False,sustained_validated=False):
     """Reviewed source successor, retaining original179 build/assets/raw reference.
 
     The caller authenticates the complete inputs SHA, including root_review;
@@ -382,6 +387,12 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
     require(p[mode]==expected
             and set(p['native_candidate_validation'])=={'root_review'}
             and source_base and p['runtime_commit']!=source_base, 'reviewed source parent / experiment mode differs')
+    if 'sustained_play' in p:
+        require(sustained_validated is True and p['runtime_commit']=='88620ec7c92edeb59512612cebf42906a4848509'
+                and not any(k in p for k in ('performance_tools','official_cpu_aa','official_l1i_record',
+                    'readonly_memory_snapshot','startup_allocation_capture','native_functional_validation',
+                    'prior_actual_game_qualification','official_gpu_tools','counter_snapshot')),
+                'sustained source requires explicit current qualification and original sparse tools only')
     official_cpu=(p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa'))) and p.get('performance_tools')
     functional = p.get('native_functional_validation')
     if functional is not None:
@@ -404,7 +415,7 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
                 'prior actual memory scope requires validated read-only snapshot')
         prior_memory=prior_actual_memory_scope(p,pinned,read,require)
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
-            and (official_cpu or prior_memory or functional)
+            and (official_cpu or prior_memory or functional or sustained_validated)
             and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
             'compiler experiment requires original f830/1MiB/full2838 and official tools or verified prior-game memory scope')
     review=read(pinned(p['native_candidate_validation']['root_review']))

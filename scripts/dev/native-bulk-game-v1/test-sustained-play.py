@@ -26,22 +26,28 @@ def digest(path):
 
 
 class Flow(unittest.TestCase):
-    def exercise(self, failure=None):
+    def exercise(self, failure=None, current=False):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp);clock = [0.];events = [];tick = [0];walks = [0]
             p = {'serial': 'Q', 'new_apk': 'apk', 'baseline_data': {'chain': 'chain'},
                  'pool_window_bytes': 1048576,
                  'sustained_play': {'interval_seconds': 600, 'resume_step': 0,
                    'route': {'path': 'verified'}, 'scheduler_helper': {'path': 'official-scheduler.py'}},
-                 '_sustained_route': {'kind': 'accepted-camp', 'scope': 'town', 'steps': t.CAMP}}
+                 '_sustained_route': {'kind': 'accepted-camp', 'scope': 'town', 'steps': t.CAMP},
+                 '_sustained_current': current}
             def state():
                 tick[0] += 1
                 return {'valid': True, 'world_input_ready': True, 'area': 1,
-                    'x': 5225, 'y': 6289, 'time_ns': tick[0], 'scale_3d': .6,
+                    'x': 5225, 'y': 6289, 'time_ns': tick[0],
+                    'scale_3d': (.75 if walks[0] == 0 else .65) if current else .6,
                     'game_output': {'width': 2750, 'height': 1260},
                     'surface_output': {'width': 2750, 'height': 1260},
                     'guest_heap': {'shared': True}, 'pool_windows': {'window_bytes': 1048576},
-                    'pipeline_prepare': {'pipelines': tick[0]}, 'frame_pacing': {'target_fps': 30}}
+                    'shared_lazy_windows': {'active': failure != 'policy' or walks[0] == 0},
+                    'shared_image_raw_observe': {'enabled_policy': False},
+                    'driver_constants': {'span_reference': True},
+                    'private_image_cache': {'budget_bytes': 536870912},
+                    'pipeline_prepare': {'pipelines': tick[0]}, 'frame_pacing': {'target_fps': 60 if current and walks[0] == 0 else 30}}
             class Dev:
                 def adb(self, *args):
                     events.append(args)
@@ -100,6 +106,19 @@ class Flow(unittest.TestCase):
                     self.assertEqual(sum(v == ('screenshot',) for v in events), 4)
                     self.assertTrue(d['sustained_play']['resumed_segments_cannot_be_summed_as_continuous'])
             return d
+
+    def test_current_adaptive_scale_and_target_changes_are_observed(self):
+        d = self.exercise(current=True)['sustained_play']
+        self.assertEqual(d['observed_scale_changes'][0]['from'], .75)
+        self.assertEqual(d['observed_scale_changes'][0]['to'], .65)
+        self.assertEqual(d['observed_target_changes'][0]['to']['target_fps'], 30)
+        self.assertIn('not fixed AB', d['scaling_policy'])
+
+    def test_current_midrun_policy_change_never_passes(self):
+        self.exercise('policy', current=True)
+
+    def test_current_reverse_miss_still_exits(self):
+        self.exercise('reverse', current=True)
 
     def test_normal_four_windows_and_sparse_observations(self): self.exercise()
     def test_thermal_pause_never_passes(self): self.exercise('thermal')

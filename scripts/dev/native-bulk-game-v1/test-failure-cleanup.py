@@ -41,22 +41,37 @@ class Device:
 
 
 class LifecycleFailureTests(unittest.TestCase):
-    def exercise(self, replacement, counter_failure=False, sustained_failure=False, memory_failure=False, vma_failure=False, vma_save_failure=False):
+    def exercise(self, replacement, counter_failure=False, sustained_failure=False, memory_failure=False, vma_failure=False, vma_save_failure=False, current=False, fixed_report=False, accounting_report=False):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder) / 'phase'
             dev = Device()
             saved = []
 
+            self_test = self
+
             class Launcher:
                 returncode = 0
 
                 def __init__(self, cmd, **kwargs):
+                    if current:
+                        self_test.assertEqual(cmd[cmd.index('--scale-3d') + 1], '.75')
+                        self_test.assertNotIn('--fixed-3d', cmd)
+                        self_test.assertIn('--no-pool-copy-accounting', cmd)
+                        self_test.assertNotIn('--pool-copy-accounting', cmd)
+                    else:
+                        self_test.assertEqual(cmd[cmd.index('--scale-3d') + 1], '.60')
+                        self_test.assertIn('--fixed-3d', cmd)
+                        self_test.assertIn('--pool-copy-accounting', cmd)
                     report = Path(cmd[cmd.index('--report') + 1])
                     report.write_text(json.dumps({
                         'pid': 12345, 'original_hud': True,
                         'actual_guest_heap': {'shared': True},
                         'actual_vulkan_provider': 'adreno',
-                        'requested_legacy_astc_copy': False}))
+                        'requested_legacy_astc_copy': False,
+                        'requested_scale_3d': .75 if current else .60,
+                        'requested_fixed_3d': fixed_report if current else True,
+                        'requested_pool_copy_accounting': accounting_report if current else True,
+                        'actual_pool_copy_accounting': not current}))
 
                 def poll(self):
                     return 0
@@ -99,7 +114,7 @@ class LifecycleFailureTests(unittest.TestCase):
                               side_effect=RuntimeError('injected retry failure')):
                 with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
                     config = {'serial': '10CG570J59001U1',
-                              'pool_window_bytes': 16777216}
+                              'pool_window_bytes': 16777216, '_sustained_current': current}
                     if sustained_failure:
                         config['sustained_play'] = {'enabled': True}
                     if counter_failure:
@@ -118,7 +133,7 @@ class LifecycleFailureTests(unittest.TestCase):
             state = json.loads((out / 'phase.json').read_text())
             if memory_failure:
                 self.assertIn('readonly_memory_snapshot_command',state)
-            if not counter_failure and not sustained_failure and not memory_failure:
+            if not counter_failure and not sustained_failure and not memory_failure and not fixed_report and not accounting_report:
                 self.assertTrue(state['screenshot_collection_errors'])
             if vma_failure and not vma_save_failure:
                 self.assertIn('builtin_vma_error', state)
@@ -131,6 +146,18 @@ class LifecycleFailureTests(unittest.TestCase):
                 self.assertTrue(dev.stopped)
                 self.assertEqual(dev.pid, '')
                 self.assertTrue(state['fresh_save_then_stopped'])
+
+    def test_current_adaptive_launch_failure_keeps_original_save2_stop(self):
+        self.exercise(False, current=True, sustained_failure=True)
+
+    def test_current_adaptive_launch_rejects_fixed_report_and_still_saves(self):
+        self.exercise(False, current=True, fixed_report=True)
+
+    def test_current_accounting_ON_report_is_rejected_and_owned_PID_saved(self):
+        self.exercise(False, current=True, accounting_report=True)
+
+    def test_current_replacement_PID_is_preserved(self):
+        self.exercise(True, current=True, sustained_failure=True)
 
     def test_VMA_diagnostic_failure_after_save2_still_stops_owned_game(self):
         self.exercise(False, vma_failure=True)

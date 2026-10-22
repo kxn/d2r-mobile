@@ -72,13 +72,15 @@ def validate_membership(old, new, old_table, new_table, changed, require, expect
                     'replacement identity/size/qualified format differs')
 
 
-def validate(p, pinned, read, require, compiler_runtime=None):
+def validate(p, pinned, read, require, compiler_runtime=None, sustained_runtime=None):
+    sustained = (sustained_runtime == p['runtime_commit'] == '88620ec7c92edeb59512612cebf42906a4848509'
+                 and compiler_runtime == sustained_runtime and bool(p.get('sustained_play')))
     mode = p['qualified_native_asset_validation']
     require(set(mode) == {'root_asset_review', 'dual_NVN_review'} and
             p.get('native_candidate_validation') and
             (p['runtime_commit'] in (RUNTIME, COMBINED_RUNTIME) or
              compiler_runtime == p['runtime_commit']) and
-            'sustained_play' not in p and 'official_gpu_tools' not in p and
+            ('sustained_play' not in p or sustained) and 'official_gpu_tools' not in p and
             'counter_snapshot' not in p, 'exact d148 bounded asset experiment only')
     if compiler_runtime == p['runtime_commit']:
         require(mode['root_asset_review']['sha256'] == FULL_ASSET_REVIEW,

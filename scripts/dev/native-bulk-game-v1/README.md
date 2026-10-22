@@ -372,3 +372,72 @@ launcher and state contract. This is not an image-data correctness proof.
 FP collection, routes, fresh save2 and CAS restoration remain unchanged;
 new runtime canonical/raw artifacts and the existing reviewed input are still
 required before execution. No executable candidate identity is supplied here.
+
+### Current886 sustained town-route qualification (tools only)
+
+This explicit branch authenticates the delivered886 publication and its actual
+controlled original-game source/canonical/freshNSO28 evidence, then reuses the
+original six-directory CAS transaction, original input tool, cooperative stop,
+fresh save2 and owned-PID shutdown. The full2838/CASC/TVFS/UI/same6217 membership
+gate still runs; historical asset `deploy_allowed=false`/acceptance fields and
+old6f receipts stay unchanged. Both compositions are checked, only the native
+phase executes. No APK, NSO or resource is built by this extension.
+
+Start at `.75` without `--fixed-3d`, retaining upstream adaptive resolution and
+existing HUD policy. Optional pool-copy accounting is explicitly OFF, as in the
+actual desktop886 launch; old controlled paths retain accounting ON. The launcher
+report must confirm these requests and actual accounting OFF. Every original
+endpoint read still requires ready world,2750x1260 output and shared1MiB; the new
+branch also checks lazy active/raw-observe OFF/span-reference ON/cache512MiB and
+accounting OFF (the disabled accounting JSON field is normally absent). Only
+scale in the original supported.50–1.00 range and actual target changes are
+allowed. Existing state reads preserve observations; they do not detect every
+transition between reads or constitute fixed-resolution A/B.
+
+The route is still an **attempt in town**: B(5225,6295)↔C(5235,6289), with the
+current886 first loop unproven. Historical6f v2 actually completed588 walks,
+including both directions; the old route file's PENDING text is historical and
+is left untouched, not evidence that historical v2 failed. First miss/tool error/PID replacement/thermal
+pause fails the uninterrupted run and enters the original save/restore path.
+The unchanged schedule is1800seconds with four original8second Perfetto windows
+at0/10/20/30minutes. No idle substitution, combat/field/whole-game acceptance,
+6GB qualification, FPS or sustained heat success follows from this source change.
+
+Input provenance and future production entry (root review/execution separate):
+
+* Reuse the real886 PARENT1 input at
+  `/home/dl/d2r-mobile/.local/build/private-image-budget-74d7e17-Q735-pair-v1/root-execute/PARENT1.json`
+  (SHA256 `1edb4e6302b99eb8d3aa4b960e280f4df0339149f82afebefe6e701715cb41c8`).
+  Its controlled `.60` run supplies artifact/source provenance, not current
+  `.75` adaptive gameplay qualification. Keep its886 canonical/raw/root review,
+  f830 provider/filter proofs, full2838 root asset/dual-NVN proofs, both full
+  compositions and original resource hashes.
+* Remove `official_cpu_aa`, `performance_tools`, `official_l1i_record`,
+  `official_memory_map`, `builtin_vma_on_suspend` and any other extra diagnostic
+  fields; new sustained scope rejects these rather than silently ignoring them.
+* Set `baseline` and `sustained_play.current_acceptance` to the real delivered886
+  baseline at `/home/dl/d2r-mobile/.local/logs/lazy-physical-span-index-88620ec-desktop-Q735-v1/delivered-baseline.json`
+  (SHA256 `28f3f9dd9763e4b7fb8cdd8caff24c94dc69b54d7a885a198dac755adcdebdb6`).
+  Restore APK is this886 canonical APK, with delivered ELF hash; do not restore
+  the older a322 APK from the PARENT input. A changed live baseline must be
+  independently checked before any later execution, not relabelled as this card.
+* `sustained_play` has exactly `seconds:1800`, `interval_seconds:600`,
+  `trace_seconds:8`, the above `current_acceptance` pin, `resume_step:0`,
+  `route` pin to `/home/dl/d2r-mobile/.local/build/native-sustained-play-v2/camp-route-v2.json`
+  (SHA256 `6890835831e5674a80ea391376c0184e047b1af877a3d8c73ad35ebaf57e008c`),
+  or a newly pinned route card with exactly the same accepted-camp steps and
+  explicit historical/current boundaries; and `scheduler_helper` pin to **this checkout's** unchanged
+  `capture-sustained-scheduler.py` (SHA256 `5a7576257b54b4352db46cf3fb9182109b483d8760fd7cd84a81604dd95022ab`).
+  Keep startup lazy1/raw0/span-reference1,1MiB,950 and full2838. Replace the old
+  authorization text/output with a distinct reviewed town-attempt scope/directory.
+* The original production entry is
+  `python3 scripts/dev/native-bulk-game-v1/run-game.py --inputs INPUT.json --inputs-sha256 SHA256 --report OUTPUT/result.json`.
+  Without `--execute` it performs the complete original proof and prints a plan.
+  This branch supplies **no execute-ready input**; keep `execution_ready:false`
+  while preparing/reviewing. Root alone creates any later unique execution input.
+
+`test-current-sustained-gate.py` exercises the actual complete offline proof using
+a temporary non-executable input and forbids Device construction, plus old6f and
+current qualification/policy refusal cases. Original flow/cleanup tests cover
+adaptive changes, first reverse miss, mid-run policy change, thermal/tools/PID,
+launch report mismatches and original save2/replacement-PID handling.
