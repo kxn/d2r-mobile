@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import selectors
 import shlex
 import signal
 import subprocess
@@ -46,6 +47,97 @@ def validate_startup(config):
     require(config['sdk_original']['sha256']=='1c9f198a91c0bcfee5cf8f5b53fb941895e91334dfb766ce79fc68576797f017'
             and config['sdk_flat']['sha256']=='f5682a032c0884fc7d8553adb0f7445c3f0ae92c961a9f95b6593d7f487b6ea0',
             'startup allocator SDK differs from original static proof')
+
+def wait_jdwp_pid(adb_base, pid, out, timeout=20):
+    """Consume official adb output, without requiring EOF after a complete PID line."""
+    require(pid.isdecimal(), 'invalid owned JDWP PID')
+    out = Path(out)
+    command = [*adb_base, 'jdwp']
+    result = dict(command=command, expected_PID=int(pid), timeout_seconds=timeout,
+                  complete_PID_line_observed=False, stdout_EOF=False, stderr_EOF=False,
+                  byte_limit=65536, observed_bytes=0, timed_out=False,
+                  scope='Observed official adb output only; no JDWP protocol implementation')
+    captured = {'stdout': bytearray(), 'stderr': bytearray()}
+    pending = bytearray()
+    child = None
+    selector = selectors.DefaultSelector()
+    try:
+        child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 stdin=subprocess.DEVNULL, bufsize=0)
+        result['owned_local_reader_PID'] = child.pid
+        for name in captured:
+            pipe = getattr(child, name)
+            os.set_blocking(pipe.fileno(), False)
+            selector.register(pipe, selectors.EVENT_READ, name)
+        deadline = time.monotonic() + timeout
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                result['timed_out'] = True
+                break
+            for key, _ in selector.select(remaining):
+                chunk = os.read(key.fileobj.fileno(), 4096)
+                name = key.data
+                if not chunk:
+                    result[name + '_EOF'] = True
+                    selector.unregister(key.fileobj)
+                    continue
+                if result['observed_bytes'] + len(chunk) > result['byte_limit']:
+                    result['output_truncated_at_byte_limit'] = True
+                    raise RuntimeError('official adb JDWP output exceeded bounded budget')
+                captured[name].extend(chunk)
+                result['observed_bytes'] += len(chunk)
+                if name == 'stdout':
+                    pending.extend(chunk)
+                    while b'\n' in pending:
+                        line, _, tail = pending.partition(b'\n')
+                        pending = bytearray(tail)
+                        if line.removesuffix(b'\r') == pid.encode('ascii'):
+                            result['complete_PID_line_observed'] = True
+            if result['complete_PID_line_observed']:
+                break
+        result['returncode_before_owned_cleanup'] = child.poll()
+        require(result['returncode_before_owned_cleanup'] in (None, 0),
+                'official adb JDWP reader failed')
+        require(result['complete_PID_line_observed'],
+                'owned process has no complete waiting JDWP PID line within bounded output/window')
+        result['reader_live_at_match'] = child.poll() is None
+        result['qualified'] = True
+    except BaseException as error:
+        result['error'] = repr(error)
+        raise
+    finally:
+        try:
+            if child is not None:
+                if child.poll() is None:
+                    result['owned_reader_terminate_requested'] = True
+                    child.terminate()
+                    try:
+                        child.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        result['owned_reader_kill_requested'] = True
+                        child.kill()
+                        child.wait(timeout=2)
+                else:
+                    child.wait(timeout=2)
+                result['owned_reader_reaped'] = child.poll() is not None
+                result['returncode_after_owned_cleanup'] = child.returncode
+        except BaseException as error:
+            result['qualified'] = False
+            result['cleanup_error'] = repr(error)
+            raise
+        finally:
+            selector.close()
+            if child is not None:
+                for name in captured:
+                    getattr(child, name).close()
+            for name, data in captured.items():
+                (out / ('official-adb-jdwp-' + name + '.bin')).write_bytes(data)
+                result[name + '_sha256'] = hashlib.sha256(data).hexdigest()
+                result[name + '_bytes'] = len(data)
+            (out / 'official-adb-jdwp-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
+    return result
+
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -126,7 +218,7 @@ def main():
         require(adb('shell', 'run-as', PKG, 'sha256sum', SERVER_APP).split()[0] == sha(SERVER_LOCAL),
                 'transaction did not publish exact NDK lldb-server')
         require('tcp:65534' not in adb('forward','--list'), 'NDK official JDWP port already owned')
-        require(pid in adb('jdwp').splitlines(), 'owned process has no waiting JDWP endpoint')
+        d['official_JDWP_readiness'] = wait_jdwp_pid(adb_base, pid, out)
         maps=adb('exec-out','run-as',PKG,'cat','/proc/'+pid+'/maps')
         (out/'native-debugger-maps-before-JDWP.txt').write_text(maps+'\n')
         require('/libdmhost_android.so' not in maps, 'native host already loaded; startup hold not proven')

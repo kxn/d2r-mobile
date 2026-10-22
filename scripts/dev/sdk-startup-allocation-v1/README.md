@@ -77,3 +77,34 @@ Official sources: [AOSP startup debugging](https://source.android.com/docs/core/
 local NDK28 `ndkgdb.pyz:ndkgdb.py` `start_jdb`, [NDK debugger](https://developer.android.com/ndk/guides/ndk-gdb).
 Host local JDK/JDI and pending symbol resolution are checked separately;
 Android early-start behavior is **not yet device-qualified**.
+
+
+### JDWP readiness consumer (V3)
+
+The first actual startup attempt failed before native startup/server creation:
+`subprocess.check_output(adb jdwp, timeout=20)` waited for EOF. The unchanged
+failed transaction is `sdk-startup-large-allocation-f75-restore-a322-Q735-v1`.
+AOSP `client/commandline.cpp` blob `5cd3ab66dd0a7ba0173b01f954fbe76c21269483`
+uses separate `jdwp` and `track-jdwp` services; both use `adb_connect_command`
+with `read_and_dump`. This evidence does **not** mean `jdwp` is a track-jdwp
+stream or that every implementation must remain open.
+Source: https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/commandline.cpp
+
+V3 still runs the original official `adb -s SERIAL jdwp`. It consumes stdout
+until the exact owned PID appears as a complete line (20-second deadline,
+64KiB combined observed stdout/stderr bound). It accepts finite or still-open
+output without waiting for EOF. A partial PID, substring, stderr PID, absent
+PID, observed client error or deadline failure is not readiness. It preserves
+observed stdout/stderr bytes and `official-adb-jdwp-readiness.json` with EOF,
+exit/stream-at-match and owned-reader cleanup facts. After a match or failure,
+it terminates/reaps **only the local reader child it created**; it neither
+restarts the ADB server nor stops another client or Android service.
+
+This fixes host orchestration only. It leaves the exact SDK 244-byte check,
+NDK JDB release, LLDB callbacks, allocation conditions/budgets, postroute
+snapshot and original save2/stop/CAS policy unchanged. Conditional SDK software
+traps can still perturb startup. Reaching a JDWP PID is not evidence of native
+startup or successful allocation capture. A character-select `save asked=0`
+still fails closed and cannot authorize unsaved stopping/restoration.
+
+Host regression: `python3 scripts/dev/sdk-startup-allocation-v1/test-jdwp-readiness.py -v`.
