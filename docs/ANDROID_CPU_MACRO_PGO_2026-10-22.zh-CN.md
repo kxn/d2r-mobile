@@ -147,3 +147,38 @@ CPU 的 `88620ec` 候选则将提示未命中的物理 Buffer 选择从逐节点
 当前没有另一块已证明可删除、足以消除约 10ms 的重复工作。已实现的 Store 记录从约 1.44 万减至约 720/submit、区间扫描改为查询既有索引，分别是减少表示工作和改变查找复杂度；它们有独立机制证据，但不能代替宏观预算。后续每个候选先列明完整父职责、可变部分、新成本、条件上界和净下界，再修改。
 
 证据：`.local/logs/cpu-lazy-physical-88620ec-pair-analysis-v1/`、`.local/logs/cpu-lazy-physical-88620ec-ABBA-root-review.json`、`.local/logs/index-ABBA-parent-DVFS-drift-readonly-v1/{ready.json,report.md,root-review.json}`。审计只读既有工具数据，没有访问 Mali／平板；本节不新增持续散热或 6GB 验收结论。
+
+## 512→64MiB 缓存预算：四轮真实内存与 CPU 对照完成
+
+父版为 `88620ec`，子版 `74d7e17` 仅降低原 CPU-rebuildable 图像软预算，不改变已完成／冷龄／CPU 可重建／非 external 的原资格，不释放 GPU 权威数据或 native imports。四轮仍用同 f830/full2838/950/.60/2750×1260/target60，实际运行原游戏、三段原输入、3×30s 官方 FP、5×8s Perfetto，再原存档两次、停止、恢复。原内置 VMA 仅在最后正常暂停／drain 时请求一次；没有新增采样或计时器。
+
+| 顺序 | NvN Running ms/Surface | Surface ms | 前台 PSS KiB | 暂停后 VMA Block MiB |
+| --- | ---: | ---: | ---: | ---: |
+| 父版 1 | 27.028 | 33.538 | 1,988,516 | 412 |
+| 子版 1 | 26.393 | 33.276 | 2,108,044 | 348 |
+| 子版 2 | 26.874 | 33.123 | 1,985,491 | 348 |
+| 父版 2 | 26.468 | 33.465 | 1,984,058 | 412 |
+
+110 个原预算端点核对实际策略正确。结束时父版私有图像分配均 346,214,400B，子版 286,461,952/286,494,720B；两子分别少约 56.98/56.95MiB，变化全部来自 CPU-rebuildable 类别，其余私有类别同为 219,394,048B。两父暂停后 VMA 均 15 block、两子均 13 block，保留 block 准确少 64MiB。这是重复观察到的分配和 allocator footprint 收益，不能当作物理驻留或 DRAM 带宽节省。
+
+前台总 PSS 没有稳定下降：同一子版两次就相差 122,553KiB。子版 1 对父版 1 的增长中 EGL/GL mtrack 合计 +79,384KiB，顺序采集的 showmap 映射 PSS +46,183KiB，主要在 guest memfd；不同统计阶段的残差保留，不强凑唯一物理 RAM。子版 2 没有重复同样的 mtrack 增长，但仍不能将子版 1 剔除或强归为无关系统噪声。暂停后四轮 VMA live allocation 均约 246.8–246.9MB；它与早期前台私有图像计数不同阶段、不同全集，不相减认领回收量。
+
+子版 1 仅首窗累计预算释放 +626,688B，此后三份 FP／末窗不变，子版 2 五窗均不变；没有该城镇稳态持续淘汰的证据。此前加载／跑动期间的累计释放，以及其他区域重建次数／字节／成本仍未知，不能把累计销毁量当净 PSS 节省或零重建证明。CPU 也没有一致候选优势：子版 2 比末轮父版更慢；PSO、位置、频率和驻核有差异，不用小均值差宣称加速。
+
+全部 20 窗、12 份 FP 保留，health 无错误、lost/truncated 为 0，12 次官方时钟重叠通过；父版 1 record2 的一条真实缺 `x_thread` 样本没有补祖先。根复核官方分析 950 项及内存审计 150 项原始引用；两子原有营地截图已实际查看，未观察到黑块或几何损坏。四轮原保存／恢复／cleanup 均完成，根 ADB 实际确认 a322 APK、私有 profile/receipt 未变且进程停止，没有访问 Mali 或平板。
+
+保留 64MiB 候选及其有证据的分配减少，不因 FPS 未涨将其判无效。总 PSS／重建成本的未解边界仍需调查，暂不替换日常预算。另行将已完成内容、生命周期及真机资格的 930/cb/886 底层改动纳入 Q 本地正常启动交付，独立验证两次无 extras 桌面冷启动；不将这一交付写成热、FPS 或 6GB 验收。
+
+证据：`.local/logs/private-image-budget-74d7e17-pair-analysis-v1/`、`.local/logs/private-image-budget-74d7e17-ABBA-root-official-review.json`、`.local/logs/private-image-budget-74d7e17-memory-analysis-v1/{all4-ready.json,all4-report.txt,root-review.json}`、`.local/logs/private-image-budget-74d7e17-post-ABBA-private-files.json`。整体持续游玩散热与 6GB 稳定运行目标仍未完成。
+
+## Q 日常版本已实际更新为 886，缓存预算仍为原值
+
+`88620ec` 已通过原 publisher 实际安装为 Q735 正常桌面版本，原进程终态 0。两次原 `MAIN/LAUNCHER` 冷启动（PID25720/26432）无 Intent extras，均实际观察 Java profile 消费、原游戏 HUD、Turnip/shared/native 策略，再由原生命周期存档两次并停止。原目录／文件 CAS、安装器和失败回滚保持；存档不回滚，原 950 Shader 与用户 HUD preferences 未改。实际普通启动比例均 0.75；上节受控采集为 0.60，不能混称同一性能条件。
+
+本次纳入 930 的 B2T 源准备修复、cb 冷阶段拆分及 886 区间索引，保留原 512MiB 缓存预算，没有部署 `74d7e17` 的 64MiB 实验。新普通启动功能验收不是 CPU/FPS、持续散热或 6GB 结论。
+
+旧 publisher 的资格门早于当前源卡格式，离线拒绝记录保留，未重标根卡或削弱门。工具 `9faac06` 将原 publisher／原 12 用例逐字节带入当前 53 工具树，并移植既有 attach 观察单行修正及真实 helper 测试；原当前 runner、installer、candidate gate、资产与构建／NSO 门均未改。原 12+15 主机用例通过，根复核 2,075 个归档／实时源码文件后，才使用新真实 886 功能资格及独立 Q 本地交付收条执行。没有新的运行时或 Shader 改动。
+
+根实际 ADB 复核：APK SHA `22d62b10d2ef2bcfd33c77ed881c8ccf9abe4ad6baeda1926c083ad6016167c0`，profile SHA `4a8ec8326276716b3735d2ed5031255ab57c567c8b2c36d700ddef4579452066`，交付收条 SHA `ea04491c67505dad25e2359ae7248e209bf1b5fea4b79ec6ed08c834e80ac384`；模块 manifest、native table、Shader chain 均匹配，进程停止，锁及传输已清理。旧 a322 APK 与私有回滚备份保留。
+
+**后续 Q 事务必须以新实际交付基线为原状态／恢复目标**：`.local/logs/lazy-physical-span-index-88620ec-desktop-Q735-v1/delivered-baseline.json`，SHA `28f3f9dd9763e4b7fb8cdd8caff24c94dc69b54d7a885a198dac755adcdebdb6`；a322 只作为历史回滚记录，不再代表当前安装。根验收为 `.local/logs/lazy-physical-span-index-88620ec-Q-local-root-actual-delivery-review.json`。源码分支 `codex/lazy-physical-span-index-v1` 与 publisher 分支 `codex/q-local-desktop-publisher-current-v2` 均已备份到 fork。
