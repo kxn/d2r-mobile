@@ -146,6 +146,7 @@ def readonly_memory_snapshot(p):
                     snapshot['config']['path'], '--config-sha256',
                     snapshot['config']['sha256'], '--plan'], check=True,
                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return True
 
 
 def readonly_memory_snapshot_result(result):
@@ -218,7 +219,7 @@ def proof(path, digest):
     require(len(p['prerequisites']) >= 2, 'actual fixture and bake receipts required')
     for row in p['prerequisites']:
         pinned(row)
-    readonly_memory_snapshot(p)
+    memory_snapshot_validated = readonly_memory_snapshot(p) is True
     if 'counter_snapshot' in p:
         counter = p['counter_snapshot']
         require(set(counter) == {'ready', 'config', 'server'}, 'counter snapshot fields differ')
@@ -327,7 +328,8 @@ def proof(path, digest):
     compiler_runtime = None
     if 'native_candidate_validation' in p:
         candidate = module('source_pinned_native_candidate_gate', HERE / 'candidate_gate.py')
-        compiler_runtime = candidate.validate(p, pinned, read, require)
+        compiler_runtime = candidate.validate(p, pinned, read, require,
+            readonly_memory_snapshot_validated=memory_snapshot_validated)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
     if p['phases'][1]['composition']['sha256'] in ('8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3',

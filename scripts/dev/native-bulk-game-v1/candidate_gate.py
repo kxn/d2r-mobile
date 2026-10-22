@@ -222,10 +222,11 @@ def reviewed_artifacts(p, review, pinned, read, require):
     return canonical,raw
 
 
-def validate(p,pinned,read,require):
+def validate(p,pinned,read,require,readonly_memory_snapshot_validated=False):
     if 'native_host_experiment' in p:
         require('native_compiler_experiment' not in p, 'choose one reviewed experiment kind')
-        return validate_compiler(p,pinned,read,require,resource_preparation=True)
+        return validate_compiler(p,pinned,read,require,resource_preparation=True,
+            readonly_memory_snapshot_validated=readonly_memory_snapshot_validated)
     if 'native_compiler_experiment' in p:
         return validate_compiler(p,pinned,read,require)
     if p['runtime_commit'] != POOL_RUNTIME:
@@ -284,7 +285,48 @@ THIN_COMPILE=['-flto=thin']
 THIN_LINK=['-flto=thin','-O3','-fuse-ld=lld','-Wl,--thinlto-jobs=2']
 
 
-def validate_compiler(p,pinned,read,require,resource_preparation=False):
+def prior_actual_memory_scope(p,pinned,read,require):
+    """Reuse only the root-reviewed, already completed exact f75 game pair."""
+    prior=read(pinned(p['prior_actual_game_qualification']))
+    require(prior.get('status')=='ROOT_REVIEWED_F75_SAME_APK_ASSETS_SPAN_PAIR_ACTUAL_GAME_FUNCTIONAL_CAPTURE_AND_OUTER_RESTORE'
+            and prior.get('runtime')==p['runtime_commit']=='f75de421d0558c746ffc9cd4fee2e1a66c5e9c40'
+            and prior.get('actual_saved_stopped_original_restored') is True
+            and prior.get('same_inputs_except_span_flag_and_output') is True,
+            'prior actual game qualification status/runtime incomplete')
+    def same(a,b):
+        return a['sha256']==b['sha256'] and str(pinned(a))==str(pinned(b))
+    require(same(prior['source_and_original_NSO_qualification'],p['native_candidate_validation']['root_review']),
+            'prior actual game source/raw review differs')
+    rounds=prior['rounds']
+    require(len(rounds)==2 and {r['label'] for r in rounds}=={'REFERENCE1','SPAN0'},
+            'prior actual game requires both completed rounds')
+    for row in rounds:
+        inputs=read(pinned(row['actual_inputs']));result=read(pinned(row['result']))
+        require(inputs['runtime_commit']==p['runtime_commit'] and inputs['serial']==p['serial']
+                and all(same(inputs[k],p[k]) for k in ('canonical','raw'))
+                and same(inputs['native_candidate_validation']['root_review'],p['native_candidate_validation']['root_review'])
+                and result['inputs_sha256']==row['actual_inputs']['sha256']
+                and result['plan']['runtime']==p['runtime_commit'], 'prior actual game inputs differ')
+        require(result['stage']=='qualified-native-ASTC6-original-game-resource-validation-complete'
+                and result.get('original_restored') is True and result.get('cleanup_complete') is True
+                and result.get('cleanup_errors')==[] and not result.get('error'),
+                'prior actual game restore/cleanup incomplete')
+        phases=result['phases'];save=read(pinned(row['fresh_save']))
+        require(len(phases)==1 and phases[0]['kind']=='native' and phases[0]['first_PID']==row['PID']
+                and all(phases[0].get(k) is True for k in ('original_HUD_reached','game_modules_executed','fresh_save_then_stopped'))
+                and phases[0].get('original_route_completed')==3
+                and save['pid']==row['PID'] and save['serial']==p['serial']
+                and save['fresh_original_lifecycle_save'] is True and save['save_commits']==2,
+                'prior actual game execution/save2 incomplete')
+    outer=read(pinned(prior['outer_publication_and_restore']))
+    require(outer['serial']==p['serial'] and outer['original_restored'] is True
+            and outer['stage_cleanup_complete'] is True and outer['pending_owned_stage_cleanup']==[],
+            'prior outer shader restore incomplete')
+    return True
+
+
+def validate_compiler(p,pinned,read,require,resource_preparation=False,
+                      readonly_memory_snapshot_validated=False):
     """Reviewed source successor, retaining original179 build/assets/raw reference.
 
     The caller authenticates the complete inputs SHA, including root_review;
@@ -297,10 +339,16 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False):
     require(p[mode]==expected
             and set(p['native_candidate_validation'])=={'root_review'}
             and source_base and p['runtime_commit']!=source_base, 'reviewed source parent / experiment mode differs')
+    official_cpu=(p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa'))) and p.get('performance_tools')
+    prior_memory=False
+    if resource_preparation and not official_cpu and 'prior_actual_game_qualification' in p:
+        require(readonly_memory_snapshot_validated is True and bool(p.get('readonly_memory_snapshot')),
+                'prior actual memory scope requires validated read-only snapshot')
+        prior_memory=prior_actual_memory_scope(p,pinned,read,require)
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
-            and (p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa'))) and p.get('performance_tools')
+            and (official_cpu or prior_memory)
             and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
-            'compiler experiment requires original f830/1MiB/full2838 and official tools')
+            'compiler experiment requires original f830/1MiB/full2838 and official tools or verified prior-game memory scope')
     review=read(pinned(p['native_candidate_validation']['root_review']))
     status = ('ROOT_REVIEWED_HOST_RESOURCE_PREPARATION_CANONICAL_AND_FRESH_RAW28' if resource_preparation
               else 'ROOT_REVIEWED_HOST_THINLTO_CANONICAL_AND_FRESH_RAW28')
