@@ -223,3 +223,15 @@ CPU 的 `88620ec` 候选则将提示未命中的物理 Buffer 选择从逐节点
 另对精确 886 的 draw/shader 两个 Android AArch64 TU 做有界 O3/O2/Os scratch 编译：六次均成功，O3 两对象与正式 canonical 对象完整逐字节相同。未链接 text 合计 153,120→141,204/123,992B；主要 draw+binding 入口 23,308→21,648/19,200B。实际解释包括首次常量初始化的 73 个展开 store 改为循环，以及五 stage 的五个静态绑定 callsite 改为一个循环 callsite；实际有效 stage 仍逐个消费，并有新增循环检查。栈没有一致减少，缺少动态 block 权重，不能据尺寸表估净 ms 或改日常默认。没有链接／APK／RAW 或游戏源码变化。原工具与机器码证据在 `.local/logs/886-O3-O2-Os-twoTU-v1/{ready-v2.json,report.txt,machine-explanations.txt,root-review.json}`。
 
 持续验收工具的只读合同亦完成：旧工具独立锁旧 6f/6217/.60 fixed，candidate/full2838 门和后续 scope/stage 也不支持直接组合；不能只换 runtime 或绕 validator 执行当前 886。当前正常启动为 .75 起始且保留 adaptive/HUD 策略，不能暗改 fixed。正在独立工具分支最小适配，保留原 proof、CAS、输入、save2、四个官方 8s Perfetto 窗与失败清理；本节没有长测结果。原营地反向路线仍未证，首 miss 必须失败，营地不能冒充战斗／完整游玩或 6GB 结论。合同在 `.local/logs/sustained-886-source-contract-readonly-v1/result.json`。
+
+## 当前持续游玩测试适配与真实启动
+
+工具分支 `codex/current-sustained-886-v1` 已推送：82f1e6a 明确允许已实际交付的886/full2838/950/.75起始adaptive组合，原四个8s Perfetto、输入、生命周期、安装与六目录CAS保留；可选copy accounting显式OFF，各端点核lazy/raw/span/cache512策略。61项主机方法通过，根复核原关键8文件、15函数和phase finally未改变，并实际执行完整离线proof。它不生成性能收益或长测成功。
+
+第一次实际控制器19434在原 `original_check` 因temp快照变化退出1，尚未创建owner、安装或启动游戏。独立停止态盘点确认，仅既有PSO.bin、recipes与游戏日志3个hash正常更新，其他7目录及不可变身份相同；未删掉或回滚暖缓存。后继b5dbe6d只添加显式根审核的同交付fresh停止态快照支持，固定原交付28f3不改，独立重算8目录/文件集合/严格PSO与GameLogs文件名/逐条old-newhash。38项受影响方法通过，根两次新完整proof通过；原original_check/expected_baseline/CAS未改。原失败与新fresh2009829、根审核52b1bce9分别保存，没有重标旧卡。
+
+实际新事务46601使用新独立输入f887cad9，PID11664，已进入真实游戏并完成首批双向营地走动，00官方窗口完成。根查看原有截图：营地、角色和HUD可见，无明显新黑块；截图电池28.4°C、overlay25.5FPS只是该张截图读数，不代替官方测量或持续散热结论。原30min流程仍运行，后续检查点与最终save2/停止/恢复尚未完成，不能把当前阶段写为连续通过。实际数据为 `.local/logs/current-sustained-886-Q735-v2/`，输入/终态编排在 `.local/build/current-sustained-886-Q735-v2/`。
+
+另做两个有界核实：停止态Q735的公开GameManager为standard、无该包intervention，不能排除OEM私有功耗/温控策略；最近6GB实测仍旧eeb、rawBC、shared线性Buffer而native image OFF，最后GPU fault/errno35不是已证OOM。当前886含后续B2T顺序修复但未在A650验证，不称修好或已失败。证据分别在 `.local/logs/Q735-current-public-game-mode-readonly-v1/result.json`、`.local/logs/a650-current-blocker-bounded-readonly-v3/report.md`。完整性能、持续游玩散热及真实6GB稳定目标仍未完成。
+
+00分钟已完成的静止8s官方检查窗为198个完整Surface，平均39.340ms（25.42区间/秒），同窗NvN Running29.721ms/区间、加权1383.8MHz，PSO174/variants30稳定；trace health无error/data_loss。thread_state有38.677ms跨度未覆盖，未补入睡眠。此窗不是行走全程FPS或30min成功。数据与根复核在 `.local/logs/current-sustained-886-Q735-v2-analysis/00min/`；后续源控制器46601仍须按真实进度继续，不能因观察超时重启。
