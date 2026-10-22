@@ -51,6 +51,10 @@ static void gpu_event_payload_test(void) {
   CALL(nvnCommandBufferBindStorageBuffer,&cmd,NVN_SHADER_STAGE_COMPUTE,0,(uintptr_t)src,256);
   CALL(nvnCommandBufferBindStorageBuffer,&cmd,NVN_SHADER_STAGE_COMPUTE,1,(uintptr_t)dst,256);
   CALL(nvnCommandBufferDispatchCompute,&cmd,1,1,1);
+#ifndef DM_ANDROID_APP
+  if(getenv("DM_COMPUTE_BIND_FIXTURE"))
+    CALL(nvnCommandBufferDispatchCompute,&cmd,1,1,1);
+#endif
   CALL(nvnCommandBufferSignalEvent,&cmd,&event,NVN_EVENT_SIGNAL_MODE_WRITE,NVN_EVENT_SIGNAL_LOCATION_BOTTOM,0,5);
   CALL(nvnCommandBufferSignalEvent,&cmd,&event,NVN_EVENT_SIGNAL_MODE_ADD,NVN_EVENT_SIGNAL_LOCATION_BOTTOM,0,8);
   CALL(nvnCommandBufferDispatchCompute,&cmd,1,1,1);

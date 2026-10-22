@@ -189,9 +189,9 @@ static int pl_render_end(render_job *j) {
     .framebuffer=j->framebuffer,.renderArea=j->area,.clearValueCount=j->attachment_count,.pClearValues=j->clears};
   vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
   VkCommandBuffer first=p->subpass?p->first:j->secondary;
-  vkCmdExecuteCommands(V.cmd,1,&first);
+  vk_command_execute(1,&first);
   vkCmdNextSubpass(V.cmd,VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-  if(p->subpass)vkCmdExecuteCommands(V.cmd,1,&j->secondary);
+  if(p->subpass)vk_command_execute(1,&j->secondary);
   vkCmdEndRenderPass(V.cmd);
   if(!p->subpass)for(unsigned k=0;k<p->plan.fragment->count;k++)
     if(!vk_texture_pixel_local_enter(&p->tokens[k]))die("Vulkan pixel-local fallback physical lifetime");
@@ -292,7 +292,7 @@ static int pl_enter(render_job *j) {
     .renderPass=j->pass,.subpass=1,.framebuffer=j->framebuffer};
   VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     .flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT|VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,.pInheritanceInfo=&inherit};
-  VK_CHECK(vkBeginCommandBuffer(j->secondary,&begin));V.cmd=j->secondary;p->subpass=1;
+  VK_CHECK(vk_command_begin(j->secondary,&begin));V.cmd=j->secondary;p->subpass=1;
   memset(&j->bound_pipeline,0,sizeof j->bound_pipeline);j->bound_layout=VK_NULL_HANDLE;
   memset(j->bound_sets,0,sizeof j->bound_sets);memset(j->bound_uniform_offsets,0,sizeof j->bound_uniform_offsets);
   memset(&j->bias_state,0,sizeof j->bias_state);j->dynamic_state_valid=0;render_binding_reset(j);

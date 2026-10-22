@@ -71,8 +71,8 @@ int vk_event_signal(uint64_t address,uint32_t mode,uint32_t value) {
       .pBufferInfo=&binding};
     vkUpdateDescriptorSets(V.device,1,&write,0,NULL);
     uint32_t push[]={(uint32_t)((offset-base)/sizeof(uint32_t)),value};
-    vkCmdBindPipeline(V.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,event_add_pipeline);
-    vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,event_layout,0,1,&set,0,NULL);
+    vk_compute_bind_pipeline(event_add_pipeline);
+    vk_compute_bind_descriptors(event_layout,0,1,&set,0,NULL);
     vkCmdPushConstants(V.cmd,event_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof push,push);
     vkCmdDispatch(V.cmd,1,1,1);
     vk_buffer_shader_written(address,sizeof(uint32_t),stage);

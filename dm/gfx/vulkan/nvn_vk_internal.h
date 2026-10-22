@@ -181,6 +181,12 @@ void vk_buffer_create(vk_buffer *b, uint64_t size, VkBufferUsageFlags usage);
 void vk_buffer_destroy(vk_buffer *b);
 vk_buffer *vk_temp_buffer(uint64_t size);
 VkCommandBuffer vk_command_buffer(VkCommandBufferLevel level);
+// Recording-owner command state; never a resource readiness/lifetime proof.
+VkResult vk_command_begin(VkCommandBuffer command,const VkCommandBufferBeginInfo *info);
+void vk_command_execute(uint32_t count,const VkCommandBuffer *commands);
+void vk_compute_bind_pipeline(VkPipeline pipeline);
+void vk_compute_bind_descriptors(VkPipelineLayout layout,uint32_t first,uint32_t count,
+    const VkDescriptorSet *sets,uint32_t offset_count,const uint32_t *offsets);
 void vk_readback_coherent_reference(int reference);
 void vk_image_layout_reference(int reference);
 void vk_sampled_array_layout_reference(int reference);

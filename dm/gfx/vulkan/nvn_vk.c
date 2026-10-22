@@ -32,6 +32,7 @@
 vk_context V = {.resources = PTHREAD_MUTEX_INITIALIZER,
                 .queue_mu = PTHREAD_MUTEX_INITIALIZER,
                 .present_queue_mu = PTHREAD_MUTEX_INITIALIZER};
+#include "nvn_vk_compute_state.inc"
 typedef struct pool_gpu_access pool_gpu_access;
 typedef struct pool_cpu_authority pool_cpu_authority;
 typedef struct pool_cpu_exposure pool_cpu_exposure;
@@ -4163,7 +4164,7 @@ static void begin_submission(int pool_migration) {
   VkCommandBufferBeginInfo bi = {
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
       .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-  VK_CHECK(vkBeginCommandBuffer(V.cmd, &bi));
+  VK_CHECK(vk_command_begin(V.cmd, &bi));
 #ifdef DM_VULKAN_SHARED_POOLS
   if(shared_union_visibility_pending) {
     // Rare remapping aliases an older import's payload. A named new-buffer
