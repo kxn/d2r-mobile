@@ -41,7 +41,7 @@ class Device:
 
 
 class LifecycleFailureTests(unittest.TestCase):
-    def exercise(self, replacement, counter_failure=False, sustained_failure=False, memory_failure=False):
+    def exercise(self, replacement, counter_failure=False, sustained_failure=False, memory_failure=False, vma_failure=False, vma_save_failure=False):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder) / 'phase'
             dev = Device()
@@ -76,6 +76,10 @@ class LifecycleFailureTests(unittest.TestCase):
                         dev.pid = '54321'
                     raise subprocess.CalledProcessError(1, cmd)
                 self.assertIn('android-game-background-save.py', ' '.join(cmd))
+                if vma_failure:
+                    self.assertIn('--vma-dump-on-suspend', cmd)
+                if vma_save_failure:
+                    raise subprocess.CalledProcessError(1, cmd)
                 report = Path(cmd[cmd.index('--report') + 1])
                 report.write_text(json.dumps({'fresh_original_lifecycle_save': True,
                                               'save_commits': 2, 'pid': 12345}))
@@ -102,6 +106,8 @@ class LifecycleFailureTests(unittest.TestCase):
                         config['counter_snapshot'] = {
                             'helper_path': 'counter-helper.py',
                             'config': {'path': '/local/config.json', 'sha256': 'a' * 64}}
+                    if vma_failure:
+                        config['builtin_vma_on_suspend'] = True
                     if memory_failure:
                         helper=Path(folder)/'memory-helper.py';helper.write_text('# host fake only\n')
                         helper_config=Path(folder)/'memory-config.json';helper_config.write_text('{}\n')
@@ -114,15 +120,23 @@ class LifecycleFailureTests(unittest.TestCase):
                 self.assertIn('readonly_memory_snapshot_command',state)
             if not counter_failure and not sustained_failure and not memory_failure:
                 self.assertTrue(state['screenshot_collection_errors'])
-            if replacement:
+            if vma_failure and not vma_save_failure:
+                self.assertIn('builtin_vma_error', state)
+            if replacement or vma_save_failure:
                 self.assertFalse(saved)
                 self.assertFalse(dev.stopped)
-                self.assertEqual(dev.pid, '54321')
+                self.assertEqual(dev.pid, '54321' if replacement else '12345')
             else:
                 self.assertTrue(saved)
                 self.assertTrue(dev.stopped)
                 self.assertEqual(dev.pid, '')
                 self.assertTrue(state['fresh_save_then_stopped'])
+
+    def test_VMA_diagnostic_failure_after_save2_still_stops_owned_game(self):
+        self.exercise(False, vma_failure=True)
+
+    def test_VMA_helper_unconfirmed_save_remains_fail_closed(self):
+        self.exercise(False, vma_failure=True, vma_save_failure=True)
 
     def test_failed_screenshot_retry_still_saves_and_stops_owned_game(self):
         self.exercise(False)

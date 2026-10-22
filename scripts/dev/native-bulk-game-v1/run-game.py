@@ -130,6 +130,80 @@ def driver_span_policy(p, state=None, where='input'):
     return bool(value)
 
 
+def builtin_vma_policy(p):
+    if 'builtin_vma_on_suspend' not in p:
+        return
+    require(p['builtin_vma_on_suspend'] is True and p.get('official_cpu_aa')
+            and p.get('performance_tools') and not any(k in p for k in (
+                'startup_allocation_capture', 'readonly_memory_snapshot', 'counter_snapshot',
+                'sustained_play', 'official_gpu_tools', 'official_l1i_record')),
+            'builtin VMA requires strict true and the original official_cpu_aa-only transaction')
+
+
+def builtin_vma_validate(before, after, fresh, own, serial, data=None, pending_ok=False):
+    require(fresh.get('vma_dump_requested') is True and fresh.get('serial') == serial
+            and fresh.get('fresh_original_lifecycle_save') is True
+            and fresh.get('save_commits') == 2 and fresh.get('pid') == int(own),
+            'builtin VMA requires this owned PID fresh request and save2 report')
+    require(f'Android native start pid={own}\n' in before and after.startswith(before),
+            'builtin VMA PID/log prefix changed')
+    tail = after[len(before):]
+    requests = list(re.finditer(r'^.*\[vulkan VMA dump\] explicit request accepted=([01]); consumes at next normal suspend[^\n]*', tail, re.M))
+    require(len(requests) == 1 and requests[0].group(1) == '1'
+            and requests[0].group(0) == fresh.get('vma_request_confirmation'),
+            'builtin VMA fresh request missing, rejected or ambiguous')
+    require('[vulkan VMA dump] failed:' not in tail, 'builtin VMA failed')
+    completions = re.findall(r'^.*\[vulkan VMA dump\] complete=[^\n]*', tail, re.M)
+    if not completions and pending_ok:
+        return None
+    require(len(completions) == 1 and completions[0] in tail[requests[0].end():]
+            and re.search(r'\] complete=1 errno=0 file=/data/(?:user/0|data)/' + re.escape(PKG)
+                          + r'/files/runtime/temp/vulkan-vma\.json builtin_detailed_map=1 '
+                          + r'post_drain_before_this_job_trim=1 earlier_tail_FRAME_trim_not_excluded=1;', completions[0]),
+            'builtin VMA unique fresh completion missing or invalid')
+    if data is not None:
+        value = json.loads(data)
+        require(isinstance(value, dict) and value.get('General', {}).get('API') == 'Vulkan'
+                and all(isinstance(value.get(k), dict) for k in ('Total', 'MemoryInfo', 'DefaultPools', 'CustomPools')),
+                'builtin VMA JSON is not the builtin detailed map')
+    return completions[0]
+
+
+def builtin_vma_collect(dev, out, before, fresh, own, serial):
+    # Wait only for the already requested builtin tool, after confirmed save2.
+    # This is bounded lifecycle control, never a CPU/GPU timing observation.
+    deadline = time.monotonic() + 20
+    previous = before
+    while True:
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'builtin VMA completion timeout after fresh save2')
+        current_pid = subprocess.check_output(dev.command + ['shell', 'pidof ' + PKG + ' || true'],
+            text=True, timeout=remaining).strip()
+        require(current_pid == own, 'PID changed while waiting for builtin VMA')
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'builtin VMA completion timeout after fresh save2')
+        after = subprocess.check_output(dev.command + ['exec-out', 'run-as', PKG, 'cat', 'files/runtime/native.log'],
+            text=True, timeout=remaining).strip()
+        (out / 'after-vma-suspend-native.log').write_text(after)
+        require(after.startswith(previous), 'builtin VMA log reset during completion wait')
+        previous = after
+        if builtin_vma_validate(before, after, fresh, own, serial, pending_ok=True):
+            break
+        require(time.monotonic() < deadline, 'builtin VMA completion timeout after fresh save2')
+        time.sleep(.2)
+    remote = 'files/runtime/temp/vulkan-vma.json'
+    digest = dev.digest(remote)
+    local = out / 'vulkan-vma.json'
+    with local.open('xb') as output:
+        subprocess.run(dev.command + ['exec-out', 'run-as', PKG, 'cat', remote],
+                       stdout=output, stderr=subprocess.PIPE, check=True, timeout=45)
+    require(digest == sha(local) == dev.digest(remote), 'builtin VMA archive SHA changed')
+    complete = builtin_vma_validate(before, after, fresh, own, serial, local.read_bytes())
+    return {'path': str(local), 'sha256': digest, 'bytes': local.stat().st_size,
+            'PID': int(own), 'completion': complete, 'builtin_complete': True,
+            'scope': 'After original pause/drain, before this idle trim; earlier tail FRAME trim possible. Not foreground PSS.'}
+
+
 def readonly_memory_snapshot(p):
     if 'readonly_memory_snapshot' not in p:
         return
@@ -267,6 +341,7 @@ def proof(path, digest):
     require(len(p['prerequisites']) >= 2, 'actual fixture and bake receipts required')
     for row in p['prerequisites']:
         pinned(row)
+    builtin_vma_policy(p)
     memory_snapshot_validated = readonly_memory_snapshot(p) is True
     startup_allocation_capture(p)
     if 'counter_snapshot' in p:
@@ -767,14 +842,32 @@ def phase_game(dev, out, phase, p, token):
             if now:
                 cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
                        '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
+                vma_error = None
+                if p.get('builtin_vma_on_suspend'):
+                    cmd.append('--vma-dump-on-suspend')
+                    try:
+                        vma_before = dev.app('cat', 'files/runtime/native.log')
+                        (out / 'before-vma-request-native.log').write_text(vma_before)
+                    except BaseException as e:
+                        vma_before = ''; vma_error = repr(e)
                 with (out / 'fresh-save.log').open('w') as f:
                     subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
                 fresh = read(out / 'fresh-save.json')
                 require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
                         and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
+                if p.get('builtin_vma_on_suspend'):
+                    try:
+                        d['builtin_vma'] = builtin_vma_collect(dev, out, vma_before, fresh, own, p['serial'])
+                        require(vma_error is None, 'builtin VMA pre-request log unavailable: ' + str(vma_error))
+                    except BaseException as e:
+                        vma_error = repr(e); d['builtin_vma_error'] = vma_error
+                    require(pid() == own, 'PID changed during builtin VMA; preserve replacement')
                 dev.adb('shell', 'am', 'force-stop', PKG)
                 require(not pid(), 'owned game process still alive')
                 d['fresh_save_then_stopped'] = True
+                if p.get('builtin_vma_on_suspend'):
+                    save()
+                    require(vma_error is None, 'builtin VMA diagnostic failed after successful save2/stop: ' + str(vma_error))
         else:
             d['already_exited_no_save_restart'] = True
         save()
@@ -838,6 +931,9 @@ def main():
                 scope='Three independent samples of this run binary; cross-version comparisons require separately pinned runs; no gain claim')
             plan['scope'] = 'Same runtime originalgame/PID/camp:3x30s officialrecord and5x8s Perfetto; original save2/CAS'
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
+    if p.get('builtin_vma_on_suspend'):
+        plan['builtin_vma_on_suspend'] = True
+        plan['scope'] += '; builtin VMA only at final original pause after all profiles; possible tail FRAME trim, not foreground PSS'
     if p.get('readonly_memory_snapshot'):
         plan['readonly_memory_snapshot'] = p['readonly_memory_snapshot']
         plan['scope'] += '; pinned read-only LLDB snapshot after route/tools, before system residency'
