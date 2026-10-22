@@ -193,7 +193,7 @@ POOL_SOURCE='cc87e79cbe7cf5573980ab6d8d5a902add232c82cbf3987a478290b2f3acba63'
 POOL_ASSETS='c10b5a4977d46fc3c946c739f344dfc5167f52a7f6d15f494de303ad12bf5713'
 
 
-def reviewed_artifacts(p, review, pinned, read, require):
+def reviewed_artifacts(p, review, pinned, read, require, memory_validated=False):
     """Existing canonical/raw identities, APP closure and default runtime flags."""
     for key in ('canonical', 'raw'):
         actual=review[key+'_ready']
@@ -215,8 +215,21 @@ def reviewed_artifacts(p, review, pinned, read, require):
             and review['source_ready']['sha256']==source['sha256']
             and str(pinned(review['source_ready']))==str(pinned(source))
             and pinned(source).stat().st_size==source['bytes'], 'effective flags/APP closure/sourcechain differs')
-    require(review['actual_APP_preprocessed_units']==6, 'six actual APP closures required')
-    for key in ('raw28_hashes_verified','six_APK_libraries_verified','new_fixture_symbols_absent_APP','compile_reference_OFF'):
+    if memory_validated and p['runtime_commit']==DESCRIPTOR_CANDIDATE:
+        # The new honest card counts the six original units plus native_vulkan.c.
+        closures=canonical['new_APP_fixture_exclusion']['actual_preprocessed_closure']
+        additional=canonical['additional_native_test_APP_closure']
+        require(review['actual_APP_preprocessed_units']==canonical['actual_APP_preprocessed_translation_units_total']==7
+                and len(closures)==6 and len(additional)==1
+                and additional[0]['source']=='native_vulkan.c'
+                and additional[0]['new_fixture_closure_absent'] is True,
+                'descriptor RAM requires actual six APP units plus native fixture closure')
+        for row in closures+additional: pinned(row['output'])
+    else:
+        require(review['actual_APP_preprocessed_units']==6, 'six actual APP closures required')
+    raw_key=('raw28_files_hash_verified' if memory_validated and p['runtime_commit']==DESCRIPTOR_CANDIDATE
+             else 'raw28_hashes_verified')
+    for key in (raw_key,'six_APK_libraries_verified','new_fixture_symbols_absent_APP','compile_reference_OFF'):
         require(review[key] is True,'root closure absent '+key)
     pinned(review['APK'])
     return canonical,raw
@@ -513,7 +526,7 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
     else:
         require(review['compiler_only_changes'] is True and review['runtime_C_CPP_source_equal_base'] is True,
                 'independently reviewed compiler-only source diff required')
-    canonical,raw=reviewed_artifacts(p,review,pinned,read,require)
+    canonical,raw=reviewed_artifacts(p,review,pinned,read,require,memory_validated=memory_validated)
     source=read(pinned(review['source_ready']))
     # Source-only reports use either of these explicit lineage field names.
     # Both forms are authenticated by the SAME canonical/source/root pins;

@@ -529,6 +529,9 @@ in the candidate canonical's `root_source_reviews`). SourceReady/canonical/raw,
 selected role/runtime/base and all original common artifact/APP/raw23/flags
 checks must agree. Parent card keeps its real cb297 source base; child base is
 886. Existing source/asset/card statuses are never rewritten as this scope.
+Only the validated52181 RAM case uses its honest seven-unit APP count (the
+original six plus pinned native_vulkan.c closure) and the root card's actual
+`raw28_files_hash_verified` field; other scopes keep the original six-unit rule.
 
 Keep original `native_host_experiment`, `native_candidate_validation` and
 full2838 asset/provider/filter proofs; add the explicit mode above,

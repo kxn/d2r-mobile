@@ -31,6 +31,11 @@ class Contract(unittest.TestCase):
   self.sourcepin=rec(R/'.local/logs/descriptor-pool-block-512-v1/source-ready-agent.json')
   self.sourcereview=rec(R/'.local/logs/descriptor-pool-block-512-v1/root-source-review.json')
   self.child=copy.deepcopy(self.parent);self.child.update(runtime=c.DESCRIPTOR_CANDIDATE,base=c.DESCRIPTOR_PARENT,source_ready=self.sourcepin)
+  actual_can=g.read(R/'.local/logs/descriptor-pool-block-512-52181dc-canonical-source-ready-agent.json')
+  self.child['actual_APP_preprocessed_units']=7
+  self.child['raw28_files_hash_verified']=True
+  self.can['actual_APP_preprocessed_translation_units_total']=7
+  self.can['additional_native_test_APP_closure']=actual_can['additional_native_test_APP_closure']
   self.can.update(commit=c.DESCRIPTOR_CANDIDATE,base=c.DESCRIPTOR_PARENT,source_only_candidate=self.sourcepin,root_source_reviews=[self.sourcereview])
   self.manifest['source_revision']=c.DESCRIPTOR_CANDIDATE;self.raw['source_commit']=c.DESCRIPTOR_CANDIDATE
   self.review={'status':'ROOT_REVIEWED_DESCRIPTOR_POOL_PHYSICAL_CAPACITY_MEMORY_COMPARISON',
@@ -116,6 +121,20 @@ class Contract(unittest.TestCase):
   with self.assertRaises(RuntimeError):g.builtin_vma_policy(self.p)
   self.p.pop('native_memory_validation')
   with self.assertRaises(RuntimeError):g.builtin_vma_policy(self.p)
+ def test_actual_seven_closures_only_in_validated_child_RAM_scope(self):
+  rootpin=rec(R/'.local/logs/descriptor-pool-block-512-52181dc-root-canonical-raw-review.json')
+  card=g.read(g.pinned(rootpin));p=copy.deepcopy(self.p)
+  p.update(runtime_commit=c.DESCRIPTOR_CANDIDATE,canonical=card['canonical_ready'],raw=card['raw_ready'],
+   native_candidate_validation={'root_review':rootpin},
+   native_host_experiment={'kind':'resource-preparation','base_runtime':c.DESCRIPTOR_PARENT})
+  p['native_memory_validation']['root_review']=rec(R/'.local/logs/descriptor-pool-block-512-52181dc-root-memory-comparison-review.json')
+  token=c.validate_memory(p,g.pinned,g.read,g.require)
+  self.assertEqual(c.validate(p,g.pinned,g.read,g.require,memory_runtime=token),c.DESCRIPTOR_CANDIDATE)
+  with self.assertRaisesRegex(RuntimeError,'six actual APP'):
+   c.reviewed_artifacts(p,card,g.pinned,g.read,g.require)
+  invalid=copy.deepcopy(card);invalid['actual_APP_preprocessed_units']=6
+  with self.assertRaisesRegex(RuntimeError,'six APP units plus'):
+   c.reviewed_artifacts(p,invalid,g.pinned,g.read,g.require,memory_validated=True)
 
 class Capture(unittest.TestCase):
  def exercise(self,failure=None):
