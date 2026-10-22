@@ -66,3 +66,25 @@ Q735 按父／候选／候选／父顺序执行。每轮原游戏三段移动、
 内存调查继续针对同停点 SDK 快照中 NVN Pool 外两块大分配，250MiB 与 260MiB 的 CPU-view present 并集合计约 382MiB。这不是可释放或独占物理 RAM 的证明。原 SDK 分配来源调试首轮在 native 启动前因 `adb jdwp` 等待 EOF 超时，未进入 LLDB/JDB；原失败保留，确认未启动 native 后退出并恢复，无存档成功宣称。工具后继 `a31c333` 仅有界消费原 ADB 输出的精确完整 PID 行，保留真实 stdout/stderr/EOF/退出状态并清理自己的本地 reader；原 SDK 244B、断点／读预算、官方 JDB/LLDB、后路快照及存档恢复不变。其 host 检查和离线资格不代表已经取得分配调用栈。
 
 本轮没有新的持续散热或 6GB 稳定游玩验收，目标仍未完成。Mali 与 6GB 平板未访问。
+
+## 后续实施：缩小绘制热函数，而非增加缓存
+
+对精确 f75 的官方 LLVM inline ranges 继续审查，主绘制函数 22,356B 中，BQ 匹配约 4,696B、PL 准备约 1,428B、PL 消费约 864B、实例展开正分支约 1,304B，另有约 228B trace 正体。这约 8.5KiB 是包含共享分支及错误路径的静态范围，不是可省 CPU 百分比。现有独立 `pl_plan`、管线创建及早先冷阶段外提不重复认领。
+
+独立 `codex/draw-cold-positive-phases-v1` 以已构建的 930 修复版为基线，实施 BQ、实例展开和 PL 成功路径的完整阶段外提。普通／禁用绘制的拒绝判断仍留在热路径；不增加 Draw 数据副本、资源缓存、分配或跳过依赖。原字段与参数直接传入独立函数，实例展开提前返回时仍由原调用者完成 operation/local-ready 清理。
+
+同 Clang 19.1.7、原 host O1/no-LTO 的实际 x86-64 机器码显示：主 Draw 23,723→15,041B，减少 8,682B；四个独立函数合计 9,099B，合并计算总代码反而增加 417B。主函数栈仅减少 16B。机制是缩小普通绘制路径所混入的代码体积，不是删除真实绘制计算；完整正分支新增函数调用，最坏总栈深可能上升。这些不是 Android AArch64 数值，尚无 CPU/FPS 或散热收益证明。原内容／GPU／sanitizer 资格正在独立进行，结果及命令位于 `.local/logs/draw-cold-positive-phases-v1/`；静态合同在 `.local/logs/f75-draw-cold-stages-readonly-v1/`。
+
+## 内存归属：从全分配器断点转为少量已证记录
+
+原 main 的静态调用链已确定三个 TLSF 子分配器的 backing 记录：250MiB 的 pointer/size 位于 `main+0x31162e8/+0x31162f0`；260MiB 的记录位于 `+0x31dafb0/+0x31dafb8`，原名称为 `Popcorn Asset Pool`；另有 40MiB `Popcorn Scratch Pool`。分配参数、返回值存储、TLSF 初始化及两个原名称的关联均有原始指令／字符串证据，不能再将其仅描述为按尺寸猜测。
+
+但历史 SDK 快照没有读取这些全局，尚未证明其指针就是先前的两个大 allocated span。下一次只在原 SDK/Pool 同停点补读这些固定记录并归一 backing offset，额外读取不超过 850B；原始指令、930 正式 ELF/DWARF 和本次前后记录均须核验。不会重新布置高频 Allocate 断点，也不遍历 TLSF。大 arena 是子分配器 backing，不意味着其中所有子块有效，更不意味着可直接释放；后续归属成功后才调查内部利用率。静态证据和待实施捕获合同位于 `.local/logs/sdk-large-nonpool-origin-static-v2/`。
+
+另一项预算修正：在本次 f75 PMU 日志实际出现的 110 个 Shader key 中，旧 950 库的 33 个非空 DPL 文件总计 3,326,480B，新 8b 库对应文件为 13,912,752B。它们仍只是所有这些 key 均实际请求 lazy recipe 时的 blob 上界，不是已观测常驻量／PSS；新库全库存约 256MiB 的磁盘增长不能直接写成实际多驻留 256MiB。新 subset 模块、元数据和驱动分配仍须单独验证，当前未部署新库。原文件哈希与统计在 `.local/logs/f75-loaded-shader-DPL-residency-budget-v1/facts.json`。
+
+## 共享 B2T 稳定性修复已通过一次原游戏功能验证
+
+V5 恢复期间的实际 f75 崩溃位于 B2T 调用的 `image_upload` 源预检保护。原 GPU 夹具能通过真实 clean 查询后发生真实同值 CPU 写，复现相同 FATAL；窄修 `930ac8f` 只要求 B2T 在借用物理图像前完成既有源可见性准备，保护条件及普通采样 clean 快速路径不变。八项原 GPU 内容／ASan 用例通过，旧生产代码在相同最终夹具上仍失败；真实最初崩溃的具体纹理 serial 和暂停因果仍未知。
+
+930 已由原 Android 入口构建，并从三个未修改 NSO 重新生成、独立校验全部 28 个交付文件，游戏可执行字节与 a322 相同。Q735 原游戏 PID 3782 已完成三段真实输入跑动、营地画面查看、原生命周期存档两次和退出，控制器终态 0、原日常 a322 APK／配置／资源恢复，cleanup 为空。此轮仅验证正确性与系统内存报告，没有 CPU/GPU 计时采集，不宣称提升帧率、持续散热或 6GB 稳定运行。证据为 `.local/logs/shared-b2t-ordered-preflight-930ac8f-root-actual-functional-review.json`；分支 `codex/shared-b2t-ordered-preflight-v1` 已备份到 fork，当前日常包没有被静默替换。
