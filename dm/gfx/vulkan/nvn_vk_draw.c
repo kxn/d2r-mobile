@@ -166,7 +166,7 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
   VkCommandBufferBeginInfo bi={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     .flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT|VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
     .pInheritanceInfo=&inherit};
-  VK_CHECK(vkBeginCommandBuffer(j->secondary,&bi));V.cmd=j->secondary;
+  VK_CHECK(vk_command_begin(j->secondary,&bi));V.cmd=j->secondary;
   render_binding_reset(j);
 }
 // NONE preserves the untouched plane even when the other plane is writable.
@@ -608,7 +608,7 @@ void vk_render_end_at(const char *file, unsigned line) {
       .renderPass=j->final_pass?j->final_pass:j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
       .clearValueCount=j->attachment_count,.pClearValues=j->clears};
     vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-    vkCmdExecuteCommands(V.cmd,1,&j->secondary);vkCmdEndRenderPass(V.cmd);
+    vk_command_execute(1,&j->secondary);vkCmdEndRenderPass(V.cmd);
     // Read-only depth testing/sampling may share the pass. Its physical store
     // is an access at pass end, not an imaginary write by every depth test.
     // Record stores directly even while an outer descriptor batch is pending.

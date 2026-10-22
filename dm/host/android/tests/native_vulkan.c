@@ -492,6 +492,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_ds_plane_store.inc"
 #include "native_vulkan_astc_decode.inc"
 #include "native_vulkan_event.inc"
+#include "native_vulkan_compute_bind.inc"
 #ifdef DM_VULKAN_SHARED_POOLS
 extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
 extern void vk_test_shared_close_arm(void),vk_test_shared_close_wait(void);
@@ -843,6 +844,7 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
+  if(getenv("DM_COMPUTE_BIND_FIXTURE")) {compute_bind_test();return 0;}
   if(getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE")) {
     descriptor_pool_block_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"descriptor-pool-blocks\",\"checks\":%u,\"physical_sets\":512,\"retention_budget\":2048,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;

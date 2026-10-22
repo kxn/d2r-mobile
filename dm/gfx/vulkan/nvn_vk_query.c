@@ -79,8 +79,8 @@ static void query_dispatch(vk_buffer *source,uint64_t bytes,vk_buffer *destinati
     .dstSet=set,.dstBinding=k,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&buffers[k]};
   vkUpdateDescriptorSets(V.device,2,writes,0,NULL);
   struct {uint32_t multiplier;int32_t shift;uint32_t bits,count,word,samples;} push={multiplier,shift,bits,count,(uint32_t)((offset-base)/4),samples};
-  vkCmdBindPipeline(V.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,query_pipeline);
-  vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,query_layout,0,1,&set,0,NULL);
+  vk_compute_bind_pipeline(query_pipeline);
+  vk_compute_bind_descriptors(query_layout,0,1,&set,0,NULL);
   vkCmdPushConstants(V.cmd,query_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof push,&push);
   vkCmdDispatch(V.cmd,1,1,1);
 }

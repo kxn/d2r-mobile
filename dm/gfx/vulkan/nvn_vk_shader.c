@@ -2074,10 +2074,9 @@ static void dispatch_record(const p_dispatch *p) {
   vk_compute_buffer_dependencies(uses,use_count,0);
   vk_texture_shader_barrier();
   unsigned gpu_region = vk_gpu_region_begin("compute", s->key, p->x, p->y);
-  vkCmdBindPipeline(V.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s->compute);
+  vk_compute_bind_pipeline(s->compute);
   vk_shader_push_bias(stages,s->compute_layout,1,NULL);
-  vkCmdBindDescriptorSets(V.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                          s->compute_layout, s->set, 1, &set, 0, NULL);
+  vk_compute_bind_descriptors(s->compute_layout, s->set, 1, &set, 0, NULL);
   vkCmdDispatch(V.cmd, p->x, p->y, p->z);
   for(unsigned k=0;k<use_count;k++) if(uses[k].writable) {
     int copied=0;
