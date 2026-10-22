@@ -182,3 +182,24 @@ CPU 的 `88620ec` 候选则将提示未命中的物理 Buffer 选择从逐节点
 根实际 ADB 复核：APK SHA `22d62b10d2ef2bcfd33c77ed881c8ccf9abe4ad6baeda1926c083ad6016167c0`，profile SHA `4a8ec8326276716b3735d2ed5031255ab57c567c8b2c36d700ddef4579452066`，交付收条 SHA `ea04491c67505dad25e2359ae7248e209bf1b5fea4b79ec6ed08c834e80ac384`；模块 manifest、native table、Shader chain 均匹配，进程停止，锁及传输已清理。旧 a322 APK 与私有回滚备份保留。
 
 **后续 Q 事务必须以新实际交付基线为原状态／恢复目标**：`.local/logs/lazy-physical-span-index-88620ec-desktop-Q735-v1/delivered-baseline.json`，SHA `28f3f9dd9763e4b7fb8cdd8caff24c94dc69b54d7a885a198dac755adcdebdb6`；a322 只作为历史回滚记录，不再代表当前安装。根验收为 `.local/logs/lazy-physical-span-index-88620ec-Q-local-root-actual-delivery-review.json`。源码分支 `codex/lazy-physical-span-index-v1` 与 publisher 分支 `codex/q-local-desktop-publisher-current-v2` 均已备份到 fork。
+
+## 重复操作之外：先区分工作量、执行速率与关键路径
+
+当前没有找到另一块已证明可删除、足以填补十毫秒差额的重复职责。后续不能从“经常调用”直接跳到“需要缓存”。修改前先给完整职责的现有包络、真正可消除子集、新增成本及净收益边界；包络不能当作预期收益。
+
+886 普通桌面真实启动新增一次原 Simpleperf 指令采样／group-read，与原 Perfetto 同窗。197 个完整 Surface 内，CPU3–7 覆盖 NvN Running 的 99.9195%，实测用户指令为每 Surface 76.548–77.056M，用户周期 37.307–37.571M，覆盖部分 IPC 2.037–2.065。全 NvN Running 为 29.562ms/Surface，Runnable 0.286ms、Sleeping 9.409ms；Sleeping 尚不能归为纯 GPU。CPU0–2 另有 4.687ms 累计 Running 无计数样本，因此没有完整线程计数的有限上界。
+
+官方 ReportLib 的 1955 条样本／counter payload 与设备原 `simpleperf dump` 逐条相符，时钟映射重叠、lost/truncated 为零；按同 ID、同 CPU 的边缘实际读数给界，不插值或按 event name 混算迁核计数。此窗是 0.75、PSO167，不与旧 0.60 数据混作候选 AB；采样开销无 control，不能称无干扰基线。根复核 39 个原始／工具／分析文件及设备原 APK、profile、收条、manifest、native table、Shader chain，进程已原存档两次并停止，当前仍为 886。
+
+这说明在当前执行方式和工作／呈现关系下，仅消除睡眠不能把约 29.6ms 的 CPU Running 缩至 16.7ms。还须减少实际工作或降低必要工作的执行成本。现有完整父职责仍有用，新指令记录没有调用链，不能拿叶 IP 指令比例冒充职责 CPU 时间。
+
+优先级继续为：
+
+1. **同版本的执行速率与工作量。** 已有同父 25.738→35.520ms 的变化伴随频率及驻核变化，幅度远大于局部候选。尚无同窗指令证据证明两父工作量相同，不能称可追回 9.8ms 或按 MHz 归一；本次官方同窗能力已验证，可用于后续真正的同版本重复比较，不先改调度、绑核或温控。
+2. **替换必要工作的表示。** 例如实际 Buffer GPU 地址／范围表替换逐槽 UBO/SSBO descriptor 组合，属于不同输入也能更便宜的结构方向。当前 886 的独立 driver descriptor bind 包络仅 1.198–2.066%，还含 image、constant 和必须的根绑定；buffer-only host 构造成本未分离。旧 7.55–8.99% 是历史混合包络，不是当前可省预算。地址表引入参数发布、GPU dependent load、边界处理和在途寿命成本；净下界仍为零，不能据此立即重写 Shader ABI。
+3. **降低必要代码的执行成本。** 继续依据完整路径与官方 PMU 分析取指／数据布局；已做 PGO 和冷阶段拆分的无一致 CPU 收益结果保留，不重新包装成未做的大收益。
+4. **小范围重复检查降级。** Pass request/history 外层仅约 1.03–1.28% 混合包络、附件视图／描述构造约 0.47–0.90%，均含必要工作且尚未扣新检查成本。资源重复声明数不能当跳过比例；不再把这些列为十毫秒主线。
+
+本节只有测量及预算审查，没有新增运行时优化、FPS／持续散热／6GB 验收。证据：`.local/logs/nvn-instruction-window-886-offline-analysis-v1/{ready.json,report.md,root-review.json}`；结构合同：`.local/logs/buffer-device-address-886-readonly-v1/{ready.json,report.txt}`。
+
+跨职责纯诊断审计亦未发现已证明的大预算：多数热统计已按 recording owner 累计并在 commit 发布；此次普通启动的可选 copy accounting 已关闭。`cpu_known_copies.fallbacks` 的 425,819,296 增量单位是逻辑拷贝字节，不是调用次数、CPU memcpy 或硬件 DRAM 流量。当前无父栈的指令叶不足以为整类诊断计价，不能把 generation、依赖、ready、寿命和预算状态一起删除。审计为 `.local/logs/886-instrumentation-wholepath-readonly-v1/{ready.json,report.txt,root-review.json}`，21 项原引用已复核；不据此新增运行时开关。
