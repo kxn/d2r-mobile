@@ -203,3 +203,23 @@ CPU 的 `88620ec` 候选则将提示未命中的物理 Buffer 选择从逐节点
 本节只有测量及预算审查，没有新增运行时优化、FPS／持续散热／6GB 验收。证据：`.local/logs/nvn-instruction-window-886-offline-analysis-v1/{ready.json,report.md,root-review.json}`；结构合同：`.local/logs/buffer-device-address-886-readonly-v1/{ready.json,report.txt}`。
 
 跨职责纯诊断审计亦未发现已证明的大预算：多数热统计已按 recording owner 累计并在 commit 发布；此次普通启动的可选 copy accounting 已关闭。`cpu_known_copies.fallbacks` 的 425,819,296 增量单位是逻辑拷贝字节，不是调用次数、CPU memcpy 或硬件 DRAM 流量。当前无父栈的指令叶不足以为整类诊断计价，不能把 generation、依赖、ready、寿命和预算状态一起删除。审计为 `.local/logs/886-instrumentation-wholepath-readonly-v1/{ready.json,report.txt,root-review.json}`，21 项原引用已复核；不据此新增运行时开关。
+
+## 同一 886 的三次实际指令／周期重复
+
+继续保持当前真实桌面 886、f830/full2838/950、0.75 与 2750×1260，不改任何运行时代码或参数。新增两次普通冷启动，同样原 Simpleperf 10s 指令事件组与原 Perfetto 8s 重叠，每次原存档两次、停止和工具清理均完成，实际控制器 72275/23028 退出 0。根复核 161 项原始／官方工具／分析文件，当前 APK、profile、收条、manifest、native table、Shader chain 未变，游戏已停止。
+
+| 窗口 | 完整 Surface | 用户指令 M/Surface | 用户周期 M/Surface | NvN Running ms/Surface | 运行加权 MHz |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 首次 | 197 | 76.548–77.056 | 37.307–37.571 | 29.562 | 1421 |
+| 第二次的可观测交集 | 188 | 80.372–80.957 | 40.091–40.433 | 29.383 | 1523 |
+| 第三次 | 197 | 76.497–77.005 | 36.063–36.358 | 28.585 | 1399 |
+
+首次计数覆盖 99.9195% NvN Running，缺小核的 4.687ms 累计运行，不能称完整线程上界。第二次原完整 195 区间保留：CPU4 首次样本在起点之后 242.55ms，因此不能用其仅覆盖 74.80% CPU 时间的 61M 计数冒充工作量减少。补充 188 区间由活跃核样本时间包络交集和原完整 Surface 规则机械决定，没有按性能挑窗；该补充窗及第三次的所有实际驻核均有计数边界。三 record 的 1955/2005/1934 样本分别与各自设备原 dump 逐条相符，lost/truncated 为零；没有盲目缩放或按 MHz 归一。
+
+首／三指令规模接近，而周期、IPC、CPU 时间相差数个百分点，且运行加权频率反向变化。因此不能单靠 MHz 解释执行速率，也不能把相近 FPS 当作同样 CPU 工作。第二次新增 PSO/variants（167/30→174/32），首为167/30稳定、第三次为174/32稳定；相同营地位置不保证相同工作或指令混合。原 marker 约每 Surface 一次 replay、八次 Vulkan submit、一次 present；没有 Draw marker，不能补造相同 Draw 证明。采样本身的中断成本缺少 control/handler 测量，未宣称零开销或从 CPU 时间扣除。
+
+本轮改变后续判断：局部 CPU 优化应同时核验同窗工作量和执行周期，不能仅因 CPU ms 或某叶样本变化就断言删工成功；现有重复没有给出可直接追回约10ms的证据。下一步的必要代码工作集研究与持续游玩工具适配均先做源码／机器码合同，不先改调度、频率或 GPU 语义。完整证据在 `.local/logs/nvn-instruction-repeat-offline-v1/{ready.json,report.md,root-review.json}`。没有新增 FPS、持续散热或真实 6GB 稳定游玩结论。
+
+另对精确 886 的 draw/shader 两个 Android AArch64 TU 做有界 O3/O2/Os scratch 编译：六次均成功，O3 两对象与正式 canonical 对象完整逐字节相同。未链接 text 合计 153,120→141,204/123,992B；主要 draw+binding 入口 23,308→21,648/19,200B。实际解释包括首次常量初始化的 73 个展开 store 改为循环，以及五 stage 的五个静态绑定 callsite 改为一个循环 callsite；实际有效 stage 仍逐个消费，并有新增循环检查。栈没有一致减少，缺少动态 block 权重，不能据尺寸表估净 ms 或改日常默认。没有链接／APK／RAW 或游戏源码变化。原工具与机器码证据在 `.local/logs/886-O3-O2-Os-twoTU-v1/{ready-v2.json,report.txt,machine-explanations.txt,root-review.json}`。
+
+持续验收工具的只读合同亦完成：旧工具独立锁旧 6f/6217/.60 fixed，candidate/full2838 门和后续 scope/stage 也不支持直接组合；不能只换 runtime 或绕 validator 执行当前 886。当前正常启动为 .75 起始且保留 adaptive/HUD 策略，不能暗改 fixed。正在独立工具分支最小适配，保留原 proof、CAS、输入、save2、四个官方 8s Perfetto 窗与失败清理；本节没有长测结果。原营地反向路线仍未证，首 miss 必须失败，营地不能冒充战斗／完整游玩或 6GB 结论。合同在 `.local/logs/sustained-886-source-contract-readonly-v1/result.json`。
