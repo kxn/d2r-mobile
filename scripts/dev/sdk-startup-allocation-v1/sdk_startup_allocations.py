@@ -55,6 +55,58 @@ def wait_stop(process, last_stop, deadline):
     return False
 
 
+def wait_stop_events(process, listener, last_stop, deadline, diagnostics):
+    """Only a public, non-restarted LLDB stop may be inspected."""
+    import lldb
+    while time.monotonic()<deadline:
+        event=lldb.SBEvent()
+        if not listener.GetNextEvent(event):
+            time.sleep(min(.02,max(0,deadline-time.monotonic())))
+            continue
+        require(lldb.SBProcess.EventIsProcessEvent(event)
+                and lldb.SBProcess.GetProcessFromEvent(event).GetUniqueID()==process.GetUniqueID(),
+                'unrelated debugger process event')
+        require(event.GetType() & lldb.SBProcess.eBroadcastBitStateChanged,
+                'unrelated debugger event kind')
+        state=lldb.SBProcess.GetStateFromEvent(event)
+        restarted=lldb.SBProcess.GetRestartedFromEvent(event)
+        diagnostics['last_event']=dict(state=state,restarted=restarted)
+        if state==lldb.eStateStopped:
+            if restarted:
+                diagnostics['explicit_restarted_stops_skipped']+=1
+                continue  # LLDB itself evaluated the condition and auto-continued.
+            require(process.GetState()==lldb.eStateStopped and process.GetStopID()>last_stop,
+                    'non-restarted event is not one new stable process stop')
+            return True
+        require(state in (lldb.eStateRunning,lldb.eStateStepping,lldb.eStateConnected,lldb.eStateAttaching),
+                'owned process exited/detached/crashed or unexpected event state')
+    return False
+
+
+def observed_stop(process, register_names=('x0','x19','x20','x21','x29','sp','pc')):
+    """Bounded debugger metadata saved before any breakpoint/register qualification."""
+    import lldb
+    row=dict(PID=process.GetProcessID(),stop_id=process.GetStopID(),state=process.GetState(),
+             qualification='NOT_YET_CHECKED',thread_stops=[],thread_stops_truncated=False)
+    for thread in process:
+        reason=thread.GetStopReason()
+        if reason in (lldb.eStopReasonNone,lldb.eStopReasonInvalid):
+            continue
+        if len(row['thread_stops'])>=16:
+            row['thread_stops_truncated']=True
+            break
+        frame=thread.GetFrameAtIndex(0)
+        registers={}
+        for name in register_names:
+            try: registers[name]=sdk._unsigned(frame.FindRegister(name))
+            except Exception as error: registers[name]=dict(UNKNOWN=repr(error))
+        count=thread.GetStopReasonDataCount()
+        row['thread_stops'].append(dict(TID=thread.GetThreadID(),reason=reason,
+            reason_data=[thread.GetStopReasonDataAtIndex(i) for i in range(min(count,32))],
+            reason_data_truncated=count>32,registers=registers))
+    return row
+
+
 def output_command(debugger, command):
     import lldb
     out=lldb.SBCommandReturnObject()
@@ -71,7 +123,7 @@ def snapshot(debugger):
     result=dict(PID=pid,ELF_sha256=config['ELF_sha256'],complete=False,inferior_calls=False,
                 target_function_evaluation=False,profile=False,errors=[],returns=[],
                 scope='First bounded large original SDK returns only, not complete malloc history or ownership/reclaim permission')
-    bp=None; allocbp=None
+    bp=None; allocbp=None; listener=None
     was_async=debugger.GetAsync()
     try:
         require(process.IsValid() and process.GetState()==lldb.eStateStopped and process.GetProcessID()==pid,
@@ -105,6 +157,10 @@ def snapshot(debugger):
         bp=target.BreakpointCreateByName('guest_thread_init','libdmhost_android.so')
         require(bp.IsValid(), 'could not create pending host startup breakpoint')
         result['pending_host_breakpoint']=dict(id=bp.GetID(),name='guest_thread_init',locations_before_load=bp.GetNumLocations())
+        listener=lldb.SBListener('owned-sdk-startup-process-events')
+        mask=process.GetBroadcaster().AddListener(listener,lldb.SBProcess.eBroadcastBitStateChanged)
+        require(mask & lldb.SBProcess.eBroadcastBitStateChanged, 'could not subscribe to official process state events')
+        result['event_control']=dict(explicit_restarted_stops_skipped=0)
         debugger.SetAsync(True)
         last=process.GetStopID(); err=process.Continue();require(err.Success(), 'initial Continue failed: '+str(err))
         adb=[os.environ['DM_SDK_FREE_ADB'],'-s',config['serial']]
@@ -113,7 +169,7 @@ def snapshot(debugger):
         (output/'pending-startup-armed.json').write_text(json.dumps(dict(PID=pid,ELF_sha256=config['ELF_sha256'],
             pending_host_breakpoint='guest_thread_init',initial_stop_id=last,inferior_calls=False))+'\n')
         deadline=time.monotonic()+config['startup_allocation']['natural_wait_seconds']
-        require(wait_stop(process,last,deadline), 'pending startup breakpoint not hit within bound')
+        require(wait_stop_events(process,listener,last,deadline,result['event_control']), 'pending startup breakpoint not hit within bound')
         thread=breakpoint_thread(process,bp); frame=thread.GetFrameAtIndex(0)
         require('guest_thread_init' in (frame.GetFunctionName() or ''), 'wrong pending host function')
         module=frame.GetModule(); uuid=module.GetUUIDString().replace('-','').lower()
@@ -145,7 +201,12 @@ def snapshot(debugger):
         result['return_condition']=allocbp.GetCondition()
         last=process.GetStopID();err=process.Continue();require(err.Success(),'Continue to allocator failed: '+str(err))
         limit=config['startup_allocation']['max_returns'];used=0
-        while len(result['returns'])<limit and wait_stop(process,last,deadline):
+        while len(result['returns'])<limit and wait_stop_events(process,listener,last,deadline,result['event_control']):
+            raw=observed_stop(process)
+            require(used+len(json.dumps(raw).encode())<=config['startup_allocation']['metadata_budget_bytes'],
+                    'stop diagnostic metadata budget exceeded')
+            result['last_allocation_stop_before_qualification']=raw
+            (output/'allocation-last-observed-stop.json').write_text(json.dumps(raw,indent=2)+'\n')
             thread=breakpoint_thread(process,allocbp);frame=thread.GetFrameAtIndex(0)
             values={name:sdk._unsigned(frame.FindRegister(name)) for name in ('x0','x19','x20','x21','x29','sp','pc')}
             require(values['pc']==sm['base']+EPILOGUE, 'return PC differs')
@@ -154,7 +215,7 @@ def snapshot(debugger):
                        saved_caller_LR=int.from_bytes(sdk._read_small(process,values['x29']+8,8),'little'))
             process.SetSelectedThread(thread)
             row['official_backtrace']=output_command(debugger,'thread backtrace -c 64')
-            used+=len(json.dumps(row).encode());require(used<=config['startup_allocation']['metadata_budget_bytes'],'stack metadata budget exceeded')
+            used+=len(json.dumps(row).encode());require(used+len(json.dumps(raw).encode())<=config['startup_allocation']['metadata_budget_bytes'],'stack metadata budget exceeded')
             result['returns'].append(row)
             # Persist each accepted event; a subsequent exit never erases provenance.
             (output/'startup-allocations-progress.json').write_text(json.dumps(result,indent=2)+'\n')
@@ -180,6 +241,10 @@ def snapshot(debugger):
                 error=process.Detach();require(error.Success(),'Detach failed: '+str(error));result['detached']=True
             else: result['detached']=process.GetState()==lldb.eStateDetached
         except BaseException as e:result['errors'].append('owned detach: '+repr(e))
+        if listener is not None:
+            result['owned_listener_removed']=process.GetBroadcaster().RemoveListener(listener,lldb.SBProcess.eBroadcastBitStateChanged)
+            if not result['owned_listener_removed']:
+                result['errors'].append('owned process event listener removal failed')
         debugger.SetAsync(was_async)
         result['complete']=result['complete'] and result.get('detached') is True and not result['errors']
         result['status']='SDK_STARTUP_LARGE_RETURNS_CAPTURE_COMPLETE' if result['complete'] else 'SDK_STARTUP_LARGE_RETURNS_INCONCLUSIVE'

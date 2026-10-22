@@ -173,3 +173,48 @@ loaded host UUID, original main ancestry, module table and 244-byte original
 SDK code checks still apply. A failed CLI operation cannot authorize arming.
 No guessed slide, synthetic executable identity or ignored unrelated stop is
 accepted. Allocation/JDB/cleanup bounds and original controller are unchanged.
+
+
+### V6: consume public LLDB process events before inspecting a stop
+
+V5 reached the original `guest_thread_init`, exact f75 UUID/caller and live
+SDK244B checks, then observed a wrong allocator/size during a conditional
+breakpoint's auto-continue transition. That failed actual transaction remains
+unchanged. Polling GetState/GetStopID sees the stopped state before LLDB has
+finished evaluating a software breakpoint condition.
+
+V6 subscribes an owned SBListener to process-state events. It consumes official
+GetNextEvent results and ignores a stopped event only when
+SBProcess.GetRestartedFromEvent explicitly says LLDB auto-continued it.
+A genuine non-restarted stop still must be a fresh stable stop, with the
+original exact breakpoint/PC/register/allocator/size qualifications. Unrelated
+processes/events/stops, exit/crash or wrong registers still fail closed; there
+is no manual continue for rejected register values. Cleanup removes only its
+own listener; the original interrupt/detach/save/CAS behavior remains.
+
+Before checking an allocation stop, it saves bounded raw debugger stop ID,
+PID, stop reasons/BP data and original registers in
+`allocation-last-observed-stop.json`; unknown register reads remain UNKNOWN.
+At most16 active stop threads/32 reason data words each are retained, explicitly
+marked if truncated. That diagnostic plus accepted metadata shares the existing
+1MiB bound. No register data are read from auto-restarted/running events.
+
+The actual host-native test uses 200 false register conditions followed by one
+true condition, another genuine breakpoint and a deadline. Official LLDB19
+reproduces old polling accepting rdi=1, while the public-event path skips200
+explicitly restarted stops and returns rdi=200. It also preserves/rejects the
+unrelated breakpoint and removes its listener/ends each owned fixture process.
+This is native host debugger orchestration qualification, not a game execution
+or CPU emulation milestone. A prior DWARF-variable-condition attempt with
+unavailable/JIT diagnostics is preserved and is not qualification evidence.
+
+Primary API/source:
+https://lldb.llvm.org/python_api/lldb.SBProcess.html#lldb.SBProcess.GetRestartedFromEvent
+https://github.com/llvm/llvm-project/blob/llvmorg-19.1.7/lldb/source/Target/Process.cpp
+`ProcessEventData::DoOnRemoval` handles public conditional-stop actions and
+sets Restarted before PrivateResume. SBProcess exposes that official result.
+
+Reproduce with the system C compiler (host x86), then official LLDB19:
+`cc -O0 -g test-native-process-events.c -o OUTPUT/native-conditional`; set
+`DM_SDK_EVENT_TEST_OUTPUT=OUTPUT`, import `test_native_process_events.py` and
+call `test_native_process_events.run(lldb.debugger)`. It does not use ADB.
