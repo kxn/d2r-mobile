@@ -34,6 +34,23 @@ Q735 按父／候选／候选／父顺序执行。每轮原游戏三段移动、
 
 本机证据：`.local/logs/host-sample-profile-33d2d8a-pair-analysis-v1/{comparison-ready.json,comparison-all20-windows.json,summary-all4-rounds.md}`、`.local/logs/host-sample-profile-33d2d8a-ABBA-root-review.json`、`.local/logs/host-sample-profile-33d2d8a-post-ABBA-private-files.json`。
 
+## 修改前的预算与优先级
+
+当前不是已经找到约 10ms、只等删除的重复工作。27–28ms Running 到 16.7ms 需要减少约四成；单个叶节点或重复绑定次数不能解释这个差额。阻塞锁不消耗 Running，因而不能将这 27–28ms 大头解释为阻塞锁等待；自旋等消耗 CPU 的行为仍须看实际调用栈，不能仅凭 Running 排除。
+
+优先研究的是改变必要工作的处理粒度和表示，而不是继续叠缓存：
+
+| 方向 | 现有预算与限制 | 实施顺序 |
+| --- | --- | --- |
+| 将稳定资源的准备归到整个 Pass，逐 Draw 只处理真正变化和实际依赖 | 历史三个完整 FP 窗的依赖／history 整段约 4.96–5.34%，仍含必要写依赖、首次消费及已有早退；不是可省比例。CPU 可变源、物理别名和版本变化必须保持原语义。尚无可信净收益估计。 | 优先证明相较现有 range／stage／generation 早退还能省什么，再决定是否实现。 |
+| 长寿命资源表示与逐 Draw 动态参数分离 | 表示构造／Descriptor／set 混合包络约 7.55–8.99%。即使能省一半，条件算术约 4%，尚非预测。已有 schema、dynamic UBO、recipe、source_flow 与 history 不能重复计算收益；还须扣新增参数上传、GPU 访存及失效成本。 | 比单个查找缓存优先，必须先找出现有表示仍迫使重建整段数据的实际输入。 |
+| 缩小必要代码与数据工作集 | 当前 PMU 已确认前端／取指成本存在，但 L1I 相关 17.405% 不是可回收预算；PGO 已有四轮无一致净收益，LLD 也已消费调用图排序，不能再假设这些能力未开启。 | 按完整 draw 路径审视热路径代码和数据访问形态，不再盲加编译开关。 |
+| 附件不变元数据在仍活动的 Pass 内复用 | 较明确的视图／描述构造站点约 0.47–0.90% 用户态样本，较宽且含必要工作的乐观包络 1.03–1.63%；新增校验及回退后净收益未知。 | 小预算候选，不能作为解决十毫秒差额的主线。 |
+
+最后一项的约 5.6–6.5% 附件父职责大部分是必须执行的布局、访问和依赖处理，不能全部删除。新 Pass 也不能复用旧 Pass 的一次性 CLEAR／DONT_CARE 描述。现有对象缓存已避免重复创建 RenderPass／Framebuffer／ImageView，候选不再重建相同缓存。详细合同与三个原 FP 窗的预算在 `.local/logs/f75-active-pass-metadata-readonly-v1/contract-and-findings.json`。
+
+实际旧 Q 帧有 2,312 Draw／50 Pass；静态采样声明出现 10,701 次，按 Pass 和精确图像／范围／阶段／布局归类为 609 个组合。这仅说明资源身份具有复用结构，不是实际 Shader 读取次数，也不是可跳过 94% CPU 工作的证据。必须排除已做的早退、CPU 并发写、别名、反馈及实际 GPU 写入；不能按这些计数开写大改造。严格相同状态相邻组为零也意味着不能把通用合批作为现成大收益。
+
 ## 当前 PMU 与大块内存来源
 
 另一个原 f75 游戏事务已实际采集基础、core、memory、front-cache、front-stalls 五组官方 Simpleperf 计数，以及独立 cpu-clock、raw L1I refill 和 Perfetto。控制器实际退出 0，原存档／停止／恢复完成。基础 stat 窗 PSO 172→179，后续记录／硬件计数／scheduler 的 bracket 为 179；分析保留这一差异，并按原输出核对事件支持、每核心有效计数及 multiplex/scaling；不能把 cache-miss 或 bus-cycles 当实际 DRAM 字节。采集源为 `.local/logs/f75-current-PMU-a322-baseline-v1/game/`。
