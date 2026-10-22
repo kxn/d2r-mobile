@@ -372,4 +372,5 @@ static int store_scan(const tex_t *target,const view_t *view,VkImageAspectFlagBi
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 #include "tests/planned_forward.inc"
 #include "tests/store_walk_fusion.inc"
+#include "tests/store_frontier.inc"
 #endif

@@ -2,7 +2,7 @@
 // No app observer, timing, game state or cross-submission command cache.
 #include "store_walk_reference.inc"
 static unsigned store_walk_checks,store_walk_comparisons;
-static int store_walk_verify_enabled;
+static int store_walk_verify_enabled,store_walk_saved_frontier;
 #define SW_CHECK(c) do { ++store_walk_checks;if(!(c)) die("Store walk fusion oracle: %s at %u",#c,__LINE__); } while(0)
 static void store_walk_test_verify(void) {
   if(!store_walk_verify_enabled) return;
@@ -40,6 +40,7 @@ static void store_walk_test_verify(void) {
 }
 unsigned vk_pass_test_store_walk_begin(void) {
   SW_CHECK(vk_tbdr_enabled());
+  store_walk_saved_frontier=atomic_exchange(&frontier_reference_requested,1);
   vk_state saved=S;int saved_reference=V.options.store_reference,saved_check=V.options.store_check;
   V.options.store_reference=0;V.options.store_check=1;store_walk_verify_enabled=1;
   uint8_t memory[8192]={0};tex_t t[3]={0};
@@ -106,6 +107,7 @@ unsigned vk_pass_test_store_walk_begin(void) {
 }
 unsigned vk_pass_test_store_walk_end(void) {
   SW_CHECK(store_walk_comparisons>100);store_walk_verify_enabled=0;
+  atomic_store(&frontier_reference_requested,store_walk_saved_frontier);
   LOG("[store walk fusion fixture] %u complete original-index comparisons; context=%zu bytes",store_walk_comparisons,sizeof(store_build_context));
   return store_walk_checks;
 }

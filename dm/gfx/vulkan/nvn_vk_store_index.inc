@@ -43,6 +43,20 @@ static uint64_t build_slot_stages,build_slot_skipped;
 static uint64_t build_duplicate_reads;
 static _Atomic uint64_t recorded_events,duplicate_reads;
 static int build_descriptor_reference;
+// Boolean store proofs need uses before a possible overwrite, not every use.
+// Keep the original representation available as a cold reference policy.
+static _Atomic int frontier_reference_requested=-1;
+static int build_frontier_reference;
+static uint32_t frontier_clear_seq;
+static int store_frontier_reference(void) {
+  int mode=atomic_load(&frontier_reference_requested);
+  if(mode<0) {
+    const char *s=getenv("DM_VULKAN_STORE_FRONTIER_REFERENCE");
+    if(s && strcmp(s,"0") && strcmp(s,"1")) die("DM_VULKAN_STORE_FRONTIER_REFERENCE expects 0 or 1");
+    mode=s&&!strcmp(s,"1");atomic_store(&frontier_reference_requested,mode);
+  }
+  return mode;
+}
 void vk_store_event_stats(uint64_t *recorded,uint64_t *duplicates) {
   *recorded=atomic_load(&recorded_events);*duplicates=atomic_load(&duplicate_reads);
 }
@@ -106,20 +120,38 @@ static void global_need(unsigned seq) {
 }
 static void bucket_event_add(unsigned seq,int b,const view_t *v,unsigned kind,unsigned bits,int full) {
   if(!index_valid || b<0) return;
-  // A read conservatively covers the whole texture. Different slots/stages
-  // reading it in this SAME operation have the same earliest-use position,
-  // including for every guest-memory alias. Never merge different sequences:
-  // an alias read before a full clear must not move past that clear.
-  if(kind==IX_READ) {
-    if(buckets[b].last_read==seq) { build_duplicate_reads++;return; }
-    buckets[b].last_read=seq;
-  }
+  if(build_frontier_reference) {
+    // Exact pre-frontier representation, including same-operation read dedup.
+    if(kind==IX_READ) {
+      if(buckets[b].last_read==seq) { build_duplicate_reads++;return; }
+      buckets[b].last_read=seq;
+    }
+  } else if(kind==IX_READ || kind==IX_ATT) {
+    // last_read is an event index in this representation, never a resource
+    // cache. A same-bucket different event ends the run. Any clear anywhere
+    // also cuts it: an alias read must never move across an overwrite witness.
+    unsigned tail=buckets[b].last_read;
+    if(tail<event_count) {
+      store_event *e=&events[tail];
+      if(e->kind==kind && e->level==level(v) && e->layer==layer(v) &&
+          e->bits==bits && e->full==full &&
+          (frontier_clear_seq==UINT32_MAX || e->seq>frontier_clear_seq)) {
+        if(kind==IX_READ && e->seq==seq)build_duplicate_reads++;
+        // All uses in this run demand contents. A false decision requires a
+        // full-clear seq c; no c is inside the run, so for every query start s,
+        // some use is in [s,c] iff this last use is. Alias/global events only
+        // force true. Per-bucket ordering survives this forward-only update.
+        e->seq=seq;return;
+      }
+    }
+  } else buckets[b].last_read=UINT32_MAX;
   if(event_count==1000000) { index_valid=0;return; }
   if(event_count==event_capacity) {
     unsigned n=event_capacity?event_capacity*2:4096;
     store_event *p=STORE_INDEX_REALLOC(events,n*sizeof *p);if(!p) { index_valid=0;return; }events=p;
     p=STORE_INDEX_REALLOC(sorted_events,n*sizeof *p);if(!p) { index_valid=0;return; }sorted_events=p;event_capacity=n;
   }
+  if(!build_frontier_reference && (kind==IX_READ || kind==IX_ATT)) buckets[b].last_read=event_count;
   events[event_count++]=(store_event){.seq=seq,.bucket=b,.level=level(v),
     .layer=layer(v),.kind=kind,.bits=bits,.full=full};
   // During construction end is the bucket count. Only appended events count;
@@ -162,6 +194,7 @@ static int bucket_footprints_overlap(const vk_texture_footprint *a,const vk_text
   return x&&y&&(x==y||(x<y?y-x<a->size:x-y<b->size));
 }
 static void store_index_begin(store_build_context *ctx) {
+  build_frontier_reference=store_frontier_reference();frontier_clear_seq=UINT32_MAX;
   index_valid=1;built_epoch=vk_texture_descriptor_epoch();bucket_count=event_count=global_count=alias_count=0;
   int reference=atomic_load(&descriptor_reference_requested);
   if(reference<0) {
@@ -249,6 +282,7 @@ static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode
     break;
   }
   case OP_CLEAR_COLOR: {
+    frontier_clear_seq=seq;
     if(size<8+sizeof(p_clear_color)) { index_valid=0;return; }
     const p_clear_color *c=a;
     if(ctx->rt.n<0||ctx->rt.n>8||c->index<0||c->index>=ctx->rt.n) { global_need(seq);break; }
@@ -257,6 +291,7 @@ static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode
     break;
   }
   case OP_CLEAR_DS: {
+    frontier_clear_seq=seq;
     if(size<8+sizeof(p_clear_ds)) { index_valid=0;return; }
     const p_clear_ds *c=a;const view_t *v=ctx->rt.has_dview?&ctx->rt.dview:NULL;
     if(ctx->rt.depth) attachment_event_add(seq,&ctx->target_buckets[8],ctx->rt.depth,v,IX_DS,(c->depth_mask?1:0)|((c->stencil_mask&255)==255?2:0),full_clear(ctx->rt.depth,v,&ctx->sc,ctx->has_sc));

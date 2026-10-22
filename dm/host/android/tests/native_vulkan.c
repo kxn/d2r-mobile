@@ -1168,6 +1168,15 @@ int dm_vulkan_test_main(void) {
     CALL(nvnProgramFinalize,&phase_fill);CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"operation-image-phase-artifact\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
+  if(getenv("DM_STORE_FRONTIER_FIXTURE")) {
+    extern unsigned vk_pass_test_store_frontier(void);
+    CALL(nvnQueueFinish,&queue);
+    checks+=vk_pass_test_store_frontier();
+    store_overwrite_test(controls[0],controls[9],NVN_FORMAT_DEPTH32F_STENCIL8);
+    store_overwrite_test(controls[0],controls[9],NVN_FORMAT_DEPTH24_STENCIL8);
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"store-use-frontier\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
   if(getenv("DM_STORE_WALK_FUSION_FIXTURE")) {
     extern unsigned vk_pass_test_store_walk_begin(void),vk_pass_test_store_walk_end(void);
     CALL(nvnQueueFinish,&queue);
