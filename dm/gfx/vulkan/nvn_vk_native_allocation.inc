@@ -393,7 +393,7 @@ unsigned vk_test_shared_buffer_coverage_index(void) {
       for(unsigned n=0;n<B;n++) {
         pool_backing_span *b=&buffers[n];b->begin=bounds[n][0];b->end=bounds[n][1];b->generation=n+1;
         pool_backing_span **chain=n<4?&p.backings:&p.shared_covers;
-        b->next=*chain;*chain=b;shared_buffer_index_add_locked(&p,b);checks++;
+        b->next=*chain;*chain=b;shared_buffer_index_add_locked(&p,b,n>=4);checks++;
       }
       for(unsigned n=0;n<N;n+=2)atomic_store(&a[n].released,n%4?2:1);
     }

@@ -40,12 +40,13 @@ typedef struct pool_backing_span {
   uint64_t begin,end,generation;
   vk_buffer buffer;
 #ifdef DM_VULKAN_SHARED_POOLS
-  // Physical coverage only; the original chains still choose actual buffers.
+  // One authoritative import node for coverage and typed geometric selection.
   alias_range_node shared_coverage;
 #endif
 } pool_backing_span;
 #ifdef DM_VULKAN_SHARED_POOLS
 _Static_assert(sizeof(alias_range_node)==64,"Physical Buffer coverage metadata");
+_Static_assert(sizeof(pool_backing_span)==152,"Typed Buffer selection must not grow span metadata");
 #endif
 typedef struct legacy_encoding_range {struct legacy_encoding_range *next;uint64_t begin,end;} legacy_encoding_range;
 typedef struct pool {
@@ -159,6 +160,7 @@ static int pool_shared_window_policy(const pool *p) {
 // rather than walking a growing byte-interval list for every buffer binding.
 enum { GPU_ACCESS_SHIFT = 12 };
 static VkResult buffer_try_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,int readback);
+static unsigned pool_maintenance;
 #include "nvn_vk_pool_spans.inc"
 #include "nvn_vk_upload_dual.inc"
 static const VkPipelineStageFlags pool_stages[]={
@@ -283,7 +285,7 @@ static _Atomic uint64_t overwritten_upload_pages;
 static _Atomic int pool_mirror_requested=-1;
 static _Atomic uint64_t pool_window_requested=UINT64_MAX;
 static _Atomic int pool_options_initialized;
-static unsigned pool_operation_depth,pool_maintenance;
+static unsigned pool_operation_depth;
 static void pool_operation_before_commit(void);
 static uint64_t pool_window_admissions,pool_window_added_bytes,pool_window_added_spans,pool_window_promotions;
 static _Atomic uint64_t published_window_admissions,published_window_added_bytes,published_window_added_spans,published_window_promotions;
@@ -2322,7 +2324,7 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       int remember_span=0;
       if(!pool_span_retained_hint(p,r->pool_lookups[k].span_hint,logical,len,&span) &&
           !pool_recording_span_hint(r,p,logical,len,&span)) {
-        if(!pool_span_resolve(p,logical,len,&span)) {
+        if(!pool_span_resolve_recorded(p,logical,len,&span)) {
 #ifdef DM_VULKAN_SHARED_POOLS
           if(p->shared_lazy_eligible)goto pool_address_locked_miss;
 #endif

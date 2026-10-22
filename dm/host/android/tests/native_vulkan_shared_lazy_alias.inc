@@ -152,6 +152,8 @@ static void shared_lazy_alias_gpu_test(void) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   extern unsigned vk_test_shared_buffer_coverage_index(void);
   checks+=vk_test_shared_buffer_coverage_index();
+  extern unsigned vk_test_shared_lazy_physical_index(void);
+  checks+=vk_test_shared_lazy_physical_index();
 #endif
   CHECK(vk_pool_shared_mode() && V.options.pool_window_bytes==W);
   CHECK(getenv("DM_SHARED_GUEST_HEAP_FIXTURE") && getenv("DM_VK_SHARED_LAZY_WINDOWS") &&

@@ -11,10 +11,10 @@ typedef struct { pool *owner;uint64_t at,end; } pool_span_iter;
 #ifdef DM_VULKAN_SHARED_POOLS
 // V.resources owns publication and teardown. Buffer imports remain immutable
 // until the original Pool/reference drain; native imports use their separate
-// index and release predicate. This tree never selects a VkBuffer or origin.
-static void shared_buffer_index_add_locked(pool *p,pool_backing_span *b) {
+// index and release predicate. Typed selection never extends that lifetime.
+static void shared_buffer_index_add_locked(pool *p,pool_backing_span *b,int cover) {
   b->shared_coverage=(alias_range_node){.start=b->begin,.end=b->end,
-    .max_end=b->end,.serial=b->generation,.owner=b,.height=1};
+    .max_end=b->end,.serial=b->generation,.owner=b,.height=1,.kind=!!cover};
   int inserted=0;
   p->shared_buffer_index=alias_range_insert(p->shared_buffer_index,&b->shared_coverage,&inserted);
   if(!inserted)die("Shared Buffer coverage publication mismatch");
@@ -98,6 +98,44 @@ static int pool_span_resolve(pool *p,uint64_t offset,uint64_t size,pool_span_pie
   pool_span_iter it;if(!pool_span_iter_begin(p,offset,size,&it))return 0;
   return pool_span_iter_next(&it,out)==1 && it.at==it.end;
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+// Same authoritative Buffer imports as the coverage tree, but a binding must
+// select ONE original physical handle. start/max_end prune unrelated ranges;
+// covers retain list priority (newest generation first), canonical ranges are
+// disjoint. Do not borrow native-image nodes or concatenate adjacent imports.
+static void shared_buffer_span_select(const alias_range_node *n,uint64_t first,uint64_t end,
+    pool_backing_span **cover,pool_backing_span **canonical) {
+  if(!n || n->max_end<end)return;
+  shared_buffer_span_select(n->left,first,end,cover,canonical);
+  if(n->start>first)return;
+  if(n->end>=end) {
+    pool_backing_span *b=n->owner;
+    if(n->kind) {if(!*cover || b->generation>(*cover)->generation)*cover=b;}
+    else *canonical=b; // production canonical imports are disjoint
+  }
+  shared_buffer_span_select(n->right,first,end,cover,canonical);
+}
+static int shared_lazy_span_resolve(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
+  if(offset>p->size || size>p->size-offset)return 0;
+  pool_backing_span *cover=NULL,*canonical=NULL;
+  shared_buffer_span_select(p->shared_buffer_index,offset,offset+size,&cover,&canonical);
+  pool_backing_span *b=cover?cover:canonical;
+  if(!b)return 0;
+  *out=(pool_span_piece){b,offset,offset-b->begin,size};return 1;
+}
+#endif
+// Recording-owner MISS only, after original operation/retained hints and a
+// current Pool reference/registry epoch check. Production lazy startup requires
+// the dedicated NVN owner. Only that owner inserts Buffer nodes; completion
+// cannot rotate this tree, and owner-FIFO close waits all refs before removal.
+// A reference alone would NOT qualify an arbitrary unlocked AVL reader.
+static int pool_span_resolve_recorded(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->shared_lazy_eligible && size && !pool_maintenance)
+    return shared_lazy_span_resolve(p,offset,size,out);
+#endif
+  return pool_span_resolve(p,offset,size,out);
+}
 static pool_span_piece pool_span_require(pool *p,uint64_t offset,uint64_t size) {
   pool_span_piece out;
   if(!pool_span_resolve(p,offset,size,&out))
@@ -156,7 +194,7 @@ static __attribute__((noinline)) void pool_span_index_build_locked(pool *p) {
 // admit a range, join adjacent backings, retain objects or publish GPU access.
 static int pool_span_search_locked(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(p->shared_lazy_eligible)return pool_span_resolve(p,offset,size,out);
+  if(p->shared_lazy_eligible)return pool_span_resolve_recorded(p,offset,size,out);
 #endif
   if(!size || !p->backings || !p->backings->next)
     return pool_span_resolve(p,offset,size,out);
@@ -183,7 +221,7 @@ static int pool_span_search_locked(pool *p,uint64_t offset,uint64_t size,pool_sp
 // Whole/single-node pools keep the original resolver without any hint access.
 static int pool_span_resolve_locked(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(p->shared_lazy_eligible)return pool_span_resolve(p,offset,size,out);
+  if(p->shared_lazy_eligible)return pool_span_resolve_recorded(p,offset,size,out);
 #endif
   if(!size || !p->backings || !p->backings->next)
     return pool_span_resolve(p,offset,size,out);
@@ -283,3 +321,61 @@ static uint64_t pool_spans_bytes(const pool *p) {
   uint64_t bytes=0;for(const pool_backing_span *b=p->backings;b;b=b->next)bytes+=b->end-b->begin;
   return bytes;
 }
+#if defined(DM_VULKAN_SHARED_POOLS) && defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Compare exact selected physical identities with the unchanged linear oracle.
+// Synthetic topology tests do not claim GPU byte/lifetime qualification; the
+// original lazy alias fixture below separately exercises real imports/content.
+unsigned vk_test_shared_lazy_physical_index(void) {
+  enum {N=7};pool p={.size=64,.shared_lazy_eligible=1};pool_backing_span b[N]={0};
+  const uint64_t bounds[N][2]={{0,8},{0,16},{8,24},{8,32},{0,32},{40,64},{24,56}};
+  const int cover[N]={0,1,0,1,1,0,1};unsigned checks=0;
+  for(unsigned n=0;n<N;n++) {
+    b[n].begin=bounds[n][0];b[n].end=bounds[n][1];b[n].generation=n+1;
+    b[n].buffer.handle=(VkBuffer)(uintptr_t)(n+1);b[n].buffer.size=b[n].end-b[n].begin;
+    pool_backing_span **at=cover[n]?&p.shared_covers:&p.backings;
+    if(!cover[n])while(*at && (*at)->begin<b[n].begin)at=&(*at)->next;
+    b[n].next=*at;*at=&b[n];shared_buffer_index_add_locked(&p,&b[n],cover[n]);
+    for(uint64_t first=0;first<=65;first++)for(uint64_t size=0;size<=66;size++) {
+      pool_span_piece linear,indexed;int a=pool_span_resolve(&p,first,size,&linear);
+      int c=pool_span_resolve_recorded(&p,first,size,&indexed);
+      if(a!=c || (a && (linear.backing!=indexed.backing || linear.offset!=indexed.offset ||
+          linear.logical!=indexed.logical || linear.size!=indexed.size)))die("Lazy physical index differs from original linear resolver");
+      checks++;
+    }
+    if(n==2) {pool_span_piece piece;
+      if(!pool_span_resolve_recorded(&p,12,2,&piece) || piece.backing!=&b[1])
+        die("Older cover lost priority to newer canonical Buffer");
+      checks++;
+    }
+  }
+  pool_span_piece piece;
+  if(!pool_span_retained_hint(&p,&b[0],0,4,&piece) || piece.backing!=&b[0])
+    die("Lazy physical index changed prior retained handle");
+  checks++;
+  if(pool_span_resolve_recorded(&p,32,32,&piece))die("Lazy physical index stitched adjacent Buffer coverage");
+  checks++;
+  if(pool_span_resolve_recorded(&p,1,UINT64_MAX,&piece))die("Lazy physical index overflow accepted");
+  checks++;
+  if(!pool_span_resolve_recorded(&p,64,0,&piece) || piece.backing!=&b[5])
+    die("Lazy physical index changed zero-length Pool tail");
+  checks++;
+  // This query allocates nothing and must not depend on the canonical index's
+  // old OOM state. Maintenance remains the unchanged linear resolver.
+  int saved_oom=pool_span_index_test_oom;pool_span_index_test_oom=1;
+  if(!pool_span_resolve_locked(&p,12,2,&piece) || piece.backing!=&b[4])
+    die("Lazy physical index depends on canonical allocation");
+  checks++;
+  pool_span_index_test_oom=saved_oom;
+  pool_maintenance++;
+  if(!pool_span_resolve_recorded(&p,12,2,&piece) || piece.backing!=&b[4])die("Lazy maintenance physical identity changed");
+  pool_maintenance--;checks++;
+  for(unsigned n=0;n<N;n++) {
+    int removed=0;p.shared_buffer_index=alias_range_remove(p.shared_buffer_index,&b[n].shared_coverage,&removed);
+    if(!removed)die("Lazy physical index removal mismatch");
+  checks++;
+  }
+  if(p.shared_buffer_index)die("Lazy physical index outlived Buffer nodes");
+  checks++;
+  return checks;
+}
+#endif

@@ -23,7 +23,7 @@ static pool_backing_span *shared_lazy_ensure_locked(pool *p,uint64_t offset,uint
       offset>p->size || bytes>p->size-offset || !shared_window_bytes)
     die("Shared lazy range/identity/closing violation");
   pool_span_piece prior;
-  if(pool_span_resolve(p,offset,bytes,&prior))return prior.backing;
+  if(pool_span_resolve_locked(p,offset,bytes,&prior))return prior.backing;
   uint64_t window=shared_window_bytes,begin=offset&~(window-1),last=offset+bytes;
   if(last>UINT64_MAX-(window-1))die("Shared lazy rounded extent overflow");
   uint64_t end=(last+window-1)&~(window-1);if(end>p->size)end=p->size;
@@ -63,14 +63,14 @@ static pool_backing_span *shared_lazy_ensure_locked(pool *p,uint64_t offset,uint
     pool_backing_span **at=&p->backings;while(*at && (*at)->begin<begin)at=&(*at)->next;
     fresh->next=*at;*at=fresh;
   }
-  shared_buffer_index_add_locked(p,fresh);
+  shared_buffer_index_add_locked(p,fresh,overlap);
   p->shared_properties=fresh->buffer.properties;
   p->shared_import_nodes++;p->shared_import_bytes+=length;p->shared_unique_bytes+=extra;
   atomic_fetch_add(&shared_lazy_import_nodes,1);
   atomic_fetch_add(&shared_lazy_import_bytes,length);
   atomic_fetch_add(&shared_lazy_unique_bytes,extra);
   // Append does not invalidate old physical nodes or dirty/content epochs.
-  // The canonical sorted index alone notices its own topology generation.
+  // New typed lookups observe this insertion; retained old handles stay valid.
   return fresh;
 }
 void vk_pool_lazy_window_stats(int *active,uint64_t *unique,uint64_t *mapped,
