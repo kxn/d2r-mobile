@@ -69,7 +69,7 @@ class Publication(unittest.TestCase):
   new={'apk':H(self.newapk.read_bytes()),'chain':'9507875007c6','module_artifacts':{n:{'sha256':h}for n,h in self.modules.items()}}
   p={'serial':'HOST','old':old,'new':new,'new_apk':new['apk'],'new_elf':'test ELF','old_apk':str(self.oldapk),
     'apk':str(self.newapk),'driver_path':str(self.driver),'driver':{'sha256':H(self.driver.read_bytes())},
-    'raw_bundle':str(self.raw),'modules':self.modules,'baseline_data':{'chain':'9507875007c6','inventories':baseline}}
+    'raw_bundle':str(self.raw),'modules':self.modules,'baseline_data':{'chain':'9507875007c6','inventories':baseline,'model':'host model','platform':'host platform'}}
   self.x={'p':p,'phase':phase,'outer':{'delivery_receipt':{'path':str(receipt),'sha256':H(receipt.read_bytes())}},
    'delivery':{'device_fingerprint':'qualified/fingerprint'},'profile_bytes':b'new tested profile\n',
    'original_shader_inventory':pub.m.inventory(self.dev,'files/runtime/shaders')}
@@ -94,6 +94,19 @@ class Publication(unittest.TestCase):
   self.assertEqual(self.dev.digest(pub.PROFILE),H(self.x['profile_bytes']))
   self.assertEqual((self.root/'files/runtime/save/hero').read_bytes(),b'LATEST-SAVE')
   for _,target in pub.r.DIRS:self.assertNotIn(pub.m.OWNER,pub.m.inventory(self.dev,target))
+  baseline=json.loads((self.out/'delivered-baseline.json').read_text())
+  self.assertEqual(baseline['model'],'host model');self.assertEqual(baseline['platform'],'host platform')
+  self.assertEqual(baseline['APK_path'],str(self.root/'installed.apk'))
+  self.assertEqual(len(baseline['inventories']),8)
+  for target in baseline['inventories']:
+   self.assertEqual(pub.r.expected_baseline({'baseline_data':baseline},target),pub.m.inventory(self.dev,target))
+  # Reconstruct the next original runner's old identity from delivered-baseline,
+  # then execute the actual accepted Device.identity (not a field-name mirror).
+  identity={'apk':baseline['APK_sha256'],'chain':baseline['chain'],'module_artifacts':{
+    Path(name).name:{'sha256':h}for name,h in baseline['inventories']['files/runtime/modules'].items()
+    if not name.endswith('/.d2r-deploy-managed')}}
+  self.assertEqual(len(identity['module_artifacts']),28);self.dev.identity(identity)
+
  def test_actual_old_baseline_absent_native_and_profile_restored_as_absent(self):
   import shutil
   target='files/runtime/native-one-resources';shutil.rmtree(self.root/target)

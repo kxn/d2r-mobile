@@ -228,12 +228,19 @@ def publish(x,out,dev,install=installer.install,game_round=ordinary_round):
    move_file(dev,target+'/'+m.OWNER,stage+'/markers/'+label,d['owner_sha256'])
    d['owner_removed'].append(label);save()
   dev.identity(p['new'])
+  inventories={target:m.inventory(dev,target)for _,target in r.DIRS}
+  inventories['files/runtime/shaders']=x['original_shader_inventory']
+  inventories['shared_prefs']=r.expected_baseline(p,'shared_prefs')
+  inventories={target:None if inv is None else {target+'/'+name:h for name,h in inv.items()}
+               for target,inv in inventories.items()}
+  location=dev.adb('shell','pm','path',PKG).removeprefix('package:')
+  require(location.startswith('/') and '\n' not in location,'delivered APK location differs')
   baseline={'serial':p['serial'],'package':PKG,'game_PID_absent':True,'APK_sha256':p['new_apk'],
+    'model':p['baseline_data']['model'],'platform':p['baseline_data']['platform'],'APK_path':location,
     'host_ELF_SHA256':p['new_elf'],'chain':p['baseline_data']['chain'],
     'profile':row(profile),'publication_receipt':x['outer']['delivery_receipt'],
-    'private_rollback_backup':stage,'original_APK_backup':row(p['old_apk']),'inventories':{target:m.inventory(dev,target)for _,target in r.DIRS},
-    'shader_inventory':x['original_shader_inventory'],'desktop_rounds':d['rounds'],
-    'no_sustained_whole_game_or_performance_claim':True}
+    'private_rollback_backup':stage,'original_APK_backup':row(p['old_apk']),'inventories':inventories,
+    'desktop_rounds':d['rounds'],'no_sustained_whole_game_or_performance_claim':True}
   m.journal(out/'delivered-baseline.json',baseline)
   d['committed']=True;d['stage']='Q-local-desktop-published-saved2-stopped';save()
  except BaseException as error:
