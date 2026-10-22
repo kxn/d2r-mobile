@@ -436,6 +436,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_quad.inc"
 #include "native_vulkan_extrap.inc"
 #include "native_vulkan_submit.inc"
+#include "native_vulkan_descriptor_pool.inc"
 #include "native_vulkan_command_reset.inc"
 #include "native_vulkan_buffer_partition.inc"
 #include "native_vulkan_pool.inc"
@@ -782,7 +783,10 @@ int dm_vulkan_test_main(void) {
     dm_gfx_suspend(0);
   }
   vk_graphics_prepare_mode(2);
-  setenv("DM_TEST_VULKAN_DESCRIPTOR_POOL_SETS", "4", 1);
+#ifndef DM_ANDROID_APP
+  if(!getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE"))
+#endif
+    setenv("DM_TEST_VULKAN_DESCRIPTOR_POOL_SETS", "4", 1);
   setenv("DM_VULKAN_GPU_PROFILE", "1", 1);
   setenv("DM_VULKAN_STORE_CHECK", "1", 1);
   {
@@ -839,6 +843,10 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
+  if(getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE")) {
+    descriptor_pool_block_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"descriptor-pool-blocks\",\"checks\":%u,\"physical_sets\":512,\"retention_budget\":2048,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){vk_test_image_source_flow(1);source_flow_observe=1;}
   if(getenv("DM_IMAGE_SOURCE_FLOW_FIXTURE")) {
@@ -1202,7 +1210,7 @@ int dm_vulkan_test_main(void) {
   submit(end());
   for (unsigned i = 0; i < 256; i++)
     CHECK(dst[i] == src[i] * 3 + 7);
-  descriptor_inflight_test((const prog_t *)&compute, 0);
+  descriptor_inflight_test((const prog_t *)&compute, 0,6);
   CALL(nvnCommandBufferBeginRecording, &cmd);
   CALL(nvnCommandBufferBindStorageBuffer, &cmd, NVN_SHADER_STAGE_COMPUTE, 0,
        (uintptr_t)(src + 1), 1024);

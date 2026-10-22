@@ -969,7 +969,9 @@ vk_shader *vk_shader_load_key(const char *key) {
   return s;
 }
 static descriptor_block *descriptor_create(void) {
-  unsigned max_sets = V.options.descriptor_sets;
+  // Physical growth quantum only. The configured retained-set budget below
+  // remains unchanged; spill chains never reset or overwrite in-flight sets.
+  unsigned max_sets = V.options.descriptor_sets<512?V.options.descriptor_sets:512;
   const VkDescriptorPoolSize sizes[] = {
       {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, max_sets * VK_PIXEL_LOCAL_MAX_INPUTS},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, max_sets * 8},
@@ -993,6 +995,15 @@ static descriptor_block *descriptor_create(void) {
   VK_CHECK(vkCreateDescriptorPool(V.device, &ci, NULL, &block->pool));
   return block;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+void vk_test_descriptor_pool_ownership(vk_shader_submission *state,
+                                       unsigned *blocks,unsigned *retained) {
+  if(!state)die("Descriptor pool fixture requires owned context");
+  *blocks=0;
+  for(descriptor_block *b=state->descriptor_blocks;b;b=b->next)(*blocks)++;
+  *retained=state->descriptor_retained;
+}
+#endif
 void vk_shader_recycle(vk_shader_submission *state) {
   if (!state) return;
   if (binding_state == state)
