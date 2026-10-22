@@ -503,3 +503,57 @@ It does not silently execute an unused patched clone or relax runtime/asset
 qualification. New inputs need this tool source and scheduler-helper hash;
 old frozen inputs,886 artifacts and failed331-walk result remain untouched.
 This observer fix is not a sustained-play pass or a gamefault diagnosis.
+
+
+### Exact886 /52181 descriptor-pool RAM control
+
+Optional `native_memory_validation` is one explicit qualification, not a generic
+resource-candidate bypass. It has exactly `role` (`parent` or `candidate`), a
+pinned independent `root_review`, and this checkout's pinned original
+`capture-sustained-scheduler.py` as `scheduler_helper`. Parent is actual886;
+candidate is frozen52181dc6 (sourceReady f52a9105…). Android canonical/RAW and
+root artifact approval must really exist before either role can qualify.
+The temporary metadata in `test-descriptor-pool-memory.py` is synthetic unit
+input, never an actual child artifact/approval or executable configuration.
+
+The new independent review has status
+`ROOT_REVIEWED_DESCRIPTOR_POOL_PHYSICAL_CAPACITY_MEMORY_COMPARISON` and fields:
+`parent_runtime`886, `candidate_runtime`52181, `base_runtime`886,
+`physical_descriptor_pool_max_sets:{parent:2048,candidate:512}`,
+`retention_budget:2048`, `production_capacity_only:true`, and
+`shader_changes/game_changes/driver_changes:false`. It pins
+`parent_artifact_review` (the original actual88679af card),
+`candidate_artifact_review` (actual new root canonical/RAW card), and
+`candidate_source_review` (the actual independent source review, also present
+in the candidate canonical's `root_source_reviews`). SourceReady/canonical/raw,
+selected role/runtime/base and all original common artifact/APP/raw23/flags
+checks must agree. Parent card keeps its real cb297 source base; child base is
+886. Existing source/asset/card statuses are never rewritten as this scope.
+
+Keep original `native_host_experiment`, `native_candidate_validation` and
+full2838 asset/provider/filter proofs; add the explicit mode above,
+`official_memory_map:{tool:"/system/bin/showmap",format:"json"}` and
+`builtin_vma_on_suspend:true`. Exclude AA/performance_tools/L1I/GPU/debugger/
+sustained/old functional or prior-memory substitutions. The real stopped
+baseline and restore APK/ELF must be current886, not olda322 in the74d template.
+No execution-ready input is supplied by this source change.
+
+Both roles retain the original controlled.60fixed/2750x1260/1MiB/lazy1/raw0/
+span-reference1/full2838/950 setup and original accounting flag; this is not
+the normal desktop.75adaptive policy. Actual states must retain the512MiB
+private-image budget. After the original3walks, exactly one existing8s Perfetto
+CPU/system window runs; its PID/APK/chain/helper/parser/trace hash and advancing
+ready state are checked. No3x30s Simpleperf is required or started. Original
+meminfo/showmap follows, then original save2 and deferred builtin VMA at pause,
+owned stop and complete six-directory CAS restoration. The VMA exception only
+accepts this already validated RAM scope; every old mode retains its AA rule.
+VMA is a post-drain/pre-this-job-trim endpoint, not simultaneous foreground PSS.
+
+The successful stage is
+`native-original-game-descriptor-pool-memory-validation-complete`; completion
+requires the original route/HUD/save plus the one official CPU trace, system
+showmap and archived VMA. It does not prove216MiB/4 total savings, CPU/FPS/heat
+improvement or sustained gameplay: spill count, retention and live driver BOs
+can change. Compare whole residency and actual workload at the original
+endpoints; keep allocation/reservation/PSS distinct. All original installer,
+PID/save2/stop/CAS/cleanup functions and original observer fix remain in use.

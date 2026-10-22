@@ -131,14 +131,19 @@ def driver_span_policy(p, state=None, where='input'):
     return bool(value)
 
 
-def builtin_vma_policy(p):
+def builtin_vma_policy(p, memory_runtime=None):
     if 'builtin_vma_on_suspend' not in p:
         return
-    require(p['builtin_vma_on_suspend'] is True and p.get('official_cpu_aa')
-            and p.get('performance_tools') and not any(k in p for k in (
+    memory = memory_runtime is not None and memory_runtime == p.get('runtime_commit') and p.get('native_memory_validation')
+    if 'native_memory_validation' in p:
+        require(memory and not p.get('official_cpu_aa') and not p.get('performance_tools'),
+                'descriptor RAM VMA requires its validated scope without AA')
+    require(p['builtin_vma_on_suspend'] is True
+            and ((p.get('official_cpu_aa') and p.get('performance_tools')) or memory)
+            and not any(k in p for k in (
                 'startup_allocation_capture', 'readonly_memory_snapshot', 'counter_snapshot',
                 'sustained_play', 'official_gpu_tools', 'official_l1i_record')),
-            'builtin VMA requires strict true and the original official_cpu_aa-only transaction')
+            'builtin VMA requires strict true and original AA or independently validated descriptor RAM scope')
 
 
 def builtin_vma_validate(before, after, fresh, own, serial, data=None, pending_ok=False):
@@ -342,7 +347,8 @@ def proof(path, digest):
     require(len(p['prerequisites']) >= 2, 'actual fixture and bake receipts required')
     for row in p['prerequisites']:
         pinned(row)
-    builtin_vma_policy(p)
+    if 'native_memory_validation' not in p:
+        builtin_vma_policy(p)
     memory_snapshot_validated = readonly_memory_snapshot(p) is True
     startup_allocation_capture(p)
     if 'counter_snapshot' in p:
@@ -448,6 +454,16 @@ def proof(path, digest):
     if p.get('official_cpu_aa'):
         p['controller_sources'][str(HERE / 'official_cpu_aa.py')] = sha(HERE / 'official_cpu_aa.py')
     p['_execution_phases'] = p['phases']
+    memory_runtime = None
+    p['_descriptor_memory_runtime'] = None
+    if 'native_memory_validation' in p:
+        candidate = module('source_pinned_memory_candidate_gate', HERE / 'candidate_gate.py')
+        memory_runtime = candidate.validate_memory(p, pinned, read, require)
+        require(pinned(p['native_memory_validation']['scheduler_helper']) == HERE / 'capture-sustained-scheduler.py',
+                'descriptor RAM requires original source-pinned official8s scheduler')
+        p['controller_sources'][str(HERE / 'capture-sustained-scheduler.py')] = sha(HERE / 'capture-sustained-scheduler.py')
+        p['_descriptor_memory_runtime'] = memory_runtime
+        builtin_vma_policy(p, memory_runtime=memory_runtime)
     sustained_runtime = None
     p['_sustained_current'] = False
     if 'sustained_play' in p:
@@ -467,7 +483,8 @@ def proof(path, digest):
     if 'native_candidate_validation' in p:
         candidate = module('source_pinned_native_candidate_gate', HERE / 'candidate_gate.py')
         compiler_runtime = candidate.validate(p, pinned, read, require,
-            readonly_memory_snapshot_validated=memory_snapshot_validated, sustained_runtime=sustained_runtime)
+            readonly_memory_snapshot_validated=memory_snapshot_validated, sustained_runtime=sustained_runtime,
+            memory_runtime=memory_runtime)
         p['controller_sources'][str(HERE / 'candidate_gate.py')] = sha(HERE / 'candidate_gate.py')
         p['_execution_phases'] = [p['phases'][1]]
     if p['phases'][1]['composition']['sha256'] in ('8676e748175eecbc3bdcfc42038e428775cc5917c3293eec56bc5335f55806f3',
@@ -500,6 +517,41 @@ def owned(label, inv, d, p, phase):
             n in (m.OWNER, 'libvulkan_freedreno.so') or n.startswith(
                 ('shader-cache/', 'mesa_shader_cache/', '.cache/')) for n in inv)
     return True  # Only the token-owned new cache/temp, never original backups.
+
+
+def descriptor_memory_state(state, p):
+    require(p.get('_descriptor_memory_runtime') == p['runtime_commit']
+            and state['valid'] and state['world_input_ready'] and state['scale_3d'] == .60
+            and state['game_output'] == state['surface_output'] == {'width':2750,'height':1260}
+            and state['guest_heap']['shared'] is True and state['pool_windows']['window_bytes'] == 1048576
+            and state['private_image_cache']['budget_bytes'] == 536870912
+            and state['shared_lazy_windows']['active'] is True
+            and state['shared_image_raw_observe']['enabled_policy'] is False
+            and state['driver_constants']['span_reference'] is True, 'descriptor RAM actual policy differs')
+
+
+def capture_memory_cpu_window(dev, own, d, report, out, p):
+    require(dev.adb('shell', 'pidof ' + PKG + ' || true') == own, 'PID changed before memory CPU window')
+    trace = out / 'memory-official-scheduler.pftrace'
+    helper = p['native_memory_validation']['scheduler_helper']
+    command = [sys.executable, str(pinned(helper)), '--serial', p['serial'], '--seconds', '8',
+               '--output', str(trace), '--app-markers', '--clean-atrace-print', '--frame-timeline']
+    d['descriptor_memory_cpu_command'] = command
+    m.journal(report, d)
+    with (out / 'memory-official-scheduler-console.txt').open('w') as log:
+        subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT, timeout=48)
+    actual = read(trace.with_suffix('.json'))
+    require(actual['pid'] == int(own) and actual['seconds_requested'] == 8
+            and actual['apk_sha256'] == p['new_apk'] and actual['shader_chain'] == p['baseline_data']['chain']
+            and actual['script_sha256'] == helper['sha256']
+            and actual['state_reader_sha256'] == sha(HERE.parent / 'game_state_json.py')
+            and actual['trace_sha256'] == sha(trace), 'memory CPU trace identity differs')
+    for state in (actual['before'], actual['after']): descriptor_memory_state(state, p)
+    require(actual['after']['time_ns'] > actual['before']['time_ns']
+            and dev.adb('shell', 'pidof ' + PKG + ' || true') == own, 'memory CPU window paused or changed PID')
+    d['descriptor_memory_cpu_window'] = {'complete':True,'actual_report':str(trace.with_suffix('.json')),
+        'trace_sha256':actual['trace_sha256'],'scope':'One original8s Perfetto CPU/system window; no Simpleperf or CPU gain claim'}
+    m.journal(report, d)
 
 
 def phase_game(dev, out, phase, p, token):
@@ -615,6 +667,7 @@ def phase_game(dev, out, phase, p, token):
         if 'shared_lazy_windows' in p:
             require(initial.get('shared_lazy_windows', {}).get('active') is bool(p['shared_lazy_windows']),
                     'actual startup shared_lazy_windows differs')
+        if p.get('native_memory_validation'): descriptor_memory_state(initial, p)
         m.screenshot_collect(dev, own, d, report, out, 'HUD-before-route')
         if p.get('sustained_play'):
             sustained = module('source_pinned_sustained_play_run', HERE / 'sustained_play.py')
@@ -627,6 +680,9 @@ def phase_game(dev, out, phase, p, token):
         else:
             m.original_route(dev, own, d, report, out, initial, None)
         current = read_state(dev, out, 'after-route')
+        if p.get('native_memory_validation'):
+            descriptor_memory_state(current, p)
+            capture_memory_cpu_window(dev, own, d, report, out, p)
         if p.get('official_gpu_tools') and p.get('_official_gpu_disabled'):
             d['gpu_validity'] = False
             d['official_gpu_complete'] = False
@@ -825,6 +881,9 @@ def phase_game(dev, out, phase, p, token):
             d['qualified_native_asset_validation'] = p['_asset_validation']
             if not p.get('sustained_play'):
                 d['scope'] = p['_asset_validation']['scope']
+        if p.get('native_memory_validation'):
+            d['scope'] = 'Exact886/52181 physical descriptor-pool RAM control; original3walks/one8sPerfetto/system residency/final VMA; no3x30CPU or sustained claim'
+            d['native_memory_validation'] = p['native_memory_validation']
         save()
     finally:
         if early_process is not None and early_process.poll() is None:
@@ -1003,6 +1062,10 @@ def main():
         plan.update(pool_copy_accounting=False,
             scope='Current886 town-route attempt:1800s uninterrupted original input and four official8s Perfetto windows; '
                   'startup.75 with adaptive/HUD live; not fixedAB, combat, whole-game or6GB acceptance')
+    if p.get('native_memory_validation'):
+        plan.update(native_memory_validation=p['native_memory_validation'], profiling=True,
+            scale_3d=.60, fixed_3d=True, pool_copy_accounting=True,
+            scope='Exact886/52181 descriptor-pool physical2048/512, retention2048 RAM control; original3walks/one8sPerfetto/meminfo/showmap/final VMA; no3x30CPU or sustained acceptance')
     if not args.execute:
         plan['execution_ready'] = p.get('execution_ready') is True
         print(json.dumps(plan, indent=2))
@@ -1122,11 +1185,18 @@ def main():
             write()
             require(phase_result.get('original_HUD_reached') and phase_result.get('fresh_save_then_stopped'),
                     'phase did not reach HUD / fresh save2')
+            if p.get('native_memory_validation'):
+                require(phase_result.get('descriptor_memory_cpu_window', {}).get('complete') is True
+                        and phase_result.get('official_showmap_complete') is True
+                        and phase_result.get('builtin_vma', {}).get('builtin_complete') is True,
+                        'descriptor RAM official CPU/memory/VMA endpoint incomplete')
             if p.get('sustained_play'):
                 require(phase_result.get('sustained_play', {}).get('continuous_pass') is True,
                         '30min sustained route did not complete')
         owner.unlink()
-        d['stage'] = ('native-original-game-uninterrupted-sustained-route-complete'
+        d['stage'] = ('native-original-game-descriptor-pool-memory-validation-complete'
+                      if p.get('native_memory_validation') else
+                      'native-original-game-uninterrupted-sustained-route-complete'
                       if p.get('sustained_play') else
                       'qualified-native-ASTC6-original-game-resource-validation-complete'
                       if p.get('_asset_validation') else

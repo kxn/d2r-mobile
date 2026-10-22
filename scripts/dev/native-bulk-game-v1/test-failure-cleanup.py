@@ -35,14 +35,19 @@ class Device:
             return 'Uid:\t10311\t10311\t10311\t10311\n'
         if args == ('sh', '-c', 'set -e; cat "$1"; printf %s ' + t.state_reader._END,
                     'sh', 'files/runtime/game-state.jsonl'):
-            return (json.dumps({'valid': True, 'world_input_ready': True}) + '\n' + t.state_reader._END).strip()
+            return (json.dumps({'valid': True, 'world_input_ready': True, 'time_ns': 1, 'scale_3d': .60,
+                'game_output': {'width':2750,'height':1260}, 'surface_output': {'width':2750,'height':1260},
+                'guest_heap': {'shared':True}, 'pool_windows': {'window_bytes':1048576},
+                'private_image_cache': {'budget_bytes':536870912}, 'shared_lazy_windows': {'active':True},
+                'shared_image_raw_observe': {'enabled_policy':False}, 'driver_constants': {'span_reference':True}})
+                    + '\n' + t.state_reader._END).strip()
         if args == ('cat', 'files/runtime/native.log'):
             return 'original game test log'
         raise AssertionError(args)
 
 
 class LifecycleFailureTests(unittest.TestCase):
-    def exercise(self, replacement, counter_failure=False, sustained_failure=False, memory_failure=False, vma_failure=False, vma_save_failure=False, current=False, fixed_report=False, accounting_report=False):
+    def exercise(self, replacement, counter_failure=False, sustained_failure=False, memory_failure=False, vma_failure=False, vma_save_failure=False, current=False, fixed_report=False, accounting_report=False, descriptor_failure=False):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder) / 'phase'
             dev = Device()
@@ -78,7 +83,7 @@ class LifecycleFailureTests(unittest.TestCase):
                     return 0
 
             def collect(_dev, _pid, d, report, _out, label):
-                if counter_failure or sustained_failure or memory_failure:
+                if counter_failure or sustained_failure or memory_failure or descriptor_failure:
                     return
                 d['screenshots'] = [{'remote': '/data/local/tmp/owned.png',
                                      'screencap_requested': True}]
@@ -108,6 +113,7 @@ class LifecycleFailureTests(unittest.TestCase):
 
             with patch.object(t, 'module', return_value=SimpleNamespace(run=sustained_fail)), \
                  patch.object(t.subprocess, 'Popen', Launcher), \
+                 patch.object(t, 'capture_memory_cpu_window', side_effect=sustained_fail), \
                  patch.object(t.subprocess, 'run', save), \
                  patch.object(t.m, 'screenshot_collect', collect), \
                  patch.object(t.m, 'original_route'), \
@@ -116,6 +122,10 @@ class LifecycleFailureTests(unittest.TestCase):
                 with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
                     config = {'serial': '10CG570J59001U1',
                               'pool_window_bytes': 16777216, '_sustained_current': current}
+                    if descriptor_failure:
+                        config.update(runtime_commit='88620ec7c92edeb59512612cebf42906a4848509',
+                            _descriptor_memory_runtime='88620ec7c92edeb59512612cebf42906a4848509',
+                            native_memory_validation={'role':'parent'})
                     if sustained_failure:
                         config['sustained_play'] = {'enabled': True}
                     if counter_failure:
@@ -134,7 +144,7 @@ class LifecycleFailureTests(unittest.TestCase):
             state = json.loads((out / 'phase.json').read_text())
             if memory_failure:
                 self.assertIn('readonly_memory_snapshot_command',state)
-            if not counter_failure and not sustained_failure and not memory_failure and not fixed_report and not accounting_report:
+            if not counter_failure and not sustained_failure and not memory_failure and not fixed_report and not accounting_report and not descriptor_failure:
                 self.assertTrue(state['screenshot_collection_errors'])
             if vma_failure and not vma_save_failure:
                 self.assertIn('builtin_vma_error', state)
@@ -147,6 +157,12 @@ class LifecycleFailureTests(unittest.TestCase):
                 self.assertTrue(dev.stopped)
                 self.assertEqual(dev.pid, '')
                 self.assertTrue(state['fresh_save_then_stopped'])
+
+    def test_descriptor_trace_failure_still_saves_and_stops_owned_game(self):
+        self.exercise(False, descriptor_failure=True)
+
+    def test_descriptor_trace_PID_replacement_is_preserved(self):
+        self.exercise(True, descriptor_failure=True)
 
     def test_current_adaptive_launch_failure_keeps_original_save2_stop(self):
         self.exercise(False, current=True, sustained_failure=True)

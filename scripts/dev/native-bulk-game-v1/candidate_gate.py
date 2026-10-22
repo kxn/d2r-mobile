@@ -222,7 +222,87 @@ def reviewed_artifacts(p, review, pinned, read, require):
     return canonical,raw
 
 
-def validate(p,pinned,read,require,readonly_memory_snapshot_validated=False,sustained_runtime=None):
+DESCRIPTOR_PARENT = '88620ec7c92edeb59512612cebf42906a4848509'
+DESCRIPTOR_CANDIDATE = '52181dc6b7cbdb7df7168d62201a84dd27d05672'
+DESCRIPTOR_SOURCE_READY = 'f52a9105706b06bc990535bcb5708d87fbb32beb40e44c412a6eae25e3d82daa'
+DESCRIPTOR_PARENT_REVIEW = '79af180d21c6dd75bc177ed43a77391da27589659a52c8707bd00d1b8097acf2'
+
+
+def validate_memory(p,pinned,read,require):
+    """One explicit physical-pool RAM experiment; no CPU-profiling surrogate."""
+    mode=p['native_memory_validation']
+    require(set(mode)=={'role','root_review','scheduler_helper'} and mode['role'] in ('parent','candidate')
+            and p.get('native_host_experiment') and p.get('native_candidate_validation')
+            and p.get('official_memory_map')=={'tool':'/system/bin/showmap','format':'json'}
+            and p.get('builtin_vma_on_suspend') is True
+            and not any(k in p for k in ('performance_tools','official_cpu_aa','official_l1i_record',
+                'official_gpu_tools','counter_snapshot','sustained_play','readonly_memory_snapshot',
+                'startup_allocation_capture','native_functional_validation','prior_actual_game_qualification',
+                'native_compiler_experiment')), 'descriptor RAM scope/combination differs')
+    require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
+            and p.get('shared_lazy_windows')==1 and p.get('shared_image_raw_observe')==0
+            and p.get('driver_span_reference')==1
+            and p['qualified_native_asset_validation']['root_asset_review']['sha256']==POOL_ASSETS,
+            'descriptor RAM retains f830/full2838/shared1MiB/lazy1/raw0/span-reference1')
+    review=read(pinned(mode['root_review']))
+    require(review['status']=='ROOT_REVIEWED_DESCRIPTOR_POOL_PHYSICAL_CAPACITY_MEMORY_COMPARISON'
+            and review['parent_runtime']==DESCRIPTOR_PARENT
+            and review['candidate_runtime']==DESCRIPTOR_CANDIDATE
+            and review['base_runtime']==DESCRIPTOR_PARENT
+            and review['physical_descriptor_pool_max_sets']=={'parent':2048,'candidate':512}
+            and review['retention_budget']==2048 and review['production_capacity_only'] is True
+            and all(review.get(k) is False for k in ('shader_changes','game_changes','driver_changes')),
+            'actual descriptor-pool memory contract not root-reviewed')
+    def same(a,b):return a['sha256']==b['sha256'] and pinned(a)==pinned(b)
+    require(review['parent_artifact_review']['sha256']==DESCRIPTOR_PARENT_REVIEW,
+            'exact actual886 parent artifact qualification required')
+    parent=read(pinned(review['parent_artifact_review']))
+    child=read(pinned(review['candidate_artifact_review']))
+    require(parent['runtime']==DESCRIPTOR_PARENT and child['runtime']==review['candidate_runtime']
+            and child['base']==DESCRIPTOR_PARENT and child['game_logic_unchanged'] is True
+            and child['host_only_changes'] is True
+            and child['status']=='ROOT_REVIEWED_HOST_RESOURCE_PREPARATION_CANONICAL_AND_FRESH_RAW28'
+            and child['tool_ready'] is True and child['actual_device_evidence'] is False,
+            'descriptor memory parent/child source differs')
+    child_can=read(pinned(child['canonical_ready']))
+    child_source=read(pinned(child['source_ready']));child_raw=read(pinned(child['raw_ready']))
+    require(child['source_ready']['sha256']==DESCRIPTOR_SOURCE_READY
+            and child_can['commit']==child_raw['source_commit']==DESCRIPTOR_CANDIDATE
+            and len(child_raw['28_deployment_file_hashes'])==28
+            and same(child['source_ready'],child_can['source_only_candidate'])
+            and {child_source[k] for k in ('commit','runtime_commit') if k in child_source}=={child['runtime']}
+            and {child_source[k] for k in ('base','base_runtime') if k in child_source}=={DESCRIPTOR_PARENT}
+            and child_source['physical_descriptor_pool_max_sets']==512
+            and child_source['retention_budget']==2048 and child_source['production_capacity_only'] is True
+            and any(same(review['candidate_source_review'],row) for row in child_can['root_source_reviews']),
+            'descriptor candidate source proof differs')
+    source_review=read(pinned(review['candidate_source_review']))
+    require(source_review['status']=='ROOT_REVIEWED_DESCRIPTOR_POOL_PHYSICAL_CAPACITY_ONLY_SOURCE_HOST_PASS'
+            and source_review['runtime']==DESCRIPTOR_CANDIDATE and source_review['base_runtime']==DESCRIPTOR_PARENT
+            and same(source_review['source_ready'],child['source_ready'])
+            and source_review['production_capacity_only'] is True and source_review['game_shader_driver_changes'] is False,
+            'descriptor candidate independent source review differs')
+    selected=parent if mode['role']=='parent' else child
+    selected_pin=review[mode['role']+'_artifact_review']
+    require(p['runtime_commit']==selected['runtime']
+            and same(selected_pin,p['native_candidate_validation']['root_review'])
+            and all(same(p[k],selected[k+'_ready']) for k in ('canonical','raw')),
+            'descriptor RAM selected role/runtime/artifacts differ')
+    parent_can=read(pinned(parent['canonical_ready']));pinned(parent['raw_ready'])
+    baseline=read(pinned(p['baseline']))
+    require(baseline['game_PID_absent'] is True and baseline['chain']=='9507875007c6'
+            and baseline['APK_sha256']==p['original_apk']['sha256']==parent_can['canonical_APK_sha256']
+            and baseline['host_ELF_SHA256']==p['original_host_elf']==
+                parent_can['canonical_native_library_sha256']['libdmhost_android.so'],
+            'descriptor RAM must restore actual stopped886, not historical a322')
+    return p['runtime_commit']
+
+
+def validate(p,pinned,read,require,readonly_memory_snapshot_validated=False,sustained_runtime=None,memory_runtime=None):
+    if memory_runtime is not None:
+        require(memory_runtime==p['runtime_commit'] and p.get('native_memory_validation')
+                and sustained_runtime is None, 'descriptor RAM qualification token differs')
+        return validate_compiler(p,pinned,read,require,resource_preparation=True,memory_validated=True)
     if sustained_runtime is not None:
         require(sustained_runtime == p['runtime_commit'] == '88620ec7c92edeb59512612cebf42906a4848509'
                 and p.get('sustained_play') and 'native_host_experiment' in p
@@ -374,7 +454,7 @@ def prior_930_memory_scope(p,prior,pinned,read,require):
 
 
 def validate_compiler(p,pinned,read,require,resource_preparation=False,
-                      readonly_memory_snapshot_validated=False,sustained_validated=False):
+                      readonly_memory_snapshot_validated=False,sustained_validated=False,memory_validated=False):
     """Reviewed source successor, retaining original179 build/assets/raw reference.
 
     The caller authenticates the complete inputs SHA, including root_review;
@@ -393,6 +473,8 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
                     'readonly_memory_snapshot','startup_allocation_capture','native_functional_validation',
                     'prior_actual_game_qualification','official_gpu_tools','counter_snapshot')),
                 'sustained source requires explicit current qualification and original sparse tools only')
+    require('native_memory_validation' not in p or memory_validated is True,
+            'descriptor RAM requires independently validated memory scope')
     official_cpu=(p.get('official_l1i_record') is True or bool(p.get('official_cpu_aa'))) and p.get('performance_tools')
     functional = p.get('native_functional_validation')
     if functional is not None:
@@ -415,7 +497,7 @@ def validate_compiler(p,pinned,read,require,resource_preparation=False,
                 'prior actual memory scope requires validated read-only snapshot')
         prior_memory=prior_actual_memory_scope(p,pinned,read,require)
     require(p['pool_window_bytes']==1048576 and p['driver']['sha256']==DRIVER
-            and (official_cpu or prior_memory or functional or sustained_validated)
+            and (official_cpu or prior_memory or functional or sustained_validated or memory_validated)
             and p.get('qualified_native_asset_validation',{}).get('root_asset_review',{}).get('sha256')==POOL_ASSETS,
             'compiler experiment requires original f830/1MiB/full2838 and official tools or verified prior-game memory scope')
     review=read(pinned(p['native_candidate_validation']['root_review']))
