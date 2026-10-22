@@ -462,6 +462,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_present.inc"
 #include "native_vulkan_sampled_array.inc"
 #include "native_vulkan_bc_cpu_scratch.inc"
+#include "native_vulkan_upload_regions.inc"
 #include "native_vulkan_clear_group.inc"
 #include "native_vulkan_vertex_binding.inc"
 #include "native_vulkan_vertex_require.inc"
@@ -985,6 +986,9 @@ int dm_vulkan_test_main(void) {
     return 0;
   }
   if(getenv("DM_IMAGE_PRESSURE_TRIM_FIXTURE")) {image_pressure_trim_test();printf("{\"test\":\"image-pressure-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_TEXTURE_UPLOAD_REGIONS_FIXTURE")) {upload_regions_gpu_test();printf("{\"test\":\"texture-upload-regions\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#endif
   if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_TEXTURE_RANGE_DIRTY_FIXTURE")) {texture_range_dirty_proof_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"texture-range-dirty\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
