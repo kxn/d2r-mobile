@@ -149,6 +149,45 @@ def readonly_memory_snapshot(p):
     return True
 
 
+def startup_allocation_capture(p):
+    if 'startup_allocation_capture' not in p:
+        return None
+    row=p['startup_allocation_capture']
+    require(isinstance(row,dict) and set(row)=={'helper','config'}
+            and bool(p.get('readonly_memory_snapshot')) and bool(p.get('prior_actual_game_qualification'))
+            and not any(p.get(k) for k in ('performance_tools','official_gpu_tools','official_cpu_aa',
+                                         'official_l1i_record','counter_snapshot','sustained_play')),
+            'startup capture requires prior qualified samePID memory flow without performance tools')
+    helper=pinned(row['helper']); config=read(pinned(row['config']))
+    require(config['serial']==p['serial'] and config['APK_sha256']==p['new_apk']
+            and config['ELF_sha256']==p['new_elf']
+            and config['canonical_source_ready_sha256']==p['canonical']['sha256'],
+            'startup capture target differs from qualified runtime')
+    # Require the later same-PID partition to use the actually successful 44c
+    # snapshot semantics, not the superseded all-40-byte-zero ABI capture.
+    later=read(pinned(p['readonly_memory_snapshot']['config']))
+    require(later.get('nvn_pools',{}).get('mode')=='f75-q735-libc-02969f76-state16-v2'
+            and later['nvn_pools'].get('qualify_unlocked') is True
+            and later['nvn_pools']['module']['sha256']=='3ef3ee3e02daa71e788b72f18f4cb90065a56a79bc6450939d96a70d8297324f',
+            'postroute partition must use successful same-stop Pool qualification')
+    freeze=read(pinned({'path':str(Path(p['readonly_memory_snapshot']['helper']['path']).parent/'tool-inputs.json'),
+                        'sha256':later['tool_inputs_sha256']}))
+    require(freeze['files']['sdk_free_resident.py']['sha256']=='82ab628b0fad3f298c0a334ae911abb0eafafd686fd6ff37c8cb8da83dee6817',
+            'postroute SDK capture is not qualified resume successor')
+    subprocess.run([sys.executable,str(helper),'12345','/tmp','--config',row['config']['path'],
+                    '--config-sha256',row['config']['sha256'],'--plan'],check=True,
+                   stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    return True
+
+
+def startup_allocation_result(result, pid):
+    require(result.get('snapshot_complete') is True and result.get('PID')==int(pid)
+            and result.get('inferior_calls') is False
+            and result.get('owned_PID_TracerPid_zero_after_cleanup') is True
+            and result.get('owned_debugger_cleanup_complete') is True and result.get('cleanup_errors')==[],
+            'early allocator capture / owned cleanup incomplete')
+
+
 def readonly_memory_snapshot_result(result):
     require(result.get('snapshot_complete') is True and result.get('inferior_calls') is False
             and result.get('owned_PID_TracerPid_zero_after_cleanup') is True
@@ -220,6 +259,7 @@ def proof(path, digest):
     for row in p['prerequisites']:
         pinned(row)
     memory_snapshot_validated = readonly_memory_snapshot(p) is True
+    startup_allocation_capture(p)
     if 'counter_snapshot' in p:
         counter = p['counter_snapshot']
         require(set(counter) == {'ready', 'config', 'server'}, 'counter snapshot fields differ')
@@ -315,6 +355,9 @@ def proof(path, digest):
     if p.get('readonly_memory_snapshot'):
         row = p['readonly_memory_snapshot']['helper']
         p['controller_sources'][str(Path(row['path']).resolve())] = row['sha256']
+    if p.get('startup_allocation_capture'):
+        row=p['startup_allocation_capture']['helper']
+        p['controller_sources'][str(Path(row['path']).resolve())]=row['sha256']
     if p.get('official_cpu_aa'):
         p['controller_sources'][str(HERE / 'official_cpu_aa.py')] = sha(HERE / 'official_cpu_aa.py')
     p['_execution_phases'] = p['phases']
@@ -393,11 +436,16 @@ def phase_game(dev, out, phase, p, token):
         command += ['--native-resource-table', '/data/user/0/' + PKG + '/' + DIRS[-1][1] + '/native-layouts.bin',
                     '--native-resource-pack-sha256', phase['pack_sha'],
                     '--native-resource-producer-sha256', phase['producer_sha']]
+    if p.get('startup_allocation_capture'):
+        command += ['--wait-java-debugger']
     d['launch_command'] = command
     save()
     own = None
     ambiguous = False
     launcher = None
+    early_started = False
+    early_process = None
+    launch_completed = False
 
     def pid():
         return dev.adb('shell', 'pidof ' + PKG + ' || true')
@@ -418,14 +466,33 @@ def phase_game(dev, out, phase, p, token):
     try:
         with (out / 'launch.log').open('w') as f:
             launcher = subprocess.Popen(command, stdout=f, stderr=subprocess.STDOUT, cwd=R)
-            deadline = time.monotonic() + 120  # A bounded tool observation, not a profiler.
+            deadline = time.monotonic() + (240 if p.get('startup_allocation_capture') else 120)  # A bounded tool observation, not a profiler.
             while launcher.poll() is None:
                 observe()
+                if own and p.get('startup_allocation_capture') and not early_started:
+                    early_started=True
+                    capture=p['startup_allocation_capture']; early_out=out/'startup-allocation-capture';early_out.mkdir()
+                    early_command=[sys.executable,str(pinned(capture['helper'])),own,str(early_out),'--config',
+                                   capture['config']['path'],'--config-sha256',capture['config']['sha256']]
+                    pinned(capture['config']);d['startup_allocation_command']=early_command;save()
+                    with (early_out/'console.txt').open('w') as log:
+                        early_process=subprocess.Popen(early_command,stdout=log,stderr=subprocess.STDOUT)
+                        try:
+                            early_process.wait(timeout=180)
+                        except subprocess.TimeoutExpired:
+                            early_process.terminate()  # accepted wrapper handles TERM with owned finally
+                            early_process.wait(timeout=30)
+                            raise RuntimeError('bounded startup capture deadline; owned helper cleanup requested')
+                        require(early_process.returncode==0, 'startup helper failed; preserve its diagnostic output')
+                    early_result=read(early_out/'debugger-result.json')
+                    startup_allocation_result(early_result,own)
+                    d['startup_allocation_capture']=early_result;save()
                 require(time.monotonic() < deadline, 'owned launcher observation deadline')
                 time.sleep(.3)
             observe()
             require(launcher.returncode == 0, 'original HUD launcher failed')
         launch = read(out / 'launch.json')
+        launch_completed = True
         require(own and launch['pid'] == int(own) and launch.get('original_hud') is True,
                 'original game HUD / owned PID mismatch')
         uid = dev.app('id', '-u')
@@ -589,6 +656,19 @@ def phase_game(dev, out, phase, p, token):
             snapshot_result = read(snapshot_out / 'debugger-result.json')
             readonly_memory_snapshot_result(snapshot_result)
             d['readonly_memory_snapshot'] = snapshot_result
+            if p.get('startup_allocation_capture'):
+                require(d['startup_allocation_capture']['PID']==snapshot_result['PID']==int(own),
+                        'startup returns and final partition are not same owned PID')
+                d['startup_final_partition_same_PID']=True
+                capture_helper=pinned(p['startup_allocation_capture']['helper'])
+                early_config=read(pinned(p['startup_allocation_capture']['config']))
+                early_inputs=read(pinned({'path':str(capture_helper.parent/'tool-inputs.json'),
+                                          'sha256':early_config['tool_inputs_sha256']}))
+                for source_row in early_inputs['files'].values():
+                    pinned(source_row)
+                corr=module('owned_startup_partition_correlation',capture_helper.parent/'correlate.py')
+                d['startup_final_partition_correlation']=corr.correlate(
+                    d['startup_allocation_capture']['snapshot'],snapshot_result['snapshot'])
             save()
         require(pid() == own, 'PID changed before residency snapshot')
         (out / 'official-dumpsys-meminfo.txt').write_text(dev.adb('shell', 'dumpsys', 'meminfo', own))
@@ -637,6 +717,9 @@ def phase_game(dev, out, phase, p, token):
             d['scope'] = p['_asset_validation']['scope']
         save()
     finally:
+        if early_process is not None and early_process.poll() is None:
+            early_process.terminate()  # existing wrapper catches TERM and detaches
+            early_process.wait(timeout=35)
         if launcher is not None and launcher.poll() is None:
             launcher.terminate()
             launcher.wait(timeout=15)
@@ -656,16 +739,29 @@ def phase_game(dev, out, phase, p, token):
         now = pid()
         if now:
             require(not ambiguous and own and now == own, 'unknown/replacement PID; preserve transaction')
-            cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
-                   '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
-            with (out / 'fresh-save.log').open('w') as f:
-                subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
-            fresh = read(out / 'fresh-save.json')
-            require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
-                    and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
-            dev.adb('shell', 'am', 'force-stop', PKG)
-            require(not pid(), 'owned game process still alive')
-            d['fresh_save_then_stopped'] = True
+            if p.get('startup_allocation_capture'):
+                status=dev.app('cat','/proc/'+own+'/status')
+                require(re.search(r'^TracerPid:\s+0$',status,re.M), 'startup owned PID remains traced; preserve it')
+            if p.get('startup_allocation_capture') and not launch_completed:
+                native_log=dev.app('cat','files/runtime/native.log')
+                if 'Android native start pid='+own+'\n' not in native_log:
+                    status=dev.app('cat','/proc/'+own+'/status')
+                    require(re.search(r'^TracerPid:\s+0$',status,re.M), 'early failed owned PID is still traced')
+                    dev.adb('shell','am','force-stop',PKG)
+                    require(not pid(), 'owned Java-wait process still alive')
+                    d['early_no_native_start_stopped_without_save_claim']=True;save()
+                    now=None
+            if now:
+                cmd = [sys.executable, str(R / 'scripts/dev/android-game-background-save.py'),
+                       '--serial', p['serial'], '--report', str(out / 'fresh-save.json')]
+                with (out / 'fresh-save.log').open('w') as f:
+                    subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=45)
+                fresh = read(out / 'fresh-save.json')
+                require(fresh['fresh_original_lifecycle_save'] is True and fresh['save_commits'] == 2
+                        and fresh['pid'] == int(own) and pid() == own, 'fresh save2 / owned PID failed')
+                dev.adb('shell', 'am', 'force-stop', PKG)
+                require(not pid(), 'owned game process still alive')
+                d['fresh_save_then_stopped'] = True
         else:
             d['already_exited_no_save_restart'] = True
         save()

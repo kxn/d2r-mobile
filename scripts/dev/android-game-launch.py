@@ -12,6 +12,7 @@ import subprocess
 import time
 
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--wait-java-debugger', action='store_true', help='Cold diagnostic launch only: Android am start -D; caller owns official JDWP release')
 parser.add_argument('--serial', default='JNJF49UGBQ4XSCZT')
 parser.add_argument('--attach', action='store_true', help='observe an existing process launched by a capture tool; never restart it')
 parser.add_argument('--operation-mode',choices=['docked','handheld'],help='startup-only original operation/render profile; default remains docked; handheld profile stays 720 high with --game-res aspect ratio')
@@ -152,6 +153,8 @@ if args.defer_pool_publication and (not args.async_submit or not args.lazy_pool_
     parser.error('--defer-pool-publication requires async submission, lazy pool sync and no submission-barrier reference')
 if args.pixel_local_shared_ds and args.pixel_local is not True:
     parser.error('--pixel-local-shared-ds requires --pixel-local')
+if args.wait_java_debugger and args.attach:
+    parser.error('--wait-java-debugger requires a cold launch')
 if args.attach and args.pixel_local_shared_ds is not None:
     parser.error('--pixel-local-shared-ds is startup-only and cannot be used with --attach')
 if args.attach and args.pixel_local is not None:
@@ -192,9 +195,9 @@ package = 'com.d2rmobile.nativeport'
 base = ['adb', '-s', args.serial]
 
 
-def adb(*parts, binary=False):
+def adb(*parts, binary=False, timeout=15):
     return subprocess.check_output([*base, *parts], text=not binary,
-                                   stderr=subprocess.DEVNULL, timeout=15)
+                                   stderr=subprocess.DEVNULL, timeout=timeout)
 
 
 def read(leaf):
@@ -315,7 +318,9 @@ if not args.attach:
         launch += ['--ez', 'panel_freeze', 'true']
     if args.runtime_extrap:
         launch += ['--ez', 'runtime_extrap', 'true']
-    adb(*launch)
+    if args.wait_java_debugger:
+        launch.insert(3, '-D')  # am start -D -W; same original component and extras
+    adb(*launch, timeout=120 if args.wait_java_debugger else 15)
 started = time.monotonic()
 deadline = started + args.timeout
 pid = None
