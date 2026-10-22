@@ -1,5 +1,6 @@
 """Bounded original-input orchestration, not a performance sampler or game bot."""
 from pathlib import Path
+import importlib.util
 import json
 import os
 import re
@@ -8,6 +9,8 @@ import sys
 import time
 
 HERE = Path(__file__).resolve().parent
+_state_spec = importlib.util.spec_from_file_location('original_state_reader', HERE.parent / 'game_state_json.py')
+state_reader = importlib.util.module_from_spec(_state_spec); _state_spec.loader.exec_module(state_reader)
 R = Path('/home/dl/d2r-mobile')
 RUNTIME = '6f8188e392f21ff045ef640ad8c4f184de048806'
 CURRENT_RUNTIME = '88620ec7c92edeb59512612cebf42906a4848509'
@@ -213,7 +216,7 @@ def validate_state(state, p, require):
 
 def endpoint_state(dev, pid, p, m):
     m.require(dev.adb('shell', 'pidof ' + m.PKG + ' || true') == pid, 'sustained PID changed')
-    state = json.loads(dev.app('tail', '-n', '1', 'files/runtime/game-state.jsonl'))
+    state = state_reader.latest_complete_state(state_reader.read_state_text(dev.app))
     validate_state(state, p, m.require)
     return state
 

@@ -156,6 +156,9 @@ class CurrentQualification(unittest.TestCase):
                     g.main()
                 plan = json.loads(text.getvalue())
                 self.assertTrue(plan['offline']); self.assertEqual(plan['runtime'], s.CURRENT_RUNTIME)
+                for name in ('android-game-walk-to.py', 'game_state_json.py'):
+                    self.assertEqual(plan['controller_sources'][str(R / 'scripts/dev' / name)],
+                                     g.sha(HERE.parent / name))
                 self.assertEqual(len(plan['phases']), 1)
                 self.assertEqual(plan['scale_3d'], .75); self.assertFalse(plan['fixed_3d'])
                 self.assertFalse(plan['pool_copy_accounting'])

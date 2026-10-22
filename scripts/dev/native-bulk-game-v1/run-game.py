@@ -29,6 +29,7 @@ def module(name, path):
     return value
 
 
+state_reader = module('source_pinned_original_game_state', HERE.parent / 'game_state_json.py')
 m = module('accepted_native_game_transaction', OLD / 'transaction.py')
 installer = module('accepted_native_game_installer', OLD / 'installer.py')
 sha, read, require, PKG = m.sha, m.read, m.require, m.PKG
@@ -435,7 +436,9 @@ def proof(path, digest):
                                 OLD / 'identity.py', m.COMMON,
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
-                                R / 'scripts/dev/android-game-walk-to.py']}
+                                R / 'scripts/dev/android-game-walk-to.py',
+                                R / 'scripts/dev/game_state_json.py',
+                                HERE.parent / 'game_state_json.py']}
     if p.get('readonly_memory_snapshot'):
         row = p['readonly_memory_snapshot']['helper']
         p['controller_sources'][str(Path(row['path']).resolve())] = row['sha256']
@@ -448,6 +451,11 @@ def proof(path, digest):
     sustained_runtime = None
     p['_sustained_current'] = False
     if 'sustained_play' in p:
+        # The original input tool executes at R, not this checkout. Both its
+        # fix and parser must be published there before this plan can qualify.
+        for name in ('android-game-walk-to.py', 'game_state_json.py'):
+            require(sha(R / 'scripts/dev' / name) == sha(HERE.parent / name),
+                    'original sustained observation helper is not the reviewed source: ' + name)
         sustained = module('source_pinned_sustained_play', HERE / 'sustained_play.py')
         sustained_runtime = sustained.validate(p, pinned, read, require)
         p['_sustained_current'] = sustained_runtime is not None
@@ -889,9 +897,9 @@ def phase_game(dev, out, phase, p, token):
 
 
 def read_state(dev, out, name):
-    text = dev.app('cat', 'files/runtime/game-state.jsonl')
+    text = state_reader.read_state_text(dev.app, full=True)
     (out / (name + '.jsonl')).write_text(text)
-    return json.loads(text.splitlines()[-1])
+    return state_reader.latest_complete_state(text)
 
 
 def main():

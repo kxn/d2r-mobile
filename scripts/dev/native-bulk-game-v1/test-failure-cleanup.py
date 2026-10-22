@@ -33,8 +33,9 @@ class Device:
             return '10311'
         if args == ('cat', '/proc/12345/status'):
             return 'Uid:\t10311\t10311\t10311\t10311\n'
-        if args == ('cat', 'files/runtime/game-state.jsonl'):
-            return json.dumps({'valid': True, 'world_input_ready': True})
+        if args == ('sh', '-c', 'set -e; cat "$1"; printf %s ' + t.state_reader._END,
+                    'sh', 'files/runtime/game-state.jsonl'):
+            return (json.dumps({'valid': True, 'world_input_ready': True}) + '\n' + t.state_reader._END).strip()
         if args == ('cat', 'files/runtime/native.log'):
             return 'original game test log'
         raise AssertionError(args)

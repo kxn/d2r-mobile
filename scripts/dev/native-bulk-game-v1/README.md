@@ -474,3 +474,32 @@ that attempt installed nothing and never launched the game. This extension does
 not relabel it successful. Host tests use the real review/fresh snapshot for a
 second complete offline proof, plus refusal cases; they produce no execute-ready
 input and do not constitute current886 sustained-play acceptance.
+
+
+### Complete original game-state observations
+
+The original writer emits each JSONL record through several `fprintf` calls,
+then writes `}\n` and flushes. Readers now select the latest newline-terminated
+record. A final partial record (even a valid JSON object without its newline)
+is not yet committed; the latest complete malformed/blank/non-object record
+fails, never searches backward for an older acceptable state. No complete
+record fails immediately. Original ready/area/PID checks, per-walk8second
+staleness, finite timeouts, joystick UP, save2 and CAS remain unchanged.
+
+The original walk and original Perfetto helper use `tail -n 2`. Sustained
+endpoints use the same bounded read via original Device.app; a fixed stdout
+suffix preserves the newline that Device.app otherwise strips. Full snapshot
+reads still preserve the original complete raw log, including partial tail
+for diagnostics, while parsing only its latest committed state. There is no
+new polling, timer, sampler, retry loop or runtime change.
+
+Actual input execution still uses
+`/home/dl/d2r-mobile/scripts/dev/android-game-walk-to.py`. Helper-only commit
+`cccbf2e4b292b15e05cd2ce13632f18dc8f9152c` contains this original helper,
+`scripts/dev/game_state_json.py` and its10 host tests; root applied it to the
+actualR tree as `2d70fdd`. The sustained proof requires both actualR files to
+match this reviewed checkout and pins both parser copies plus actualR helper.
+It does not silently execute an unused patched clone or relax runtime/asset
+qualification. New inputs need this tool source and scheduler-helper hash;
+old frozen inputs,886 artifacts and failed331-walk result remain untouched.
+This observer fix is not a sustained-play pass or a gamefault diagnosis.

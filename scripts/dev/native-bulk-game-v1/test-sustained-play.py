@@ -37,7 +37,7 @@ class Flow(unittest.TestCase):
                  '_sustained_current': current}
             def state():
                 tick[0] += 1
-                return {'valid': True, 'world_input_ready': True, 'area': 1,
+                return {'valid': True, 'world_input_ready': True, 'area': 2 if failure == 'area' and walks[0] else 1,
                     'x': 5225, 'y': 6289, 'time_ns': tick[0],
                     'scale_3d': (.75 if walks[0] == 0 else .65) if current else .6,
                     'game_output': {'width': 2750, 'height': 1260},
@@ -60,8 +60,10 @@ class Flow(unittest.TestCase):
                         return 'official meminfo'
                     return '12345' if failure != 'PID' or walks[0] == 0 else 'other'
                 def app(self, *args):
-                    assert args == ('tail', '-n', '1', 'files/runtime/game-state.jsonl')
-                    return json.dumps(state())
+                    assert args == ('sh', '-c', 'set -e; tail -n 2 "$1"; printf %s ' + t.state_reader._END,
+                                    'sh', 'files/runtime/game-state.jsonl')
+                    return (json.dumps(state()) + '\n' + ('{"partial":' if current else '')
+                            + t.state_reader._END).strip()
             dev = Dev()
             m = SimpleNamespace(PKG='com.d2rmobile.nativeport', require=require, sha=digest,
                 journal=lambda path,data: Path(path).write_text(json.dumps(data)),
@@ -116,6 +118,9 @@ class Flow(unittest.TestCase):
 
     def test_current_midrun_policy_change_never_passes(self):
         self.exercise('policy', current=True)
+
+    def test_current_unexpected_area_with_partial_tail_never_passes(self):
+        self.exercise('area', current=True)
 
     def test_current_reverse_miss_still_exits(self):
         self.exercise('reverse', current=True)

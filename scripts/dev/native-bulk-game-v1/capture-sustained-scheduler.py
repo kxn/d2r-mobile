@@ -6,11 +6,16 @@ capture. Unsupported frequency events must not be inferred from other counters.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shlex
 import subprocess
 import uuid
+
+STATE_READER = Path(__file__).resolve().parents[1] / 'game_state_json.py'
+_state_spec = importlib.util.spec_from_file_location('original_state_reader', STATE_READER)
+state_reader = importlib.util.module_from_spec(_state_spec); _state_spec.loader.exec_module(state_reader)
 
 PACKAGE='com.d2rmobile.nativeport'
 
@@ -38,7 +43,7 @@ def main():
         return subprocess.check_output([*base,*parts],text=True,timeout=20)
 
     def state():
-        return json.loads(adb('exec-out','run-as',PACKAGE,'tail','-n','1','files/runtime/game-state.jsonl'))
+        return state_reader.latest_complete_state(adb('exec-out','run-as',PACKAGE,'tail','-n','2','files/runtime/game-state.jsonl'))
 
     pid=adb('shell','pidof',PACKAGE).strip()
     if not pid.isdecimal():raise SystemExit('one running original game process is required')
@@ -104,6 +109,7 @@ duration_ms: %d
             'shader_chain':chain,'before':before,'after':after,'thermal_before':thermal_before,
             'thermal_after':thermal_after,'trace_sha256':hashlib.sha256(args.output.read_bytes()).hexdigest(),
             'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            'state_reader_sha256':hashlib.sha256(STATE_READER.read_bytes()).hexdigest(),
             'scope':'CPU scheduler/frequency system trace, optional native replay/submit/publish annotations. Submit-to-observed-fence includes queueing/driver/GPU/CPU wake latency, not pure GPU execution. Verify event counts; GPU frequency may be unavailable.'}
     args.output.with_suffix('.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({k:v for k,v in report.items() if k in ('pid','trace_sha256','scope')}))
