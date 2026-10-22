@@ -3,6 +3,16 @@
 // every index first.
 #include "nvn_vk_state.h"
 vk_state S = {.depth_range = {0, 1}, .chmask = {~0u}};
+uint64_t vk_driver_state_versions[6][2] = {{1,1},{1,1},{1,1},{1,1},{1,1},{1,1}};
+void vk_driver_state_invalidate(unsigned stage,unsigned slot) {
+  if(stage>=6 || (slot!=0 && slot!=2))die("Vulkan driver state identity");
+  if(!++vk_driver_state_versions[stage][slot/2])die("Vulkan driver state version overflow");
+}
+void vk_state_restore(const vk_state *state) {
+  S=*state;
+  for(unsigned stage=0;stage<6;stage++)for(unsigned slot=0;slot<=2;slot+=2)
+    vk_driver_state_invalidate(stage,slot);
+}
 // 只对实际变化的静态管线状态递增；动态视口、资源绑定和缓冲地址不使其失效。
 // Advance only for changed static pipeline state, excluding dynamic viewports,
 // resource bindings and buffer addresses. Owned by the translation thread.
@@ -81,7 +91,13 @@ void vk_state_op(uint32_t op, const void *data) {
     const p_bind_buf *p = data;
     bounds(p->stage, 1, 6);
     bounds(p->index, 1, 16);
-    (op == OP_BIND_UBO ? S.ubo : S.ssbo)[p->stage][p->index] = *p;
+    p_bind_buf *dst=&(op == OP_BIND_UBO ? S.ubo : S.ssbo)[p->stage][p->index];
+    // Graphics UBOs are separate descriptors; only CS includes them in c0.
+    // Size high words and the binding record's index fields are not c0 bytes.
+    if((op==OP_BIND_SSBO || p->stage==5) &&
+        (dst->addr!=p->addr || (uint32_t)dst->size!=(uint32_t)p->size))
+      vk_driver_state_invalidate(p->stage,0);
+    *dst=*p;
     break;
   }
   case OP_BIND_TEX:
@@ -90,6 +106,13 @@ void vk_state_op(uint32_t op, const void *data) {
     const p_bind_handles *p = data;
     bounds(p->stage, 1, 6);
     bounds(p->first, p->n, op == OP_BIND_IMG ? 32 : 128);
+    uint64_t *dst=op==OP_BIND_IMG?S.img[p->stage]:
+        op==OP_BIND_TEX?S.tex[p->stage]:S.samp[p->stage];
+    int limit=op==OP_BIND_IMG?8:128;
+    for(int n=0;n<p->n && p->first+n<limit;n++)
+      if((uint32_t)dst[p->first+n]!=(uint32_t)p->h[n]) {
+        vk_driver_state_invalidate(p->stage,2);break;
+      }
     if (op == OP_BIND_IMG)
       memcpy(S.img[p->stage] + p->first, p->h, p->n * 8);
     else

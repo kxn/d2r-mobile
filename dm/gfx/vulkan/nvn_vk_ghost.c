@@ -166,9 +166,9 @@ void vk_ghost_flush(void) {
     }
   }
   vk_state saved = S;
-  S = *ghost.candidate[best].state;vk_pipeline_state_changed();
+  vk_state_restore(ghost.candidate[best].state);vk_pipeline_state_changed();
   const tex_t *target = S.targets.n ? S.targets.color[0] : NULL;
-  if (!target) { S = saved;vk_pipeline_state_changed(); clear_candidates(); return; }
+  if (!target) { vk_state_restore(&saved);vk_pipeline_state_changed(); clear_candidates(); return; }
   unsigned level = S.targets.has_cview[0] && S.targets.cview[0].set_levels
                      ? S.targets.cview[0].base_level : 0;
   float width = target->d.width >> level, height = target->d.height >> level;
@@ -191,6 +191,6 @@ void vk_ghost_flush(void) {
                     (unsigned long long)V.passes, ghost.n, least,
                     ghost.rect[0], ghost.rect[1], ghost.rect[2], ghost.rect[3]);
   ghost.busy = 0;
-  S = saved;vk_pipeline_state_changed();
+  vk_state_restore(&saved);vk_pipeline_state_changed();
   clear_candidates();
 }
