@@ -19,6 +19,9 @@ SERVER_APP = 'files/runtime/d2r-lldb-server'
 PKG = 'com.d2rmobile.nativeport'
 PORT = '39486'
 SOCKET = 'd2r-sdk-free-owned-' + str(os.getpid())
+Q735_MUTEX_MODE = 'f75-q735-libc-02969f76-state16-v2'
+Q735_LIBC_SHA = '02969f76be8e6ed8a44be78083735801448a6e0f972792da63b93e4a6de8d5b0'
+Q735_LIBC_PATH = '/apex/com.android.runtime/lib64/bionic/libc.so'
 
 
 def sha(path):
@@ -52,9 +55,13 @@ def validate_optional_nvn(config, inputs):
     p = config['nvn_pools']
     require(isinstance(p, dict) and
             {'enabled','mode','module','ELF_sha256','ELF_BuildID'} <= set(p) <=
-            {'enabled','mode','module','ELF_sha256','ELF_BuildID','qualify_unlocked'},
+            {'enabled','mode','module','ELF_sha256','ELF_BuildID','qualify_unlocked','libc_sha256'},
             'unknown/missing optional NVN config fields')
-    require(p['enabled'] is True and p['mode']=='f75-bionic-normal-resources-zero-v1', 'unqualified optional NVN mode/enable')
+    require(p['enabled'] is True and p['mode'] in ('f75-bionic-normal-resources-zero-v1', Q735_MUTEX_MODE), 'unqualified optional NVN mode/enable')
+    if p['mode'] == Q735_MUTEX_MODE:
+        require(p.get('libc_sha256') == Q735_LIBC_SHA, 'actual Q735 libc ABI pin missing/differs')
+    else:
+        require('libc_sha256' not in p, 'old mutex mode must not imply another libc ABI')
     require(type(p.get('qualify_unlocked',False)) is bool, 'optional NVN entry qualification is not bool')
     require(p['ELF_sha256']==config['ELF_sha256']=='4a8420209e2ac6c71c161626472458ac498ee844bdce58677c8e2769b5ec4618' and
             p['ELF_BuildID']==config['ELF_BuildID']=='6e6f12c5c5f7a858704a84ee294b19d95aa3f894', 'optional NVN ELF identity differs from reviewed f75')
@@ -124,6 +131,11 @@ def main():
         path = adb('shell', 'pm', 'path', PKG)
         require(path.startswith('package:') and '\n' not in path, 'ambiguous installed APK')
         require(adb('shell', 'sha256sum', path[8:]).split()[0] == APK_SHA, 'installed APK identity mismatch')
+        if config.get('nvn_pools',{}).get('mode') == Q735_MUTEX_MODE:
+            actual_libc = adb('shell', 'sha256sum', Q735_LIBC_PATH).split()[0]
+            require(actual_libc == config['nvn_pools']['libc_sha256'] == Q735_LIBC_SHA,
+                    'actual device libc differs from qualified state16 ABI')
+            d['device_libc'] = dict(path=Q735_LIBC_PATH, sha256=actual_libc, verified_before_attach=True)
         uid = adb('shell', 'run-as', PKG, 'id', '-u')
         status = adb('exec-out', 'run-as', PKG, 'cat', '/proc/' + pid + '/status')
         (out / 'native-debugger-owned-status.txt').write_text(status + '\n')

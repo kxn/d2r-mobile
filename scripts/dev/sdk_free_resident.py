@@ -196,10 +196,17 @@ def _on_entry(frame, bp_loc, _dict):
             gate = active['nvn_entry_gate']
             active['nvn_qualification']['natural_entries_examined'] += 1
             raw = _read_small(frame.GetThread().GetProcess(), gate['address'], gate['bytes'])
-            if raw != bytes(40):
+            try:
+                active['nvn_entry_predicate'](raw)
+            except ValueError:
                 active['nvn_qualification']['nonzero_mutex_entries_declined'] += 1
                 active['nvn_qualification']['last_declined_mutex_hex'] = raw.hex()
-                return False
+                active['qualification_declined'] = dict(stop_id=frame.GetThread().GetProcess().GetStopID(),
+                    thread=frame.GetThread().GetThreadID(), breakpoint=bp_loc.GetBreakpoint().GetID(), location=bp_loc.GetID())
+                # Do not let callback returnFalse create a transient restarted
+                # stop that races the asynchronous owner. Its explicit loop
+                # validates this exact stop and alone issues Continue().
+                return True
             active['nvn_qualification']['accepted_mutex_hex'] = raw.hex()
         bp_loc.GetBreakpoint().SetEnabled(False)
         active['thread'] = frame.GetThread().GetThreadID()
@@ -209,6 +216,37 @@ def _on_entry(frame, bp_loc, _dict):
         active['callback_error'] = repr(error)
         bp_loc.GetBreakpoint().SetEnabled(False)
         return True
+
+
+def _resume_qualification_declined(process, bp, active, last_stop, deadline):
+    """Resume only our exact deliberately declined main-SDK stop, once.
+    This is official debugger event control, not a new target polling loop.
+    """
+    import lldb
+    require(time.monotonic() < deadline, 'natural entry wait budget expired before qualified resume')
+    require(not active.get('matched') and not active.get('callback_error'), 'not a clean qualification decline')
+    decline = active.get('qualification_declined')
+    require(decline and process.GetState() == lldb.eStateStopped and
+            process.GetStopID() == decline['stop_id'] > last_stop, 'declined stop is stale or not stopped')
+    stopped = [process.GetThreadAtIndex(i) for i in range(process.GetNumThreads())
+               if process.GetThreadAtIndex(i).GetStopReason() not in (lldb.eStopReasonInvalid, lldb.eStopReasonNone)]
+    require(len(stopped) == 1, 'unrelated/multiple stop reasons at qualification decline')
+    thread = stopped[0]
+    require(thread.GetThreadID() == decline['thread'] and thread.GetStopReason() == lldb.eStopReasonBreakpoint and
+            thread.GetStopReasonDataCount() == 2 and thread.GetStopReasonDataAtIndex(0) == bp.GetID() == decline['breakpoint'] and
+            thread.GetStopReasonDataAtIndex(1) == decline['location'], 'qualification decline is not our exact original breakpoint')
+    frame = thread.GetFrameAtIndex(0)
+    require(_unsigned(frame.FindRegister('pc')) == active['sdk'] + SDK_ENTRY and
+            _unsigned(frame.FindRegister('x0')) == active['central'] and
+            _unsigned(frame.FindRegister('x30')) == active['sdk'] + SDK_LR, 'declined SDK register identity changed')
+    stop = decline['stop_id']
+    active['nvn_qualification']['last_declined_stop'] = decline
+    active.pop('qualification_declined')
+    error = process.Continue()
+    require(error.Success(), 'explicit qualification Continue failed: ' + str(error))
+    q = active['nvn_qualification']
+    q['declined_stops_explicitly_resumed'] = q.get('declined_stops_explicitly_resumed', 0) + 1
+    return stop
 
 
 class Snapshot:
@@ -336,7 +374,7 @@ def _read_modules(target):
 
 def _load_nvn_companion(pin, config):
     require({'enabled', 'mode', 'module', 'ELF_sha256', 'ELF_BuildID'} <= set(pin) <=
-            {'enabled', 'mode', 'module', 'ELF_sha256', 'ELF_BuildID', 'qualify_unlocked'} and pin['enabled'] is True,
+            {'enabled', 'mode', 'module', 'ELF_sha256', 'ELF_BuildID', 'qualify_unlocked', 'libc_sha256'} and pin['enabled'] is True,
             'optional nvn_pools config fields/enable differ')
     require(type(pin.get('qualify_unlocked', False)) is bool, 'optional NVN qualification must be a bool')
     require(pin['ELF_sha256'] == config['elf']['sha256'] and
@@ -419,6 +457,7 @@ def run(debugger, config):
         if config.get('nvn_pools', {}).get('qualify_unlocked', False):
             companion = _load_nvn_companion(config['nvn_pools'], config)
             _ACTIVE['nvn_entry_gate'] = companion.prepare_entry_gate(target, config, config['nvn_pools'])
+            _ACTIVE['nvn_entry_predicate'] = lambda raw, f=companion.normal_resources_unlocked, mode=config['nvn_pools']['mode']: f(raw, mode)
             _ACTIVE['nvn_qualification'] = dict(natural_entries_examined=0, nonzero_mutex_entries_declined=0)
         bp = target.BreakpointCreateByAddress(sdk['base'] + SDK_ENTRY)
         require(bp.IsValid() and bp.GetNumLocations() == 1, 'natural SDK entry breakpoint unresolved')
@@ -435,6 +474,9 @@ def run(debugger, config):
         while True:
             state = process.GetState()
             if state == lldb.eStateStopped and process.GetStopID() > initial_stop:
+                if _ACTIVE.get('qualification_declined') and not _ACTIVE.get('callback_error'):
+                    initial_stop = _resume_qualification_declined(process, bp, _ACTIVE, initial_stop, wait_end)
+                    continue
                 require(_ACTIVE.get('matched') and not _ACTIVE.get('callback_error'), 'unrelated stop/callback error: ' + str(_ACTIVE))
                 r['matched'] = True
                 break

@@ -11,9 +11,9 @@ import sys
 HERE = Path(__file__).resolve().parent
 ROOT = Path('/home/dl/d2r-mobile')
 CAPTURE_FILES = {
-    'run-debugger.py': (HERE / 'run-debugger.py', 'd2f6c1f33dededbcc4560c81e0906c3911bd9920761dfc2753ac1f354abf6678'),
-    'sdk_free_resident.py': (HERE / '../sdk_free_resident.py', 'a46fe631dde9f97d3d9b8352e35d2a1bbe90e20a6d1036aae6d693e525ec1e21'),
-    'sdk_nvn_pool_registry.py': (HERE / '../sdk_nvn_pool_registry.py', '5735d89be2852c0c8e4113fadab140c2cd81037c378ea17155c4cb63c64dfc17'),
+    'run-debugger.py': (HERE / 'run-debugger.py', '3242c479b5e4d3419b680a3ababe3c8cd7adec34ae3ad87a40f25a1385a41bc0'),
+    'sdk_free_resident.py': (HERE / '../sdk_free_resident.py', '82ab628b0fad3f298c0a334ae911abb0eafafd686fd6ff37c8cb8da83dee6817'),
+    'sdk_nvn_pool_registry.py': (HERE / '../sdk_nvn_pool_registry.py', '3ef3ee3e02daa71e788b72f18f4cb90065a56a79bc6450939d96a70d8297324f'),
 }
 TOOLS = [
     ROOT / '.local/tools/lldb19/usr/lib/llvm-19/bin/lldb',
@@ -66,7 +66,7 @@ def main():
         'source_provenance': {
             'accepted_owned_cleanup_revision': '4984509f629b9ec71b3a3b6366fee7895f83bd02',
             'accepted_owned_cleanup_sha256': '86eb7fae482a52da56de766d068cfc5c7c049c45302b21d5049cc4657cb2b10c',
-            'reviewed_capture_revision': '306dd9a SDK/NVN metadata plus minimal source-pinned wrapper successor; old v3 untouched',
+            'reviewed_capture_revision': '4446ce5 successor: explicit declined-stop resume and exact API36 Q735 libc state16 mode; old captures unchanged',
             'readiness': 'Observe named official server socket before first LLDB connection; never consume its sole client slot with a probe.',
             'binary_transport': 'Existing Android dd status=none option suppresses transfer summaries; no guessed binary suffix removal.',
         },

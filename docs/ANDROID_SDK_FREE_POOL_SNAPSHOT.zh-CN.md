@@ -15,7 +15,8 @@
 {
   "nvn_pools": {
     "enabled": true,
-    "mode": "f75-bionic-normal-resources-zero-v1",
+    "mode": "f75-q735-libc-02969f76-state16-v2",
+    "libc_sha256": "02969f76be8e6ed8a44be78083735801448a6e0f972792da63b93e4a6de8d5b0",
     "ELF_sha256": "4a8420209e2ac6c71c161626472458ac498ee844bdce58677c8e2769b5ec4618",
     "ELF_BuildID": "6e6f12c5c5f7a858704a84ee294b19d95aa3f894",
     "qualify_unlocked": true,
@@ -33,25 +34,27 @@
 
 SDK `GetMemStats_`停点持有的是SDK分配器中央锁，不是Vulkan资源锁。f75 `pool_add_metadata`在`V.resources`内先发布`pools`头，再更新epoch/identity/counter；`mtl_pool_del`在同锁内摘链、等待引用并销毁。窗口发布、migration、shared union、lazy canonical/covers发布也都由`V.resources`排他保护。任意all-stop可能停在这些中间步骤。
 
-因此本模式只在实际DWARF所指的`V.resources`为完整40字节零初始化表示时才遍历；非零、读失败、未知类型或尺寸均不猜测“未加锁”。f75明确使用`PTHREAD_MUTEX_INITIALIZER`，没有对该锁重新设置属性。AOSP Bionic LP64 normal/private mutex的首个atomic uint16状态0表示unlocked、1/2表示owned；本工具要求全部40字节为零，比仅检查状态位更保守，不尝试解码owner/递归/PI状态，不调用trylock或修改futex。
+旧v1模式保留完整40字节零初始化要求；但本机API36的实际libc不符合该更强假设，因此不继续用于本机归属验收。新v2仅适用上面明确固定的Q735 libc镜像：实际DWARF所指`V.resources`的前16位必须为零、字节4–39必须全零，字节2–3作为诊断值保留而不判断持锁。读失败、未知模式/镜像或尺寸均不猜测“未加锁”。f75明确使用`PTHREAD_MUTEX_INITIALIZER`，没有对该锁重新设置属性。AOSP Bionic LP64 normal/private mutex的首个atomic uint16状态0表示unlocked、1/2表示owned；本工具要求全部40字节为零，比仅检查状态位更保守，不尝试解码owner/递归/PI状态，不调用trylock或修改futex。
+
+实际设备补充证据（原66753失败保留，不改标）：主代理提取的`libc.so` SHA为`02969f76…8d5b0`；官方LLVM反汇编的lock+0x4c和trylock+0x50成功路径将TLS诊断halfword写入mutex+2；正常unlock只通过`__aarch64_swp2_rel`清首16位，不清该诊断值。新wrapper在真实执行附加之前读取`/apex/com.android.runtime/lib64/bionic/libc.so`哈希并要求与pin严格相同，`--plan`只验证本地pin结构和值，不访问设备。不能将该规则自动应用到其他厂商镜像。
 
 一手依据：
 
 - [AOSP Bionic pthread_mutex.cpp](https://android.googlesource.com/platform/bionic/+/refs/heads/android14-release/libc/bionic/pthread_mutex.cpp)：normal state0/1/2、LP64布局、正常锁原子获取/释放。
 - 实际NDK `bits/pthread_types.h`和f75正式ELF DWARF：`pthread_mutex_t`40字节，Pool448字节，Buffer node152字节，vk_buffer56字节。代码按实际DWARF字段取值，不把这些数当地址偏移进行猜读。
 
-`qualify_unlocked=true`只扩展原自然SDK断点的资格：先匹配maincentral/x0和SDK返回地址，再只读40字节锁表示。非零交官方LLDB自动继续，在原最长60秒natural wait内等首个合格事件；不取多份snapshot，不主动调用SDK函数。记录实际考察/拒绝次数、最后拒绝表示与成功表示。读失败沿原callback_error路径停止并脱离。未设置时不执行此额外过滤；首停点锁忙将给出NVN unavailable。
+`qualify_unlocked=true`只扩展原自然SDK断点的资格：先匹配maincentral/x0和SDK返回地址，再只读40字节锁表示。资格拒绝明确returnTrue形成稳定停点，并带stopID/TID/breakpoint/location标记；外层只有确认唯一实际停因仍为原SDK断点、PC/x0/LR仍匹配、没有callback_error且原deadline未过时才显式Continue。在原最长60秒natural wait内等首个合格事件，不重设deadline；不取多份snapshot，不主动调用SDK函数。记录实际考察/拒绝次数、最后拒绝表示与成功表示。读失败沿原callback_error路径停止并脱离。未设置时不执行此额外过滤；首停点锁忙将给出NVN unavailable。
 
 ## 采集内容、边界和失败语义
 
 在同一个已合格的SDK all-stop、原pagemap/SDK分区读取之后：
 
-1. 全40字节资源锁为零；记录实际命名全局的DWARF declaration、地址、类型。
+1. 资源锁符合显式选择的固定ABI（v1全40零；v2首16位和4–39零、诊断halfword不参与）；记录实际命名全局的DWARF declaration、地址、类型。
 2. 读取`pools`、`pool_registry_epoch`、`pool_adds`；完整遍历当前注册链，最多64个Pool、合计4096个Buffer node。
 3. 每个Pool记录guest/size/identity、已发布backing generation、共享/原NVN flags、canonical backings和shared_covers；只保存这些宿主元数据结构原字节，不读取Pool内容。
 4. 使用官方`SBData`和实际DWARF从已读原字节生成本地typed SBValue，检查正identity/无重复/无环、逻辑范围非绕回/无交叠、next链完整、Buffer范围和size、已发布generation/handle/memory、共享Buffer的原guest origin。canonical链要求有序且不重叠；covers允许合法交叠，不能当canonical误判。
 5. lazy Buffer导入的节点/覆盖节点/导入字节数与链一致；不把这些字节当物理独占RAM。`pool_registry_epoch`也因迁移/窗口变化推进，**不能**用`2*pool_adds-epoch`推断当前Pool数。
-6. 再读head/epoch/adds和资源锁，必须未变且仍全零。
+6. 再读head/epoch/adds和资源锁，必须整40字节未变且仍符合该ABI。
 7. 可读texture_capacity/sampler_capacity及实际descriptor元素类型大小；不遍历descriptor数组。此附加标量失败单独标明，不冒充描述符内容或阻断已完整Pool结果。
 
 新增元数据总量上限1MiB，原40MiB总原字节和60秒停点预算不变。Pool和Buffer结构读取仍用原Snapshot的受预算ReadMemory，每段最多64KiB；原finally detach不变。所有原元数据字节进入同一个raw_files哈希清单。registry失败的部分字节也保留。
@@ -63,8 +66,13 @@ SDK `GetMemStats_`停点持有的是SDK分配器中央锁，不是Vulkan资源�
 ## 离线验证
 
 - 原22个SDK decoder正负用例继续通过。
-- 新5个自然资格/失败隔离用例，涵盖非零拒绝、全零接受、读失败不当零、未启用时零额外锁读取、坏pin明确unavailable。
-- 16个Pool结构正负用例覆盖未物化洞、合法overlap covers、锁中间态、链/范围/代数/计数/CPU origin错误。
+- 12个自然资格/失败隔离及显式恢复用例，涵盖非零拒绝、全零接受、读失败不当零、未启用时零额外锁读取、坏pin明确unavailable。
+- 20个Pool结构及固定libc ABI正负用例覆盖未物化洞、合法overlap covers、锁中间态、链/范围/代数/计数/CPU origin错误。
+- 12个wrapper可选配置pin正负用例，保留v1并限定v2实际libc哈希。
 - 官方LLDB在实际f75正式ELF上以`SBData.SetData`/`CreateValueFromData`核验Pool/Buffer字段、指针和nested vk_buffer解码，无设备或inferior。
 
 以上是工具离线资格，不是新真机采集成功，也不报告任何新增内存收益。
+
+## 资格拒绝事件竞态修正
+
+首轮工具把被拒绝的callback returnFalse自动继续的中间stop误当成unrelated stop，因此未获得有效SDK/Pool快照；这属于工具控制缺陷。新控制不放宽unrelated/callback_error：明确拒绝停点经官方SBThread stop reason数据与寄存器核验后才继续，过期、旧stopID、其他断点/信号或多停因全部失败并走原detach/清理。新增离线用例覆盖拒绝→一次显式继续→接受及这些负控。无新的目标计时器、轮询器或运行时修改。

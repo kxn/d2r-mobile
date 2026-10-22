@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 
 MODE = 'f75-bionic-normal-resources-zero-v1'
+MODE_Q735 = 'f75-q735-libc-02969f76-state16-v2'
+Q735_LIBC_SHA = '02969f76be8e6ed8a44be78083735801448a6e0f972792da63b93e4a6de8d5b0'
 ELF_SHA = '4a8420209e2ac6c71c161626472458ac498ee844bdce58677c8e2769b5ec4618'
 BUILD_ID = '6e6f12c5c5f7a858704a84ee294b19d95aa3f894'
 MAX_POOLS, MAX_BACKINGS, MAX_BYTES = 64, 4096, 1024 * 1024
@@ -43,19 +45,31 @@ def unique_global(target, name, source):
     return matches[0]
 
 
-def normal_resources_unlocked(raw):
+def normal_resources_unlocked(raw, mode=MODE):
     # f75 explicitly uses PTHREAD_MUTEX_INITIALIZER (normal/private) for V.
     # AOSP LP64 Bionic's first atomic uint16 state is0 when unlocked,1/2 when
     # owned. No parsing owner TIDs, recursion, PI, trylock or futex activity.
-    # Requiring the complete original40-byte zero initializer is stricter:
-    # any nonzero/unknown representation is UNAVAILABLE, never guessed free.
+    # Old v1 requires the entire original40-byte zero initializer. The exact
+    # Q735 vendor image has a separately pinned diagnostic-halfword mode below.
     require(len(raw) == 40, 'resources mutex ABI differs')
-    require(raw == bytes(40), 'V.resources is held or not a qualified normal zero mutex')
+    if mode == MODE_Q735:
+        # Exact API36 Q735 libc disassembly: successful normal lock/trylock
+        # stores diagnostic TLS tid16 at+2; normal unlock SWP2 clears only+0.
+        # Its stale+2 word is not ownership. Preserve/record it, never modify it.
+        require(raw[:2] == bytes(2) and raw[4:] == bytes(36),
+                'V.resources state16 is owned or reserved bytes are not qualified')
+    else:
+        require(mode == MODE, 'unknown mutex ABI mode')
+        require(raw == bytes(40), 'V.resources is held or not a qualified normal zero mutex')
 
 
 def prepare_entry_gate(target, config, pin):
     """Cold typed address resolution; optional callback later reads only40B."""
-    require(pin['mode'] == MODE, 'NVN metadata mode not qualified')
+    require(pin['mode'] in (MODE, MODE_Q735), 'NVN metadata mode not qualified')
+    if pin['mode'] == MODE_Q735:
+        require(pin.get('libc_sha256') == Q735_LIBC_SHA, 'actual Q735 libc ABI pin missing/differs')
+    else:
+        require('libc_sha256' not in pin, 'old mutex mode must not imply another libc ABI')
     require(pin['ELF_sha256'] == ELF_SHA == config['elf']['sha256'], 'NVN metadata source/ELF hash not f75')
     require(pin['ELF_BuildID'].replace('-', '').lower() == BUILD_ID == config['elf']['buildid'].replace('-', '').lower(), 'NVN metadata source/BuildID not f75')
     v = unique_global(target, 'V', 'nvn_vk.c')
@@ -63,7 +77,8 @@ def prepare_entry_gate(target, config, pin):
     require(mutex.GetType().GetByteSize() == 40, 'actual pthread_mutex_t size differs')
     return dict(address=mutex.GetLoadAddress(), bytes=40,
                 V_declaration=str(v.GetDeclaration()), mutex_type=mutex.GetTypeName(),
-                rule='exact normal/private Bionic zero initializer; nonzero declines this natural entry')
+                mode=pin['mode'], libc_sha256=pin.get('libc_sha256'),
+                rule='all40zero' if pin['mode'] == MODE else 'exact pinned Q735 libc: state16zero, bytes4:40zero; bytes2:4 diagnostic only')
 
 
 def validate_registry(pools, head_before, epoch_before, adds_before,
@@ -158,7 +173,7 @@ def capture(target, snapshot, pin):
         return int.from_bytes(raw, 'little')
 
     before = read(mutex.GetLoadAddress(), 40, 'resources-before.bin')
-    normal_resources_unlocked(before)
+    normal_resources_unlocked(before, pin['mode'])
     head, epoch, adds = [scalar(n, 'before') for n in ['pools', 'pool_registry_epoch', 'pool_adds']]
     result, seen_pools, seen_backings = [], set(), set()
     address = head
@@ -188,7 +203,7 @@ def capture(target, snapshot, pin):
         address = integer(member(p, 'next'))
     after_head, after_epoch, after_adds = [scalar(n, 'after') for n in ['pools', 'pool_registry_epoch', 'pool_adds']]
     after = read(mutex.GetLoadAddress(), 40, 'resources-after.bin')
-    normal_resources_unlocked(after)
+    normal_resources_unlocked(after, pin['mode'])
     require(before == after, 'resources mutex changed at the same all-stop')
     summary = validate_registry(result, head, epoch, adds, after_head, after_epoch, after_adds)
     descriptor = dict(complete=False, scope='capacity scalars/type sizes only; no descriptor-array traversal')
@@ -207,14 +222,15 @@ def capture(target, snapshot, pin):
         descriptor['error'] = repr(error)
     snapshot.check()
     return dict(complete=True, status='SAME_SDK_STOP_NVN_POOL_REGISTRY_METADATA_COMPLETE',
-                inferior_calls=False, mutex_mode=MODE, resources_mutex_address=mutex.GetLoadAddress(),
+                inferior_calls=False, mutex_mode=pin['mode'], libc_sha256=pin.get('libc_sha256'), resources_mutex_address=mutex.GetLoadAddress(),
+                resources_before_hex=before.hex(), resources_after_hex=after.hex(),
                 namespace_globals=declarations, actual_Pool_bytes=ptype.GetByteSize(),
                 actual_Buffer_node_bytes=btype.GetByteSize(), registry_head=head,
                 registry_epoch=epoch, pool_adds=adds, pools=result, summary=summary,
                 descriptor_metadata=descriptor, metadata_acquisition_bytes=used,
                 raw_files=snapshot.files[raw_files_start:],
                 scope='Complete current logical Pool list and canonical/shared-cover Buffer chains only. Native VkImage allocation chains are not traversed. Imported intervals can overlap and are not physical RAM/PSS.',
-                limitations=['The SDK allocator mutex does not protect NVN; a nonzero/unknown V.resources representation rejects this optional section without following its pointers.',
-                             'Zero normal/private Bionic mutex+one all-stop and head/epoch recheck qualify stable CPU registry metadata only; not GPU completion or contents.',
+                limitations=['The SDK allocator mutex does not protect NVN; a V.resources representation not qualified by the selected pinned ABI rejects this optional section without following its pointers.',
+                             'ABI-qualified normal/private mutex+one all-stop and head/epoch recheck qualify stable CPU registry metadata only; not GPU completion or contents.',
                              'The current registered list excludes removed Pools that may still be draining references; absence is not proof of no retained GPU owner.',
                              'Only logical Pool address ownership is established. Buffer interval sizes are not physical memory residency or unique committed GPU allocation bytes.'])

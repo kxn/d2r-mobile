@@ -57,6 +57,20 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'ELF identity'):
             m.validate_optional_nvn(self.c, self.inputs)
 
+    def test_exact_Q735_libc_pin_accepted(self):
+        self.c['nvn_pools'].update(mode=m.Q735_MUTEX_MODE, libc_sha256=m.Q735_LIBC_SHA)
+        m.validate_optional_nvn(self.c, self.inputs)
+
+    def test_Q735_missing_or_other_libc_pin_rejected(self):
+        self.c['nvn_pools']['mode'] = m.Q735_MUTEX_MODE
+        with self.assertRaisesRegex(RuntimeError, 'libc ABI pin'): m.validate_optional_nvn(self.c, self.inputs)
+        self.c['nvn_pools']['libc_sha256'] = '0' * 64
+        with self.assertRaisesRegex(RuntimeError, 'libc ABI pin'): m.validate_optional_nvn(self.c, self.inputs)
+
+    def test_old_mode_does_not_implicitly_accept_vendor_libc_pin(self):
+        self.c['nvn_pools']['libc_sha256'] = m.Q735_LIBC_SHA
+        with self.assertRaisesRegex(RuntimeError, 'old mutex mode'): m.validate_optional_nvn(self.c, self.inputs)
+
     def test_wrong_mode_rejected(self):
         self.c['nvn_pools']['mode'] = 'unreviewed'
         with self.assertRaisesRegex(RuntimeError, 'mode/enable'):

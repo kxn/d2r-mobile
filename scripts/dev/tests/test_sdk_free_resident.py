@@ -4,6 +4,9 @@ from pathlib import Path
 import struct
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
+import sys
+import time
 
 p = Path(__file__).resolve().parents[1] / 'sdk_free_resident.py'
 spec = importlib.util.spec_from_file_location('sdk_free_resident_under_test', p)
@@ -184,18 +187,40 @@ class NaturalQualificationTests(unittest.TestCase):
         class BP:
             disabled = False
             def GetBreakpoint(self): return self
+            def GetID(self): return 5
             def SetEnabled(self, value): self.disabled = not value
+        class PR:
+            state, stop_id, calls = 5, 2, 0
+            def GetStopID(self): return self.stop_id
+            def GetState(self): return self.state
+            def GetNumThreads(self): return len(self.threads)
+            def GetThreadAtIndex(self, i): return self.threads[i]
+            def Continue(self):
+                self.calls += 1; self.state = 6
+                return SimpleNamespace(Success=lambda: True)
+        proc = PR()
         class TH:
-            def GetProcess(self): return object()
+            reason, data = 3, [5, 5]
+            def GetProcess(self): return proc
             def GetThreadID(self): return 17
+            def GetStopReason(self): return self.reason
+            def GetStopReasonDataCount(self): return len(self.data)
+            def GetStopReasonDataAtIndex(self, i): return self.data[i]
+            def GetFrameAtIndex(self, i): return frame
         class FR:
-            def FindRegister(self, name): return {'x0': 0x1000, 'x30': 0x2000 + m.SDK_LR}[name]
-            def GetThread(self): return TH()
+            registers = {'x0': 0x1000, 'x30': 0x2000 + m.SDK_LR, 'pc': 0x2000 + m.SDK_ENTRY}
+            def FindRegister(self, name): return self.registers[name]
+            def GetThread(self): return thread
+        thread, frame = TH(), FR()
+        proc.threads = [thread]
+        self.process, self.thread, self.frame = proc, thread, frame
         m._ACTIVE = dict(central=0x1000, sdk=0x2000, matched=False)
         if gated:
             m._ACTIVE.update(nvn_entry_gate=dict(address=0x3000, bytes=40),
-                             nvn_qualification=dict(natural_entries_examined=0, nonzero_mutex_entries_declined=0))
+                             nvn_qualification=dict(natural_entries_examined=0, nonzero_mutex_entries_declined=0),
+                             nvn_entry_predicate=lambda raw: m.require(raw == bytes(40), 'not zero'))
         b = BP()
+        self.breakpoint = b
         def read(*args):
             if error: raise error
             return raw
@@ -205,8 +230,58 @@ class NaturalQualificationTests(unittest.TestCase):
 
     def test_nonzero_registry_mutex_declines_natural_entry(self):
         stop, disabled, active = self.invoke(b'\x01' + bytes(39))
-        self.assertFalse(stop); self.assertFalse(disabled); self.assertFalse(active['matched'])
+        self.assertTrue(stop); self.assertFalse(disabled); self.assertFalse(active['matched'])
+        self.assertEqual(active['qualification_declined']['stop_id'], 2)
         self.assertEqual(active['nvn_qualification']['nonzero_mutex_entries_declined'], 1)
+
+    def resume(self, active, deadline=None):
+        fake = SimpleNamespace(eStateStopped=5, eStopReasonInvalid=0, eStopReasonNone=1, eStopReasonBreakpoint=3)
+        with patch.dict(sys.modules, {'lldb': fake}), patch.object(m, '_unsigned', lambda v: v):
+            return m._resume_qualification_declined(self.process, self.breakpoint, active, 1,
+                                                   deadline if deadline is not None else time.monotonic() + 60)
+
+    def test_decline_resume_then_accept_has_no_auto_restart_race(self):
+        stop, disabled, active = self.invoke(b'\x01' + bytes(39))
+        self.assertTrue(stop); self.assertFalse(disabled)
+        self.assertEqual(self.resume(active), 2)
+        self.assertEqual(self.process.calls, 1)
+        self.assertNotIn('qualification_declined', active)
+        self.process.state, self.process.stop_id = 5, 3
+        with patch.object(m, '_unsigned', lambda v: v), patch.object(m, '_read_small', lambda *a: bytes(40)):
+            self.assertTrue(m._on_entry(self.frame, self.breakpoint, {}))
+        self.assertTrue(active['matched'])
+        self.assertEqual(active['nvn_qualification']['declined_stops_explicitly_resumed'], 1)
+
+    def test_declined_wrong_breakpoint_never_continues(self):
+        _, _, active = self.invoke(b'\x01' + bytes(39)); self.thread.data = [99, 5]
+        with self.assertRaisesRegex(ValueError, 'exact original breakpoint'): self.resume(active)
+        self.assertEqual(self.process.calls, 0)
+
+    def test_declined_unrelated_signal_never_continues(self):
+        _, _, active = self.invoke(b'\x01' + bytes(39)); self.thread.reason = 5
+        with self.assertRaisesRegex(ValueError, 'exact original breakpoint'): self.resume(active)
+        self.assertEqual(self.process.calls, 0)
+
+    def test_declined_changed_register_identity_never_continues(self):
+        _, _, active = self.invoke(b'\x01' + bytes(39))
+        self.frame.registers = dict(self.frame.registers, pc=0)
+        with self.assertRaisesRegex(ValueError, 'register identity changed'): self.resume(active)
+        self.assertEqual(self.process.calls, 0)
+
+    def test_declined_expired_original_deadline_never_continues(self):
+        _, _, active = self.invoke(b'\x01' + bytes(39))
+        with self.assertRaisesRegex(ValueError, 'budget expired'): self.resume(active, time.monotonic() - 1)
+        self.assertEqual(self.process.calls, 0)
+
+    def test_declined_stale_stop_never_continues(self):
+        _, _, active = self.invoke(b'\x01' + bytes(39)); self.process.stop_id = 3
+        with self.assertRaisesRegex(ValueError, 'stale'): self.resume(active)
+        self.assertEqual(self.process.calls, 0)
+
+    def test_declined_callback_error_never_continues(self):
+        _, _, active = self.invoke(b'\x01' + bytes(39)); active['callback_error'] = 'read failed'
+        with self.assertRaisesRegex(ValueError, 'clean qualification decline'): self.resume(active)
+        self.assertEqual(self.process.calls, 0)
 
     def test_zero_registry_mutex_accepts_exactly_one_stop(self):
         stop, disabled, active = self.invoke(bytes(40))

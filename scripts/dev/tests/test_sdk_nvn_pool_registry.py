@@ -44,6 +44,27 @@ class RegistryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.normal_resources_unlocked(raw)
 
+    def test_exact_Q735_state16_accepts_stale_diagnostic_halfword(self):
+        observed = bytes.fromhex('0000161f' + '00' * 36)
+        m.normal_resources_unlocked(observed, m.MODE_Q735)
+        with self.assertRaises(ValueError): m.normal_resources_unlocked(observed, m.MODE)
+
+    def test_Q735_mode_rejects_owned_state_even_with_diagnostic(self):
+        for state in (1, 2):
+            raw = bytes([state, 0, 0x16, 0x1f]) + bytes(36)
+            with self.assertRaisesRegex(ValueError, 'state16 is owned'): m.normal_resources_unlocked(raw, m.MODE_Q735)
+
+    def test_Q735_mode_rejects_unknown_reserved_bytes(self):
+        raw = bytes.fromhex('0000161f01' + '00' * 35)
+        with self.assertRaisesRegex(ValueError, 'reserved bytes'): m.normal_resources_unlocked(raw, m.MODE_Q735)
+
+    def test_Q735_mode_requires_qualified_libc_pin_before_any_typed_read(self):
+        p = dict(mode=m.MODE_Q735, ELF_sha256=m.ELF_SHA, ELF_BuildID=m.BUILD_ID)
+        config = dict(elf=dict(sha256=m.ELF_SHA, buildid=m.BUILD_ID))
+        with self.assertRaisesRegex(ValueError, 'libc ABI pin'): m.prepare_entry_gate(None, config, p)
+        p['libc_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'libc ABI pin'): m.prepare_entry_gate(None, config, p)
+
     def test_identity_midpublication_zero_rejected(self):
         p = fixture(); p[0]['identity'] = 0
         with self.assertRaisesRegex(ValueError, 'unpublished'):
