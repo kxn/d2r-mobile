@@ -30,11 +30,12 @@ a = load('current_sustained_assets', HERE / 'qualified_asset_gate.py')
 PARENT = R / '.local/build/private-image-budget-74d7e17-Q735-pair-v1/root-execute/PARENT1.json'
 DELIVERED = R / '.local/logs/lazy-physical-span-index-88620ec-desktop-Q735-v1/delivered-baseline.json'
 ROUTE = R / '.local/build/native-sustained-play-v2/camp-route-v2.json'
+LIVE_REVIEW = R / '.local/logs/current-sustained-886-fresh-baseline-v2/root-review.json'
 
 def record(path):
     return {'path': str(path), 'sha256': g.sha(path)}
 
-def current_input():
+def current_input(live_review=None):
     p = g.read(PARENT)
     for key in ('official_cpu_aa', 'performance_tools', 'official_l1i_record',
                 'official_memory_map', 'builtin_vma_on_suspend'):
@@ -45,6 +46,9 @@ def current_input():
     p['sustained_play'] = {'seconds': 1800, 'interval_seconds': 600, 'trace_seconds': 8,
         'current_acceptance': record(DELIVERED), 'route': record(ROUTE), 'resume_step': 0,
         'scheduler_helper': record(HERE / 'capture-sustained-scheduler.py')}
+    if live_review is not None:
+        p['sustained_play']['live_baseline_review'] = record(live_review)
+        p['baseline'] = g.read(live_review)['fresh_baseline']
     p['execution_ready'] = False
     p['authorization_scope'] = 'Host-only offline current886 sustained plan; no device authorization supplied'
     p['output'] = str(R / '.local/logs/current-sustained-886-host-plan-only')
@@ -76,6 +80,9 @@ class CurrentQualification(unittest.TestCase):
         for phase in p['phases']:
             phase['composition_data'] = g.read(g.pinned(phase['composition']))
         self.assertIsNone(s.validate(p, g.pinned, g.read, g.require))
+        p['sustained_play']['live_baseline_review'] = record(LIVE_REVIEW)
+        with self.assertRaisesRegex(RuntimeError, 'config fields'):
+            s.validate(p, g.pinned, g.read, g.require)
 
     def test_old_runtime_or_wrong_baseline_restore_artifacts_refused(self):
         for key, value in [('runtime_commit', s.RUNTIME), ('original_host_elf', '0'*64),
@@ -135,28 +142,104 @@ class CurrentQualification(unittest.TestCase):
         with self.assertRaises(RuntimeError): s.validate_state(state, {'pool_window_bytes':1048576}, g.require)
 
     def test_complete_original_offline_plan_keeps_single_phase_and_sustained_scope(self):
-        # This invokes the actual full proof, including originalNSO28, six SO,
-        # both CASC compositions, all12448 full2838 outputs and asset membership.
-        # Device construction is forbidden even if an accidental branch changes.
-        with tempfile.TemporaryDirectory(prefix='current-sustained-plan-') as folder:
-            path = Path(folder) / 'inputs.json'; path.write_text(json.dumps(current_input()))
-            text = io.StringIO()
-            args = ['run-game.py', '--inputs', str(path), '--inputs-sha256', g.sha(path),
-                    '--report', str(Path(current_input()['output']) / 'result.json')]
-            with patch.object(sys, 'argv', args), contextlib.redirect_stdout(text), \
-                 patch.object(g.m.common, 'Device', side_effect=AssertionError('no device allowed')):
-                g.main()
-            plan = json.loads(text.getvalue())
-            self.assertTrue(plan['offline']); self.assertEqual(plan['runtime'], s.CURRENT_RUNTIME)
-            self.assertEqual(len(plan['phases']), 1)
-            self.assertEqual(plan['scale_3d'], .75); self.assertFalse(plan['fixed_3d'])
-            self.assertIn('1800s uninterrupted', plan['scope'])
-            self.assertFalse(plan['pool_copy_accounting'])
-            self.assertIn('not fixedAB, combat, whole-game or6GB', plan['scope'])
-            self.assertNotIn('Shortcandidate', plan['scope'])
-            self.assertEqual(plan['qualified_native_asset_validation']['replacements'], 2838)
-            self.assertFalse(json.loads(path.read_text())['execution_ready'])
-            # Export only the non-executable plan to stdout for the test log.
-            print(json.dumps({'actual_full_offline_plan': plan}, sort_keys=True))
+        # Original complete proof, now for both actual delivered and actual
+        # root-reviewed fresh stopped snapshots. Neither input is executable.
+        for live in (None, LIVE_REVIEW):
+            with self.subTest(live=live), tempfile.TemporaryDirectory(prefix='current-sustained-plan-') as folder:
+                p = current_input(live)
+                path = Path(folder) / 'inputs.json'; path.write_text(json.dumps(p))
+                text = io.StringIO()
+                args = ['run-game.py', '--inputs', str(path), '--inputs-sha256', g.sha(path),
+                        '--report', str(Path(p['output']) / 'result.json')]
+                with patch.object(sys, 'argv', args), contextlib.redirect_stdout(text), \
+                     patch.object(g.m.common, 'Device', side_effect=AssertionError('no device allowed')):
+                    g.main()
+                plan = json.loads(text.getvalue())
+                self.assertTrue(plan['offline']); self.assertEqual(plan['runtime'], s.CURRENT_RUNTIME)
+                self.assertEqual(len(plan['phases']), 1)
+                self.assertEqual(plan['scale_3d'], .75); self.assertFalse(plan['fixed_3d'])
+                self.assertFalse(plan['pool_copy_accounting'])
+                self.assertIn('1800s uninterrupted', plan['scope'])
+                self.assertIn('not fixedAB, combat, whole-game or6GB', plan['scope'])
+                self.assertNotIn('Shortcandidate', plan['scope'])
+                self.assertEqual(plan['qualified_native_asset_validation']['replacements'], 2838)
+                self.assertFalse(json.loads(path.read_text())['execution_ready'])
+                print(json.dumps({'baseline_kind': 'reviewed-fresh' if live else 'delivered',
+                                  'actual_full_offline_plan': plan}, sort_keys=True))
+
+
+class CurrentLiveBaseline(unittest.TestCase):
+    """Actual immutable cards; refusals alter read results in memory only."""
+    def setUp(self):
+        self.p = current_input(LIVE_REVIEW)
+        self.delivered = g.read(DELIVERED)
+        self.fresh_path = Path(self.p['baseline']['path'])
+        self.review = g.read(LIVE_REVIEW)
+        self.fresh = g.read(self.fresh_path)
+
+    def invoke(self):
+        def read(path):
+            if Path(path) == self.fresh_path: return self.fresh
+            if Path(path) == LIVE_REVIEW: return self.review
+            return g.read(path)
+        return s.current_baseline(self.p, self.delivered, g.pinned, read, g.require)
+
+    def test_actual_stopped_fresh_three_existing_hash_changes_pass(self):
+        self.invoke()
+        self.assertEqual(len(self.review['changes']), 3)
+        self.assertEqual(g.sha(DELIVERED), s.CURRENT_DELIVERED)
+
+    def test_unreviewed_fresh_wrong_pin_or_incomplete_review_refused(self):
+        p = copy.deepcopy(self.p); p['sustained_play'].pop('live_baseline_review')
+        with self.assertRaises(RuntimeError): s.current_baseline(p, self.delivered, g.pinned, g.read, g.require)
+        for key in ('same_delivery', 'game_PID_absent', 'immutable_identity_unchanged', 'only_temp_changed',
+                    'original_Device_identity_passed', 'profile_and_publication_receipt_device_hashes_match',
+                    'controller_lock_absent'):
+            with self.subTest(key=key):
+                old = self.review[key]; self.review[key] = False
+                with self.assertRaises(RuntimeError): self.invoke()
+                self.review[key] = old
+        self.review['fresh_baseline'] = self.review['delivered_baseline']
+        with self.assertRaises(RuntimeError): self.invoke()
+
+    def test_each_core_identity_and_non_temp_inventory_change_refused(self):
+        original = copy.deepcopy(self.fresh)
+        for key in ('APK_sha256', 'host_ELF_SHA256', 'model', 'serial', 'chain', 'profile', 'publication_receipt'):
+            with self.subTest(key=key):
+                self.fresh[key] = 'changed'
+                with self.assertRaises(RuntimeError): self.invoke()
+                self.fresh[key] = original[key]
+        for target in original['inventories']:
+            if target == 'files/runtime/temp': continue
+            with self.subTest(target=target):
+                self.fresh['inventories'][target] = {'unexpected-file': '0'*64}
+                with self.assertRaises(RuntimeError): self.invoke()
+                self.fresh['inventories'][target] = original['inventories'][target]
+        self.fresh['game_PID_absent'] = False
+        with self.assertRaises(RuntimeError): self.invoke()
+
+    def test_temp_file_add_remove_bad_hash_or_unreviewed_changes_refused(self):
+        temp = 'files/runtime/temp'; original = copy.deepcopy(self.fresh['inventories'][temp])
+        self.fresh['inventories'][temp]['files/runtime/temp/new-file'] = '1'*64
+        with self.assertRaises(RuntimeError): self.invoke()
+        self.fresh['inventories'][temp] = copy.deepcopy(original)
+        self.fresh['inventories'][temp].pop(next(iter(original)))
+        with self.assertRaises(RuntimeError): self.invoke()
+        self.fresh['inventories'][temp] = copy.deepcopy(original)
+        changed = self.review['changes'][0]['path']
+        self.fresh['inventories'][temp][changed] = 'not-a-SHA256'
+        with self.assertRaises(RuntimeError): self.invoke()
+        self.fresh['inventories'][temp] = copy.deepcopy(original)
+        self.review['changes'].pop()
+        with self.assertRaises(RuntimeError): self.invoke()
+
+    def test_equal_file_sets_do_not_waive_temp_path_policy(self):
+        # Synthetic extra old+new member solely tests the allowlist, not a
+        # purported delivered snapshot or an actual independently approved card.
+        temp = 'files/runtime/temp'; bad = temp + '/unrelated.data'
+        self.delivered['inventories'][temp][bad] = '1'*64
+        self.fresh['inventories'][temp][bad] = '2'*64
+        with self.assertRaisesRegex(RuntimeError, 'unapproved temp hash'):
+            self.invoke()
 
 if __name__ == '__main__': unittest.main(verbosity=2)

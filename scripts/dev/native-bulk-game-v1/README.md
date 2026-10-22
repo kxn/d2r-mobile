@@ -415,7 +415,7 @@ Input provenance and future production entry (root review/execution separate):
 * Remove `official_cpu_aa`, `performance_tools`, `official_l1i_record`,
   `official_memory_map`, `builtin_vma_on_suspend` and any other extra diagnostic
   fields; new sustained scope rejects these rather than silently ignoring them.
-* Set `baseline` and `sustained_play.current_acceptance` to the real delivered886
+* By default, set `baseline` and `sustained_play.current_acceptance` to the real delivered886
   baseline at `/home/dl/d2r-mobile/.local/logs/lazy-physical-span-index-88620ec-desktop-Q735-v1/delivered-baseline.json`
   (SHA256 `28f3f9dd9763e4b7fb8cdd8caff24c94dc69b54d7a885a198dac755adcdebdb6`).
   Restore APK is this886 canonical APK, with delivered ELF hash; do not restore
@@ -441,3 +441,36 @@ a temporary non-executable input and forbids Device construction, plus old6f and
 current qualification/policy refusal cases. Original flow/cleanup tests cover
 adaptive changes, first reverse miss, mid-run policy change, thermal/tools/PID,
 launch report mismatches and original save2/replacement-PID handling.
+
+
+Current886 reviewed live baseline extension: keep `current_acceptance` fixed to
+the delivered28f3 card above. If existing warm PSO/log contents have changed,
+`baseline` may instead pin a fresh independently reviewed **stopped** snapshot,
+with the optional `sustained_play.live_baseline_review` pin. The review status is
+`ROOT_REVIEWED_CURRENT886_STOPPED_LIVE_BASELINE_TEMP_ONLY`; it binds both exact
+baseline pins, same delivery/immutable identity/stopped facts, original Device
+identity, profile/publication checks and absence of a controller lock.
+
+The tool independently compares core APK/ELF/model/serial/chain/package/platform,
+profile/publication receipt and all8 inventories. Seven inventories stay exactly
+equal. Temp must retain exactly the original file set; only existing strict
+`vulkan-pso/v1-<8hex>-<8hex>-<8hex>-<32hex>.bin[.recipes-v1]` or
+`Diablo II/GameLogs/D<7digits>.txt` hashes may change. Every changed old/new hash
+must also exactly match the review's `changes` list. This grants no arbitrary
+file exemption and never deletes, rolls back or ignores warm cache contents.
+The original `original_check`, `expected_baseline`, input/lifecycle and six-dir
+CAS code remain unchanged, now checking and restoring the fresh pinned bytes.
+
+The actual host-tested new pins are:
+
+* `baseline`: `/home/dl/d2r-mobile/.local/logs/current-sustained-886-fresh-baseline-v2/baseline.json`,
+  SHA256 `2009829ce6ea38d30291488c33b644c706cf7d95e1e15a0d745b842aa83fb8a3`.
+* `sustained_play.live_baseline_review`:
+  `/home/dl/d2r-mobile/.local/logs/current-sustained-886-fresh-baseline-v2/root-review.json`,
+  SHA256 `52b1bce92abc280336f5da529088d87798ba3010ac30df633c5a910f3876873f`.
+
+The old82 source/receipt and failed preflight session19434 remain historical;
+that attempt installed nothing and never launched the game. This extension does
+not relabel it successful. Host tests use the real review/fresh snapshot for a
+second complete offline proof, plus refusal cases; they produce no execute-ready
+input and do not constitute current886 sustained-play acceptance.

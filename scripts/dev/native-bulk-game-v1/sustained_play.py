@@ -20,15 +20,53 @@ CAMP = [{'x': 5225, 'y': 6295, 'area': 1},
         {'x': 5235, 'y': 6289, 'area': 1}]
 
 
+def current_baseline(p, delivered, pinned, read, require):
+    c = p['sustained_play']
+    if 'live_baseline_review' not in c:
+        require(p['baseline']['sha256'] == CURRENT_DELIVERED
+                and pinned(c['current_acceptance']) == pinned(p['baseline']),
+                'current sustained requires delivered886 or explicit reviewed live baseline')
+        return
+    review = read(pinned(c['live_baseline_review']))
+    require(review['status'] == 'ROOT_REVIEWED_CURRENT886_STOPPED_LIVE_BASELINE_TEMP_ONLY'
+            and review['runtime'] == CURRENT_RUNTIME
+            and all(review.get(k) is True for k in ('same_delivery', 'game_PID_absent',
+                'immutable_identity_unchanged', 'only_temp_changed', 'original_Device_identity_passed',
+                'profile_and_publication_receipt_device_hashes_match', 'controller_lock_absent')),
+            'current886 stopped live baseline review incomplete')
+    for name, expected in (('delivered_baseline', c['current_acceptance']), ('fresh_baseline', p['baseline'])):
+        require(review[name]['sha256'] == expected['sha256']
+                and pinned(review[name]) == pinned(expected), 'reviewed live baseline pin differs ' + name)
+    fresh = read(pinned(p['baseline']))
+    require(fresh['game_PID_absent'] is True and all(fresh[k] == delivered[k] for k in
+                ('APK_sha256', 'host_ELF_SHA256', 'model', 'serial', 'chain', 'package',
+                 'platform', 'profile', 'publication_receipt')), 'live baseline immutable identity differs')
+    old, new = delivered['inventories'], fresh['inventories']
+    temp = 'files/runtime/temp'
+    require(set(old) == set(new) and len(old) == 8
+            and all(old[k] == new[k] for k in old if k != temp),
+            'live baseline non-temp inventory differs')
+    require(set(old[temp]) == set(new[temp]), 'live baseline temp file set differs')
+    changed = [n for n in old[temp] if old[temp][n] != new[temp][n]]
+    allowed = (r'files/runtime/temp/(?:vulkan-pso/v1-[0-9a-f]{8}-[0-9a-f]{8}-'
+               r'[0-9a-f]{8}-[0-9a-f]{32}\.bin(?:\.recipes-v1)?|Diablo II/GameLogs/D[0-9]{7}\.txt)')
+    require(changed and all(re.fullmatch(allowed, n) and
+                re.fullmatch('[0-9a-f]{64}', new[temp][n]) for n in changed),
+            'live baseline unapproved temp hash change')
+    actual_changes = [{'path': n, 'old_sha256': old[temp][n], 'new_sha256': new[temp][n]}
+                      for n in changed]
+    require(sorted(review['changes'], key=lambda v: v['path']) ==
+            sorted(actual_changes, key=lambda v: v['path']), 'live baseline reviewed changes differ')
+
+
 def current_qualification(p, pinned, read, require):
     c = p['sustained_play']
     delivered = read(pinned(c['current_acceptance']))
-    require(c['current_acceptance']['sha256'] == CURRENT_DELIVERED
-            and p['baseline']['sha256'] == CURRENT_DELIVERED
-            and pinned(c['current_acceptance']) == pinned(p['baseline']),
-            'current sustained requires the actual delivered886 baseline')
+    require(c['current_acceptance']['sha256'] == CURRENT_DELIVERED,
+            'current sustained requires the actual delivered886 qualification')
     require(p['runtime_commit'] == CURRENT_RUNTIME and delivered['game_PID_absent'] is True
             and delivered['chain'] == '9507875007c6', 'current sustained runtime/chain differs')
+    current_baseline(p, delivered, pinned, read, require)
     publication = read(pinned(delivered['publication_receipt']))
     require(publication['status'] == 'ROOT_REVIEWED_Q_LOCAL_DESKTOP_DELIVERY_CANDIDATE'
             and publication['runtime'] == CURRENT_RUNTIME
@@ -85,9 +123,12 @@ def current_qualification(p, pinned, read, require):
 def validate(p, pinned, read, require):
     c = p['sustained_play']
     current = 'current_acceptance' in c
-    require(set(c) == {'seconds', 'interval_seconds', 'trace_seconds',
-                        'current_acceptance' if current else 'paired_acceptance',
-                        'route', 'resume_step', 'scheduler_helper'}, 'sustained config fields')
+    fields = {'seconds', 'interval_seconds', 'trace_seconds',
+              'current_acceptance' if current else 'paired_acceptance',
+              'route', 'resume_step', 'scheduler_helper'}
+    if current and 'live_baseline_review' in c:
+        fields.add('live_baseline_review')
+    require(set(c) == fields, 'sustained config fields')
     require((c['seconds'], c['interval_seconds'], c['trace_seconds']) == (1800, 600, 8),
             'reviewed finite 30min / 10min / official8s only')
     require(not any(k in p for k in ('counter_snapshot', 'performance_tools', 'official_gpu_tools',
