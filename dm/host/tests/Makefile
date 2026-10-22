@@ -139,6 +139,8 @@ tsan: $(B)/t_audio_spsc_tsan
 	$(B)/t_audio_spsc_tsan
 $(B)/t_condvar: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle_thread.c
+$(B)/t_sleep_diagnostics: t_sleep_diagnostics.c ../hle_thread.c ../dm.h ../platform.h | $(B)
+	clang -O1 -g -Wall -Wno-unused-function -Wno-format -pthread -o $@ t_sleep_diagnostics.c
 $(B)/t_condvar_old: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_CV_OLD_ORDER -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle_thread.c
 
