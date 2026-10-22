@@ -459,3 +459,21 @@ Q735 的 REFERENCE1 与 SPAN0 两次原游戏事务均实际退出 0。使用同
 原 APK、模块、设置和全部原 Shader 字节已恢复，测试游戏已停止；额外的设备端 Shader 副本也在完整库存核对后删除。Mali 与 6GB 平板未访问。候选仍是独立的已备份分支，不能将测试期间的临时安装说成主线默认包已更新。
 
 实际记录：`.local/logs/driver-proof-fingerprint-f75de42-Q735-pair-root-functional-review.json`、`driver-proof-fingerprint-f75de42-root-official-analysis-review.json`、`driver-proof-fingerprint-f75de42-analysis-v1/{comparison.json,summary.md}`、`SDK-free-resident-snapshot-plan-v1/{plan.md,facts.json}`（均在 `.local/logs/`）。
+
+### 完整路径预算：不再把高频叶调用当作优先级
+
+当前没有新的、已证明可安全删除且足以解释约10ms差距的重复工作块。f75六份完整FP的绑定职责仍占21–24%，其中实际view、Buffer范围、依赖与引用消费不能因缓存命中而省略。更早BASE1对表示本体、descriptor构造与set交付的7.55–8.99%只是过宽包络，包含必须保留的工作；不能宣称能省整段24%，也不将旧版占比乘本版Running生成精确毫秒。
+
+更高层次的实施顺序是：先证明必要工作是否能用更便宜的数据表示完成；再证明能否在完整setup之前减少合法draw入口；同时区分指令量和指令/数据缓存停顿。已有dynamic UBO、schema、recipe、history、预展开planned_op及融合规划不重复建设。新表示必须列出物理版本、真实consumer、GPU索引读取及退休成本；合批必须证明原NVN邻接、query、storage与alias顺序。当前Q记录2312draw，严格相同状态连续组为0；只放松IBO偏移最多少174个入口，这还不是174个合法合批，更不是7.5%线程收益。
+
+已确认的重复操作例子是完成通知唤醒错误的waiter群体。此前实际guest等待CPU从0.299–0.352ms/Surface降至0.080–0.097ms，属于约0.2ms量级局部减负，已经保留；不能拿它解释NvN约27ms。空CPU源预检候选虽然机制可界定，实际完整职责未下降，不能继续预支其改前约5%为收益。常量完整父职责本次已低于0.8%，退出CPU主攻。
+
+整APP审查也未发现大型宿主忙等：原SDK同步父包络约2.32–3.30%、HLE同步约1.63–2.22%、宿主门约3.41–4.07%整APP用户采样，互相重叠，不可相加；线程根已排除。原任务图让出函数还执行真实任务，不能当idle删去。三个guest线程频繁唤醒但主要阻塞睡眠，现有样本不能证明所有唤醒必要，也不能把未知guest PC都归为无法改进的游戏算法。完整证据为`.local/logs/driver-proof-fingerprint-f75de42-whole-app-readonly-v1/{summary.md,result.json}`。
+
+### SDK内存快照已完成：容量调查独立于CPU提速结论
+
+使用官方LLDB在原SDK自然GetMemStats调用、分配器锁已持有的位置只读取得完整6340个span与两个同backing映射的PTE；不调用目标函数、不修改或回收页。189份原始文件哈希/长度均核验。已分配逻辑3024.04MiB，两个CPU映射present并集1399.98MiB；逻辑空闲685.09MiB中该并集14.24MiB。无CPU present PTE不是物理不驻留证明，也不是回收授权。
+
+最大四个已分配span贡献约798.97MiB CPU-view present，约占已分配并集57.07%。缺少同次运行NVN Pool归属，不能按块大小猜用途、拼旧进程地址或直接打洞。这项是工作集/内存生命周期调查，不冒称已缩短翻译CPU。原游戏移动、存档2次、退出及原包资源恢复完成；最终核实游戏PID为空，调试器自有forward已移除。工具源码独立备份于`codex/sdk-free-resident-tools-v1`的`118920a`。
+
+原始快照、离线重放和根核验分别为`.local/logs/sdk-free-resident-Q735-v1/game-v4/native/readonly-memory-snapshot/sdk-free-resident.json`、`.local/logs/sdk-free-resident-Q735-v1-offline-analysis-v1/report.md`、`.local/logs/sdk-free-resident-Q735-v1-root-completed-review.json`。本节没有新增CPU提速、FPS或持续温度收益结论。
