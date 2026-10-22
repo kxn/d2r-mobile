@@ -130,6 +130,30 @@ def driver_span_policy(p, state=None, where='input'):
     return bool(value)
 
 
+def readonly_memory_snapshot(p):
+    if 'readonly_memory_snapshot' not in p:
+        return
+    snapshot = p['readonly_memory_snapshot']
+    require(isinstance(snapshot, dict) and set(snapshot) == {'helper', 'config'}
+            and 'counter_snapshot' not in p, 'read-only memory snapshot fields / counter conflict')
+    helper = pinned(snapshot['helper'])
+    config = read(pinned(snapshot['config']))
+    require(config['serial'] == p['serial'] and config['APK_sha256'] == p['new_apk']
+            and config['ELF_sha256'] == p['new_elf']
+            and config['canonical_source_ready_sha256'] == p['canonical']['sha256'],
+            'read-only memory snapshot target differs from paired runtime')
+    subprocess.run([sys.executable, str(helper), '12345', '/tmp', '--config',
+                    snapshot['config']['path'], '--config-sha256',
+                    snapshot['config']['sha256'], '--plan'], check=True,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def readonly_memory_snapshot_result(result):
+    require(result.get('snapshot_complete') is True and result.get('inferior_calls') is False
+            and result.get('owned_PID_TracerPid_zero_after_cleanup') is True
+            and result.get('cleanup_errors') == [], 'read-only memory snapshot / detach incomplete')
+
+
 def proof(path, digest):
     require(re.fullmatch('[a-f0-9]{64}', digest or '') is not None,
             'explicit input SHA256 required')
@@ -194,6 +218,7 @@ def proof(path, digest):
     require(len(p['prerequisites']) >= 2, 'actual fixture and bake receipts required')
     for row in p['prerequisites']:
         pinned(row)
+    readonly_memory_snapshot(p)
     if 'counter_snapshot' in p:
         counter = p['counter_snapshot']
         require(set(counter) == {'ready', 'config', 'server'}, 'counter snapshot fields differ')
@@ -286,6 +311,9 @@ def proof(path, digest):
                                 m.SOURCE / 'scripts/dev/android-game-launch.py',
                                 R / 'scripts/dev/android-game-background-save.py',
                                 R / 'scripts/dev/android-game-walk-to.py']}
+    if p.get('readonly_memory_snapshot'):
+        row = p['readonly_memory_snapshot']['helper']
+        p['controller_sources'][str(Path(row['path']).resolve())] = row['sha256']
     if p.get('official_cpu_aa'):
         p['controller_sources'][str(HERE / 'official_cpu_aa.py')] = sha(HERE / 'official_cpu_aa.py')
     p['_execution_phases'] = p['phases']
@@ -542,6 +570,24 @@ def phase_game(dev, out, phase, p, token):
                     'once-only counter snapshot / detach failed')
             d['native_import_counters'] = counter_result['snapshot']
             save()
+        if p.get('readonly_memory_snapshot'):
+            require(pid() == own, 'PID changed before read-only memory snapshot')
+            snapshot = p['readonly_memory_snapshot']
+            snapshot_out = out / 'readonly-memory-snapshot'
+            snapshot_out.mkdir()
+            command = [sys.executable, str(pinned(snapshot['helper'])), own, str(snapshot_out),
+                       '--config', snapshot['config']['path'], '--config-sha256',
+                       snapshot['config']['sha256']]
+            pinned(snapshot['config'])
+            d['readonly_memory_snapshot_command'] = command
+            save()
+            # The pinned helper owns bounded LLDB detach/server/forward cleanup.
+            with (snapshot_out / 'console.txt').open('w') as log:
+                subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
+            snapshot_result = read(snapshot_out / 'debugger-result.json')
+            readonly_memory_snapshot_result(snapshot_result)
+            d['readonly_memory_snapshot'] = snapshot_result
+            save()
         require(pid() == own, 'PID changed before residency snapshot')
         (out / 'official-dumpsys-meminfo.txt').write_text(dev.adb('shell', 'dumpsys', 'meminfo', own))
         if p.get('official_memory_map'):
@@ -681,6 +727,9 @@ def main():
                 scope='Samebinary A/A and measurement disturbance; no new optimization or FPS gain claim')
             plan['scope'] = 'Same runtime originalgame/PID/camp:3x30s officialrecord and5x8s Perfetto; original save2/CAS'
         plan['controller_sources'].update({v['path']: v['sha256'] for v in p['performance_tools'].values()})
+    if p.get('readonly_memory_snapshot'):
+        plan['readonly_memory_snapshot'] = p['readonly_memory_snapshot']
+        plan['scope'] += '; pinned read-only LLDB snapshot after route/tools, before system residency'
     if 'driver_span_reference' in p:
         plan['driver_span_reference_requested'] = driver_span_policy(p)
         plan['scope'] += '; cold span-only OFF/ON with identical APK/shader assets; shader deployment is external'

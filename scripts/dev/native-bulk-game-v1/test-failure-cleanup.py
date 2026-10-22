@@ -41,7 +41,7 @@ class Device:
 
 
 class LifecycleFailureTests(unittest.TestCase):
-    def exercise(self, replacement, counter_failure=False, sustained_failure=False):
+    def exercise(self, replacement, counter_failure=False, sustained_failure=False, memory_failure=False):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder) / 'phase'
             dev = Device()
@@ -62,7 +62,7 @@ class LifecycleFailureTests(unittest.TestCase):
                     return 0
 
             def collect(_dev, _pid, d, report, _out, label):
-                if counter_failure or sustained_failure:
+                if counter_failure or sustained_failure or memory_failure:
                     return
                 d['screenshots'] = [{'remote': '/data/local/tmp/owned.png',
                                      'screencap_requested': True}]
@@ -71,7 +71,7 @@ class LifecycleFailureTests(unittest.TestCase):
                 raise RuntimeError('injected screenshot pull failure')
 
             def save(cmd, **kwargs):
-                if counter_failure and 'counter-helper.py' in cmd:
+                if (counter_failure and 'counter-helper.py' in cmd) or (memory_failure and any('memory-helper.py' in x for x in cmd)):
                     if replacement:
                         dev.pid = '54321'
                     raise subprocess.CalledProcessError(1, cmd)
@@ -102,9 +102,17 @@ class LifecycleFailureTests(unittest.TestCase):
                         config['counter_snapshot'] = {
                             'helper_path': 'counter-helper.py',
                             'config': {'path': '/local/config.json', 'sha256': 'a' * 64}}
+                    if memory_failure:
+                        helper=Path(folder)/'memory-helper.py';helper.write_text('# host fake only\n')
+                        helper_config=Path(folder)/'memory-config.json';helper_config.write_text('{}\n')
+                        config['readonly_memory_snapshot']={
+                            'helper':{'path':str(helper),'sha256':t.sha(helper)},
+                            'config':{'path':str(helper_config),'sha256':t.sha(helper_config)}}
                     t.phase_game(dev, out, {'kind': 'control'}, config, 'test-token')
             state = json.loads((out / 'phase.json').read_text())
-            if not counter_failure and not sustained_failure:
+            if memory_failure:
+                self.assertIn('readonly_memory_snapshot_command',state)
+            if not counter_failure and not sustained_failure and not memory_failure:
                 self.assertTrue(state['screenshot_collection_errors'])
             if replacement:
                 self.assertFalse(saved)
@@ -133,6 +141,12 @@ class LifecycleFailureTests(unittest.TestCase):
 
     def test_counter_tool_replacement_pid_is_not_stopped(self):
         self.exercise(True, counter_failure=True)
+
+    def test_memory_tool_failure_still_saves_and_stops_owned_game(self):
+        self.exercise(False, memory_failure=True)
+
+    def test_memory_tool_replacement_pid_is_not_stopped(self):
+        self.exercise(True, memory_failure=True)
 
 
 if __name__ == '__main__':
