@@ -9,10 +9,15 @@ from pathlib import Path
 import subprocess
 import shutil
 import zipfile
+import native_sample_profile as sample_profile
 from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
+parser.add_argument('--sample-profile',type=Path,help='explicit LLVM sample profile for host C/C++, default disabled')
+parser.add_argument('--sample-profile-sha256',help='exact sample profile SHA256')
+parser.add_argument('--sample-profile-provenance',type=Path,help='completed official converter input/output provenance')
+parser.add_argument('--sample-profile-provenance-sha256',help='exact producer provenance SHA256')
 parser.add_argument('--thinlto',action='store_true',help='experimental Clang ThinLTO for host C/C++, lld backends limited to2')
 parser.add_argument('--native-resources',action='store_true',help='compile default-OFF host-native texture protocol; requires shared pools')
 parser.add_argument('--shared-pools',action='store_true',help='compile default-OFF fixed shared Pool/early guest heap experiment')
@@ -22,6 +27,10 @@ parser.add_argument('--tlsdesc', action='store_true', help='Native dynamic TLS, 
 parser.add_argument('--opt-level', choices=['1', '2', '3'], default='3', help='native host optimization; preserves debug symbols and frame pointers')
 parser.add_argument('--renderdoc-api', action='store_true', help='optional official application-API capture, not custom timing')
 args = parser.parse_args()
+try:
+    sample = sample_profile.verify(args)
+except (ValueError, OSError, json.JSONDecodeError) as error:
+    parser.error(str(error))
 if args.shared_import_windows and not args.shared_pools:
     parser.error("--shared-import-windows requires --shared-pools")
 if args.native_resources and not args.shared_pools:
@@ -45,6 +54,8 @@ def run(*args):
 run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-native',
     '-DDM_ANDROID_TLS_DESC=' + ('ON' if args.tlsdesc else 'OFF'),
     '-DDM_NATIVE_THINLTO=' + ('ON' if args.thinlto else 'OFF'),
+    '-DDM_NATIVE_SAMPLE_PROFILE=' + (sample['profile']['path'] if sample else ''),
+    '-DDM_NATIVE_SAMPLE_PROFILE_SHA256=' + (sample['profile']['sha256'] if sample else ''),
     '-DDM_VULKAN_SHARED_IMPORT_WINDOWS=' + ('ON' if args.shared_import_windows else 'OFF'),
     '-DDM_VULKAN_SHARED_POOLS=' + ('ON' if args.shared_pools else 'OFF'),
     '-DDM_VULKAN_NATIVE_RESOURCES=' + ('ON' if args.native_resources else 'OFF'),
@@ -133,7 +144,7 @@ inputs.update(path for path in SOURCE.rglob('*') if path.is_file())
 inputs.add(Path(__file__).resolve())
 for name in ['volk','libadrenotools','opus']:
     inputs.update(p for p in (ROOT/'dm/third_party'/name).rglob('*') if p.is_file())
-inputs.update([ROOT/'dm/host/android/CMakeLists.txt',ROOT/'dm/host/native_thin_lto.cmake',ROOT/'dm/gfx/vulkan/CMakeLists.txt'])
+inputs.update([ROOT/'dm/host/android/CMakeLists.txt',ROOT/'dm/host/native_thin_lto.cmake',ROOT/'dm/host/native_sample_profile.cmake',ROOT/'scripts/dev/native_sample_profile.py',ROOT/'dm/gfx/vulkan/CMakeLists.txt'])
 inputs.update([ROOT/'dm/gfx/vulkan/builtins.cmake',ROOT/'dm/gfx/vulkan/build_builtin.py'])
 inputs.update(p for p in (ROOT/'dm/gfx/vulkan/shaders').iterdir() if p.is_file())
 inputs.update(native_build.glob('nvn_vk_*_spv.json'))
@@ -161,7 +172,8 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'native_jobs':args.native_jobs,
           'host_thinlto':args.thinlto,
           'host_thinlto_backend_jobs':2 if args.thinlto else None,
-          'host_extra_compile_options':['-flto=thin'] if args.thinlto else [],
+          'host_extra_compile_options':(['-flto=thin'] if args.thinlto else
+              sample_profile.compile_options(native_build/'sample-profile'/(sample['profile']['sha256']+'.prof')) if sample else []),
           'host_extra_link_options':['-flto=thin','-O'+args.opt_level,'-fuse-ld=lld','-Wl,--thinlto-jobs=2'] if args.thinlto else [],
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,
@@ -170,5 +182,15 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'upstream_ui_assets_sha256':{str(path.relative_to(ROOT)):sha(path)
               for path in [*touch_assets,*hud_assets]},
           'source_inputs':{str(path.relative_to(ROOT)):sha(path) for path in sorted(inputs)}}
+if sample:
+    # Verify source profile/proof and every producer file again after compilation.
+    # Never accept mutation during a build or silently keep a cached profile.
+    if sample_profile.verify(args) != sample:
+        raise SystemExit('sample profile producer inputs changed during build')
+    frozen_profile = native_build/'sample-profile'/(sample['profile']['sha256']+'.prof')
+    if sample_profile.sha(frozen_profile) != sample['profile']['sha256']:
+        raise SystemExit('actual compiler profile copy differs from explicit input')
+    manifest['host_sample_profile'] = dict(sample, compiled_profile=sample_profile.record(frozen_profile))
+    manifest['external_compiler_inputs'] = [sample['profile'],sample['producer_provenance'],*sample['producer_files']]
 manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
 print(apk)

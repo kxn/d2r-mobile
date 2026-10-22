@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(dmhost_android C ASM CXX)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../native_thin_lto.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../native_sample_profile.cmake")
 set(CMAKE_CXX_STANDARD 17)
 add_executable(native_display_test tests/native_display.c display.c)
 target_compile_options(native_display_test PRIVATE -UNDEBUG)
@@ -224,7 +225,9 @@ endif()
 # Keep all C/C++ participating in the application host visible to ThinLTO.
 # Prebuilt driver/helper libraries and original game modules are not rewritten.
 dm_native_thinlto(dmhost_android)
+dm_native_sample_profile(dmhost_android)
 dm_native_thinlto(dm_original_features)
+dm_native_sample_profile(dm_original_features)
 
 add_dependencies(dm_original_features dm_original_tables)
 
