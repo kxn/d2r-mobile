@@ -519,3 +519,20 @@ SDK／NVN 同一 PID15201、stop2、memfd inode79735 的快照成功；540 份�
 这些是内存所有权调查结果，不是翻译线程 CPU 优化成果；CPU 和内存账不能互相冒充。PTE present 不是 PSS、唯一物理 RAM、GPU 全驻留或可回收证明；当前 registry 不含已移除但仍在途的 Pool。Q 原包／资源恢复且 PID 已核为空；Mali 仍暂停，A650 不新增设备实验。
 
 证据：`.local/logs/sdk-free-pool-ownership-Q735-v2-offline-analysis-v1/report.md`、`sdk-free-pool-ownership-Q735-v1/root-actual-review.json`、`sdk-large-nonpool-origin-readonly-v1/report.txt`（后两项同在 `.local/logs/`）。
+
+
+### 当前硬件计数缺口、编译工具实测与分配来源工具交付
+
+局部性只读审核对了当前实际 ELF：f75 到 dc515 的 `.text` 为 2,833,404→2,833,972B，draw impl 22,356B、binding 7,696B 均未变。历史 d148／2fc／74 的 L1I 相关 stall 约占各自用户周期 18.40／18.01／18.26%，不能迁移成当前 f75 的预算，也不能全归宿主。53c 的三个完整冷阶段外提和 922 ThinLTO 已实施过，不再包装成新方向。当前逐函数 section 已存在，LLD 可以重排函数，但不能拆函数内部内联或另一个 f830 DSO；原 builder 也尚未声明排序输入与指纹，所以没有临时塞 link flags 或直接交付排序版。
+
+已用原未修改 helper 准备当前 f75 的 stat／core／memory／front-cache／front-stalls 和独立 raw-L1I 窗口，完整本地资格校验通过。实际执行在 identity 阶段发现桌面手动启动的新用户游戏，尚未部署、采集或改变设备状态即终止；没有新的合格 PMU 数据。等待设备可用期间继续离线工作，不能把这次终态1写成正在采集。
+
+原 PGO 的“Perf not found”前置已实际解决：官方 Debian `linux-perf` 与依赖只在工作区解包，核 APT 包哈希与签名，无系统安装。找回原历史 argv，使用相同 179 ELF／原 Simpleperf 文件／LLVM19.1.7 重试，仍终态1、无 profile。原内部 `perf script` 命令实际返回234，报 ARM64 unwind 不支持及 type32776；独立 `perf evlist` 确认该记录没有 BRANCH_STACK，而这版 llvm-profgen 只接受 LBR／LBRStack。限制现已实测，既不将缺工具直接当格式不支持，也不自造分支记录或泛称所有 AutoFDO 都不支持普通采样。
+
+为查清非 Pool 大分配来源，工具后继 `fa62848527a738631a2342e82afd889f0ce2bf96` 已实现并推送独立分支 `codex/sdk-startup-large-allocation-tools-v1`。冷启动只加入 Android `am start -D`；先用原官方 LLDB 安装 pending 主启动断点，再由 NDK 原 jdb 放行。实际模块加载后核 host UUID／哈希及原 SDK Allocate 的244B指令，再在原返回点读请求、返回指针、保存 LR 与官方调用栈。默认最多12次、硬上限16次、总60秒，与 CPU/GPU 性能采集互斥；原存档／恢复／原始NSO／canonical／资源门均保留。后续同 PID 的 SDK／Pool 快照复用成功44c解码器，明确地址对应不证明未发生 free/reuse，更不授权回收。
+
+51项离线控制与负例、官方主机 JDB 连接／退出、本地 LLDB 符号及冻结 config 校验通过；根审40项直接源码／官方工具引用、9文件源码归档和 decoder 与成功44c字节一致。Android 早启动捕获尚未实测，没有新的内存回收或 CPU／温度收益。执行说明和准确边界见独立工具 README；不得用离线通过数量代替原游戏实测。
+
+6GB 的目标仍是实际稳定游玩。旧 A650 记录已证明原游戏能进营地，未改 Mesa、sharedOFF／nativeOFF 时完成4段移动后也失败；另有同 PID GPU hardfault／skipcmd 和 WAITTIMESTAMP 返回 EPROTO71，不是已证 LMK／OOM 启动不足。A6xx＋KGSL4.19 与 Q735 的 A7xx＋6.1 存在真实差异，单靠共享关闭或 forcedSYSMEM 也未消除失败；当前缺 fault shader PC、真实输入 payload 与写入历史，不能凭近似 CP 前端位置指定错误 Draw／资源或盲改 preemption。没有再占用平板实验，也不拿 Q735 的内存端点代替6GB验收。
+
+证据（均在 `.local/logs/`）：`q735-current-locality-readonly-v1/ready.json`、`f75-link-order-feasibility-readonly-v1/ready.json`、`llvm-profgen-perf-prerequisite-retry-v1/ready.json`、`sdk-startup-large-allocation-tools-v1/{source-ready-agent,root-source-review}.json`、`a650-6gb-higher-level-blocker-readonly-v2/result.json`。
