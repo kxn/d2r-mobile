@@ -369,6 +369,25 @@ v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完�
 
 当前先验证已实现的连续纯状态段候选：42355条状态 opcode 可组成2622段，保留所有原 setter，仅减少段内反复观察器准入和计划游标交接。独立冻结版`ad44b85`及canonical APK已完成，原始NSO重新生成并验证；主机合同和原图形回归已通过，Android同包OFF/ON对照开始，尚不报告净收益。另一路研究直接扩充原 physical recipe 的消费产物，使源身份、物理准备、View及依赖履行结果贯穿各层；不能再建相同的资源目录，也不能只省一个getter却增加多层检查。
 
+### 连续状态段：四轮同包实测及可省成本的边界
+
+冻结`ad44b85`，canonical APK `502ebae9…`、host Build ID `aa0e8ec3…`。两臂均开启已有image split／UBO计划／附件复用，仅改变state segments；真实ARM64游戏、相同原NSO执行字节、驱动及资源。四轮都成功完成原生命周期存档两次提交并停机，画面为相同营地视角，无截图可见黑块或缺场景；已恢复日常稳定APK。Mali和平板未操作。
+
+| 轮次 | 状态段 | 整线程Running ms/Surface | replay self | replay children | Surface Hz | Running加权MHz | 外围样本占比（含新增段维护） |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | OFF | 26.0070 | 22.4074 | 2.4520 | 30.273 | 1509.3 | 131/1697，7.72% |
+| B1 | ON | 26.1722 | 22.3119 | 2.5897 | 30.269 | 1417.8 | 42/1798，2.34% |
+| B2 | ON | 26.6323 | 22.8513 | 2.5323 | 30.149 | 1434.4 | 39/1790，2.18% |
+| A2 | OFF | 26.8823 | 22.9853 | 2.6007 | 29.148 | 1418.6 | 125/1761，7.10% |
+
+外围列只包含观察器／计划交接、外层回放和新增段准入遍历；原setter、规划构造和真实GPU操作另计。两次ON都明显降低这部分的采样权重，支持“确有高频外围重复且可删除”的判断。它不是可省毫秒的直接测量，尤其不能乘独立8秒scheduler窗口的Running得到精确节省。原实现的42355条状态操作仍逐条执行，未通过少画或改游戏状态提速。
+
+初版B1分析将新段40个样本全部归为混合维护；机器码核验发现`vk_state_op`恢复栈帧后尾跳到`pipeline_set`／`memcpy`，调用栈缺失setter帧。按同一ELF的实际`BL vk_state_op`调用点对称恢复A1/B1/B2/A2的原setter后代后，B1新段剩24、B2剩22，得到上表。初版3.23%是包含16个已证原setter样本的保守混合值，不再称为新增维护成本。叶PC恰在call处及其它无法证明归属的样本继续保留混合，不擅自补父栈。
+
+整线程第一对ON多0.1653ms，反向第二对少0.2500ms，未获得稳定净时间改善。真实规划／提交成本必须计入总账，不能只看外围下降。频率和核心驻留也不同：首对replay self区域加权频率约1513→1409MHz，但外部marked区域反而约1501→1629MHz；不能用一个整线程MHz线性校正，也不能断言是优化触发降频。四个scheduler窗口严格资格通过，无实际未知时间缺口；B1一项独立PMU窗口variants30→32变化保留，record各轮自身稳定但A1/B1变体数不同，不隐去这些限制。
+
+本候选证明了一个约7%–8%父职责中确有可消除的重复外围，但没有找到能一次削掉约10ms的路径。源码及启动对照桥已保留到主线`d34e823`／`de379aa`／`2594522`，运行时代码与实测冻结版一致；当前仍是显式启动候选，不声称日常恢复包已经包含或默认启用本改动。后续不能因为未涨帧删除已成立的工作减少，也不能据此继续把剩余所有准备职责都叫重复。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -402,3 +421,5 @@ v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完�
 - `.local/logs/native-image-coverage-snapshot-v3/snapshot.json`、`coverage.json`、`root-actual-review.json`：成功的同暂停资源身份映射、静态使用机会及实际存档/恢复验收，非运行时热命中或性能测量。
 - `.local/logs/ordinary-image-coverage-v1/review.md`、`coverage.json`：已有普通分组覆盖、空组构建与非紧邻descriptor重访的次数；不将静态机会当运行时净收益。
 - `.local/logs/nvn-state-segments-v1/independent-review/ad44b85-addendum.md`、`android-ready.json`、`raw-ready.json`：冻结候选、实际消费标志及APK/ELF/原始NSO来源核对。
+- `.local/logs/nvn-state-segments-device-v1/final-independent-review.md`、四轮`state-path-review.json`：官方工具结果和按真实尾调用点修正的互斥父职责；原始采样及初版结果保留。
+- `.local/logs/nvn-state-segments-device-v1/root-scene-cleanup-review.json`、`install-baseline.json`：四轮截图、原生命周期存档、停机与日常APK恢复核验。
