@@ -388,6 +388,31 @@ v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完�
 
 本候选证明了一个约7%–8%父职责中确有可消除的重复外围，但没有找到能一次削掉约10ms的路径。源码及启动对照桥已保留到主线`d34e823`／`de379aa`／`2594522`，运行时代码与实测冻结版一致；当前仍是显式启动候选，不声称日常恢复包已经包含或默认启用本改动。后续不能因为未涨帧删除已成立的工作减少，也不能据此继续把剩余所有准备职责都叫重复。
 
+### 来源分类的整段实验：减少遍历不等于减少总准备成本
+
+独立候选 `d26c838` 已完成同包 OFF／ON／ON／OFF 真机对照，源码保留到主线 `27964c7`。它在绑定变化时维护原 source entries 的职责集合，热 draw 只处理需要 CPU publication 的 packaged 来源；不另建资源目录，不跳过实际 GPU 访问和 owner 保活。主机十项专项与原回归通过，独立审查未发现明确阻塞；原始 NSO、1033 个源码输入、六库及启动实际命中均核验。完整回归的 window=0 只证明回归资格，实际稀疏路径由四项专门的共享／legacy OFF／ON 用例覆盖。
+
+| 轮次 | 来源分类 | Running ms/Surface | replay self ms/Surface | Running MHz |
+|---|---|---:|---:|---:|
+| A1 | OFF |25.93145|22.16979|1479.43|
+| B1 | ON |26.69157|22.85685|1462.40|
+| B2 | ON |26.70064|22.99899|1434.76|
+| A2 | OFF |27.14775|23.29288|1400.81|
+
+正序 ON 多0.76013ms，反序 ON 少0.44711ms，未证明稳定净 CPU 收益。四轮 Surface 约30.19–30.28Hz，完整线程状态、频率覆盖及 trace health 通过；A1/A2 最初 stat 准备变化保留，record/scheduler 窗稳定。频率／核心驻留不同，不按MHz线性校正。四轮原生命周期同PID存档两次后停止；营地截图无明显缺面／黑块，不能扩大为全游戏验证。之后恢复原日常APK并核实停止。
+
+更重要的是**成本转移**：两次 OFF 的来源父职责合计237/3589样本（6.60%），两次 ON 为212/3602（5.89%）；将来源作用域与新增 setter 维护按互斥并集计入，变成264/3589（7.36%）与262/3602（7.27%），基本持平。ON 变槽分类各23/26样本，setter各12样本；旧 resolve 函数下降不能冒充整段工作消失。这些都是独立record窗的描述性份额，不乘Perfetto毫秒。
+
+次数模型也收窄了理想预期：同停快照所有stage共11361项，计入冷重建与变槽分类后，两种明示边界情景为7133/7217次逐项访问，不是仅剩2158。模型不含真实回调／变体序列，不是运行时命中率；当前 shared-lazy draw 本来就跳过 Pool collector，不能再认领第二轮收集的减少。
+
+决定：保留该实验，但暂不默认开启；原因是新增分类和维护抵消了大部分可见源处理减少，尚未证明整个职责的净工作收益，不是单凭FPS未上涨。它不是解决剩余约十毫秒的主要方向。此前已验证的 Buffer 消费、附件表示和连续状态段复用，在 `08b8ef0` 将 Android Java/JNI 默认改为开启，仍允许冷启动显式关闭；新的默认包需独立构建和实际无覆盖启动验证，不声称恢复到手机的旧日常包已包含这些默认。
+
+下一步优先复用此前已经跑通的官方同窗测量：Simpleperf `instructions:u` 加 cycles/task-clock 与 Perfetto 的完整 Surface 区间联合分析。既有886的三轮证明工具可用，但不能将其旧指令数当当前值。以组合开关检验累计结构优化是否实际减少每帧指令及CPU成本，再区分工作转移和执行速率问题；不继续用独立PMU窗的每秒指令率代替每帧工作量。
+
+此外，新的静态 UBO 调查只找到958次新增同4KiB页的偏移变化候选；7789次精确范围未变已属于现有覆盖，不能重新认领。整页alias／读取可见性和真实物理span资格尚未证明，因此不先新增全局页缓存。BOLT基本块布局调查也已完成实际工具尝试：当前ELF缺代码relocation、Android重写资格未验证，现有Simpleperf数据转`perf2bolt`失败；不把30%前端停顿率当可回收预算。
+
+本轮证据：`.local/logs/source-duty-partition-v1/`、`.local/logs/source-duty-partition-device-v1/{offline-result.json,final-interpretation.md,root-scene-cleanup-review.json}`、`.local/logs/source-partition-frequency-v1/`、`.local/logs/dynamic-ubo-page-reuse-v1/`、`.local/logs/cpu-frontend-layout-after-segments-v1/`。原始失败、各轮结果及分析边界均保留；Mali与平板未访问。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
