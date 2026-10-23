@@ -1,0 +1,54 @@
+# Q735：真实游戏官方 GPU 队列追踪
+
+当前没有达到60FPS。本轮补齐了此前缺少的真实游戏 GPU renderstage 证据：CPU准备继续变快并不保证出图同步变快，必须同时处理实际GPU关键路径。下面的GPU时间均来自开启官方追踪时的执行状态，不能冒充无工具性能基线，也不是纯Shader时间。
+
+## 实际实现与资格
+
+在原f830完整驱动源码上，仅启用Mesa现成Perfetto SDK v56.1，得到独立89e4c682驱动；没有改渲染算法、着色器或内存实现。真实独立transfer验证先通过copy/fill字节和fence检查，并取得正确PID/context下的GPU时间戳。它只证明transfer，不代表游戏。
+
+新驱动的UUID和ELF摘要与旧表不同，严格资源门会拒绝旧表。因此使用原8064生产器、现有压缩输入重新生产全部6217项，第一批128项和余下48批6089项均完成原roundtrip校验并退出。没有重新编码ASTC，也没有改旧recipe的身份。原strict packer重新封装后，6217项payload、CFT、descriptor、thumbnail和family分别逐项相同，保留原CASC；新表只用于独立诊断。
+
+诊断运行时源码为独立分支`codex/turnip-perfetto-resident-v1`的`5d329bd`，基于主线9057。仅在两个启动期精确驱动合同中加入89e：原shared实际字节门通过后保持shared-lazy；原table/UUID/driver/producer/pack门通过后保持native resident。未知驱动没有获得新资格，无sparse、绑核或游戏逻辑修改。源码1034项、六库、UI及签名、原始NSO重建的28项产物均核验；其中24项执行和规则产物与日常相同。辅助库整体文件摘要含新debug/buildID，五个辅助库的所有allocated sections（除buildID）经LLVM readelf比较相同。
+
+实际游戏PID13423进入原角色选择及营地，shared-lazy实际开启，原native表安装门通过，实际mapped驱动inode/device与独立部署一致。固定.60、2750×1260、target60、原950 shader及6217项混合ASTC资源；预热至tick1003，PSO174、variants32。营地截图含原角色、场景及HUD，未见明显黑块或缺几何；这是单场景资格，不代表战斗和长时稳定性。
+
+原system Perfetto工具请求`gpu.renderstages`、`mesa.default`、CPU调度和Surface事件，共8秒。实际trace为25,520,168字节，SHA256 `46d03c6e06f4bd9423ad69bc36f0d1371d36301e02698ab230af1d6c50c90e21`。该运行完成原生命周期fresh save commits=2并退出。原日常APK、f830、旧表及33项资产已实际恢复并独立核对，层设置不变，生产器也已退出；未使用暂停借出的设备。
+
+一次正式采集前的controller失败另存于`qualification-GPU/`：JNI只把stderr重定向至native.log，controller却要求stdout的identity JSON出现在该文件。游戏本身已经成功安装表并运行，尚未开始GPU采集。修正为实际映射身份和原严格表安装门后，第二次实际运行取得上述trace。旧失败及save2收条保留，不冒称两次GPU对照。
+
+## 首次实际队列结果
+
+官方TraceProcessor确认真实游戏UPID1/context2的GPU执行事件。正常执行位于Queue0/hw_queue4，warning轨道不能当第二条执行队列，也没有据此证明并行binning。没有error/data-loss；clock_sync_cache_miss是info，不能当数据丢失。
+
+|稳定Render Pass组|本次次数|GPU区间均值|
+|---|---:|---:|
+|1650×756、2附件、8bins、641draw|206|13.337ms|
+|1650×756、1附件、4bins、641draw|207|4.921ms|
+|2750×1260、1附件、10bins、783draw|207|3.544ms|
+
+这些是TBDR pass区间，含阶段及同步边界；不能与其嵌套binning/GMEM子项再相加，也不按单个draw归因。主组原args显示`ubwc=y|y`，不支持简单认定当前主组未启用压缩。
+
+最大组内部按原区间裁剪并排重后，平均Binning为2.259ms、GMEM标记覆盖10.979ms、其余0.100ms，合计才是13.337ms。GMEM覆盖含每tile绘制及clear/store等，不是纯片元着色成本。相同硬件队列的CommandBuffer映射端点存在368处小重叠，最大0.824ms；保留官方时钟/流水边界精度限制，不据此宣称额外硬件并行或微秒级因果顺序。
+
+同SurfaceView首尾203个完整间隔覆盖7.829秒。CommandBuffer/执行阶段包络并集约7.780秒（99.375%），包络外最大内部空隙约0.798ms。这个数字只表示带工具状态下GPU队列执行包络密集，不表示Shader Busy=99%、DRAM带宽饱和或没有流水线内等待。present的2.1756秒睡眠中约2.1706秒与GPU包络重叠，进一步支持检查GPU未完成的原因，不能将它归为单独的CPU锁等待。
+
+KGSL官方追踪自身会等待profiling buffer中的`gpu_ticks_queued`，还增加时间戳/trace工作。本次Surface约38.57ms不能与无工具日常约33ms直接做优化比较，不能猜一个扰动值扣除。原CPU7对照仍是约21ms Running、约33ms Surface；既没有满足16.67ms CPU预算，也没有因CPU缩短而涨帧。
+
+本次同窗owner Running为26.034ms/Surface，不能与未开官方GPU追踪的CPU7对照混算。1654个有GPU阶段且严格关联的提交，从真实CPU queue_submit返回到首个GPU阶段平均37.749ms；这表示带工具队列及依赖延迟，不是API执行耗时。原GPU工具的traceq0和TracingMuxer线程也有实际CPU开销，不能把它们加入owner后称作原游戏日常成本。
+
+## LRZ与更高层CPU批处理
+
+主8bin组显示`lrzWriteDisableReason=Stencil may kill fragments`，第1个draw后禁写；4bin组同原因发生于第539个draw。pass末尾的`lrzStatus=DISABLED`不能证明全程都没用LRZ，也不能将禁写混同禁读。旧同暂停相近主类646draw的实际stencil是EQUAL、compareMask=(2,2)、reference=(0,0)、writeMask=(0,0)，测试有效位，并非mask0恒真；旧类不是本次641draw组的逐对象对应证据。不能为解除warning删掉真实stencil或强制Early-Z。
+
+CPU侧同时审查旧完整2445draw快照的批量表达机会：完整固定状态及几何完全相同的相邻draw组为0；仅Uniform地址变化的92组236draw，排除未知shader variant后51组129draw，需要真实DrawID/UBO表表达，不能直接换一个MultiDraw调用。另有173次相邻变化仅是索引地址，组成80组253draw；若物理VkBuffer相同且query/顺序允许，可能用firstIndex表达而不改Shader。现有快照没有物理span资格，173不等于合法可合并数；不将旧次数比例乘当前采样份额认领毫秒。大规模bindless/DrawID改造目前没有足够覆盖预算。
+
+## 接下来的判断标准
+
+1. CPU按完整职责和净工作量评估，不能把约9%的Buffer父路径或约9%的图像父路径全部称作重复劳动。已有复用命中先扣除，必要publication/hazard/lifetime不能跳过。
+2. GPU优先解释最大的稳定pass组：实际Shader与资源读取、binning/GMEM阶段及pass边界，再结合原SDP全局读写/纹理计数；不把pass时间直接称Shader时间或盲目开Early-Z。
+3. 只有精确证明输入、生命周期和观察边界相同，才推进整段准备复用或批量draw；目标是取消消费路径，不在它前面再叠一层逐draw检查。
+4. 当前没有60FPS、长期温度或新默认性能收益。追踪驱动与两项冷合同保留为独立工具候选，日常驱动和设置已恢复。
+
+下一项有限实验准备比较当前日常驱动的默认GMEM决策和原驱动提供的SYSMEM路径：主组实际存在8tile重放及binning成本，值得测其工作量/带宽取舍。旧scale1.0、旧shader且未共享的GMEM/SYSMEM运行不能代替本次结果；当前先用无GPU-stage扰动的原Simpleperf/Perfetto对照，不把强制SYSMEM预设为更快或默认策略。driver、shader、原资源及.60固定分辨率保持一致，属性必须在冷启动设置并按原值恢复。
+
+原始采集及实际恢复：`.local/logs/current-game-renderstages-v1/`；官方SQL与队列分析：`.local/logs/current-game-renderstages-v1-analysis/`；生产及严格封装：`.local/logs/perfetto-native-rebake-v1/`、`.local/logs/perfetto-native-pack-89e-v1/`；CPU批处理审查：`.local/logs/adjacent-draw-batching-audit-v1/`。工具配置可用`capture-android-scheduler.py --mesa-renderstages`请求现成数据源；请求成功仍必须核实实际GPU记录。

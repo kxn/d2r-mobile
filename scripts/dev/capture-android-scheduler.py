@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Record scheduler/frequency events for the current original Android game.
 
-CPU/system tracing complements vendor GPU counters; it is not a GPU render-stage
-capture. Unsupported frequency events must not be inferred from other counters.
+CPU/system tracing complements vendor GPU counters. Optional Mesa render-stage
+sources require a compatible driver and verified GPU records. Unsupported
+frequency events must not be inferred from other counters.
 """
 import argparse
 import hashlib
@@ -27,6 +28,8 @@ def main():
                         help='official print_filter: retain all B/E and async phases, app counters only; discard vendor free-text and wrong-TGID counters')
     parser.add_argument('--frame-timeline',action='store_true',help='request official SurfaceFlinger frame/timeline sources; verify packet counts before interpreting')
     parser.add_argument('--thermal-events',action='store_true',help='request the Android thermal tracing category; verify which events the device actually emits')
+    parser.add_argument('--mesa-renderstages',action='store_true',
+                        help='request Mesa official gpu.renderstages and mesa.default events; requires a driver built with Perfetto support, and actual GPU records must be verified')
     args=parser.parse_args()
     sidecars=[args.output,args.output.with_suffix('.json'),args.output.with_suffix('.pbtxt'),args.output.with_suffix('.capture.log')]
     if not 1<=args.seconds<=30 or args.output.suffix!='.pftrace' or any(p.exists() for p in sidecars):
@@ -45,7 +48,7 @@ def main():
     native_log=adb('exec-out','run-as',PACKAGE,'cat','files/runtime/native.log')
     if f'Android native start pid={pid}\n' not in native_log or 'external profiling: custom CPU/GPU timers disabled' not in native_log:
         raise SystemExit('use the original game in --external-profile mode')
-    apk=adb('shell','pm','path',PACKAGE).strip().removeprefix('package:')
+    apk=adb('shell','pm','path','--user','0',PACKAGE).strip().removeprefix('package:')
     if not apk.startswith('/') or '\n' in apk:raise SystemExit('one APK path is required')
     apk_sha=adb('shell',shlex.join(['sha256sum',apk])).split()[0]
     chain=adb('exec-out','run-as',PACKAGE,'cat','files/runtime/shaders/.chain').strip()
@@ -79,6 +82,9 @@ duration_ms: %d
     if args.frame_timeline:
         config+='data_sources { config { name: "android.surfaceflinger.frame" } }\n'
         config+='data_sources { config { name: "android.surfaceflinger.frametimeline" } }\n'
+    if args.mesa_renderstages:
+        config+='data_sources { config { name: "gpu.renderstages" } }\n'
+        config+='data_sources { config { name: "track_event" track_event_config { disabled_categories: "*" enabled_categories: "mesa.default" } } }\n'
     args.output.with_suffix('.pbtxt').write_text(config)
     # Temperature is displayed through the app's public Android API only.
     # Do not add shell temperature reports to the measured gameplay path.
@@ -95,6 +101,8 @@ duration_ms: %d
     adb('shell','rm',remote)
     report={'serial':args.serial,'pid':int(pid),'seconds_requested':args.seconds,'apk_sha256':apk_sha,
             'buffer_mb':args.buffer_mb,
+            'mesa_renderstages_requested':args.mesa_renderstages,
+            'mesa_renderstages_scope':'Official driver GPU events, if emitted. On KGSL the profiling path can wait for gpu_ticks_queued; captured CPU/FPS is not an uninstrumented baseline. Nested stages and queue envelopes are not additive shader time.',
             'clean_atrace_print_requested':args.clean_atrace_print,
             'app_markers_requested':args.app_markers,
             'thermal_events_requested':args.thermal_events,'frame_timeline_requested':args.frame_timeline,
