@@ -290,6 +290,27 @@ Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相
 
 已将完整实现及v2维护收敛合入当前源码（`504a193`、`a598163`、`02a33b6`、`ddcda87`），`dm/`与`scripts/`和实测冻结版完全相同。保留工作量成果，不冒称已达到60fps；启动实验开关仍可显式对照。四轮均完成原生命周期存档并停止，设备恢复日常稳定包。附件实验在独立分支继续，尚未交付：首次host回归发现整draw冷重试重复了前段操作，已保留失败，正在改为只重建必要的准备段，不能把这种未闭合候选合入基础运行。
 
+### 将图像职责与混合访问分开后，收窄下一项预算
+
+对v2四个既有Simpleperf窗口再次逐样本归类，分母609／608／600／608。明确附件、clear、dispatch等先按真实父职责排除；每个样本只进入一个分类。能确认的着色器图像链及其自身维护占12.50%–17.27%，不再沿用前述资源大类的25%–30%作为纹理优化预算。
+
+| 完整父职责 | 四窗样本数 | 整线程采样范围 |
+| --- | --- | --- |
+| 图像来源逻辑解析 | 17／21／18／10 | 1.64%–3.45% |
+| 图像CPU来源观察 | 15／10／15／9 | 1.48%–2.50% |
+| 物理图像预准备＋View消费子树 | 46／49／50／43 | 7.07%–8.33% |
+| 混合descriptor整set交付 | 35／37／39／33 | 5.43%–6.50% |
+| 混合图像依赖（含附件） | 10／13／8／7 | 1.15%–2.14% |
+| 混合访问历史（含附件） | 24／17／18／18 | 2.80%–3.94% |
+
+后三行不能全算给采样纹理：descriptor同时交付Buffer，依赖和历史向量也包含附件。物理prepare/View可以处理sampled和storage，采样未记录参数，不能按函数名推断每个输入类型。native/普通图像在公共代码中的组成多数仍未知，只保留调用点越过明确分支后可证明的少量归属。来源计划作用域、现有普通图像组维护和未知分支单独保留在完整报告，未从分母删除。
+
+27ms降到16.7ms需要减少约38%的整线程Running。即使不合理地把所有已归属图像职责、所有混合descriptor／依赖／历史及来源未知外壳免费删除，四窗可见包络也只有23.36%–29.61%。这不是全局数学上界，缺失父栈和未归属PC仍存在；它说明**现有证据不足以承诺只做下一项纹理复用就达到60fps**。上述百分比没有乘独立scheduler窗口冒充函数毫秒。
+
+下一结构单位仍应是同一draw的完整消费产物：来源→Pool/VS依赖→prepare→descriptor→dependency/history。让实际状态变化更新已有产物，并将身份、范围、物理表示及首次消费证明向下交付；不能给每层再套一个valid检查。实际CPU发布、首次可见性、writer、资源保活和recording边界继续履行。普通图像组、UBO计划及descriptor缓存已经省掉的工作不能重复计入候选。
+
+附件表示复用已在独立冻结版`e9c60cb`实现：直接借当前render job/framebuffer已有数组，保留每draw实际access和dependency。初版整draw冷重试重复nofxaa/bloom的错误已改为有界局部重建。完整host ON/OFF、真实共享lazy UBO组合、区域扩大／pass结束／Storage及格式升级／深度角色变化的专项均通过，未放宽原断言。共享UBO专项不证明附件热借用的全部联合失效组合；Android默认OFF同包对照正在进行，不预先声明净收益。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -312,3 +333,5 @@ Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相
 - `.local/logs/nvn-buffer-consumption-plan-v2/contract.md`、`independent-contract-review.md`、`android-phase-gate.disasm`：v2事件合同、独审及实测Android ELF检查。
 - `.local/logs/buffer-consumption-device-v2/final-independent-review.md`、`final-independent-manifest.json`、`pmu-window-review.json`：v2四轮工具数据、父子职责及PMU测量边界。
 - `.local/logs/buffer-consumption-device-v1/attachment-preparation-contract.md`：附件复用依赖与静态覆盖边界，明确已持有结果和缺少的访问证明。
+- `.local/logs/image-preparation-cost-v2/report.md`、`attribution.json`及逐窗`assignments.json`：当前图像链和混合职责的互斥分类、未知归属与跨层预算。
+- `.local/logs/attachment-job-reuse-v1/independent-review/final-review.md`、`ready.json`：附件候选失效合同与冻结host验证；`android-ready.json`单列canonical APK，不混同host结果。
