@@ -3,6 +3,7 @@
 // Map original NVN draw state to Vulkan render passes and pipelines,
 // conservatively preserving attachments and command ordering.
 #include "nvn_vk_shader.h"
+#include "nvn_vk_record_owner.h"
 #include "nvn_vk_draw_emission.h"
 #include "nvn_vk_extrap.h"
 #include "nvn_vk_freeze.h"
@@ -63,10 +64,15 @@ typedef struct render_job {
   vk_draw_emission *pending_draws;
   uint32_t pending_count,pending_capacity;
   uint8_t pending_uncacheable; // whole-job retention abandoned; future delivery is immediate
+  VkCommandBuffer retained_secondary;
+  unsigned retained_slot;
+  uint8_t retained_slot_valid,retained_preceded;
 } render_job;
 struct vk_graphics_submission {
   render_job *jobs;
   size_t pending_bytes; // retained packet allocations, released only at safe recycle
+  struct retained_recordings *retained;
+  unsigned retained_next_job;
 };
 static vk_graphics_submission *graphics_state;
 // 同目标的连续绘制保持通道打开；传输、查询重置或目标变化时再结束。
@@ -152,7 +158,9 @@ static void render_bind_index(render_job *j,VkBuffer buffer,VkDeviceSize offset,
     j->bound_index_valid=1;
   }
 }
+static int retained_prefix_try(render_job *,const vk_draw_emission *,unsigned);
 #include "nvn_vk_draw_emission.inc"
+#include "nvn_vk_retained_prefix.inc"
 static atomic_uint_fast64_t pixel_local_plans,pixel_local_draws,pixel_local_aborts;
 void vk_pixel_local_stats(uint64_t *planned,uint64_t *draws,uint64_t *aborts) {
   *planned=atomic_load(&pixel_local_plans);*draws=atomic_load(&pixel_local_draws);*aborts=atomic_load(&pixel_local_aborts);
@@ -195,6 +203,7 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
       j->ds_written|=VK_IMAGE_ASPECT_STENCIL_BIT;
   }
   j->secondary = vk_command_buffer(VK_COMMAND_BUFFER_LEVEL_SECONDARY);
+  retained_job_begin(j);
   VkCommandBufferInheritanceInfo inherit={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO,
     .renderPass=j->pass,.framebuffer=j->framebuffer};
   VkCommandBufferBeginInfo bi={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -652,7 +661,13 @@ void vk_render_end_at(const char *file, unsigned line) {
       .renderPass=j->final_pass?j->final_pass:j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
       .clearValueCount=j->attachment_count,.pClearValues=j->clears};
     vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-    vk_command_execute(1,&j->secondary);vkCmdEndRenderPass(V.cmd);
+    if(j->retained_secondary) {
+      // The cached prefix precedes every command retained in the original
+      // transient tail (possibly empty). Never execute either prefix twice.
+      VkCommandBuffer commands[]={j->retained_secondary,j->secondary};
+      vk_command_execute(2,commands);
+    } else vk_command_execute(1,&j->secondary);
+    vkCmdEndRenderPass(V.cmd);
     // Read-only depth testing/sampling may share the pass. Its physical store
     // is an access at pass end, not an imaginary write by every depth test.
     // Record stores directly even while an outer descriptor batch is pending.
@@ -795,6 +810,8 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   }
   if (state->jobs) die("Vulkan graphics resources reused before recycling");
   graphics_state = state;
+  state->retained_next_job=0;
+  if(state->retained)state->retained->used=0;
   mip_clear_begin();
   // 按提交锁定模式；命令更新和绘制必须使用同一套失效规则。
   // Latch per submission: state updates and draws must share invalidation rules.
@@ -820,11 +837,13 @@ void vk_graphics_end(vk_graphics_submission *state) {
   atomic_store(&pixel_local_draws,draw_recorded.pixel_local_draws);
   atomic_store(&pixel_local_aborts,draw_recorded.pixel_local_aborts);
   mip_clear_publish();
+  retained_submission_end(state);
   graphics_state = NULL;
 }
 void vk_graphics_recycle(vk_graphics_submission *state) {
   if (!state) return;
   if (graphics_state == state) die("Vulkan recycling recording graphics resources");
+  retained_submission_recycle(state);
   while (state->jobs) {
     render_job *j = state->jobs;
     state->jobs = j->next;

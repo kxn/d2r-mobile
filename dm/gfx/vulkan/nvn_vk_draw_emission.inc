@@ -12,6 +12,7 @@ static int draw_emission_test_reference(void) {
 // Synchronous resolved delivery: no resource lookup, owner preparation or
 // fallback replay. Only the original per-secondary emitted-state suppression.
 static void draw_emission_immediate(render_job *j,const vk_draw_emission *p,vk_sample_query occlusion) {
+  j->retained_preceded=1;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(p->geometry_complete)draw_emission_complete++;else draw_emission_interleaved++;
 #endif
@@ -100,7 +101,8 @@ void vk_test_draw_pending_stats(uint64_t *queued,uint64_t *flushes,uint64_t *max
 #endif
 void vk_draw_flush_pending(void) {
   render_job *j=active_job;
-  if(!j || !j->pending_count)return;
+  if(!j)return;
+  if(!j->pending_count) {j->retained_preceded=1;return;}
   unsigned count=j->pending_count;
   // Clear before emission: query hooks may call this entry, but queued draws
   // have no query and emission never invokes owner/resource preparation.
@@ -108,6 +110,8 @@ void vk_draw_flush_pending(void) {
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   draw_pending_flushes++;
 #endif
+  if(retained_prefix_try(j,j->pending_draws,count))return;
+  draw_parameters_flush(graphics_state?graphics_state->parameters:NULL);
   for(unsigned i=0;i<count;i++)draw_emission_immediate(j,&j->pending_draws[i],(vk_sample_query){0});
 }
 static void draw_emission_deliver(render_job *j,const vk_draw_emission *p,vk_sample_query query) {
