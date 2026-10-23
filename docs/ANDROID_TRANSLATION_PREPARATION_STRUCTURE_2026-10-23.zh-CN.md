@@ -436,6 +436,16 @@ v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完�
 
 证据：`.local/logs/same-window-structural-comparison-v1/` 的四轮原采集、配置、`analysis-C*/{full,observable}/facts.json`；职责与剩余预算清单为 `.local/logs/translation-structure-reuse-v1/current-repetition-priority.{md,json,py}`。当前保留新默认APK，采集结束已核实进程退出；无稳定净FPS或60FPS达标声明。
 
+### 最新父职责继续拆解与 Store 候选预算约束
+
+对 source 四轮同 ELF 的实际调用链继续展开原 `remaining draw` 和 `remaining binding assembly`，默认开关一致的 A1/A2 中：附件访问、目标匹配及通道生命周期占全部用户样本4.44%/3.58%；program/变体选择0.94%/2.01%；descriptor 真正 MISS 物化及其驱动后代1.22%/1.51%；复用 key/查找0.94%/0.67%。另有 draw9.51%–10.60%、binding5.05%–5.65%为直接PC/混合协调，不能填成已证重复。只在原互斥父桶内按精确祖先细分，没有补缺失父栈、猜line0分支或按叶函数调用量预报毫秒。结果、逐样本分组和输入哈希见 `.local/logs/current-draw-parent-breakdown-v1/`。
+
+Store READ 的真实槽频度仍说明有重复 descriptor 查询，但进一步预算检查发现：当前四窗 `submission_index_build` 祖先内的 `descriptor_bucket`／`vk_texture_descriptor_footprint` 合并仅20/1802、22/1803、22/1799、26/1787，即约1.1%–1.45%全部用户采样。这是新“变槽解析、稳定槽直接交付原seq读取事件”候选的父包络；不能把约七成身份相同，写成可省七成规划，更不能认领全部1.6ms。
+
+候选冻结为独立提交 `2b0aeab`，两臂主机事件oracle各128次及两个深度格式像素合同通过；新增冷/热/变槽/同ID注册失效断言通过。原真实fixture的重复descriptor hash hits每组3→0、misses15不变，真实读取事件不减。首次旧测试因要求重复hash hit增加而失败的日志保留，修订为ON严格不增加、OFF仍须增加。尚未做Android构建或真机性能验收，未并入主线。为这个已经收窄的小预算，不立即再开完整原NSO/安装/四轮长事务；候选保留，是否合并或上线须由其完整成本与平台验证决定。主线优先级仍是整段消费产物及未闭合的大父职责，不回到只省一个末端hash便预报大幅提速。合同及结果见 `.local/logs/store-read-slots-v1/{ready.json,result.md,host-v2/results.json}`。
+
+同窗运行态显示 ON 在CPU3–6本身也降频，CPU7驻留减少，因此并非仅大核占比改变。原系统快照均普通调度、top-app、uclamp0..1024，并无配置30fps的证据：实际target60、pace60、period16666665ns。当前trace缺真实频率限制事件，部分核心PMU内层user cycles与trace频率积分也不足以互推，不能从两者差额虚构内核时间。历史ADPF已有成功启用却未加速的对照，不将重复启用当新方案。执行速率结论的下一证据入口为 `.local/logs/translation-execution-rate-v1/`，仍不声称已找到完整26.8ms不下降的单一原因。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
