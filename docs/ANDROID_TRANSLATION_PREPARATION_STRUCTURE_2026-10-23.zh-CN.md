@@ -344,6 +344,21 @@ Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相
 
 v1在native映射失败前已完整读取OP/program/schema。非draw离线分析独立核对764个原始页及哈希、重新展开控制流并核对93个program/82份schema后，才使用这些字段；它不把整个快照改成成功，也不推断物理图像寿命。原始命令字段分析和native资格补缺分别记账。
 
+### 同次native映射补齐：收回对native候选覆盖的乐观预期
+
+v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完整SHA，官方LLDB采集成功。原游戏本次45257条OP、519个实际使用descriptor、物理image/native allocation/Pool身份来自同一暂停；registry/writer/recipe epochs及mutex状态前后一致。实际detach成功、原生命周期存档两次提交、停机和恢复稳定APK均已核验，没有为此更改游戏或运行时代码。
+
+| 同次FS采样图像槽使用 | 次数 |
+| --- | ---: |
+| 总数（排除7个非FS/变体不确定槽） | 11354 |
+| 完整native来源，暂停时resident/coherent | 1251 |
+| 普通物理图像、带CPU布局来源 | 2158 |
+| 普通物理图像、不带CPU布局来源 | 7945 |
+
+同shader及保守命令段中，native相邻同槽身份不变只有231项，整native子集不变88对。1251不能当可省调用次数，暂停resident也不证明未来writer/pass/recording稳定。它说明此前prepare/View约7%–8%的父预算不能全分给native扩展，首要研究方向须据此调整。
+
+7945个普通无layout槽也不是新收益：已有普通图像组在e9四轮相同scheduler外围端点，每guest submit已经跳过6398–6502项，约584–593次成功复用。这里与单次快照不是同窗，不能相减造精确未覆盖数；但数量级已足以要求扣除既有覆盖。当前继续核对普通图像组的资格、失效及空组构建，特别检查少数变化槽是否使其他稳定槽重新准备；不能预设整组失效就是剩余大头。带layout来源、首次消费、实际写入和同步也不能按“相同ID”直接省掉。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -374,3 +389,4 @@ v1在native映射失败前已完整读取OP/program/schema。非draw离线分析
 - `.local/logs/replay-architecture-after-attachment-v1/report.md`、`attribution.json`、`e9-field-validation.json`：当前非draw互斥父职责、独立完整命令字段验证与变化驱动读取集合机会。
 - `.local/logs/native-image-coverage-snapshot-v1/`、`native-image-coverage-snapshot-v2/`：两次未完成native映射的原始失败及存档/停机记录，不作为native覆盖成功证据。
 - `.local/logs/native-image-mutex-abi-audit-v1/`：实际手机libc与历史工具证据一致性、官方反汇编和独立ABI审查。
+- `.local/logs/native-image-coverage-snapshot-v3/snapshot.json`、`coverage.json`、`root-actual-review.json`：成功的同暂停资源身份映射、静态使用机会及实际存档/恢复验收，非运行时热命中或性能测量。
