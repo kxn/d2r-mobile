@@ -64,6 +64,7 @@ parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalA
 parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job attachment representation reuse (default off); verify effective backend mode')
 parser.add_argument('--attachment-raster-run',action=argparse.BooleanOptionalAction,default=None,help='startup-only fulfilled ordinary attachment access runs (default on; --no-attachment-raster-run for reference); verify actual history reuse')
 parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental validated pure-state replay segments (default off); verify effective backend mode')
+parser.add_argument('--nvn-owner-cpu',type=int,default=None,help='startup-only diagnostic self-affinity: -1 unchanged, otherwise one allowed CPU [0,1023]; no priority/frequency changes')
 parser.add_argument('--source-partition',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental sparse image source responsibilities (default off)')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
@@ -150,6 +151,8 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
+if args.nvn_owner_cpu is not None and (args.attach or not -1 <= args.nvn_owner_cpu < 1024):
+    parser.error('--nvn-owner-cpu requires cold startup and -1 or [0,1023]')
 if args.attach and args.source_partition is not None:
     parser.error('--source-partition is startup-only')
 if args.attach and args.state_segments is not None:
@@ -249,6 +252,8 @@ if not args.attach:
               '--ez', 'validate', str(args.validate).lower()]
     if args.image_buffer_split is not None:
         launch += ['--ez','image_buffer_split',str(args.image_buffer_split).lower()]
+    if args.nvn_owner_cpu is not None:
+        launch += ['--ei','nvn_owner_cpu',str(args.nvn_owner_cpu)]
     if args.source_partition is not None:
         launch += ['--ez','source_partition',str(args.source_partition).lower()]
     if args.state_segments is not None:
@@ -407,6 +412,19 @@ while time.monotonic() < deadline:
                         raise SystemExit('pool backing window policy did not apply')
                     if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
                         raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
+                    owner_affinity=re.findall(r'\[nvn affinity\] requested=(\d+) tid=(\d+) original=([0-9a-f]+) actual=([0-9a-f]+) status=applied errno=0',log)
+                    owner_affinity_actual=None
+                    if owner_affinity:
+                        cpu,tid,original,actual=owner_affinity[-1]
+                        owner_affinity_actual={'cpu':int(cpu),'tid':int(tid),'original_mask':original,'readback_mask':actual}
+                    if args.nvn_owner_cpu is not None:
+                        if args.nvn_owner_cpu < 0:
+                            if '[nvn affinity] requested=-1 status=unchanged' not in log:
+                                raise RuntimeError('NVN owner affinity unchanged startup not observed')
+                        elif (not owner_affinity_actual or owner_affinity_actual['cpu']!=args.nvn_owner_cpu or
+                                int(owner_affinity_actual['readback_mask'],16)!=(1<<args.nvn_owner_cpu) or
+                                not int(owner_affinity_actual['original_mask'],16)&(1<<args.nvn_owner_cpu)):
+                            raise RuntimeError('NVN owner self-affinity verified readback not observed')
                     source_partition_modes=re.findall(r'\[vulkan\] image source partition enabled=([01])\b',log)
                     actual_source_partition=bool(int(source_partition_modes[-1])) if source_partition_modes else None
                     source_partition_hit='[vulkan] image source partition actual sparse CPU operation' in log
@@ -479,6 +497,8 @@ while time.monotonic() < deadline:
                               'attachment_raster_first_hit':raster_hit,
                               'requested_attachment_job_reuse':args.attachment_job_reuse,
                               'actual_attachment_job_reuse':actual_attachment_reuse,
+                              'requested_nvn_owner_cpu':args.nvn_owner_cpu,
+                              'actual_nvn_owner_affinity':owner_affinity_actual,
                               'requested_source_partition':args.source_partition,
                               'actual_source_partition':actual_source_partition,
                               'source_partition_actual_sparse':source_partition_hit,

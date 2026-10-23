@@ -46,6 +46,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeBufferConsumptionPlan(boolean enabled);
     private static native void nativeAttachmentJobReuse(boolean enabled);
     private static native void nativeAttachmentRasterRun(boolean enabled);
+    private static native void nativeNvnOwnerCpu(int cpu);
     private static native void nativeStateSegments(boolean enabled);
     private static native void nativeSourcePartition(boolean enabled);
     private static native void nativeSampleLivenessReference(boolean reference);
@@ -273,6 +274,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", true));
             nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", true));
             nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
+            nativeNvnOwnerCpu(getIntent().getIntExtra("nvn_owner_cpu", -1));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
@@ -506,6 +508,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("image_buffer_split")) {
             android.util.Log.w("D2RDriver", "image_buffer_split is startup-only; cold restart required");
             intent.removeExtra("image_buffer_split");
+        }
+        if (intent.hasExtra("nvn_owner_cpu")) {
+            android.util.Log.w("D2RDriver", "nvn_owner_cpu is startup-only; cold restart required");
+            intent.removeExtra("nvn_owner_cpu");
         }
         if (intent.hasExtra("state_segments")) {
             android.util.Log.w("D2RDriver", "state_segments is startup-only; cold restart required");

@@ -365,6 +365,20 @@ static int shared_guest_heap_startup;
 static int shared_lazy_windows_startup;
 static int shared_image_raw_observe_startup;
 static int image_buffer_split_startup=1;
+static int nvn_owner_cpu_startup=-1;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeNvnOwnerCpu(
+    JNIEnv *env,jclass klass,jint cpu) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  const char *failure=operation_mode_fixed?"nvn_owner_cpu is fixed before native startup":
+      (cpu < -1 || cpu >= 1024)?"nvn_owner_cpu must be -1 or [0,1023]":NULL;
+  if(failure) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,failure);
+    return;
+  }
+  nvn_owner_cpu_startup=cpu;pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int state_segments_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStateSegments(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -773,6 +787,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   vk_driver_span_reference_startup(driver_span_reference_startup);
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
+  char owner_cpu_text[16];snprintf(owner_cpu_text,sizeof(owner_cpu_text),"%d",nvn_owner_cpu_startup);
+  if(setenv("DM_NVN_OWNER_CPU",owner_cpu_text,1)) die("Android NVN affinity cold request");
   if(setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_ATTACHMENT_JOB_REUSE",attachment_job_reuse_startup?"1":"0",1) ||

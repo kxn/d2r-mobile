@@ -39,6 +39,7 @@ static void x_shared_cache(uint64_t,size_t,int);
 #include "nvn_platform.h"
 #ifdef __ANDROID__
 #include <android/trace.h>
+#include "nvn_owner_affinity.inc"
 #endif
 #ifdef __APPLE__
 #include <mach/mach_time.h>
@@ -1160,6 +1161,17 @@ static void *x_thread(void *a) {
 #else
     pthread_setname_np(pthread_self(), "nvn-translate");
 #endif
+#ifdef __ANDROID__
+    if(nvn_owner_cpu>=0) {
+        cpu_set_t before,after;CPU_ZERO(&before);CPU_ZERO(&after);int error;
+        const char *failure=nvn_owner_affinity_apply(nvn_owner_cpu,&before,&after,&error);
+        char oldmask[CPU_SETSIZE/4+1],newmask[CPU_SETSIZE/4+1];
+        nvn_owner_mask_text(&before,oldmask);nvn_owner_mask_text(&after,newmask);
+        LOG("[nvn affinity] requested=%d tid=%d original=%s actual=%s status=%s errno=%d",
+            nvn_owner_cpu,(int)gettid(),oldmask,newmask,failure?failure:"applied",error);
+        if(failure) die("NVN owner affinity diagnostic failed: %s errno=%d",failure,error);
+    } else LOG("[nvn affinity] requested=-1 status=unchanged");
+#endif
     pthread_mutex_lock(&g_xmu);
     for (;;) {
         while (g_xq_done == g_xq_in) pthread_cond_wait(&g_xcv, &g_xmu);
@@ -1176,13 +1188,22 @@ static pthread_once_t g_shared_start_once=PTHREAD_ONCE_INIT;
 #endif
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
+#ifdef __ANDROID__
+    if(nvn_owner_cpu_parse(getenv("DM_NVN_OWNER_CPU"),&nvn_owner_cpu))
+        die("DM_NVN_OWNER_CPU must be -1 or a decimal CPU in [0,1023]");
+    if(g_x_sync && nvn_owner_cpu>=0) die("NVN owner affinity requires the translation worker");
+#endif
     if (g_x_sync) { mtl_pool_defer_publication_disable(); LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); atomic_store_explicit(&g_x_started,1,memory_order_release);return; }
     pthread_attr_t at; pthread_attr_init(&at);
 #ifdef __APPLE__
     pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     pthread_attr_setstacksize(&at, 8 << 20);
-    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { mtl_pool_defer_publication_disable(); LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
+    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) {
+#ifdef __ANDROID__
+        if(nvn_owner_cpu>=0) die("NVN owner affinity worker creation failed");
+#endif
+        mtl_pool_defer_publication_disable(); LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
     atomic_store_explicit(&g_x_started,1,memory_order_release);
 }
