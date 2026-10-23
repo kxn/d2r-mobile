@@ -365,6 +365,19 @@ static int shared_guest_heap_startup;
 static int shared_lazy_windows_startup;
 static int shared_image_raw_observe_startup;
 static int image_buffer_split_startup=1;
+static int state_segments_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStateSegments(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"state_segments is fixed before native startup");
+    return;
+  }
+  state_segments_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int attachment_job_reuse_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachmentJobReuse(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -734,7 +747,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   vk_driver_span_reference_startup(driver_span_reference_startup);
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
-  if(setenv("DM_VULKAN_ATTACHMENT_JOB_REUSE",attachment_job_reuse_startup?"1":"0",1) ||
+  if(setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_ATTACHMENT_JOB_REUSE",attachment_job_reuse_startup?"1":"0",1) ||
       setenv("DM_VULKAN_BUFFER_CONSUMPTION_PLAN",buffer_consumption_plan_startup?"1":"0",1) ||
       setenv("DM_VULKAN_IMAGE_BUFFER_SPLIT",image_buffer_split_startup?"1":"0",1) ||
       setenv("DM_VK_SHARED_LAZY_WINDOWS",shared_lazy_windows_startup?"1":"0",1) ||

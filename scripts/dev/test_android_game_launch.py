@@ -50,6 +50,21 @@ class PoolWindowLaunchTests(unittest.TestCase):
     def test_default_leaves_native_startup_default_unchanged(self):
         self.assertNotIn('pool_window_bytes', self.launch_command([]))
 
+    def test_state_segments_are_explicit_and_cannot_change_running_experiment(self):
+        self.assertNotIn('state_segments', self.launch_command([]))
+        for option,value in (('--state-segments','true'),
+                             ('--no-state-segments','false')):
+            with self.subTest(option=option):
+                command=self.launch_command([option])
+                index=command.index('state_segments')
+                self.assertEqual(command[index-1:index+2],['--ez','state_segments',value])
+                with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                        patch('subprocess.check_output') as adb, \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                    runpy.run_path(str(LAUNCHER),run_name='__main__')
+                self.assertEqual(caught.exception.code,2)
+                adb.assert_not_called()
+
     def test_attachment_job_reuse_is_explicit_and_cannot_change_running_experiment(self):
         self.assertNotIn('attachment_job_reuse', self.launch_command([]))
         for option,value in (('--attachment-job-reuse','true'),

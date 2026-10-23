@@ -62,6 +62,7 @@ parser.add_argument('--present-worker-shared-queue',action='store_true',help='is
 parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction,default=None,help='startup-only stable GPU-produced FS image reuse (default on; --no-image-buffer-split for reference)')
 parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental shared UBO preparation reuse (default off); verify effective backend mode')
 parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job attachment representation reuse (default off); verify effective backend mode')
+parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental validated pure-state replay segments (default off); verify effective backend mode')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
 parser.add_argument('--descriptor-history-reference',action='store_true',help='comparison: cache only consecutive identical descriptor contents')
@@ -147,6 +148,8 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
+if args.attach and args.state_segments is not None:
+    parser.error('--state-segments/--no-state-segments are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_job_reuse is not None:
     parser.error('--attachment-job-reuse/--no-attachment-job-reuse are startup-only and cannot be used with --attach')
 if args.attach and args.buffer_consumption_plan is not None:
@@ -240,6 +243,8 @@ if not args.attach:
               '--ez', 'validate', str(args.validate).lower()]
     if args.image_buffer_split is not None:
         launch += ['--ez','image_buffer_split',str(args.image_buffer_split).lower()]
+    if args.state_segments is not None:
+        launch += ['--ez','state_segments',str(args.state_segments).lower()]
     if args.attachment_job_reuse is not None:
         launch += ['--ez','attachment_job_reuse',str(args.attachment_job_reuse).lower()]
     if args.buffer_consumption_plan is not None:
@@ -392,6 +397,10 @@ while time.monotonic() < deadline:
                         raise SystemExit('pool backing window policy did not apply')
                     if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
                         raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
+                    state_segment_modes=re.findall(r'\[vulkan state segments\] enabled=([01])\b',log)
+                    actual_state_segments=bool(int(state_segment_modes[-1])) if state_segment_modes else None
+                    if args.state_segments is not None and actual_state_segments != args.state_segments:
+                        raise SystemExit('state segments backend startup mode did not match explicit request')
                     attachment_reuse_modes=re.findall(r'\[vulkan attachment reuse\] enabled=([01])\b',log)
                     actual_attachment_reuse=bool(int(attachment_reuse_modes[-1])) if attachment_reuse_modes else None
                     if args.attachment_job_reuse is not None and actual_attachment_reuse != args.attachment_job_reuse:
@@ -435,6 +444,8 @@ while time.monotonic() < deadline:
                               'actual_buffer_consumption_plan':actual_buffer_plan,
                               'requested_attachment_job_reuse':args.attachment_job_reuse,
                               'actual_attachment_job_reuse':actual_attachment_reuse,
+                              'requested_state_segments':args.state_segments,
+                              'actual_state_segments':actual_state_segments,
                               'requested_opus_shadow':args.opus_shadow,
                               'requested_native_opus':args.native_opus,
                               'external_profile': external, 'attached': args.attach,
