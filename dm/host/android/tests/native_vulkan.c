@@ -872,6 +872,10 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  persistent_texel_owner_test();
+  if(getenv("DM_TEXEL_OWNER_FIXTURE")) {
+    printf("{\"test\":\"persistent-texel-owner\",\"result\":\"passed\",\"game_modules_executed\":false}\n");return 0;
+  }
   state_segment_test();
   if(getenv("DM_STATE_SEGMENTS_FIXTURE")) {
     printf("{\"test\":\"validated-state-segments\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
@@ -1254,7 +1258,7 @@ int dm_vulkan_test_main(void) {
   submit(end());
   for (unsigned i = 0; i < 256; i++)
     CHECK(dst[i] == src[i] * 3 + 7);
-  descriptor_inflight_test((const prog_t *)&compute, 0,6);
+  descriptor_inflight_test((const prog_t *)&compute, 0,6,0);
   CALL(nvnCommandBufferBeginRecording, &cmd);
   CALL(nvnCommandBufferBindStorageBuffer, &cmd, NVN_SHADER_STAGE_COMPUTE, 0,
        (uintptr_t)(src + 1), 1024);

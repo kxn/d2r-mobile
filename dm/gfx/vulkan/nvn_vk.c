@@ -47,7 +47,7 @@ typedef struct pool_backing_span {
 } pool_backing_span;
 #ifdef DM_VULKAN_SHARED_POOLS
 _Static_assert(sizeof(alias_range_node)==64,"Physical Buffer coverage metadata");
-_Static_assert(sizeof(pool_backing_span)==152,"Typed Buffer selection must not grow span metadata");
+_Static_assert(sizeof(pool_backing_span)==160,"Physical span: original152B + owned immutable-view pointer");
 #endif
 typedef struct legacy_encoding_range {struct legacy_encoding_range *next;uint64_t begin,end;} legacy_encoding_range;
 typedef struct pool {
@@ -1180,6 +1180,8 @@ static void buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,in
 }
 void vk_buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) { buffer_create(b,size,usage,0); }
 void vk_buffer_destroy(vk_buffer *b) {
+  // Existing callers already retire all GPU users before destroying this owner.
+  vk_buffer_views_destroy(b);
   if (b->handle)
     vkDestroyBuffer(V.device, b->handle, NULL);
 #ifdef DM_VULKAN_SHARED_POOLS

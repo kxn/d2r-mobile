@@ -9,7 +9,7 @@ typedef struct native_image_allocation {
   alias_range_node range;
   _Atomic int released;
 } native_image_allocation;
-_Static_assert(sizeof(native_image_allocation)==184,"Native import node: original120B + exact AVL64B");
+_Static_assert(sizeof(native_image_allocation)==192,"Native import node: original184B + Buffer-owned view pointer");
 static _Atomic uint64_t native_allocation_count,native_allocation_bytes;
 
 // Real physical allocation index, not an authority/cache shortcut. All changes

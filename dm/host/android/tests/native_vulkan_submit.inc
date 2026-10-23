@@ -36,7 +36,7 @@ static void float16_arithmetic_test(void) {
   S=saved;vk_pipeline_state_changed();
   LOG("[vulkan Float16 fixture] explicit half arithmetic, 32-bit storage interface, repeated CPU edits and byte guards passed");
 }
-static void descriptor_inflight_test(const prog_t *program, int texel,unsigned set_count) {
+static void descriptor_inflight_test(const prog_t *program, int texel,unsigned set_count,int persistent) {
   CHECK(V.cmd == VK_NULL_HANDLE);
   if (!V.timeline_semaphore) {
     LOG("[vulkan descriptor inflight fixture] skipped: timeline semaphore unavailable");
@@ -47,6 +47,9 @@ static void descriptor_inflight_test(const prog_t *program, int texel,unsigned s
   vk_shader *shader = stages[5];
   CHECK(shader && shader->compute && shader->nb == 2);
   enum { RUNS = 3, WORDS = 64 };
+  int reference=getenv("DM_VULKAN_TEXEL_VIEW_REFERENCE") && !strcmp(getenv("DM_VULKAN_TEXEL_VIEW_REFERENCE"),"1");
+  VkBufferView *first_views=persistent?calloc(set_count,sizeof *first_views):NULL;
+  CHECK(!persistent || (texel && first_views));
   VkDeviceSize align = V.props.limits.minStorageBufferOffsetAlignment;
   if (texel && align < V.props.limits.minTexelBufferOffsetAlignment)
     align = V.props.limits.minTexelBufferOffsetAlignment;
@@ -101,15 +104,18 @@ static void descriptor_inflight_test(const prog_t *program, int texel,unsigned s
 #endif
       if (texel) vk_texture_recycle(texture_owners[0]);
     }
-    vk_buffer_create(&input[run], stride * set_count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-        (texel ? VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT : 0));
+    vk_buffer *input_owner=&input[persistent?0:run];
+    if(!persistent || !run)
+      vk_buffer_create(input_owner, stride * set_count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+          (texel ? VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT : 0));
     vk_buffer_create(&output[run], stride * set_count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     memset(output[run].map, 0, stride * set_count);
-    for (unsigned set = 0; set < set_count; set++)
-      for (unsigned word = 0; word < WORDS; word++) {
-        uint32_t value = 10000 * run + 100 * set + word;
-        memcpy(input[run].map + stride * set + word * 4, &value, 4);
-      }
+    if(!persistent || !run)
+      for (unsigned set = 0; set < set_count; set++)
+        for (unsigned word = 0; word < WORDS; word++) {
+          uint32_t value = 10000 * run + 100 * set + word;
+          memcpy(input_owner->map + stride * set + word * 4, &value, 4);
+        }
     owners[owner] = vk_shader_begin(owners[owner]);
     if (texel) texture_owners[owner] = vk_texture_begin(texture_owners[owner]);
     VkCommandBufferBeginInfo begin = {
@@ -126,7 +132,7 @@ static void descriptor_inflight_test(const prog_t *program, int texel,unsigned s
     for (unsigned set = 0; set < set_count; set++) {
       VkDescriptorSet descriptors = vk_descriptor_allocate(shader->descriptors);
       VkDescriptorBufferInfo buffers[2] = {
-          {input[run].handle, stride * set, WORDS * 4},
+          {input_owner->handle, stride * set, WORDS * 4},
           {output[run].handle, stride * set, WORDS * 4}};
       VkWriteDescriptorSet writes[2] = {0};
       for (unsigned binding = 0; binding < 2; binding++)
@@ -137,11 +143,22 @@ static void descriptor_inflight_test(const prog_t *program, int texel,unsigned s
             .pBufferInfo = &buffers[binding]};
       VkBufferView view;
       if (texel) {
-        VkBufferViewCreateInfo create = {.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,
-            .buffer = input[run].handle, .format = VK_FORMAT_R32_UINT,
-            .offset = stride * set, .range = WORDS * 4};
-        VK_CHECK(vkCreateBufferView(V.device, &create, NULL, &view));
-        vk_texture_own_buffer_view(view);
+        if(persistent) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+          extern VkBufferView vk_test_texel_view(vk_buffer *,VkFormat,VkDeviceSize,VkDeviceSize);
+          view=vk_test_texel_view(input_owner,VK_FORMAT_R32_UINT,stride*set,WORDS*4);
+          if(!run)first_views[set]=view;
+          else if(!reference)CHECK(view==first_views[set]);
+#else
+          die("persistent texel owner fixture is host-only");
+#endif
+        } else {
+          VkBufferViewCreateInfo create = {.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,
+              .buffer = input_owner->handle, .format = VK_FORMAT_R32_UINT,
+              .offset = stride * set, .range = WORDS * 4};
+          VK_CHECK(vkCreateBufferView(V.device, &create, NULL, &view));
+          vk_texture_own_buffer_view(view);
+        }
         writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
         writes[0].pBufferInfo = NULL;
         writes[0].pTexelBufferView = &view;
@@ -197,7 +214,7 @@ static void descriptor_inflight_test(const prog_t *program, int texel,unsigned s
       for (unsigned word = 0; word < WORDS; word++) {
         uint32_t value;
         memcpy(&value, output[run].map + stride * set + word * 4, 4);
-        CHECK(value == (10000 * run + 100 * set + word) * 3 + 7);
+        CHECK(value == (10000 * (persistent?0:run) + 100 * set + word) * 3 + 7);
       }
     vkDestroyFence(V.device, fences[run], NULL);
   }
@@ -211,7 +228,9 @@ static void descriptor_inflight_test(const prog_t *program, int texel,unsigned s
     vk_buffer_destroy(&input[run]);
     vk_buffer_destroy(&output[run]);
   }
+  free(first_views);
   CHECK(mtl_last_fence() == guest_fence);
+  LOG("[vulkan persistent texel GPU fixture] persistent=%d reference=%d real two owners / three submissions / independent fences passed",persistent,reference);
   LOG("[vulkan descriptor inflight fixture] passed: texel=%d two owners, three submits, %u descriptor sets, %u GPU words",texel,RUNS*set_count,RUNS*set_count*WORDS);
 }
 
@@ -677,6 +696,58 @@ static void compute_sample_layout_test(void) {
   CALL(nvnSamplerFinalize,&sampler);CALL(nvnProgramFinalize,&program);mtl_set_tex_pool_n(4);
   LOG("[vulkan compute sample layout fixture] optimal sampling, same-submission clear fallback and cross-submission immutable view reuse preserve GPU data");
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static void persistent_texel_owner_test(void) {
+  mtl_init();
+  extern VkBufferView vk_test_texel_view(vk_buffer *,VkFormat,VkDeviceSize,VkDeviceSize);
+  extern unsigned vk_test_texel_view_count(const vk_buffer *);
+  extern uint64_t vk_test_owned_texel_views_destroyed(void);
+  CHECK(V.cmd==VK_NULL_HANDLE);
+  int reference=getenv("DM_VULKAN_TEXEL_VIEW_REFERENCE") && !strcmp(getenv("DM_VULKAN_TEXEL_VIEW_REFERENCE"),"1");
+  VkDeviceSize stride=V.props.limits.minTexelBufferOffsetAlignment;if(stride<256)stride=256;
+  vk_buffer b={0};vk_buffer_create(&b,stride*128,VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT);
+  vk_texture_submission *owner=vk_texture_begin(NULL);
+  VkBufferView first=vk_test_texel_view(&b,VK_FORMAT_R32_UINT,0,256);
+  VkBufferView repeat=vk_test_texel_view(&b,VK_FORMAT_R32_UINT,0,256);
+  CHECK(reference?first!=repeat:first==repeat);
+  VkBufferView format=vk_test_texel_view(&b,VK_FORMAT_R32_SINT,0,256);
+  VkBufferView range=vk_test_texel_view(&b,VK_FORMAT_R32_UINT,0,128);
+  CHECK(first!=format && first!=range && format!=range);
+  for(unsigned k=1;k<=61;k++)vk_test_texel_view(&b,VK_FORMAT_R32_UINT,k*stride,256);
+  CHECK(vk_test_texel_view_count(&b)==(reference?0:64));
+  VkBufferView overflow=vk_test_texel_view(&b,VK_FORMAT_R32_UINT,96*stride,256);
+  VkBufferView overflow_again=vk_test_texel_view(&b,VK_FORMAT_R32_UINT,96*stride,256);
+  CHECK(reference?overflow!=overflow_again:overflow==overflow_again);
+  CHECK(vk_test_texel_view_count(&b)==(reference?0:64));
+  VkBufferView external;
+  VkBufferViewCreateInfo ci={.sType=VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,
+    .buffer=b.handle,.format=VK_FORMAT_R32_UINT,.offset=100*stride,.range=256};
+  VK_CHECK(vkCreateBufferView(V.device,&ci,NULL,&external));vk_texture_own_buffer_view(external);
+  uint64_t destroyed=vk_test_owned_texel_views_destroyed();
+  vk_texture_end(owner);vk_texture_recycle(owner);
+  CHECK(vk_test_owned_texel_views_destroyed()==destroyed);
+  owner=vk_texture_begin(owner);
+  uint64_t hits,created,created_after;vk_texel_view_stats(&hits,&created);
+  repeat=vk_test_texel_view(&b,VK_FORMAT_R32_UINT,0,256);
+  vk_texel_view_stats(&hits,&created_after);
+  CHECK(reference?created_after==created+1:(repeat==first && created_after==created));
+  vk_texture_end(owner);vk_texture_destroy(owner);
+  // The only production by-value move is a fresh whole-import Buffer (no views
+  // yet); preserve ownership even if a fully constructed owner is moved once.
+  vk_buffer moved=b;memset(&b,0,sizeof b);vk_buffer_destroy(&moved);
+  CHECK(!moved.handle && !moved.texel_views);
+  CHECK(vk_test_owned_texel_views_destroyed()==destroyed+(reference?0:64));
+  vk_buffer_create(&b,stride*128,VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT);
+  CHECK(!b.texel_views);owner=vk_texture_begin(NULL);
+  vk_texel_view_stats(&hits,&created);vk_test_texel_view(&b,VK_FORMAT_R32_UINT,0,256);
+  vk_texel_view_stats(&hits,&created_after);CHECK(created_after==created+1);
+  CHECK(vk_test_texel_view_count(&b)==(reference?0:1));
+  vk_texture_end(owner);vk_texture_destroy(owner);vk_buffer_destroy(&b);
+  CHECK(!b.handle && !b.texel_views && vk_validation_error_count()==0);
+  LOG("[persistent texel owner fixture] reference=%d cross-submission identity, exact keys, cap64 transient fallback, external views, move/destroy/address reuse passed",reference);
+}
+#endif
+
 // 经原 NVN 纹理描述符和绑定路径创建临时 texel view，再验真实在途独立回收。
 // Create transient texel views through original NVN registration/binding, then
 // exercise independent ownership with actual GPU submissions in flight.
@@ -711,7 +782,10 @@ static void texel_submission_test(void) {
   CALL(nvnCommandBufferDispatchCompute, &cmd, 1, 1, 1);
   submit(end());
   for (unsigned i = 0; i < 64; i++) CHECK(output[i] == input[i] * 3 + 7);
-  descriptor_inflight_test((const prog_t *)&program, 1,6);
+  descriptor_inflight_test((const prog_t *)&program, 1,6,0);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  descriptor_inflight_test((const prog_t *)&program,1,6,1);
+#endif
   CALL(nvnProgramFinalize, &program);
   CALL(nvnTextureFinalize, &texture);
   CALL(nvnTexturePoolFinalize, &pool);

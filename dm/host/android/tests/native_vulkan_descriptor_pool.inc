@@ -71,10 +71,10 @@ static void descriptor_pool_block_test(void) {
   vkDestroyDescriptorPool=descriptor_pool_block_destroy_checked;
   uint64_t hits0,hits1,resets0,resets1;int reference;
   vk_descriptor_reuse_stats(&hits0,&resets0,&reference);CHECK(!reference);
-  descriptor_inflight_test((const prog_t *)&program,0,768);
+  descriptor_inflight_test((const prog_t *)&program,0,768,0);
   vk_descriptor_reuse_stats(&hits1,&resets1,&reference);
   CHECK(hits1-hits0>=768 && resets1==resets0);
-  descriptor_inflight_test((const prog_t *)&program,0,2304);
+  descriptor_inflight_test((const prog_t *)&program,0,2304,0);
   vk_descriptor_reuse_stats(&hits1,&resets1,&reference);
   CHECK(resets1>resets0 && descriptor_pool_block_creates>=4);
   CHECK(descriptor_pool_block_out && descriptor_pool_block_fragmented);

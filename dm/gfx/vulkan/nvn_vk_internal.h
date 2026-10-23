@@ -25,6 +25,8 @@ typedef struct vk_buffer {
   void *allocation;
   uint8_t *map;
   VkDeviceSize size;
+  // Immutable views belong to this physical Buffer, never a submission or bare handle.
+  struct vk_texel_view_cache *texel_views;
   VkMemoryPropertyFlags properties;
   int readback;
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -32,6 +34,7 @@ typedef struct vk_buffer {
   uint32_t shared_memory_type;
 #endif
 } vk_buffer;
+void vk_buffer_views_destroy(vk_buffer *buffer);
 typedef struct vk_effect {
   struct vk_effect *next;
   void *dst;

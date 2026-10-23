@@ -2608,11 +2608,45 @@ void vk_texture_own_buffer_view(VkBufferView view) {
   if(!v) die("Vulkan buffer-view ownership allocation");
   v->next=texture_state->views;v->buffer=view;texture_state->views=v;
 }
-static VkBufferView texel_view(VkBuffer buffer,VkFormat format,VkDeviceSize offset,VkDeviceSize range) {
+enum { BUFFER_TEXEL_VIEW_BUCKETS=16, BUFFER_TEXEL_VIEW_LIMIT=64 };
+struct vk_texel_view_cache {
+  transient_view *all,*buckets[BUFFER_TEXEL_VIEW_BUCKETS];
+  unsigned count;
+};
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t owned_texel_views_destroyed;
+uint64_t vk_test_owned_texel_views_destroyed(void) {return owned_texel_views_destroyed;}
+#endif
+void vk_buffer_views_destroy(vk_buffer *buffer) {
+  struct vk_texel_view_cache *cache=buffer->texel_views;
+  if(!cache)return;
+  // This is called only from the original safe Buffer destruction path. No LRU
+  // eviction or view destruction at a submission boundary while another use lives.
+  while(cache->all) {
+    transient_view *v=cache->all;cache->all=v->next;
+    vkDestroyBufferView(V.device,v->buffer,NULL);free(v);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    owned_texel_views_destroyed++;
+#endif
+  }
+  free(cache);buffer->texel_views=NULL;
+}
+static VkBufferView texel_view(vk_buffer *owner,VkFormat format,VkDeviceSize offset,VkDeviceSize range) {
   if (!texture_state) die("Vulkan buffer view outside a submission");
-  uint64_t hash=((uint64_t)buffer>>4)^((uint64_t)format<<7)^offset^(offset>>19)^range^(range>>13);
-  unsigned bucket=hash%256;
-  if(!texel_view_reference())
+  VkBuffer buffer=owner->handle;
+  int reference=texel_view_reference();
+  uint64_t hash=((uint64_t)format<<7)^offset^(offset>>19)^range^(range>>13);
+  unsigned owned_bucket=hash%BUFFER_TEXEL_VIEW_BUCKETS;
+  struct vk_texel_view_cache *cache=owner->texel_views;
+  if(!reference && cache)
+    for(transient_view *v=cache->buckets[owned_bucket];v;v=v->hash_next)
+      if(v->format==format && v->offset==offset && v->range==range) {
+        atomic_fetch_add(&texel_view_hits,1);return v->buffer;
+      }
+  int retain=!reference && (!cache || cache->count<BUFFER_TEXEL_VIEW_LIMIT);
+  unsigned bucket=(hash^((uint64_t)buffer>>4))%256;
+  // At the per-Buffer cap preserve the old submission cache, with no live eviction.
+  if(!retain && !reference)
     for(transient_view *v=texture_state->texel_views[bucket];v;v=v->hash_next)
       if(v->source==buffer && v->format==format && v->offset==offset && v->range==range) {
         atomic_fetch_add(&texel_view_hits,1);return v->buffer;
@@ -2623,13 +2657,29 @@ static VkBufferView texel_view(VkBuffer buffer,VkFormat format,VkDeviceSize offs
   VK_CHECK(vkCreateBufferView(V.device,&ci,NULL,&view));
   transient_view *v = malloc(sizeof *v);
   if (!v) die("Vulkan buffer-view ownership allocation");
-  *v=(transient_view){.next=texture_state->views,.hash_next=texture_state->texel_views[bucket],
-    .buffer=view,.source=buffer,.format=format,.offset=offset,.range=range};
-  texture_state->views = v;
-  texture_state->texel_views[bucket]=v;
+  if(retain) {
+    if(!cache) {
+      cache=calloc(1,sizeof *cache);if(!cache)die("Vulkan Buffer view cache allocation");
+      owner->texel_views=cache;
+    }
+    *v=(transient_view){.next=cache->all,.hash_next=cache->buckets[owned_bucket],
+      .buffer=view,.source=buffer,.format=format,.offset=offset,.range=range};
+    cache->all=v;cache->buckets[owned_bucket]=v;cache->count++;
+  } else {
+    *v=(transient_view){.next=texture_state->views,.hash_next=texture_state->texel_views[bucket],
+      .buffer=view,.source=buffer,.format=format,.offset=offset,.range=range};
+    texture_state->views = v;texture_state->texel_views[bucket]=v;
+  }
   atomic_fetch_add(&texel_view_creates,1);
   return view;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+VkBufferView vk_test_texel_view(vk_buffer *owner,VkFormat format,VkDeviceSize offset,VkDeviceSize range) {
+  return texel_view(owner,format,offset,range);
+}
+unsigned vk_test_texel_view_count(const vk_buffer *owner) {return owner->texel_views?owner->texel_views->count:0;}
+#endif
+
 void vk_texture_end_submit(void) {
   image_split_publish();raster_publish();
   // 保留翻译快照宽限期，同时检查所有内部/客体提交的真实完成序号。
@@ -3672,7 +3722,7 @@ VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlag
     die("Vulkan texel buffer alignment");
   VkFormat format = vk_nvn_format(
       d.has_view && d.view.set_format ? d.view.format : d.texture.d.format);
-  VkBufferView view=texel_view(b->handle,format,off,size);
+  VkBufferView view=texel_view(b,format,off,size);
   if (writable)
     vk_buffer_writeback_stage((uintptr_t)d.texture.mem,size,stages);
   return view;
