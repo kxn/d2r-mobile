@@ -11,11 +11,18 @@ static uint32_t driver_fixture_handle(unsigned n,unsigned variant,unsigned kind)
   return 0x51020304u+n*0x103u+variant*0x1000000u+kind*0x10000000u;
 }
 static void driver_fixture_bind_buffer(unsigned stage,unsigned index,unsigned ubo,uint64_t addr,uint64_t size) {
+  uint64_t before=vk_driver_state_versions[stage][0];
   p_bind_buf p={stage,index,addr,size};vk_state_op(ubo?OP_BIND_UBO:OP_BIND_SSBO,&p);
+  CHECK(vk_driver_state_versions[stage][0]==before+(!ubo || stage==5));
 }
 static void driver_fixture_bind_handle(unsigned stage,unsigned kind,unsigned index,uint64_t handle) {
   p_bind_handles p={.stage=stage,.first=index,.n=1,.h={handle}};
+  uint64_t before=vk_driver_state_versions[stage][1];
   vk_state_op(kind==0?OP_BIND_TEX:kind==1?OP_BIND_SAMP:OP_BIND_IMG,&p);
+  CHECK(vk_driver_state_versions[stage][1]==before+(kind!=2 || index<8));
+  p.n=0;before=vk_driver_state_versions[stage][1];
+  vk_state_op(kind==0?OP_BIND_TEX:kind==1?OP_BIND_SAMP:OP_BIND_IMG,&p);
+  CHECK(vk_driver_state_versions[stage][1]==before);
 }
 static void driver_fixture_seed(unsigned stage,unsigned variant,uint8_t *output) {
   for(unsigned n=0;n<16;n++) {

@@ -39,3 +39,11 @@ texture view、Pool 解析、CPU publication、GPU writer、布局/descriptor �
 新 bloom 测试入口与整段 driver key fixture/helper/body/dispatch 均以 `DM_VULKAN_TEST_EMBED && !DM_ANDROID_APP` 排除。实际原 host 编译命令加 APP define 的五个相关 TU 预处理已核排除；这不冒充 Android NDK APP 资格。保留首次数组类型选择错误的失败日志及之后所有构建/测试记录。既有 VVL warning 保留，最终12用例没有 Validation Error/SYNC-HAZARD，也没有执行真实游戏模块。
 
 本轮无 Android canonical/RAW、设备访问或 Shader cache 修改。原公共 GPU 资格之外，真实游戏性能及稳定性须由 root 统一合并候选后验证。
+
+## 4a37 后继：setter 保守失效，取消额外 values 遍历
+
+本修订以 `4a37f8d15f116d0d38b1f7ad38d300100be15faf` 为父。原三路实现和旧 Android/AA 证据保持；只把普通 state_op 的值变化判定换为相关 setter 调用保守失效。SSBO 始终推进 c0，UBO 仅 CS 推进 c0；非空 TEX/SAMP 推进 c2，IMG 只在非空范围与前8槽相交时推进 c2。原边界检查、赋值与 memcpy 保留。没有读取旧值、第二遍 vector 扫描、schema 依赖扫描或新数组。ghost/bloom 全量恢复合同不变。
+
+同值重绑或仅高位变化现在也失效；原 sparse/dense key 和 last/content 缓存仍能复用原不可变表，只是不能在这些 setter 后直接 pre-key 命中。没有相关 setter 的相邻 draw 仍能提前命中。新增固定标量分支/版本递增替代最多128项的比较循环，版本数组和上下文预算不再增加。每次实际 mutation 的正确性更保守，GPU 消费/ready/寿命不变。
+
+已有 P1/B1 FP 显示 state_op SELF 约1.16–1.47%与1.76–1.93%，但频率/核心/工作量不同，不能把差额当本修订的可省比例或净毫秒。实际 shader sparse key 可很小，不能预支整个 binding21–24%或假定新的失效率。测试沿用真实整数 driver c0/c2 内容、恢复、sparse/module/range、CS/graphics；只在原 !APP helper 加 setter 版本资格和空 vector 断言，不新增生产计数器。
