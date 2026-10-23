@@ -130,8 +130,8 @@ class Contract(unittest.TestCase):
   p['native_memory_validation']['root_review']=rec(R/'.local/logs/descriptor-pool-block-512-52181dc-root-memory-comparison-review.json')
   token=c.validate_memory(p,g.pinned,g.read,g.require)
   self.assertEqual(c.validate(p,g.pinned,g.read,g.require,memory_runtime=token),c.DESCRIPTOR_CANDIDATE)
-  with self.assertRaisesRegex(RuntimeError,'six actual APP'):
-   c.reviewed_artifacts(p,card,g.pinned,g.read,g.require)
+  # The common CPU gate now accepts the same honest seven-unit artifact card.
+  c.reviewed_artifacts(p,card,g.pinned,g.read,g.require)
   invalid=copy.deepcopy(card);invalid['actual_APP_preprocessed_units']=6
   with self.assertRaisesRegex(RuntimeError,'six APP units plus'):
    c.reviewed_artifacts(p,invalid,g.pinned,g.read,g.require,memory_validated=True)

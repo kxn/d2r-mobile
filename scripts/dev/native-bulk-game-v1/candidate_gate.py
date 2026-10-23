@@ -215,21 +215,26 @@ def reviewed_artifacts(p, review, pinned, read, require, memory_validated=False)
             and review['source_ready']['sha256']==source['sha256']
             and str(pinned(review['source_ready']))==str(pinned(source))
             and pinned(source).stat().st_size==source['bytes'], 'effective flags/APP closure/sourcechain differs')
-    if memory_validated and p['runtime_commit']==DESCRIPTOR_CANDIDATE:
-        # The new honest card counts the six original units plus native_vulkan.c.
+    seven=(review['actual_APP_preprocessed_units']==7 or
+           (memory_validated and p['runtime_commit']==DESCRIPTOR_CANDIDATE))
+    if seven:
+        # Honest seven-unit cards are also valid for the original CPU scope.
         closures=canonical['new_APP_fixture_exclusion']['actual_preprocessed_closure']
         additional=canonical['additional_native_test_APP_closure']
         require(review['actual_APP_preprocessed_units']==canonical['actual_APP_preprocessed_translation_units_total']==7
                 and len(closures)==6 and len(additional)==1
+                and {row['source'] for row in closures}=={'nvn_vk.c','nvn_vk_shader.c','nvn_vk_draw.c',
+                    'nvn_vk_texture.c','nvn_vk_plan.c','hle_nvn.c'}
                 and additional[0]['source']=='native_vulkan.c'
-                and additional[0]['new_fixture_closure_absent'] is True,
-                'descriptor RAM requires actual six APP units plus native fixture closure')
+                and all(row['new_fixture_closure_absent'] is True for row in closures+additional),
+                'actual six APP units plus native fixture closure required')
         for row in closures+additional: pinned(row['output'])
     else:
         require(review['actual_APP_preprocessed_units']==6, 'six actual APP closures required')
-    raw_key=('raw28_files_hash_verified' if memory_validated and p['runtime_commit']==DESCRIPTOR_CANDIDATE
-             else 'raw28_hashes_verified')
-    for key in (raw_key,'six_APK_libraries_verified','new_fixture_symbols_absent_APP','compile_reference_OFF'):
+    raw_keys=([k for k in ('raw28_files_hash_verified','raw28_hashes_verified') if k in review]
+              if seven else ['raw28_hashes_verified'])
+    require(raw_keys and all(review[k] is True for k in raw_keys), 'root RAW28 closure absent or contradictory')
+    for key in ('six_APK_libraries_verified','new_fixture_symbols_absent_APP','compile_reference_OFF'):
         require(review[key] is True,'root closure absent '+key)
     pinned(review['APK'])
     return canonical,raw

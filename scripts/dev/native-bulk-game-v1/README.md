@@ -560,3 +560,35 @@ improvement or sustained gameplay: spill count, retention and live driver BOs
 can change. Compare whole residency and actual workload at the original
 endpoints; keep allocation/reservation/PSS distinct. All original installer,
 PID/save2/stop/CAS/cleanup functions and original observer fix remain in use.
+
+### Current52181 and combined CPU control
+
+`prepare-combined-cpu.py` prepares and runs the original CLI **offline proof for
+one round only**; it never launches ADB or starts an automatic batch. Order is
+PARENT1 → CANDIDATE1 → CANDIDATE2 → PARENT2 (ABBA), inspecting each original
+save2/stop/CAS result before starting the next round. Parent uses its actual
+52181 root artifact card/base886; a candidate needs its actual independent root
+canonical/RAW card with base52181. No future source/artifact approval is invented.
+
+Use `--round PARENT1 --directory /home/dl/d2r-mobile/.local/build/UNIQUE-PARENT1
+--output /home/dl/d2r-mobile/.local/logs/UNIQUE-PARENT1`; a child additionally
+requires `--candidate-review ACTUAL_ROOT_CARD`. Preparation defaults to
+`execution_ready=false`; `--execution-ready` is an explicit root input-preparation
+choice and still does not execute. `ready.json` retains the exact original
+offline and root-execution argv. Missing child artifacts fail, never substitute
+the parent or emit an approved placeholder.
+
+Restore uses the root-reviewed fresh stopped52181 inventory under
+`three-route-stopped-baseline-v1`, linked to the actual delivered52181 identity.
+The old74d PARENT1 is only an immutable provenance/template source. No a322/886
+restore inventory or historical acceptance is relabelled. Controlled launch
+remains .60fixed/2750x1260/f830/full2838/950/shared1MiB/lazy1/raw0/span-reference1,
+original accountingON/ADPFreference, original3walks,3×30s99HzFP plus5×8sPerfetto.
+Helpers, measurement, run-game, lifecycle and finally are unchanged. This CPU
+scope does not use `native_memory_validation` or require a new memory gate.
+
+Actual seven-unit APP cards are checked honestly: six uniquely named core
+preprocessed outputs plus native_vulkan.c, all seven hashes and fixture absence.
+Original six-unit cards remain supported; actual RAW28 field aliases must agree
+when both occur. Whole-window CPU/frequency/workload and all repeated windows
+must be reported separately from FPS; no gross draw/binding budget is promised.
