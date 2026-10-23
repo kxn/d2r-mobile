@@ -17,8 +17,8 @@ int vk_uab_normalize_values(const vk_uab_schema *,const vk_split_descriptor_valu
 vk_uab_packet *vk_uab_packet_create(const vk_uab_schema *,uint32_t draws,uint32_t versions);
 VkDescriptorSetLayout vk_uab_packet_layout(const vk_uab_packet *);
 // Slots indexed by original SPIR-V set number; NULL holes get an empty layout.
-// Caller owns this pipeline layout/PSOs and retires them before packet destroy.
-// Do NOT put transient packet handles into the existing device-lifetime cache.
+// Explicit-push helper returns caller-owned pipeline layout. Set layouts borrow
+// the original device-lifetime intern. Game PSOs use vk_program_uab_layout.
 int vk_uab_pipeline_layout_create(vk_uab_packet *const sets[6],
     const VkPushConstantRange *push,uint32_t push_count,VkPipelineLayout *out);
 // A returned index is exclusively writable; -1 means busy/unavailable, never wait.
@@ -32,5 +32,6 @@ VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *,unsigned version,unsigne
 // persistent CB must remain valid through its original GPU+CPU-effect completion.
 int vk_uab_packet_pending(vk_uab_packet *,unsigned version,uint64_t recording_serial);
 int vk_uab_packet_abandon(vk_uab_packet *,unsigned version);
-// Refuses pending versions; caller first retires CB/PSO references to this layout.
+// Refuses pending versions; caller first retires CB references to these sets.
+// Descriptor set layouts remain in the original device-lifetime intern.
 int vk_uab_packet_destroy(vk_uab_packet *);

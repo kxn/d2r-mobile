@@ -4,7 +4,7 @@
 typedef struct { uint32_t binding,type,count,stages; } descriptor_layout_binding;
 typedef struct descriptor_layout_entry {
   struct descriptor_layout_entry *next;
-  uint32_t count;
+  uint32_t count,creation_flags,extended;
   VkDescriptorSetLayout layout;
   descriptor_layout_binding bindings[];
 } descriptor_layout_entry;
@@ -20,26 +20,49 @@ static uint64_t layout_hash(const void *data,size_t size) {
   const uint8_t *p=data;uint64_t h=UINT64_C(14695981039346656037);
   while(size--) { h^=*p++;h*=UINT64_C(1099511628211); }return h;
 }
-static VkDescriptorSetLayout descriptor_layout_get(const VkDescriptorSetLayoutBinding *bindings,uint32_t count) {
-  descriptor_layout_binding key[128];
+static VkDescriptorSetLayout descriptor_layout_get_flags(const VkDescriptorSetLayoutBinding *bindings,uint32_t count,
+    VkDescriptorSetLayoutCreateFlags creation_flags,const VkDescriptorBindingFlags *binding_flags) {
+  descriptor_layout_binding key[128];VkDescriptorBindingFlags flags[128];
   if(count>128)die("Vulkan descriptor layout binding capacity");
+  // Original flags-zero lookup keeps its original 16-byte key and hash. The
+  // optional sorted flags vector extends this same intern table, not a cache.
+  int extended=creation_flags!=0 || binding_flags!=NULL;
   for(uint32_t i=0;i<count;i++) {
     if(bindings[i].pImmutableSamplers)die("Vulkan immutable sampler layout pending");
     descriptor_layout_binding value={bindings[i].binding,bindings[i].descriptorType,bindings[i].descriptorCount,bindings[i].stageFlags};
-    uint32_t j=i;while(j && key[j-1].binding>value.binding) { key[j]=key[j-1];j--; }key[j]=value;
+    VkDescriptorBindingFlags flag=binding_flags?binding_flags[i]:0;
+    uint32_t j=i;while(j && key[j-1].binding>value.binding) {
+      key[j]=key[j-1];if(extended)flags[j]=flags[j-1];j--;
+    }
+    key[j]=value;if(extended)flags[j]=flag;
   }
-  uint32_t bucket=(layout_hash(key,count*sizeof *key)^count)%256;
+  uint64_t hash=layout_hash(key,count*sizeof *key)^count;
+  if(extended)hash^=layout_hash(flags,count*sizeof *flags)^creation_flags;
+  uint32_t bucket=hash%256;
   for(descriptor_layout_entry *e=descriptor_layout_cache[bucket];e;e=e->next)
-    if(e->count==count && !memcmp(e->bindings,key,count*sizeof *key))return e->layout;
-  descriptor_layout_entry *e=calloc(1,sizeof *e+count*sizeof *key);
-  if(!e)die("Vulkan descriptor layout cache allocation");
+    if(e->count==count && e->creation_flags==creation_flags && e->extended==(unsigned)extended && !memcmp(e->bindings,key,count*sizeof *key) &&
+       (!extended || !memcmp(e->bindings+count,flags,count*sizeof *flags)))return e->layout;
+  descriptor_layout_entry *e=calloc(1,sizeof *e+count*sizeof *key+(extended?count*sizeof *flags:0));
+  if(!e)return VK_NULL_HANDLE;
   VkDescriptorSetLayoutBinding ordered[128];
   for(uint32_t i=0;i<count;i++)ordered[i]=(VkDescriptorSetLayoutBinding){
     .binding=key[i].binding,.descriptorType=key[i].type,.descriptorCount=key[i].count,.stageFlags=key[i].stages};
+  VkDescriptorSetLayoutBindingFlagsCreateInfo bf={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+    .bindingCount=count,.pBindingFlags=flags};
   VkDescriptorSetLayoutCreateInfo ci={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .bindingCount=count,.pBindings=ordered};
-  VK_CHECK(vkCreateDescriptorSetLayout(V.device,&ci,NULL,&e->layout));
-  e->count=count;memcpy(e->bindings,key,count*sizeof *key);e->next=descriptor_layout_cache[bucket];descriptor_layout_cache[bucket]=e;return e->layout;
+    .flags=creation_flags,.pNext=extended?&bf:NULL,.bindingCount=count,.pBindings=ordered};
+  if(extended) {
+    VkDescriptorSetLayoutSupport supported={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT};
+    vkGetDescriptorSetLayoutSupport(V.device,&ci,&supported);if(!supported.supported){free(e);return VK_NULL_HANDLE;}
+  }
+  if(vkCreateDescriptorSetLayout(V.device,&ci,NULL,&e->layout)!=VK_SUCCESS){free(e);return VK_NULL_HANDLE;}
+  e->count=count;e->creation_flags=creation_flags;e->extended=extended;memcpy(e->bindings,key,count*sizeof *key);
+  if(extended)memcpy(e->bindings+count,flags,count*sizeof *flags);
+  e->next=descriptor_layout_cache[bucket];descriptor_layout_cache[bucket]=e;return e->layout;
+}
+static VkDescriptorSetLayout descriptor_layout_get(const VkDescriptorSetLayoutBinding *bindings,uint32_t count) {
+  VkDescriptorSetLayout layout=descriptor_layout_get_flags(bindings,count,0,NULL);
+  if(!layout)die("Vulkan descriptor layout creation failed");return layout;
 }
 static VkPipelineLayout pipeline_layout_get(const VkDescriptorSetLayout sets[6],uint32_t count,int biased) {
   uint32_t bucket=(layout_hash(sets,count*sizeof *sets)^count^!!biased)%256;

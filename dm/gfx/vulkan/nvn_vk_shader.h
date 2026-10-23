@@ -57,7 +57,7 @@ typedef struct vk_shader {
   vk_driver_schema *driver_schema[2]; // c0 / c2, NULL keeps exact full key
   uint32_t driver_span[2]; // optional all-module read bound; zero keeps 64 KiB
   VkShaderModule driver_span_module; // new, unproved module alternatives cannot inherit a bound
-  VkDescriptorSetLayout descriptors,dynamic_descriptors[2];
+  VkDescriptorSetLayout descriptors,dynamic_descriptors[2],uab_descriptors;
   VkDescriptorUpdateTemplate descriptor_templates[3];
   uint8_t dynamic_uniform_ordinals[2][128]; // narrow/extended, one-based binding order
   uint32_t dynamic_uniform_count[2];
@@ -326,3 +326,19 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
 int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,int compute);
 
 int vk_ghost_cpu_draw_ready(vk_shader *const list[6],const vk_state *state,const p_draw *,const p_draw_idx *);
+
+// PSO-only layout variant. Never pass 3 to resource consumers / dynamic arrays.
+enum { VK_DESCRIPTOR_LAYOUT_UAB=3 };
+VkDescriptorSetLayout vk_shader_uab_layout(vk_shader *);
+VkPipelineLayout vk_program_uab_layout(vk_shader *const shaders[6]);
+// Caller-owned resolved product, valid after callbacks/nested consumption.
+// Same original source/require/history work; no old descriptor set is built.
+typedef struct {
+  vk_shader *shader;
+  int source_dynamic_mode;
+  uint32_t count;
+  vk_split_descriptor_value values[128]; // full effective Buffer byte offsets
+} vk_shader_prepared_values;
+void vk_shader_prepare_values(vk_shader *,int dynamic,const vk_texel_storage_selection *,vk_shader_prepared_values *);
+// Fallback delivers ordinary immutable descriptors: select PSO mode0 with it.
+VkDescriptorSet vk_shader_materialize_prepared(const vk_shader_prepared_values *);

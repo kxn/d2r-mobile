@@ -34,8 +34,22 @@ static int uab_parameters_test(void) {
   vk_uab_packet *packet=vk_uab_packet_create(&schema,2,2);CHECK(packet);
   vk_uab_schema invalid=schema;invalid.bindings[0].descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;CHECK(!vk_uab_packet_create(&invalid,2,2));
   CHECK(!vk_uab_packet_create(&schema,VK_UAB_MAX_DRAWS+1,2));
-  VkPipelineLayout pipeline_layout;vk_uab_packet *stage_sets[6]={packet};
-  CHECK(vk_uab_pipeline_layout_create(stage_sets,NULL,0,&pipeline_layout));
+  VkPipelineLayout explicit_layout;vk_uab_packet *stage_sets[6]={packet};
+  CHECK(vk_uab_pipeline_layout_create(stage_sets,NULL,0,&explicit_layout));vkDestroyPipelineLayout(V.device,explicit_layout,NULL);
+  vk_shader *program[6]={NULL,NULL,NULL,NULL,NULL,&reflected_shader};
+  VkPipelineLayout pipeline_layout=vk_program_layout_mode(program,VK_DESCRIPTOR_LAYOUT_UAB);CHECK(pipeline_layout);
+  CHECK(vk_program_uab_layout(program)==pipeline_layout);
+  CHECK(vk_shader_uab_layout(&reflected_shader)==vk_uab_packet_layout(packet));
+  // The original intern sorts flags with binding keys, independent of reflection order.
+  vk_uab_schema reversed=schema;
+  for(unsigned i=0;i<4;i++)reversed.bindings[i]=schema.bindings[3-i];
+  vk_uab_packet *reordered=vk_uab_packet_create(&reversed,1,1);CHECK(reordered);
+  CHECK(vk_uab_packet_layout(reordered)==vk_uab_packet_layout(packet));CHECK(vk_uab_packet_destroy(reordered));
+  VkDescriptorSetLayout saved=vk_shader_uab_layout(&reflected_shader);
+  // Same numeric fields, no UAB creation/binding flags: a distinct compatible-type layout.
+  extern VkDescriptorSetLayout vk_test_uab_plain_layout(const vk_uab_schema *);
+  reflected_shader.descriptors=vk_test_uab_plain_layout(&schema);VkPipelineLayout ordinary=vk_program_layout_mode(program,0);CHECK(ordinary!=pipeline_layout);
+
   VkShaderModule shader;VkShaderModuleCreateInfo sci={.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,.codeSize=sizeof dm_test_uab_spv,.pCode=dm_test_uab_spv};VK_CHECK(vkCreateShaderModule(V.device,&sci,NULL,&shader));
   VkComputePipelineCreateInfo pci={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,.stage={.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_COMPUTE_BIT,.module=shader,.pName="main"},.layout=pipeline_layout};
   VkPipeline pipeline;VK_CHECK(vkCreateComputePipelines(V.device,V.pipeline_cache,1,&pci,NULL,&pipeline));
@@ -77,7 +91,7 @@ static int uab_parameters_test(void) {
   CHECK(vk_uab_packet_seal(packet,0));mtl_sub_begin();vkCmdExecuteCommands(V.cmd,1,&cb[0]);CHECK(vk_uab_packet_pending(packet,0,vk_recording_serial()));
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&readback,0,NULL,0,NULL);vk_internal_wait(vk_internal_commit());
   for(unsigned draw=0;draw<2;draw++){uint32_t got;memcpy(&got,output.map+(4+draw)*stride,4);CHECK(got==numbers[3-draw]+18);}
-  vkDestroyCommandPool(V.device,pool,NULL);vkDestroyPipeline(V.device,pipeline,NULL);vkDestroyPipelineLayout(V.device,pipeline_layout,NULL);vkDestroyShaderModule(V.device,shader,NULL);CHECK(vk_uab_packet_destroy(packet));
+  vkDestroyCommandPool(V.device,pool,NULL);vkDestroyPipeline(V.device,pipeline,NULL);vkDestroyShaderModule(V.device,shader,NULL);CHECK(vk_uab_packet_destroy(packet));CHECK(vk_shader_uab_layout(&reflected_shader)==saved);CHECK(vk_program_uab_layout(program)==pipeline_layout);
   vkDestroySampler(V.device,sampler,NULL);vkDestroyImageView(V.device,image_view,NULL);vkDestroyImage(V.device,image,NULL);vk_memory_free(allocation);vkDestroyBufferView(V.device,texel,NULL);vkDestroyBufferView(V.device,other,NULL);vk_buffer_destroy(&input);vk_buffer_destroy(&output);
   CHECK(vk_validation_error_count()==0);
   printf("{\"test\":\"UAB parameters\",\"result\":\"passed\",\"checks\":%u,\"actual_feature_enabled\":true,\"secondary_reexecuted_without_recording\":true,\"mixed_image_texel_shader_reads\":true,\"game_modules_executed\":false}\n",checks-checks_before);return 0;

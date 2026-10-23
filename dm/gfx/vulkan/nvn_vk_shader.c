@@ -687,6 +687,7 @@ unsigned vk_test_binding_consumer_edges(void) {
 }
 #endif
 static void shader_descriptor_layouts(vk_shader *s) {
+  s->uab_descriptors=VK_NULL_HANDLE; // Alternatives cannot inherit another schema's variant.
   // Base active-binding compaction and every texel/pixel alternative conversion
   // finish before this shared constructor. Never inherit a different schema's
   // index mask through the alternatives' struct copies.
@@ -1735,8 +1736,56 @@ static VK_COLD_PHASE vk_buffer *storage_alignment_copy(const p_bind_buf *u,
     current_operation.storage_copies[index].writable = 1;
   *offset=0;return current_operation.storage_copies[index].aligned;
 }
+static VkDescriptorSet shader_descriptor_materialize(vk_shader *s,int dynamic,VkDescriptorSetLayout layout,const descriptor_value *values) {
+  // Resolve every descriptor and its dependencies before checking the final
+  // immutable contents. Buffer data changes still take the normal upload /
+  // writeback paths; the set only stores a handle, offset and range.
+  descriptor_content *last=&binding_state->descriptor_last[s->stage];
+  size_t key_bytes=s->nb*sizeof *values;
+  if(!descriptor_content_reference() && last->shader==s && last->layout==layout &&
+     !memcmp(last->values,values,key_bytes)) {
+    shader_recorded.descriptor_content_hits += 1;return last->set;
+  }
+  descriptor_history_entry **history=NULL;
+  uint64_t hash=0;
+  if(!descriptor_content_reference() && !atomic_load(&descriptor_history_reference)) {
+    // Keep the original stage-last HIT above completely unchanged. On its
+    // MISS, shader/layout locality can avoid hashing every descriptor. This
+    // is only a hint: slot
+    // replacement/recycle and any resolved handle/offset/range change reject.
+    descriptor_history_entry *hinted=descriptor_shader_hint_find(s,layout,values,key_bytes);
+    if(hinted) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      descriptor_shader_hint_test_hits++;
+#endif
+      // Preserve the original stage-last locality as well: after A/B/A,
+      // consecutive A draws must regain the cheapest unchanged first check.
+      last->shader=s;last->layout=layout;last->set=hinted->set;memcpy(last->values,values,key_bytes);
+      shader_recorded.descriptor_history_hits += 1;
+      shader_recorded.descriptor_content_hits += 1;
+      return hinted->set;
+    }
+    hash=descriptor_history_hash(s,layout,values);
+    history=&binding_state->descriptor_history[hash&(DESCRIPTOR_HISTORY_SLOTS-1)];
+    descriptor_history_entry *entry=*history;
+    if(entry && entry->epoch==binding_state->descriptor_history_epoch &&
+        entry->hash==hash && entry->shader==s && entry->layout==layout &&
+        !memcmp(entry->values,values,key_bytes)) {
+      last->shader=s;last->layout=layout;last->set=entry->set;memcpy(last->values,values,key_bytes);
+      descriptor_shader_hint_remember(s,layout,history);
+      shader_recorded.descriptor_history_hits += 1;
+      shader_recorded.descriptor_content_hits += 1;return entry->set;
+    }
+    shader_recorded.descriptor_history_misses += 1;
+  }
+  // Only a true driver-set MISS needs Vulkan's update representation. The
+  // immutable key above already contains every field, including the aligned
+  // dynamic descriptor offset; cache hits must not build an unused second
+  // 24-byte representation for each binding. Never defer resource work.
+  return descriptor_create_selected(s,dynamic,layout,values,last,history,hash,key_bytes);
+}
 static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
-                                           const vk_texel_storage_selection *selection,const VkImageView *local_views,const VkImageLayout *local_layouts) {
+                                           const vk_texel_storage_selection *selection,const VkImageView *local_views,const VkImageLayout *local_layouts,vk_shader_prepared_values *prepared) {
   // The immutable dynamic schema assigns every ordinal 0..count-1 once.
   // Only that live prefix is observable; do not clear the unused array tail.
   if(offsets)offsets->count=0;
@@ -1973,56 +2022,57 @@ consume_split_remaining:
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   ubo_test_consumed+=__builtin_popcountll(uniform_skipped[0])+__builtin_popcountll(uniform_skipped[1]);
 #endif
-  // Resolve every descriptor and its dependencies before checking the final
-  // immutable contents. Buffer data changes still take the normal upload /
-  // writeback paths; the set only stores a handle, offset and range.
-  descriptor_content *last=&binding_state->descriptor_last[s->stage];
-  size_t key_bytes=s->nb*sizeof *values;
-  if(!descriptor_content_reference() && last->shader==s && last->layout==layout &&
-     !memcmp(last->values,values,key_bytes)) {
-    shader_recorded.descriptor_content_hits += 1;return last->set;
-  }
-  descriptor_history_entry **history=NULL;
-  uint64_t hash=0;
-  if(!descriptor_content_reference() && !atomic_load(&descriptor_history_reference)) {
-    // Keep the original stage-last HIT above completely unchanged. On its
-    // MISS, shader/layout locality can avoid hashing every descriptor. This
-    // is only a hint: slot
-    // replacement/recycle and any resolved handle/offset/range change reject.
-    descriptor_history_entry *hinted=descriptor_shader_hint_find(s,layout,values,key_bytes);
-    if(hinted) {
-#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
-      descriptor_shader_hint_test_hits++;
-#endif
-      // Preserve the original stage-last locality as well: after A/B/A,
-      // consecutive A draws must regain the cheapest unchanged first check.
-      last->shader=s;last->layout=layout;last->set=hinted->set;memcpy(last->values,values,key_bytes);
-      shader_recorded.descriptor_history_hits += 1;
-      shader_recorded.descriptor_content_hits += 1;
-      return hinted->set;
+  if(prepared) {
+    prepared->shader=s;prepared->source_dynamic_mode=dynamic;prepared->count=s->nb;
+    for(unsigned n=0;n<s->nb;n++) {
+      prepared->values[n]=values[n];unsigned ordinal=dynamic?s->dynamic_uniform_ordinals[dynamic-1][n]:0;
+      if(ordinal) {
+        if(!offsets || ordinal>offsets->count || values[n].offset>UINT64_MAX-offsets->offsets[ordinal-1])
+          die("Vulkan prepared Uniform offset overflow");
+        prepared->values[n].offset+=offsets->offsets[ordinal-1];
+      }
     }
-    hash=descriptor_history_hash(s,layout,values);
-    history=&binding_state->descriptor_history[hash&(DESCRIPTOR_HISTORY_SLOTS-1)];
-    descriptor_history_entry *entry=*history;
-    if(entry && entry->epoch==binding_state->descriptor_history_epoch &&
-        entry->hash==hash && entry->shader==s && entry->layout==layout &&
-        !memcmp(entry->values,values,key_bytes)) {
-      last->shader=s;last->layout=layout;last->set=entry->set;memcpy(last->values,values,key_bytes);
-      descriptor_shader_hint_remember(s,layout,history);
-      shader_recorded.descriptor_history_hits += 1;
-      shader_recorded.descriptor_content_hits += 1;return entry->set;
-    }
-    shader_recorded.descriptor_history_misses += 1;
+    return VK_NULL_HANDLE;
   }
-  // Only a true driver-set MISS needs Vulkan's update representation. The
-  // immutable key above already contains every field, including the aligned
-  // dynamic descriptor offset; cache hits must not build an unused second
-  // 24-byte representation for each binding. Never defer resource work.
-  return descriptor_create_selected(s,dynamic,layout,values,last,history,hash,key_bytes);
+  return shader_descriptor_materialize(s,dynamic,layout,values);
 }
+
+void vk_shader_prepare_values(vk_shader *s,int dynamic,const vk_texel_storage_selection *selection,vk_shader_prepared_values *out) {
+  if(!s || !out || dynamic<0 || dynamic>2)die("Vulkan prepared values destination/mode");
+  vk_uniform_offsets offsets;
+  shader_bindings_selected_impl(s,dynamic,&offsets,selection,NULL,NULL,out);
+}
+VkDescriptorSet vk_shader_materialize_prepared(const vk_shader_prepared_values *p) {
+  if(!p || !p->shader || p->count!=p->shader->nb)die("Vulkan prepared values schema");
+  return shader_descriptor_materialize(p->shader,0,p->shader->descriptors,p->values);
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t prepared_roundtrip_modes[3];
+void vk_test_prepared_roundtrip_counts(uint64_t out[3]) {memcpy(out,prepared_roundtrip_modes,sizeof prepared_roundtrip_modes);}
+// Host oracle feeds the existing real draw fixtures through the public product
+// boundary once. Recreate the original descriptor encoding, not resource work.
+static VkDescriptorSet prepared_roundtrip(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
+    const vk_texel_storage_selection *selection) {
+  vk_shader_prepared_values p;vk_shader_prepare_values(s,dynamic,selection,&p);
+  if(p.shader!=s || p.count!=s->nb || p.source_dynamic_mode!=dynamic)die("prepared product identity");
+  prepared_roundtrip_modes[dynamic]++;
+  if(!dynamic){if(offsets)offsets->count=0;return vk_shader_materialize_prepared(&p);}
+  if(!offsets && s->dynamic_uniform_count[dynamic-1])die("prepared test missing offsets");
+  if(offsets)offsets->count=s->dynamic_uniform_count[dynamic-1];
+  for(unsigned n=0;n<s->nb;n++)if(s->dynamic_uniform_ordinals[dynamic-1][n]) {
+    unsigned ordinal=s->dynamic_uniform_ordinals[dynamic-1][n]-1;
+    offsets->offsets[ordinal]=(uint32_t)p.values[n].offset;
+    p.values[n].offset&=~UINT64_C(0xffffffff);
+  }
+  return shader_descriptor_materialize(s,dynamic,s->dynamic_descriptors[dynamic-1],p.values);
+}
+#endif
 VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection) {
-  return shader_bindings_selected_impl(s,dynamic,offsets,selection,NULL,NULL);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_UAB_PREPARED_ROUNDTRIP"))return prepared_roundtrip(s,dynamic,offsets,selection);
+#endif
+  return shader_bindings_selected_impl(s,dynamic,offsets,selection,NULL,NULL,NULL);
 }
 VkDescriptorSet vk_shader_pixel_local_bindings(const vk_pixel_local_proof *proof,int dynamic,
     vk_uniform_offsets *offsets,const VkImageView views[VK_PIXEL_LOCAL_MAX_INPUTS],
@@ -2033,13 +2083,15 @@ VkDescriptorSet vk_shader_pixel_local_bindings(const vk_pixel_local_proof *proof
     if(selection->shader!=proof->source_shader)die("Vulkan pixel-local source schema changed");
     local=*selection;local.shader=proof->shader;selection=&local;
   }
-  return shader_bindings_selected_impl(proof->shader,dynamic,offsets,selection,views,layouts);
+  return shader_bindings_selected_impl(proof->shader,dynamic,offsets,selection,views,layouts,NULL);
 }
 VkDescriptorSet vk_shader_bindings_mode(vk_shader *s,int dynamic,vk_uniform_offsets *offsets) {
   return vk_shader_bindings_selected(s,dynamic,offsets,NULL);
 }
 VkDescriptorSet vk_shader_bindings(vk_shader *s) { return vk_shader_bindings_mode(s,0,NULL); }
 VkPipelineLayout vk_program_layout_mode(vk_shader *const list[6],int dynamic) {
+  if(dynamic==VK_DESCRIPTOR_LAYOUT_UAB)return vk_program_uab_layout(list);
+  if(dynamic<0 || dynamic>2)die("Vulkan pipeline layout mode");
   if(!empty_layout)empty_layout=descriptor_layout_get(NULL,0);
   VkDescriptorSetLayout layouts[6];
   for(unsigned i=0;i<6;i++)layouts[i]=empty_layout;

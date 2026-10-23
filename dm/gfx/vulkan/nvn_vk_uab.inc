@@ -87,12 +87,8 @@ vk_uab_packet *vk_uab_packet_create(const vk_uab_schema *s,uint32_t draws,uint32
   }
   VkDescriptorBindingFlags flags[VK_UAB_MAX_BINDINGS];
   for(unsigned n=0;n<s->count;n++)flags[n]=uab_buffer_type(s->bindings[n].descriptorType)?VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT:0;
-  VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,.bindingCount=s->count,.pBindingFlags=flags};
-  VkDescriptorSetLayoutCreateInfo layout={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.pNext=&binding_flags,
-    .flags=VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,.bindingCount=s->count,.pBindings=s->bindings};
-  VkDescriptorSetLayoutSupport supported={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT};
-  vkGetDescriptorSetLayoutSupport(V.device,&layout,&supported);if(!supported.supported)goto failed;
-  if(vkCreateDescriptorSetLayout(V.device,&layout,NULL,&p->layout)!=VK_SUCCESS)goto failed;
+  p->layout=descriptor_layout_get_flags(s->bindings,s->count,VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,flags);
+  if(!p->layout)goto failed;
   VkDescriptorPoolSize sizes[11];unsigned ns=0;
   for(unsigned n=0;n<s->count;n++) {
     unsigned i=0;while(i<ns && sizes[i].type!=s->bindings[n].descriptorType)i++;
@@ -109,7 +105,6 @@ vk_uab_packet *vk_uab_packet_create(const vk_uab_schema *s,uint32_t draws,uint32
   uab_pool_descriptors+=descriptors;return p;
 failed:
   if(p->pool)vkDestroyDescriptorPool(V.device,p->pool,NULL);
-  if(p->layout)vkDestroyDescriptorSetLayout(V.device,p->layout,NULL);
   for(unsigned v=0;v<versions;v++){free(p->version[v].fixed);free(p->version[v].initialized);free(p->version[v].touched);}
   free(p->sets);free(p);return NULL;
 }
@@ -176,24 +171,18 @@ int vk_uab_packet_destroy(vk_uab_packet *p) {
   if(!p)return 1;
   uint64_t complete=vk_completed_serial();
   for(unsigned i=0;i<p->versions;i++)if(p->version[i].state==3 && p->version[i].serial>complete)return 0;
-  vkDestroyDescriptorPool(V.device,p->pool,NULL);vkDestroyDescriptorSetLayout(V.device,p->layout,NULL);
+  vkDestroyDescriptorPool(V.device,p->pool,NULL);
   if(uab_pool_descriptors<p->descriptors)die("UAB pool budget underflow");
   uab_pool_descriptors-=p->descriptors;
   for(unsigned i=0;i<p->versions;i++){free(p->version[i].fixed);free(p->version[i].initialized);free(p->version[i].touched);}
   free(p->sets);free(p);return 1;
 }
 
-int vk_uab_pipeline_layout_create(vk_uab_packet *const sets[6],
-    const VkPushConstantRange *push,uint32_t push_count,VkPipelineLayout *out) {
-  if(!sets || !out || push_count>1 || (push_count && !push))return 0;
-  if(push_count && (!push->stageFlags || (push->stageFlags&~(VK_SHADER_STAGE_ALL_GRAPHICS|VK_SHADER_STAGE_COMPUTE_BIT)) ||
-      !push->size || push->size%4 || push->offset%4 || push->offset>V.props.limits.maxPushConstantsSize ||
-      push->size>V.props.limits.maxPushConstantsSize-push->offset))return 0;
+static int uab_program_limits(const vk_uab_schema *const sets[6]) {
   uint32_t counts[11]={0},stage_counts[6][11]={{0}},size=0;
-  VkDescriptorSetLayout layouts[6]={0},empty=VK_NULL_HANDLE;
   for(unsigned slot=0;slot<6;slot++)if(sets[slot]) {
-    const vk_uab_schema *s=&sets[slot]->schema;if(s->set!=slot)return 0;
-    layouts[slot]=sets[slot]->layout;size=slot+1;
+    const vk_uab_schema *s=sets[slot];if(s->set!=slot)return 0;
+    size=slot+1;
     for(unsigned n=0;n<s->count;n++) {
       const VkDescriptorSetLayoutBinding *b=&s->bindings[n];counts[b->descriptorType]++;
       if(b->stageFlags&~(VK_SHADER_STAGE_ALL_GRAPHICS|VK_SHADER_STAGE_COMPUTE_BIT))return 0;
@@ -213,6 +202,17 @@ int vk_uab_pipeline_layout_create(vk_uab_packet *const sets[6],
     if(all>p->maxPerStageUpdateAfterBindResources)return 0;
   }
 #undef UAB_AGG
+  return 1;
+}
+int vk_uab_pipeline_layout_create(vk_uab_packet *const sets[6],
+    const VkPushConstantRange *push,uint32_t push_count,VkPipelineLayout *out) {
+  if(!sets || !out || push_count>1 || (push_count && !push))return 0;
+  if(push_count && (!push->stageFlags || (push->stageFlags&~(VK_SHADER_STAGE_ALL_GRAPHICS|VK_SHADER_STAGE_COMPUTE_BIT)) ||
+      !push->size || push->size%4 || push->offset%4 || push->offset>V.props.limits.maxPushConstantsSize ||
+      push->size>V.props.limits.maxPushConstantsSize-push->offset))return 0;
+  const vk_uab_schema *schemas[6]={0};VkDescriptorSetLayout layouts[6]={0},empty=VK_NULL_HANDLE;unsigned size=0;
+  for(unsigned i=0;i<6;i++)if(sets[i]){schemas[i]=&sets[i]->schema;layouts[i]=sets[i]->layout;size=i+1;}
+  if(!uab_program_limits(schemas))return 0;
   // Empty layouts have no descriptor backing and no cache identity to reuse.
   for(unsigned i=0;i<size;i++)if(!layouts[i]) {
     if(!empty) {VkDescriptorSetLayoutCreateInfo ci={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -224,3 +224,34 @@ int vk_uab_pipeline_layout_create(vk_uab_packet *const sets[6],
   if(empty)vkDestroyDescriptorSetLayout(V.device,empty,NULL);
   return result==VK_SUCCESS;
 }
+
+VkDescriptorSetLayout vk_shader_uab_layout(vk_shader *shader) {
+  if(!shader || !V.retained_draws)return VK_NULL_HANDLE;
+  if(shader->uab_descriptors)return shader->uab_descriptors;
+  if(!shader->nb)return shader->uab_descriptors=descriptor_layout_get(NULL,0);
+  vk_uab_schema schema;uint32_t count;
+  if(!vk_uab_schema_from_shader(shader,0,&schema) || !uab_schema_limits(&schema,&count))return VK_NULL_HANDLE;
+  VkDescriptorBindingFlags flags[VK_UAB_MAX_BINDINGS];
+  for(unsigned n=0;n<schema.count;n++)flags[n]=uab_buffer_type(schema.bindings[n].descriptorType)?VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT:0;
+  return shader->uab_descriptors=descriptor_layout_get_flags(schema.bindings,schema.count,
+      VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,flags);
+}
+VkPipelineLayout vk_program_uab_layout(vk_shader *const shaders[6]) {
+  if(!shaders || !V.retained_draws)return VK_NULL_HANDLE;
+  vk_uab_schema schemas[6];const vk_uab_schema *by_set[6]={0};VkDescriptorSetLayout layouts[6];unsigned count=0;int biased=0;
+  if(!empty_layout)empty_layout=descriptor_layout_get(NULL,0);
+  for(unsigned i=0;i<6;i++)layouts[i]=empty_layout;
+  for(unsigned i=0;i<6;i++)if(shaders[i]) {
+    vk_shader *s=shaders[i];
+    if(s->set>=6 || by_set[s->set] || !vk_uab_schema_from_shader(s,0,&schemas[i]))return VK_NULL_HANDLE;
+    by_set[s->set]=&schemas[i];layouts[s->set]=vk_shader_uab_layout(s);
+    if(!layouts[s->set])return VK_NULL_HANDLE;
+    if(count<=s->set)count=s->set+1;biased|=!!s->storage_bias_mask;
+  }
+  if(!uab_program_limits(by_set))return VK_NULL_HANDLE;
+  return pipeline_layout_get(layouts,count,biased);
+}
+
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+VkDescriptorSetLayout vk_test_uab_plain_layout(const vk_uab_schema *s) {return descriptor_layout_get(s->bindings,s->count);}
+#endif
