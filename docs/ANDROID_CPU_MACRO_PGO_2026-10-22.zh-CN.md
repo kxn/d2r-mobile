@@ -316,3 +316,49 @@ Q735日常安装已通过原publisher76512实际终态0：52181完整APK/RAW/模
 另用同一exact886六份原全栈复核Vulkan录制职责：driver self为12.03–14.86% NvN用户采样，已归属命令录制含pass/submit/query/transfer为10.12–12.84%，实际draw发射为3.16–4.00%。它们不是可删除预算，也没有与独立8秒时间相乘。现有pipeline/set/动态offset/VBO/IBO状态复用已生效，旧533严格同状态组为零的反例不能冒充新886帧。更宽间接绘制还需要GPU参数/资源表示合同，不把整个约73% draw父职责预支给换API。根核记录在`.local/logs/current886-vulkan-recording-budget-readonly-v1/root-review.json`。
 
 完整行修复的工具后继`b3137c3`已独立推送，58项相关检查通过。根复核原phase_game/main及持续run/validate等5个完整AST函数未变，原APK/NSO与运行时不变。实际主工作区的输入工具/解析器与后继逐字节相同。停止态八目录重新核实后，原1800秒持续测试以新事务53886启动，先前331段的失败不拼接；新输入SHA`b9261f784fe3162d68004470b1c76c93bbc504afbd8a38c95d2ade4c2c7238d1`，实际全offlineproof退出0。当前没有新的30分钟或战斗/6GB验收。
+
+## 2026-10-23：三路实现、额外扫描修正与真机结果
+
+三路通用后端改动已完成，最终运行时源码为 `10d5e136aa2bd131c6d18c2cdfcce1d045e150ed`。主备份分支通过 `e087893` 合并该谱系，`dm/` 运行时代码与已构建的 exact10d 相同。这里的对照基线是已交付的 `52181dc`，不把此前共享内存、图像用途、资源复用或 descriptor512 的收益再算一次。
+
+| 路径 | 最终实现与已证工作减少 | 额外成本、适用边界 |
+| --- | --- | --- |
+| Compute 绑定复用 | guest、query、event、bright、retile 共用真实命令录制状态；相同 pipeline/完整 descriptor 调用不再发绑定。begin 和 secondary 执行使证明失效，内部 compute 与 guest 互相覆盖后会重新绑定。 | 168B 静态状态、每次少量比较；dispatch、push、资源依赖和 GPU 工作仍执行。当前游戏命中频率和净耗时未知。 |
+| c0/c2 常量提前命中 | 同一提交、schema/range/module/reference 合同下，无相关 setter 时可在构造 key 前复用不可变表。相关 setter 保守推进版本；同值 setter 仍走原 key/last/content cache。ghost/bloom 恢复、在途提交与回收均保留。 | 全局96B、每提交96B，另有标量检查/失效；不能跳过外层资源消费。没有实测游戏 pre-key 命中次数，不能把整个绑定职责算成收益。 |
+| 非 native 上传合批 | 两条原路径共用有界 planner，最多64 regions/8MiB一组；69个 mip/layer 的真实 GPU 用例合为2次 copy/2组 staging，3D四级 mip 合为1次。超大单件单独保留原大小。 | 原像素转换、全部字节与逐区域 hazard 不减少；新增 legacy 临时计划约88B/region。实际 VkBuffer 创建和驻留取决于缓存，不能把组数当分配或DRAM节省。native 直接路径不经过此处。 |
+
+另外合入原 bootprof 统计门控：OFF 时省去 mprotect/yield 的诊断时钟和统计更新，真实原语与截止判断不变，没有增加热路径环境变量读取。
+
+### Profile 发现并修掉了新增成本
+
+首版 `4a37f8d` 在每次相关绑定时比较 values 以判断版本是否变化。原始三份 FP 中，父版 `vk_state_op` SELF/明确 inline 为1.16–1.47%，首版为1.76–1.93%；新增扫描源码有实际采样。同值大 vector 会完整扫描，可能比原 sparse key 更贵。该比较不证明整个线程变慢的因果，但足以要求检查新增工作。
+
+`10d5e13` 删除了这次额外扫描，改成相关 setter 的标量保守失效。没有相关 setter 的相邻 draw 保留提前命中；同值绑定交给原缓存，既不冒险预测数据，也不再次遍历 vector。正式 AArch64 `vk_state_op` 由2300B变为2160B；代码尺寸不是速度测量。四项代表性 normal/ASan GPU 回归及正式 APP 排除通过，原三路合并另有十项 GPU/CoreSYNC 回归；这些仅作正确性证据。
+
+### 真正的原生游戏与原工具对照
+
+在 Q735 真机运行原始 main/sdk/subsdk0 经声明规则新生成并独立 verify-only 的28项模块产物，执行原硬件 ARM64/HLE 路线。每轮原营地三段正常摇杆行走，随后使用现成 Simpleperf（3×30秒、99Hz FP）、Perfetto（五个8秒窗口，其中三窗与采样重叠）及原 meminfo/showmap。每轮都确认原生命周期 save2、停止与目录CAS恢复。旧首版四轮和最终后继的两轮及第三父版共七次独立进程，原始失败/不利窗口均保留。
+
+受控条件固定0.60、2750×1260、target60、f830、原950 shader链、2838 native替换资源、共享1MiB、lazy1/raw0/span-reference1，使用原 external-profile/noADPF 条件；**这不是日常默认性能设置**。坐标、PSO数、CPU频率和核心分布的实际差异仍在报告中，没有按MHz线性归一化。
+
+| 最近对照顺序 | 五窗 NvN Running/Surface 范围 | Surface 间隔范围 |
+| --- | --- | --- |
+| 父版 A2，52181 | 26.371–27.056ms | 33.508–33.553ms |
+| 最终10d，第一次 | 25.559–27.175ms | 33.275–33.511ms |
+| 最终10d，第二次 | 26.285–26.712ms | 33.700–33.803ms |
+| 父版 A3，52181 | 24.879–27.187ms | 33.130–33.181ms |
+
+**结论：没有证明稳定的整线程 CPU 或 FPS 提升，出图仍约30FPS。** 不能挑25.559ms首窗报收益，也不能丢掉父版24.879ms首窗。早期 A1 的23.404ms窗口和旧4a的完整20窗另行保存。12份最终上下文 FP 均核对真实 ELF BuildID、原始祖先和官方丢样信息，并验证实际 MONOTONIC/Perfetto 时间重叠；没有自写计时器、采样器或合成调用栈。
+
+PSS单端点依次为2056216/1978966/1966960/1963661KiB，第三父版已与第二后继接近，不能承诺净驻留节省。没有温度改善、战斗/全场景、持续散热或真实6GB可玩性的新验收。显示与存档检查未观察到本轮缺画面或生命周期回退。保留正确且成本有界的条件工作减少，继续把局部工作量与整帧收益分开。
+
+本机可复核记录：
+
+- 最终源码/构建：`.local/logs/driver-binding-invalidation-v2/source-ready-agent.json`、`.local/logs/three-path-scalar-10d5e13-build-closure.json`。
+- 根独立5126文件/实际7APP/六库/RAW28审查：`.local/logs/three-path-scalar-10d5e13-root-canonical-raw-review.json`。
+- 实际原生游戏功能：`.local/logs/three-path-scalar-10d5e13-root-functional-review.json`。
+- 最终完整20窗/原职责与内存：`.local/logs/three-path-scalar-10d5e13-pair-analysis-v1/final-comparison/ready.json`、同目录 `report.txt` 与 `all-twenty-windows.csv`。
+- 旧首版负结果：`.local/logs/three-path-4a37f8d-pair-analysis-v1/four-round-summary/ready.json`；扫描新增成本：同谱系 `PARENT1-CANDIDATE1-cost-shift/ready.json`。
+- 根核985份证据及保留理由：`.local/logs/three-path-scalar-10d5e13-root-performance-review.json`。旧 raw/canonical/资源验收不改写、不重复计收益。
+
+最终 Q735 日常包已实际交付10d：`.local/logs/three-path-scalar-10d5e13-desktop-Q735-v1/result.json` 为 `Q-local-desktop-published-saved2-stopped`，两次普通桌面冷启动（无 Intent extras）均到原 HUD、确认共享/native 策略并原 save2 后停止。根又独立读取设备新 APK/28模块、profile/receipt 与全部八目录，原950 shader链及 shared_prefs 不变；未改变日常0.75/adaptive/HUD偏好。正式 APK SHA `ec15c8c37edb7afe50783a2e44503f36eaf565fb86771f03ae1a6bf5f1af0db0`，正式 ELF BID `e5072519e4f0ea29f908832910cc7b9905769cff`。新的后续恢复基线是 `.local/logs/three-path-scalar-10d5e13-desktop-Q735-v1/delivered-baseline.json`；52181仅作回退，不能再作为当前已安装身份。根设备复核：`.local/logs/three-path-scalar-10d5e13-desktop-Q735-v1-root-actual-review.json`（SHA `d39e02e4c68405569d003e669c7182c6c7ef6a24cbbdb2995fc49cc375bbba51`）。设备游戏已停止，无新的日常涨帧、持续散热或6GB承诺。
