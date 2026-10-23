@@ -18,8 +18,9 @@ typedef struct {
   // it. Promotions change owners, never request access flags or ordinals.
   size_t writer_begin;
   int writer_suffix;
+  int split_read_group; // one borrowed immutable FS group, no per-draw members
 } image_batch;
-_Static_assert(sizeof(image_batch)==40,"Image phase artifact:16 additional bytes per owned batch");
+_Static_assert(sizeof(image_batch)==40,"Image phase artifact retains existing padding");
 // Original drag-follow rendering can replay a draw while ending another
 // operation's previous pass. Preserve the outer descriptor batch across it.
 static image_batch image_batches[8];
@@ -135,7 +136,7 @@ static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelin
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(i->native_entry)native_image_record(i,r,stages,access);
 #endif
-  if(writing) {image_rebuildable_set(i,0);image_astc_proof(i,0);
+  if(writing) {image_split_changed(i);image_rebuildable_set(i,0);image_astc_proof(i,0);
 #ifdef DM_VULKAN_SHARED_POOLS
     i->shared_writer=1;i->shared_writer_source=0;i->shared_writer_region=(NVNcopyRegion){0};
     image_shared_alias_write(i);
@@ -226,18 +227,32 @@ void vk_texture_pass_begin(void) {
     image_reference_visible_clock=image_write_clock;
   }
 }
-static void image_dependencies(const image_request *requests,size_t count,int preserve_render,int covered) {
+static void image_dependencies_batch(const image_request *requests,size_t count,int preserve_render,int covered,image_batch *batch) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(batch) {
+    image_split_dependency_fixture();
+    requests=batch->requests;count=batch->count;
+  }
+#endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   // Image read-cache proofs cannot cover VkBuffer aliases. Prepare their
   // actual RAW/WAR/WAW dependencies BEFORE the consumer, including covered
   // image reads and conservative/unknown Buffer writers. Post-draw access
   // recording is too late when that path must close a physical pass.
   for(size_t k=0;k<count;k++) {
+    // Native preparation may end a pass, replay a nested draw and materialize
+    // this batch. Never borrow its allocation across that callback.
     const image_request *q=&requests[k];
-    if(q->owner->native_entry)native_image_prepare(q->owner,q->range,q->stages,q->access);
+    if(q->owner->native_entry) {
+      native_image_prepare(q->owner,q->range,q->stages,q->access);
+      if(batch) {requests=batch->requests;count=batch->count;}
+    }
   }
 #endif
-  if(!preserve_render) vk_render_end();
+  if(!preserve_render) {
+    vk_render_end();
+    if(batch) {requests=batch->requests;count=batch->count;}
+  }
   int explicit_order=!!(V.nvn_barrier&
       (NVN_BARRIER_ORDER_PRIMITIVES_BIT|NVN_BARRIER_ORDER_INDIRECT_DATA_BIT));
   int conservative=(!covered && explicit_order) || vk_submission_barrier_mode()!=0;
@@ -269,7 +284,10 @@ static void image_dependencies(const image_request *requests,size_t count,int pr
   if(conservative) { vk_barrier();return; }
   // Only a real conflict ends a pass. Re-query afterwards: original drag-follow
   // replay while ending it can add accesses or upgrade a pending image view.
-  if(!before_pass) vk_render_end();
+  if(!before_pass) {
+    vk_render_end();
+    if(batch) {requests=batch->requests;count=batch->count;}
+  }
   VkCommandBuffer command=before_pass?before_pass:V.cmd;
   // GENERAL -> GENERAL does not require an image layout transition. Batch
   // memory dependencies by stage pair instead of emitting one barrier per
@@ -304,6 +322,11 @@ static void image_dependencies(const image_request *requests,size_t count,int pr
   for(unsigned g=0;g<n;g++) vkCmdPipelineBarrier(command,groups[g].src,groups[g].dst,
       0,1,&groups[g].memory,0,NULL,0,NULL);
 }
+// Standalone copy/transition requests are by-value caller-owned arrays; only
+// shader batches may grow during callbacks and must follow stable batch identity.
+static void image_dependencies(const image_request *requests,size_t count,int preserve_render,int covered) {
+  image_dependencies_batch(requests,count,preserve_render,covered,NULL);
+}
 static void image_transfer(image *i,VkImageSubresourceRange r,int writing) {
   image_request request=image_request_make(i,r,VK_PIPELINE_STAGE_TRANSFER_BIT,
       writing?VK_ACCESS_TRANSFER_WRITE_BIT:VK_ACCESS_TRANSFER_READ_BIT);
@@ -324,6 +347,7 @@ void vk_texture_shader_begin(void) {
   image_binding_active++;
   if(image_binding_count) die("Vulkan unfinished image operation");
   image_batch_current.writer_begin=SIZE_MAX;image_batch_current.writer_suffix=1;
+  image_batch_current.split_read_group=0;
 }
 // Only immutable physical-view recipes may bypass normalization here. The
 // stored access range is separate from the VkImageView's range: coupled DS
@@ -331,6 +355,10 @@ void vk_texture_shader_begin(void) {
 static void image_request_add_normalized(image *i,VkImageSubresourceRange r,
     VkPipelineStageFlags stages,VkAccessFlags access) {
   if(!image_binding_active || !stages) { image_unknown(i);return; }
+  // Prospective writers conservatively invalidate before appending. This
+  // may materialize reads/reallocate, before any caller borrows the new slot;
+  // it publishes no GPU history and needs no extra per-draw writer scan.
+  if(image_writes(access))image_split_changed(i);
   if(image_binding_count==image_binding_capacity) {
     size_t capacity=image_binding_capacity?image_binding_capacity*2:32;
     image_request *grown=realloc(image_bindings,capacity*sizeof *grown);
@@ -369,6 +397,7 @@ static void image_binding_replaced(image *previous,image *retired) {
       if(image_batches[b].requests[k].owner==previous) image_batches[b].requests[k].owner=retired;
 }
 const char *vk_texture_quad_readonly_error(void) {
+  vk_image_split_break();
   if(!image_binding_active)return "image operation must be collecting";
   for(size_t n=0;n<image_binding_count;n++) {
     const image_request *q=&image_bindings[n];
@@ -390,10 +419,10 @@ const char *vk_texture_quad_readonly_error(void) {
   return NULL;
 }
 void vk_texture_shader_barrier(void) {
-  image_dependencies(image_bindings,image_binding_count,0,1);
+  image_dependencies_batch(image_bindings,image_binding_count,0,1,&image_batch_current);
 }
 void vk_texture_graphics_barrier(void) {
-  image_dependencies(image_bindings,image_binding_count,1,1);
+  image_dependencies_batch(image_bindings,image_binding_count,1,1,&image_batch_current);
 }
 int vk_texture_shader_collecting(void) {
   return image_binding_active!=0;
@@ -404,6 +433,7 @@ void vk_texture_shader_abandon(void) {
   // Those commands publish their own histories immediately. The collected
   // shader requests are only prospective: no draw/dispatch consumed them, so
   // neither access nor visibility may be published while discarding a retry.
+  image_batch_current.split_read_group=0;
   image_binding_count=0;image_binding_active--;
 }
 void vk_texture_shader_record(void) {
@@ -434,6 +464,8 @@ void vk_texture_shader_record(void) {
       }
     }
   }
+  image_split_record_done();
+  image_batch_current.split_read_group=0;
   image_binding_count=0;image_binding_active--;
   image_record_merging=0;
   image_record_raster=0;

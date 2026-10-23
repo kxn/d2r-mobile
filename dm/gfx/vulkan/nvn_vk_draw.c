@@ -479,6 +479,7 @@ int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
   return 1;
 }
 void vk_nvn_barrier(uint32_t flags) {
+  if(flags)vk_image_split_break();
   vk_mip_clear_drain();
   if (flags & ~255u)
     die("Vulkan unknown NVN barrier flags %#x", flags);
@@ -535,6 +536,7 @@ static struct {
 } end_sites[64];
 static unsigned end_site_count;
 void vk_render_end_at(const char *file, unsigned line) {
+  vk_image_split_break();
   if (active_job && !vk_pool_maintenance_active()) vk_ghost_flush();
   if(active_job && active_job->local) {pl_render_end(active_job);mip_clear_materialize();return;}
   if (active_job) {
@@ -1348,9 +1350,11 @@ static VK_COLD_PHASE int draw_expand_instances(vk_shader *const list[6],
 }
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
 static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
+  vk_image_split_draw_begin();
   vk_texture_lookup_scope_begin();int source_operation=vk_shader_image_sources_begin();
   vk_draw_record_impl(draw,idx,disable_local_plan);
   vk_shader_image_sources_end(source_operation);vk_texture_lookup_scope_end();
+  vk_image_split_draw_end();
 }
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   // A state change outside the complete planned sequence cannot enable
@@ -1550,6 +1554,10 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   for(int k=0;k<S.targets.n;k++) if(S.targets.color[k])
     vk_texture_prepare_attachment(S.targets.color[k],S.targets.has_cview[k]?&S.targets.cview[k]:NULL);
   uint64_t cover_descriptor_epoch=cover_ready?vk_texture_descriptor_epoch():0;
+  int split_ok=active_job && !active_job->local && !local_ready && !local_consumer && !vk_ghost_replaying() && !writable_buffers;
+  for(unsigned st=0;st<5;st++)if(list[st] && list[st]->has_resource_writes)split_ok=0;
+  if(list[1] && (list[1]->quad_readonly_sources || list[1]->texel_storage_alternative))split_ok=0;
+  vk_image_split_admit(list[1],split_ok);
   vk_texture_binding_scope_begin();
   vk_shader_prepare_images(list,0);
   if(local_consumer && (active_job!=local_job || local_recording!=vk_recording_serial() || local_pass_number!=V.passes)) {

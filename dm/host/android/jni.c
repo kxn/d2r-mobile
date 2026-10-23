@@ -364,6 +364,19 @@ static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int shared_guest_heap_startup;
 static int shared_lazy_windows_startup;
 static int shared_image_raw_observe_startup;
+static int image_buffer_split_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeImageBufferSplit(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"image_buffer_split is fixed before native startup");
+    return;
+  }
+  image_buffer_split_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int driver_span_reference_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeDriverSpanReference(
     JNIEnv *env,jclass klass,jboolean reference) {
@@ -695,7 +708,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   vk_driver_span_reference_startup(driver_span_reference_startup);
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
-  if(setenv("DM_VK_SHARED_LAZY_WINDOWS",shared_lazy_windows_startup?"1":"0",1) ||
+  if(setenv("DM_VULKAN_IMAGE_BUFFER_SPLIT",image_buffer_split_startup?"1":"0",1) ||
+      setenv("DM_VK_SHARED_LAZY_WINDOWS",shared_lazy_windows_startup?"1":"0",1) ||
       setenv("DM_VK_SHARED_IMAGE_RAW_OBSERVE",shared_image_raw_observe_startup?"1":"0",1) ||
       setenv("DM_GUEST_HEAP_SHARED",shared_guest_heap_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SHARED_POOLS",shared_guest_heap_startup?"1":"0",1) ||

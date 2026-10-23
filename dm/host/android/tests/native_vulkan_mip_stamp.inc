@@ -2,6 +2,9 @@
 // checks private hazard sequence invariants unavailable in GPU profiling tools.
 // These are logical sequence numbers, never CPU/GPU performance timestamps.
 extern int vk_texture_test_mip_clocks(const tex_t *,uint64_t[20]);
+static void mip_stamp_bind(uint64_t handle) {
+  p_bind_handles p={.stage=1,.first=0,.n=1,.h={handle}};vk_state_op(OP_BIND_TEX,&p);
+}
 static void mip_stamp_snapshot(const NVNtexture *texture,uint64_t state[20]) {
   CHECK(vk_texture_test_mip_clocks((const tex_t *)texture,state)==3);
 }
@@ -57,7 +60,7 @@ static void mip_stamp_test(const void *vertex,const void *fragment) {
   S.attr[0]=*(const va_st *)&attr[0];S.attr[1]=*(const va_st *)&attr[1];S.stream[0]=*(const vs_st *)&stream;
   S.vertex[0]=(NVNbufferRange){(uintptr_t)storage+0x30000,sizeof vertices};
   S.has_viewport=S.has_scissor=1;S.viewport[0][2]=S.viewport[0][3]=16;S.scissor=(p_scissor){0,0,16,16};
-  S.tex[1][0]=whole;S.samp[1][0]=UINT64_C(1)<<20;
+  mip_stamp_bind(whole);S.samp[1][0]=UINT64_C(1)<<20;
   S.targets=(p_set_rt){.n=1,.color={(const tex_t *)&textures[1]}};vk_pipeline_state_changed();
   p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3};
   const float clear_colors[3][4]={{1,0,0,1},{0,1,0,1},{0,0,1,1}};
@@ -76,14 +79,15 @@ static void mip_stamp_test(const void *vertex,const void *fragment) {
   CHECK(V.passes==pass&&b[0]>a[0]&&b[2]>a[2]&&b[1]==a[1]&&b[3]==a[3]);
   for(unsigned level=0;level<3;level++)CHECK(a[4+level]>a[1]&&b[4+level]==a[4+level]);
   // New physical pass with the same still-valid read proof must restamp.
-  S.targets.color[0]=(const tex_t *)&textures[2];vk_pipeline_state_changed();
+  vk_state changed=S;changed.targets.color[0]=(const tex_t *)&textures[2];
+  vk_state_restore(&changed);vk_pipeline_state_changed();
   vk_draw(&draw,NULL);mip_stamp_snapshot(&textures[0],c);
   CHECK(V.passes==pass+1&&c[1]>b[1]&&c[2]>b[2]&&c[3]==b[3]);
   for(unsigned level=0;level<3;level++)CHECK(c[4+level]>b[4+level]&&c[4+level]>c[1]);
   // Three different exact views evict the bounded two-entry proof. Returning
   // to the whole view must not infer coverage from only one stamped mip.
-  for(unsigned level=0;level<3;level++) { S.tex[1][0]=first+level;vk_draw(&draw,NULL); }
-  S.tex[1][0]=whole;vk_draw(&draw,NULL);mip_stamp_snapshot(&textures[0],a);
+  for(unsigned level=0;level<3;level++) { mip_stamp_bind(first+level);vk_draw(&draw,NULL); }
+  mip_stamp_bind(whole);vk_draw(&draw,NULL);mip_stamp_snapshot(&textures[0],a);
   for(unsigned level=0;level<3;level++)CHECK(a[4+level]==a[2]&&a[4+level]>c[4+level]);
   CHECK(V.passes==pass+1);vk_internal_wait(vk_internal_commit());
   mip_stamp_pixels(&textures[1],0,16,(const uint8_t[]){255,0,0,255});
@@ -91,17 +95,22 @@ static void mip_stamp_test(const void *vertex,const void *fragment) {
   // Real producer and layout change invalidate the old image generation.
   mtl_sub_begin();p_clear_tex yellow={.tex=(const tex_t *)&textures[0],.has_view=1,
     .view={.set_levels=1,.base_level=1,.nlevels=1},.r={0,0,0,8,8,1},.mask=15,.c.f={1,1,0,1}};
-  vk_texture_clear(&yellow);S.tex[1][0]=second;vk_draw(&draw,NULL);mip_stamp_snapshot(&textures[0],b);
+  vk_texture_clear(&yellow);mip_stamp_bind(second);vk_draw(&draw,NULL);mip_stamp_snapshot(&textures[0],b);
   CHECK(b[3]>a[3]&&b[5]==b[2]&&b[5]>b[1]);
   vk_draw(&draw,NULL);mip_stamp_snapshot(&textures[0],c);
   // A single-mip range keeps the original one-cell stamp. Only multi-mip
   // ranges amortize the extra proof-stamp check and publication.
-  CHECK(c[0]>b[0]&&c[2]>b[2]&&c[5]==c[2]&&c[5]>b[5]);
+  CHECK(c[0]>b[0]&&c[2]>=b[2]&&c[5]==c[2]&&c[5]>=b[5]&&c[5]>c[1]);
+  // A successful same-pass immutable group may omit the redundant read. Its
+  // range remains after pass-begin; new pass/producer checks above and below
+  // still require strict restamps. OFF retains the original strict check.
+  if(!getenv("DM_VULKAN_IMAGE_BUFFER_SPLIT") || !strcmp(getenv("DM_VULKAN_IMAGE_BUFFER_SPLIT"),"0"))
+    CHECK(c[2]>b[2]&&c[5]>b[5]);
   CHECK(c[4]==b[4]&&c[6]==b[6]);vk_internal_wait(vk_internal_commit());
   mip_stamp_pixels(&textures[2],0,16,(const uint8_t[]){255,255,0,255});
   // First STORAGE use promotes physical allocation; requests must use its
   // fresh generation and keep every sibling mip's actual GPU contents.
-  mtl_sub_begin();vk_texture_view(whole,1);S.tex[1][0]=whole;
+  mtl_sub_begin();vk_texture_view(whole,1);mip_stamp_bind(whole);
   vk_draw(&draw,NULL);mip_stamp_snapshot(&textures[0],a);
   CHECK(a[3]>c[3]);for(unsigned level=0;level<3;level++)CHECK(a[4+level]==a[2]);
   vk_internal_wait(vk_internal_commit());

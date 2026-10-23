@@ -102,6 +102,7 @@ typedef struct image {
   image_view *views;
   image_access *access;
   uint64_t access_generation;
+  uint64_t split_group_revision; // recording-owner watcher; never a CPU publication proof
   image_read_proof read_proofs[2];
   unsigned read_proof_next;
   unsigned physical_traits;
@@ -145,8 +146,17 @@ enum {
 // Recording-owner identity generation for logical image destruction and real
 // physical replacement. Reject freed owners and handle-reuse ABA before any
 // cached pointer dereference. Completion only frees already-invalidated copies.
+static void image_split_changed(image *i);
+static void image_split_capture(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stage,int storage,const view_t *view);
+static void image_split_record_done(void);
+static void image_split_publish(void);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static void image_split_dependency_fixture(void);
+#endif
+static int sampled_target_alias(const tex_t *,const view_t *);
 static uint64_t image_recipe_generation=1;
 static void image_recipes_changed(void) {
+  vk_image_split_break();
   if(++image_recipe_generation==0) die("Vulkan image recipe generation overflow");
 }
 // Content proof belongs to actual physical image bytes, not a filename,
@@ -426,7 +436,7 @@ static void image_whole_layout_access(image *i,VkImageLayout next,
       .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
       .image=i->handle,.subresourceRange={i->aspect,0,i->levels,0,i->layers}};
   vkCmdPipelineBarrier(command,src_stage,dst_stage,0,0,NULL,0,NULL,1,&barrier);
-  i->layout=next;i->layout_scope=dst_stage;i->access_generation++;
+  i->layout=next;i->layout_scope=dst_stage;image_split_changed(i);i->access_generation++;
   for(unsigned a=0;a<3;a++) if(i->aspect&(1u<<a))
     for(unsigned level=0;level<i->levels;level++)
       for(unsigned layer=0;layer<i->layers;layer++) {
@@ -475,7 +485,7 @@ static void image_range_layout_access_normalized(image *i,VkImageSubresourceRang
     c->mip_layout=next;c->mip_scope=dst_stage;
     c->readers=0;c->raster_pass=0;c->visible=dst_stage;c->layout_ordered=dst_stage;
     c->layout_ordered_access=dst_access;
-    i->access_generation++;
+    image_split_changed(i);i->access_generation++;
     image_layout_recorded.transitions++;
   }
   // Raw image consumers first normalize the whole image. A mixed-layout image
@@ -716,7 +726,7 @@ static void image_allocate(image *i) {
   if(!cells || cells>SIZE_MAX/sizeof *i->access) die("Vulkan image access capacity");
   i->access=calloc(cells,sizeof *i->access);
   if(!i->access) die("Vulkan image access allocation");
-  i->access_generation++;
+  image_split_changed(i);i->access_generation++;
   VK_CHECK(vkCreateImage(V.device, &i->description, NULL, &i->handle));
   VK_CHECK(vk_memory_image(i->handle, &i->memory, &i->allocation));
   i->allocation_bytes=vk_memory_allocation_bytes(i->allocation);
@@ -1118,7 +1128,7 @@ void vk_test_native_rgba_adopt(const tex_t *t,VkImage handle,VkDeviceMemory memo
   i->allocation=NULL;i->handle=handle;i->memory=memory;i->native_pool=allocation;i->native_entry=entry;
   i->description=*description;i->description.pNext=NULL;i->initialized=1;i->layout=VK_IMAGE_LAYOUT_GENERAL;
   i->layout_scope=0;i->physical_traits=image_physical_traits(i);
-  memset(i->access,0,(size_t)i->levels*3*sizeof *i->access);i->access_generation++;
+  memset(i->access,0,(size_t)i->levels*3*sizeof *i->access);image_split_changed(i);i->access_generation++;
   for(unsigned n=0;n<i->levels;n++)image_cell(i,0,n,0)->mip_layout=VK_IMAGE_LAYOUT_GENERAL;
   native_range_add(i);image_recipes_changed();
 }
@@ -2188,6 +2198,7 @@ static void sampler_registry_changed(void) {
 static int texture_capacity, sampler_capacity, texture_limit = 1048576;
 static atomic_uint_fast64_t descriptor_epoch;
 uint64_t vk_texture_descriptor_epoch(void) { return atomic_load(&descriptor_epoch); }
+#include "nvn_vk_image_read_group.inc"
 // All logical descriptor publishers hold resources. Never publish a wrapped
 // epoch: a value-only cache may legally survive any number of draws.
 static void texture_registry_changed(void) {
@@ -2587,6 +2598,7 @@ static VkBufferView texel_view(VkBuffer buffer,VkFormat format,VkDeviceSize offs
   return view;
 }
 void vk_texture_end_submit(void) {
+  image_split_publish();
   // 保留翻译快照宽限期，同时检查所有内部/客体提交的真实完成序号。
   // Preserve translation-snapshot grace, independently checking actual
   // completion of every referencing guest/internal submission.
@@ -3209,6 +3221,7 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
             i->tex.d.target==NVN_TEXTURE_TARGET_2D && i->tex.L.layers==1 && i->tex.d.samples<=1),
         .owner=i,.view=view,.description=ci,.access_range=access_range,.handle=handle,.astc_decode8=decode8};
   }
+  image_split_capture(i,access_range,image_shader_stages(stage),storage,v);
   return handle;
 }
 VkImageView vk_texture_view_binding(int id,int storage,VkShaderStageFlagBits stage,VkImageLayout *layout) {
@@ -3446,7 +3459,7 @@ int vk_texture_pixel_local_prepare(const tex_t *t,int local,vk_pixel_local_image
   image_range_layout_access(i,r,layout,stages,access);
   if(!local) {
     // Invalidate SHADER_READ-only proofs before the dedicated input request.
-    i->access_generation++;
+    image_split_changed(i);i->access_generation++;
     image_cell(i,0,0,0)->visible=0;
     image_request q=image_request_make(i,r,stages,access);image_dependencies(&q,1,0,1);
     image_record(i,r,stages,access,0);
@@ -3462,7 +3475,7 @@ int vk_texture_pixel_local_prepare(const tex_t *t,int local,vk_pixel_local_image
 }
 int vk_texture_pixel_local_enter(const vk_pixel_local_image *p) {
   image *i=pixel_local_owner(p);if(!i)return 0;image_access *c=image_cell(i,0,0,0);
-  i->last_use=vk_recording_serial();i->access_generation++;
+  i->last_use=vk_recording_serial();image_split_changed(i);i->access_generation++;
   if(p->local) {
     if(image_mip_tracked(i)) {
       c->mip_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -3527,7 +3540,7 @@ int vk_texture_pixel_local_depth_preflight(const tex_t *t,const view_t *v,
   if(generation!=image_recipe_generation || recording!=vk_recording_serial() || passes!=V.passes ||
       image_binding_active || vk_render_active())return 0;
   if(i->handle!=handle || i->layout!=attachment->layout || i->access_generation!=access_generation)return 0;
-  i->access_generation++; // Invalidate old read-only visibility caches.
+  image_split_changed(i);i->access_generation++; // Invalidate old read-only visibility caches.
   for(unsigned a=0;a<3;a++)if(q.range.aspectMask&(1u<<a)) {
     image_access *c=image_cell(i,a,0,0);
     c->layout_ordered=stages;c->layout_ordered_access=access;

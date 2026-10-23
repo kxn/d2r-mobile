@@ -9,6 +9,7 @@ void vk_driver_state_invalidate(unsigned stage,unsigned slot) {
   if(!++vk_driver_state_versions[stage][slot/2])die("Vulkan driver state version overflow");
 }
 void vk_state_restore(const vk_state *state) {
+  vk_image_split_break();
   S=*state;
   for(unsigned stage=0;stage<6;stage++)for(unsigned slot=0;slot<=2;slot+=2)
     vk_driver_state_invalidate(stage,slot);
@@ -104,6 +105,7 @@ void vk_state_op(uint32_t op, const void *data) {
     const p_bind_handles *p = data;
     bounds(p->stage, 1, 6);
     bounds(p->first, p->n, op == OP_BIND_IMG ? 32 : 128);
+    vk_image_split_handles(op,p->stage,p->first,p->n,p->h);
     // Empty setters and IMG[8..31] do not intersect c2. A relevant setter
     // invalidates even for identical/ignored bits: the existing key cache
     // handles that case, avoiding a second walk of the supplied vector here.

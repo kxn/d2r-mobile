@@ -154,9 +154,7 @@ typedef struct {
   vk_buffer *original, *aligned;
   int writable;
 } storage_copy;
-typedef struct {
-  uint64_t object,offset,range;
-} descriptor_value;
+typedef vk_split_descriptor_value descriptor_value;
 typedef struct {
   const vk_shader *shader;
   VkDescriptorSetLayout layout;
@@ -1569,7 +1567,20 @@ VkDescriptorSet vk_descriptor_allocate(VkDescriptorSetLayout layout) {
   return one;
 }
 void vk_shader_prepare_images(vk_shader *const list[6],int compute) {
-  for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++) if(list[stage])
+  for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++) if(list[stage]) {
+    uint64_t skip[2];
+    if(stage==1 && list[stage]->image_binding_mask_ready && vk_image_split_prepare(list[stage],skip)) {
+      for(unsigned word=0;word<2;word++) {
+        uint64_t bits=list[stage]->image_binding_mask[word]&~skip[word];
+        while(bits) {unsigned k=word*64+__builtin_ctzll(bits);bits&=bits-1;
+          const vk_binding *b=&list[stage]->bindings[k];
+          if(b->kind!=3 && b->kind!=4 && b->kind!=6)continue;
+          uint64_t h=b->kind==4?S.img[stage][b->reg]:S.tex[stage][b->reg];
+          vk_texture_prepare_binding(h&0xfffff,b->kind==4,vk_stage(stage));
+        }
+      }
+      continue;
+    }
     for(vk_image_binding_iterator it=vk_image_binding_begin(list[stage]);;) {
       unsigned k;if(!vk_image_binding_next(list[stage],&it,&k))break;
       const vk_binding *b=&list[stage]->bindings[k];
@@ -1578,6 +1589,7 @@ void vk_shader_prepare_images(vk_shader *const list[6],int compute) {
       uint64_t handle=b->kind==4?S.img[stage][b->reg]:S.tex[stage][b->reg];
       vk_texture_prepare_binding(handle & 0xfffff,b->kind==4,vk_stage(stage));
     }
+  }
 }
 // Only immutable-content misses need the Vulkan update arrays. Keep their
 // stack storage and driver calls out of the much more frequent binding/cache
@@ -1716,14 +1728,28 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
   uint32_t *bias_words=current_operation.storage_bias_words[bias_stage];
   memset(bias_words,0,16*sizeof *bias_words);
   if(bias_stage>=2)memset(bias_words+16,0,16*sizeof *bias_words);
-  descriptor_value values[128];
+  descriptor_value local_values[128];
+  uint64_t split_skip[2]={0,0};
+  descriptor_value *values=s->stage==1 && !local_views?
+      vk_image_split_values(s,s->nb,split_skip):NULL;
+  int split_values=values!=NULL;
+  if(!values)values=local_values;
   const struct vk_binding_consumer *program=vk_binding_consumer_reference_mode()?NULL:s->binding_consumers;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(program)binding_consumer_test_compiled+=s->nb;else binding_consumer_test_reference+=s->nb;
 #endif
   VkShaderStageFlagBits consuming_stage=vk_stage(s->stage);
   VkPipelineStageFlags producing_stage=producer_stage(s->stage);
-  for (uint32_t n = 0; n < s->nb; n++) {
+  uint64_t consume[2]={s->nb>=64?UINT64_MAX:((UINT64_C(1)<<s->nb)-1),
+      s->nb<=64?0:s->nb==128?UINT64_MAX:((UINT64_C(1)<<(s->nb-64))-1)};
+  consume[0]&=~split_skip[0];consume[1]&=~split_skip[1];
+  int sparse=!!(split_skip[0]|split_skip[1]);
+consume_split_remaining:
+  for(uint32_t ordinal=0,n=0;ordinal<s->nb;ordinal++) {
+    if(!sparse)n=ordinal;
+    else if(consume[0]) {n=__builtin_ctzll(consume[0]);consume[0]&=consume[0]-1;}
+    else if(consume[1]) {n=64+__builtin_ctzll(consume[1]);consume[1]&=consume[1]-1;}
+    else break;
     const vk_binding *b = &s->bindings[n];
     const struct vk_binding_consumer *consumer=program?program+n:NULL;
     if (!consumer && b->count != 1)
@@ -1810,6 +1836,8 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
       break;
     }
     case BIND_IMAGE: {
+      if(split_values && (b->kind==3 || b->kind==6))
+        vk_image_split_capture_begin(n,b->reg,b->kind==3?b->sampler:-1);
       image=(VkDescriptorImageInfo){.imageLayout = VK_IMAGE_LAYOUT_GENERAL};
       // Image producers are owned by the image dependency batch. They do not
       // write guest buffer mirrors or invalidate cached buffer constants, and
@@ -1888,6 +1916,8 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
       values[n]=(descriptor_value){(uint64_t)texel,0,0};
     }
   }
+  vk_image_split_capture_end();
+  if(split_values && vk_image_split_retry(consume)) {sparse=1;goto consume_split_remaining;}
   // Resolve every descriptor and its dependencies before checking the final
   // immutable contents. Buffer data changes still take the normal upload /
   // writeback paths; the set only stores a handle, offset and range.

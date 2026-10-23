@@ -103,6 +103,22 @@ static void unknown_stage_reuse_test(const void *vertex,const void *fragment) {
 
 // Re-enter the real texture binding path while ending a pass: the original
 // drag-follow draw overwrites a colliding cache slot during an outer upload.
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+extern void vk_test_image_split_stats(uint64_t [6]);
+extern void vk_test_image_split_callback(void (*)(void *),void *);
+extern VkImage vk_test_image_split_first_image(void);
+extern unsigned vk_test_image_split_requests(VkImage);
+static void image_split_promote_callback(void *context) {
+  unsigned *calls=context;(*calls)++;
+  VkImage old=vk_test_image_split_first_image();CHECK(old!=VK_NULL_HANDLE);
+  // Real storage promotion first ends the pass and flushes the armed ghost.
+  // The outer deferred read group must already be materialized when the
+  // original image_binding_replaced transfers old descriptor requests.
+  vk_texture_view(270,1);
+  CHECK(vk_test_image_split_first_image()!=old);
+  CHECK(vk_test_image_split_requests(old)>0);
+}
+#endif
 static void recipe_reentrant_test(const void *vertex,const void *fragment) {
 #ifdef DM_VULKAN_TEST_EMBED
   unsigned vk_test_texture_binding_slot(int,int);
@@ -160,7 +176,9 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
   NVNcolorState cs;CALL(nvnColorStateSetDefaults,&cs);
   const tex_t *upload=(const tex_t *)&textures[2];const float grid[]={.125f,.125f,.25f,.25f};
   CHECK(upload->has_layout);
-  for(unsigned reference=0;reference<2;reference++) {
+  for(unsigned trial=0;trial<(getenv("DM_IMAGE_BUFFER_SPLIT_FIXTURE")?3u:2u);trial++) {
+    unsigned reference=trial==1;
+    int split_case=trial==2;
     vk_texture_binding_reference(reference);
     dm_guest_write_prepare((void *)upload->mem,upload->L.size);memset((void *)upload->mem,0x11,upload->L.size);
     int before_mode;vk_texture_binding_stats(&hits0,&prepares,&misses,&before_mode);
@@ -179,6 +197,28 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
     mtl_ui_ghost(1,.25f,.25f,grid,.75f,.75f);
     p_draw draw={.prim=NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP,.count=4};vk_draw(&draw,NULL);
     CHECK(vk_render_active());
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(split_case) {
+      uint64_t before[6],after[6];vk_test_image_split_stats(before);
+      vk_draw(&draw,NULL);vk_draw(&draw,NULL);vk_test_image_split_stats(after);
+      CHECK(after[1]>before[1] && after[2]>before[2]);
+      unsigned callbacks=0;uint64_t actual_draws=V.draws;
+      vk_test_image_split_callback(image_split_promote_callback,&callbacks);
+      vk_draw(&draw,NULL);vk_test_image_split_stats(after);
+      CHECK(callbacks==1 && V.draws==actual_draws+2);
+      CHECK(after[3]>before[3] && after[4]>before[4]);
+      LOG("[image split fixture] hot subset hit, actual parent group + nested ghost + physical promotion, old-owner request preserved; draws=%llu expansions=%llu",(unsigned long long)(V.draws-actual_draws),(unsigned long long)(after[3]-before[3]));
+      mtl_ui_ghost(0,0,0,NULL,0,0);
+      vk_internal_wait(vk_internal_commit());
+      NVNcopyRegion check_region={0,0,0,16,16,1};uint8_t check_pixels[1024];
+      CALL(nvnTextureReadTexels,&textures[0],NULL,&check_region,check_pixels);
+      for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
+        int icon=(x>=2&&x<6&&y>=2&&y<6)||(x>=10&&x<14&&y>=10&&y<14);
+        CHECK(!memcmp(check_pixels+(y*16+x)*4,icon?(uint8_t[]){0,255,128,255}:(uint8_t[]){0,0,0,255},4));
+      }
+      continue; // Independent extra case; original two reference oracles above stay intact.
+    }
+#endif
     // The first draw replaced the colliding slot. Restore the outer recipe
     // without changing its layout or ending the active target's pass.
     CHECK(vk_texture_view(outer_id,0)==original);CHECK(vk_render_active());

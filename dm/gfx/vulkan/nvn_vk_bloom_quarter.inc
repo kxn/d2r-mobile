@@ -33,6 +33,7 @@ static uint64_t bq_restore_handle;
 static int bq_restore_color;
 static color_st bq_original_color;
 static void bq_bind_texture(unsigned reg,uint64_t handle) {
+  vk_image_split_handles(OP_BIND_TEX,1,reg,1,&handle);
   if((uint32_t)S.tex[1][reg]!=(uint32_t)handle)vk_driver_state_invalidate(1,2);
   S.tex[1][reg]=handle;
 }

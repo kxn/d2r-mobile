@@ -258,6 +258,13 @@ static void observe_tick(const uint64_t *registers) {
     void vk_store_slot_stats(uint64_t *,uint64_t *);
     void vk_store_event_stats(uint64_t *,uint64_t *);
     void vk_bloom_quarter_blit_stats(uint64_t *,uint64_t *,uint64_t *);
+    void vk_image_split_stats(uint64_t [6]);
+    int vk_image_split_enabled(void);
+    uint64_t image_split[6];vk_image_split_stats(image_split);
+    fprintf(state_log, ",\"image_buffer_split\":{\"enabled\":%s,\"builds\":%llu,\"hits\":%llu,\"skipped_items\":%llu,\"expansions\":%llu,\"expanded_items\":%llu,\"invalidations\":%llu}",
+      vk_image_split_enabled()?"true":"false",(unsigned long long)image_split[0],
+      (unsigned long long)image_split[1],(unsigned long long)image_split[2],
+      (unsigned long long)image_split[3],(unsigned long long)image_split[4],(unsigned long long)image_split[5]);
     void vk_driver_constant_stats(uint64_t *,uint64_t *,uint64_t *,int *);
     int vk_driver_span_reference_mode(void);
     uint64_t driver_last,driver_content,driver_misses;int driver_reference;
