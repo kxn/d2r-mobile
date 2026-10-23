@@ -199,6 +199,9 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
     CHECK(vk_render_active());
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
     if(split_case) {
+      extern void vk_test_buffer_plan_payload(uint64_t[2],int *);
+      uint64_t payload_before[2],payload_after[2];int payload_enabled;
+      vk_test_buffer_plan_payload(payload_before,&payload_enabled);
       uint64_t before[6],after[6];vk_test_image_split_stats(before);
       vk_draw(&draw,NULL);vk_draw(&draw,NULL);vk_test_image_split_stats(after);
       CHECK(after[1]>before[1] && after[2]>before[2]);
@@ -207,6 +210,15 @@ static void recipe_reentrant_test(const void *vertex,const void *fragment) {
       vk_draw(&draw,NULL);vk_test_image_split_stats(after);
       CHECK(callbacks==1 && V.draws==actual_draws+2);
       CHECK(after[3]>before[3] && after[4]>before[4]);
+      vk_test_buffer_plan_payload(payload_after,&payload_enabled);
+      if(payload_enabled) {
+        CHECK(payload_after[0]>payload_before[0]);
+        CHECK(payload_after[1]>payload_before[1]);
+        LOG("[buffer plan payload fixture] stage owner consumed; real nested ghost used independent payload; Buffer preparation still original");
+      } else {
+        CHECK(payload_after[0]==payload_before[0]);
+        CHECK(payload_after[1]==payload_before[1]);
+      }
       LOG("[image split fixture] hot subset hit, actual parent group + nested ghost + physical promotion, old-owner request preserved; draws=%llu expansions=%llu",(unsigned long long)(V.draws-actual_draws),(unsigned long long)(after[3]-before[3]));
       mtl_ui_ghost(0,0,0,NULL,0,0);
       vk_internal_wait(vk_internal_commit());

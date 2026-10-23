@@ -12,6 +12,7 @@ static struct {
   unsigned count,nb;
   int valid,building,failed,hot,consumed,capture,capture_slot,capture_sampler;
   vk_split_descriptor_value values[128];
+  vk_split_descriptor_value *payload;
 } split_group;
 static _Atomic uint64_t split_published[6];
 static _Atomic int split_published_enabled;
@@ -107,10 +108,11 @@ int vk_image_split_prepare(const void *shader,uint64_t skip[2]) {
   if(!split_ready(shader))return 0;
   skip[0]=split_group.mask[0];skip[1]=split_group.mask[1];return 1;
 }
-static void split_build(const void *shader,unsigned nb) {
+static void split_build(const void *shader,unsigned nb,vk_split_descriptor_value *payload) {
   split_expand(); // no active borrower can see the member vector overwritten
   if(!++split_group.revision)die("Image split revision overflow");
   split_group.shader=shader;split_group.nb=nb;
+  split_group.payload=payload;
   split_group.mask[0]=split_group.mask[1]=0;
   split_group.textures[0]=split_group.textures[1]=0;
   split_group.sampler_slots[0]=split_group.sampler_slots[1]=0;
@@ -122,10 +124,20 @@ static void split_build(const void *shader,unsigned nb) {
   split_group.samplers=atomic_load(&sampler_registry_epoch);
   split_counts[0]++;
 }
-vk_split_descriptor_value *vk_image_split_values(const void *shader,unsigned nb,uint64_t skip[2]) {
+vk_split_descriptor_value *vk_image_split_values(const void *shader,unsigned nb,uint64_t skip[2],
+                                               vk_split_descriptor_value *prepared_values) {
   if(!split_on() || split_depth!=1 || !shader || split_admitted!=shader ||
-      !image_binding_active || nb>128 || !vk_render_active())return NULL;
-  if(split_ready(shader)) {
+      !image_binding_active || nb>128 || !vk_render_active()) {
+    // The caller will fill the complete payload through its original path.
+    // An unadmitted shader/local consumer may use the same stage storage:
+    // invalidate its former image subset before any values are overwritten.
+    if(prepared_values && split_group.payload==prepared_values)vk_image_split_break();
+    return NULL;
+  }
+  vk_split_descriptor_value *payload=prepared_values?prepared_values:split_group.values;
+  // Changing the payload owner is a cold transition, never a copy of old
+  // members. Materialize live request borrowers before replacing the group.
+  if(split_ready(shader) && split_group.payload==payload) {
     skip[0]=split_group.mask[0];skip[1]=split_group.mask[1];
     split_group.hot=1;split_group.consumed=1;
     image_batch_current.split_read_group=1;
@@ -135,8 +147,8 @@ vk_split_descriptor_value *vk_image_split_values(const void *shader,unsigned nb,
       split_test_callback=NULL;split_test_context=NULL;callback(context);
     }
 #endif
-  } else split_build(shader,nb);
-  return split_group.values;
+  } else split_build(shader,nb,payload);
+  return split_group.payload;
 }
 int vk_image_split_retry(uint64_t retry[2]) {
   if(!split_on() || split_depth!=1 || !split_group.hot)return 0;

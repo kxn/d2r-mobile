@@ -481,7 +481,11 @@ void vk_image_split_admit(const void *shader,int eligible);
 void vk_image_split_break(void);
 void vk_image_split_handles(uint32_t op,unsigned stage,unsigned first,unsigned count,const uint64_t *values);
 int vk_image_split_prepare(const void *shader,uint64_t skip[2]);
-vk_split_descriptor_value *vk_image_split_values(const void *shader,unsigned count,uint64_t skip[2]);
+// Optional caller-owned complete stage payload. It must live until the group
+// is invalidated; any replacement fill must enter this API before overwriting
+// it. Nested operations must use independent storage. NULL keeps the old owner.
+vk_split_descriptor_value *vk_image_split_values(const void *shader,unsigned count,uint64_t skip[2],
+                                               vk_split_descriptor_value *prepared_values);
 int vk_image_split_retry(uint64_t retry[2]);
 void vk_image_split_capture_begin(unsigned binding,unsigned slot,int sampler_slot);
 void vk_image_split_capture_end(void);

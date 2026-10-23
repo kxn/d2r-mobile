@@ -155,6 +155,19 @@ typedef struct {
   int writable;
 } storage_copy;
 typedef vk_split_descriptor_value descriptor_value;
+// Interface prototype only: this does NOT skip any Buffer consumer, source
+// publication, dependency, Pool borrow or access ledger. A future dirty-mask
+// plan can update this same stage payload in place instead of copying stable
+// descriptor entries into the ordinary stack array on every draw.
+static int buffer_plan_payload_enabled=-1;
+static descriptor_value buffer_plan_payloads[2][128];
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t buffer_payload_uses,buffer_payload_nested_fallbacks;
+void vk_test_buffer_plan_payload(uint64_t out[2],int *enabled) {
+  out[0]=buffer_payload_uses;out[1]=buffer_payload_nested_fallbacks;
+  *enabled=buffer_plan_payload_enabled==1;
+}
+#endif
 typedef struct {
   const vk_shader *shader;
   VkDescriptorSetLayout layout;
@@ -1153,6 +1166,12 @@ void vk_shader_destroy(vk_shader_submission *state) {
 }
 vk_shader_submission *vk_shader_begin(vk_shader_submission *state) {
   if (binding_state) die("Vulkan nested descriptor recording");
+  if(buffer_plan_payload_enabled<0) {
+    const char *setting=getenv("DM_VULKAN_BUFFER_PLAN_PAYLOAD");
+    if(setting && strcmp(setting,"0") && strcmp(setting,"1"))
+      die("DM_VULKAN_BUFFER_PLAN_PAYLOAD expects 0 or 1");
+    buffer_plan_payload_enabled=setting && !strcmp(setting,"1");
+  }
   int reference=atomic_load(&storage_bias_requested);
   if(reference<0) {
     const char *setting=getenv("DM_VULKAN_STORAGE_BIAS_REFERENCE");
@@ -1729,11 +1748,26 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
   memset(bias_words,0,16*sizeof *bias_words);
   if(bias_stage>=2)memset(bias_words+16,0,16*sizeof *bias_words);
   descriptor_value local_values[128];
+  descriptor_value *prepared_values=NULL;
+  // Ghost/recursive operations keep their own stack payload. They must not
+  // overwrite an outer stage whose consumer is suspended in a callback.
+  if(buffer_plan_payload_enabled && s->stage<2 && !vk_ghost_replaying()) {
+    if(shader_operation_depth==1) {
+      prepared_values=buffer_plan_payloads[s->stage];
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      buffer_payload_uses++;
+#endif
+    }
+  }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(buffer_plan_payload_enabled && s->stage<2 &&
+     (shader_operation_depth>1 || vk_ghost_replaying()))buffer_payload_nested_fallbacks++;
+#endif
   uint64_t split_skip[2]={0,0};
-  descriptor_value *values=s->stage==1 && !local_views?
-      vk_image_split_values(s,s->nb,split_skip):NULL;
+  descriptor_value *values=s->stage==1 && (!local_views || prepared_values)?
+      vk_image_split_values(local_views?NULL:s,s->nb,split_skip,prepared_values):NULL;
   int split_values=values!=NULL;
-  if(!values)values=local_values;
+  if(!values)values=prepared_values?prepared_values:local_values;
   const struct vk_binding_consumer *program=vk_binding_consumer_reference_mode()?NULL:s->binding_consumers;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(program)binding_consumer_test_compiled+=s->nb;else binding_consumer_test_reference+=s->nb;
