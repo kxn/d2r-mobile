@@ -169,7 +169,9 @@ static pool_backing_span *sparse_pool_ensure_locked(pool *p,uint64_t offset,uint
     .signalSemaphoreCount=1,.pSignalSemaphores=&ticket->ready};
   pthread_mutex_lock(&V.queue_mu);VkResult result=vkQueueBindSparse(V.queue,1,&info,VK_NULL_HANDLE);pthread_mutex_unlock(&V.queue_mu);
   if(result!=VK_SUCCESS)die("Sparse Pool bind failed=%d; pending resources retained",result);
-  ticket->next=recording_resources->sparse_binds;recording_resources->sparse_binds=ticket;
+  // V.resources remains held from range admission through this reference.
+  // A reservation may not produce a GPU access record before internal commit.
+  sparse_pool_pin_ticket(p,ticket,recording_resources);
   for(unsigned j=0;j<n;j++) {
     pool_backing_span *b=children[j];uint64_t k=b->begin/shared_window_bytes;
     if(sparse_pool_chunk_present(p,k))die("Sparse Pool remap of retained child");
@@ -185,7 +187,11 @@ static pool_backing_span *sparse_pool_ensure_locked(pool *p,uint64_t offset,uint
   return &p->whole;
 }
 static void sparse_pool_destroy_locked(pool *p) {
-  if(p->references)die("Sparse Pool destruction before original owner drain");
+  if(p->references || !p->shared_closing)die("Sparse Pool destruction before original owner drain");
+  // Caller has removed the closed identity from the registry and drained
+  // every GPU/native/mapping owner. No new borrow can reach it. Never block
+  // the completion worker on V.resources while waiting for this queue.
+  pthread_mutex_unlock(&V.resources);
   if(p->whole.buffer.handle) {
     VkSparseMemoryBind unbind={.resourceOffset=0,.size=p->size,.memory=VK_NULL_HANDLE};
     VkSparseBufferMemoryBindInfo buffer={.buffer=p->whole.buffer.handle,.bindCount=1,.pBinds=&unbind};
@@ -197,6 +203,7 @@ static void sparse_pool_destroy_locked(pool *p) {
     vkDestroyFence(V.device,fence,NULL);vkDestroyBuffer(V.device,p->whole.buffer.handle,NULL);
     memset(&p->whole,0,sizeof p->whole);
   }
+  pthread_mutex_lock(&V.resources);
   free(p->sparse_chunks);p->sparse_chunks=NULL;
 }
 #undef SPARSE_POOL_USAGE
@@ -248,3 +255,30 @@ unsigned vk_test_sparse_pool_ranges(void) {
 #endif
 
 int vk_pool_sparse_mode(void) {return sparse_pool_active;}
+
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Functional ownership oracle only; no fake GPU success or synthetic fence.
+// Uses the exact production pin/completion/closed-empty destruction helpers.
+unsigned vk_test_sparse_pool_owners(const char *negative) {
+  pool p={.size=4096,.sparse_backing=1};submit_resources older={0},newer={0};
+  sparse_bind_ticket first={0},second={0};unsigned checks=0;
+  pthread_mutex_lock(&V.resources);
+  sparse_pool_pin_ticket(&p,&first,&older);
+  if(p.references!=1 || older.gpu_accesses || first.owner!=&p)die("Sparse reservation needs independent owner");checks++;
+  // New recording, same Pool: old ticket cannot be moved or overwritten.
+  sparse_pool_pin_ticket(&p,&second,&newer);
+  if(p.references!=2 || newer.gpu_accesses || older.sparse_binds!=&first || newer.sparse_binds!=&second)
+    die("Sparse internal commit mapping owner contract");checks++;
+  p.shared_closing=1;
+  if(negative && !strcmp(negative,"closing")) {sparse_bind_ticket illegal={0};sparse_pool_pin_ticket(&p,&illegal,&newer);die("Sparse closed pin unexpectedly returned");}
+  if(negative && !strcmp(negative,"retire")) {sparse_pool_destroy_locked(&p);die("Sparse early retirement unexpectedly returned");}
+  sparse_pool_complete_references(older.sparse_binds);
+  if(p.references!=1 || first.owner || second.owner!=&p)die("Sparse completion crossed recording ownership");checks++;
+  // Simulate the original actual-range owner alongside the mapping owner.
+  p.references++;sparse_pool_complete_references(newer.sparse_binds);
+  if(p.references!=1 || second.owner)die("Sparse completion consumed access owner");checks++;
+  p.references--; // original access-ledger completion, not a sparse operation
+  sparse_pool_destroy_locked(&p);checks++;
+  pthread_mutex_unlock(&V.resources);return checks;
+}
+#endif

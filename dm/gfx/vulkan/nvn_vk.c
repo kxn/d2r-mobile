@@ -127,7 +127,7 @@ static int sparse_pool_covered(const pool *,uint64_t,uint64_t);
 static pool_backing_span *sparse_pool_ensure_locked(pool *,uint64_t,uint64_t);
 static int sparse_pool_startup_probe(void);
 static void sparse_pool_destroy_locked(pool *);
-typedef struct sparse_bind_ticket {struct sparse_bind_ticket *next;VkSemaphore ready;} sparse_bind_ticket;
+typedef struct sparse_bind_ticket {struct sparse_bind_ticket *next;VkSemaphore ready;pool *owner;} sparse_bind_ticket;
 static _Atomic uint64_t shared_lazy_import_bytes,shared_lazy_unique_bytes;
 static _Atomic uint64_t shared_lazy_import_nodes,shared_lazy_cover_nodes;
 static pool_backing_span *shared_lazy_ensure_locked(pool *,uint64_t,uint64_t);
@@ -1058,6 +1058,7 @@ static void reclaim_submissions(void) {
     vk_texture_recycle(r->texture);
 #ifdef DM_VULKAN_SHARED_POOLS
     while(r->sparse_binds) {sparse_bind_ticket *ticket=r->sparse_binds;r->sparse_binds=ticket->next;
+      if(ticket->owner)die("Sparse Pool semaphore reclaimed before completion ownership release");
       vkDestroySemaphore(V.device,ticket->ready,NULL);free(ticket);}
 #endif
     free(r->cpu_writes);
@@ -1203,6 +1204,25 @@ void vk_buffer_destroy(vk_buffer *b) {
   vk_memory_free(b->allocation);
   memset(b, 0, sizeof *b);
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+// Cold first-map ownership, while the original registry lock is held. Mapping
+// tickets are independent of access-ledger rows and survive internal commits.
+static void sparse_pool_pin_ticket(pool *p,sparse_bind_ticket *ticket,submit_resources *r) {
+  if(!p || !r || !ticket || ticket->owner || p->shared_closing || p->references==UINT_MAX)
+    die("Sparse Pool mapping owner unavailable/closing/overflow");
+  ticket->owner=p;p->references++;
+  ticket->next=r->sparse_binds;r->sparse_binds=ticket;
+}
+// Caller holds V.resources after the real consumer fence and all CPU effects.
+// A bind can exist without any actual GPU range use (reservation only), so it
+// owns an independent reference. The semaphore lives until command-pool reset.
+static void sparse_pool_complete_references(sparse_bind_ticket *tickets) {
+  for(sparse_bind_ticket *t=tickets;t;t=t->next) {
+    if(!t->owner || !t->owner->references)die("Sparse Pool completion ownership underflow");
+    t->owner->references--;t->owner=NULL;
+  }
+}
+#endif
 static void *completion_thread(void *unused) {
   (void)unused;
 #ifdef __ANDROID__
@@ -1336,6 +1356,9 @@ static void *completion_thread(void *unused) {
         use->owner->recording_access = NULL;
       }
     }
+#ifdef DM_VULKAN_SHARED_POOLS
+    sparse_pool_complete_references(s->resources->sparse_binds);
+#endif
     pthread_cond_broadcast(&pool_cv);
     pthread_mutex_unlock(&V.resources);
     pthread_mutex_lock(&completion_mu);
@@ -2084,6 +2107,7 @@ void mtl_pool_del(const void *mem) {
   if(p->native_allocations)die("Native allocations survived Pool close");
 #endif
 #ifdef DM_VULKAN_SHARED_POOLS
+  if(p->sparse_backing)sparse_pool_destroy_locked(p);
   if(p->shared_lazy_eligible) {
     atomic_fetch_sub(&shared_lazy_import_bytes,p->shared_import_bytes);
     atomic_fetch_sub(&shared_lazy_unique_bytes,p->shared_unique_bytes);
@@ -2091,9 +2115,6 @@ void mtl_pool_del(const void *mem) {
     atomic_fetch_sub(&shared_lazy_cover_nodes,p->shared_cover_nodes);
     pool_span_chain_destroy(p,p->shared_covers);p->shared_covers=NULL;
   }
-#endif
-#ifdef DM_VULKAN_SHARED_POOLS
-  if(p->sparse_backing)sparse_pool_destroy_locked(p);
 #endif
   pool_spans_destroy(p);
 #ifdef DM_VULKAN_SHARED_POOLS

@@ -47,6 +47,8 @@ int main(void) {
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_SPARSE_POOL_RANGE_FIXTURE")) {
     extern unsigned vk_test_sparse_pool_ranges(void);
+    extern unsigned vk_test_sparse_pool_owners(const char *);
+    printf("[sparse Pool owner oracle] checks=%u\n",vk_test_sparse_pool_owners(getenv("DM_SPARSE_POOL_OWNER_NEGATIVE")));
     printf("[sparse Pool range oracle] checks=%u\n",vk_test_sparse_pool_ranges());return 0;
   }
 #endif
