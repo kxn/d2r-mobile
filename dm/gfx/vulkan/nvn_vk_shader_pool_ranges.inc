@@ -95,6 +95,24 @@ int vk_shader_pool_ranges_state(vk_shader *const list[6],const vk_state *state,i
     image_source_plan *source_plan=image_sources_current();
     image_source_stage *source_part=image_sources_stage(source_plan,s,state,stage,compute);
     if(source_part) {
+      image_source_partition *partition=source_plan->partition;
+      int sparse=image_partition_supported(source_plan,state,compute) && partition && partition->valid &&
+          partition->epoch==vk_texture_descriptor_epoch() && partition->version==source_partition_version;
+      if(sparse) {
+        for(unsigned word=0;word<2;word++) {
+          uint64_t bits=partition->native[stage][word];
+          while(bits) {unsigned j=word*64+__builtin_ctzll(bits);bits&=bits-1;
+            image_source_entry *entry=&source_plan->entries[source_part->begin+j];
+            const tex_t *t=image_source_resolve(entry,state,stage);
+            if(!t || !vk_texture_native_pool_collect(t,producer_stage(stage),0,sink,context))return 0;
+          }
+        }
+        // A collector callback may register or restore state. Its owner must
+        // abandon this partial enumeration and use the original full fallback.
+        if(!partition->valid || partition->epoch!=vk_texture_descriptor_epoch() ||
+            partition->version!=source_partition_version)return pool_range_fail("source partition changed during admission");
+        continue;
+      }
       for(unsigned j=0;j<source_part->count;j++) {
         image_source_entry *entry=&source_plan->entries[source_part->begin+j];
         const tex_t *t=image_source_resolve(entry,state,stage);
@@ -206,6 +224,8 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
 #endif
       )return;
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(image_partition_cpu(list,state,compute))return;
+  uint64_t partition_epoch=vk_texture_descriptor_epoch(),partition_version=source_partition_version;
   image_source_plan *source_plan=image_sources_start(list,state,compute);
   int source_complete=1;
 #endif
@@ -243,6 +263,7 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
   }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   image_sources_finish(source_plan,source_complete);
+  image_partition_build(source_plan,partition_epoch,partition_version);
 #endif
 }
 

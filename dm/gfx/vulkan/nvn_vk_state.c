@@ -2,6 +2,7 @@
 // NVN state objects and bindings reuse the original replay format, checking
 // every index first.
 #include "nvn_vk_state.h"
+#include "nvn_vk_shader.h"
 vk_state S = {.depth_range = {0, 1}, .chmask = {~0u}};
 uint64_t vk_driver_state_versions[6][2] = {{1,1},{1,1},{1,1},{1,1},{1,1},{1,1}};
 void vk_driver_state_invalidate(unsigned stage,unsigned slot) {
@@ -11,6 +12,7 @@ void vk_driver_state_invalidate(unsigned stage,unsigned slot) {
 void vk_state_restore(const vk_state *state) {
   vk_image_split_break();
   vk_ubo_plan_break();
+  vk_shader_image_sources_invalidate();
   S=*state;
   for(unsigned stage=0;stage<6;stage++)for(unsigned slot=0;slot<=2;slot+=2)
     vk_driver_state_invalidate(stage,slot);
@@ -107,6 +109,7 @@ void vk_state_op(uint32_t op, const void *data) {
     const p_bind_handles *p = data;
     bounds(p->stage, 1, 6);
     bounds(p->first, p->n, op == OP_BIND_IMG ? 32 : 128);
+    if(op==OP_BIND_TEX)vk_shader_image_sources_changed(p->stage,p->first,p->n,p->h);
     vk_image_split_handles(op,p->stage,p->first,p->n,p->h);
     // Empty setters and IMG[8..31] do not intersect c2. A relevant setter
     // invalidates even for identical/ignored bits: the existing key cache

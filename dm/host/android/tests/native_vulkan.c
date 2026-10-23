@@ -791,7 +791,7 @@ int dm_vulkan_test_main(void) {
   }
 #endif
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE"))vk_legacy_astc_copy_startup(1);
+  if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE") || getenv("DM_SOURCE_PARTITION_FIXTURE"))vk_legacy_astc_copy_startup(1);
 #endif
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
     extern void nvn_test_idle_trim_cold_poll(void);
@@ -877,7 +877,12 @@ int dm_vulkan_test_main(void) {
     printf("{\"test\":\"descriptor-pool-blocks\",\"checks\":%u,\"physical_sets\":512,\"retention_budget\":2048,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(getenv("DM_SOURCE_PARTITION_FORCE"))vk_test_image_source_flow(1);
   if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){vk_test_image_source_flow(1);source_flow_observe=1;}
+  if(getenv("DM_SOURCE_PARTITION_FIXTURE")) {
+    source_partition_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"source-duty-partition\",\"result\":\"passed\"}\n");return 0;
+  }
   if(getenv("DM_IMAGE_SOURCE_FLOW_FIXTURE")) {
     image_source_flow_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"operation-image-source-flow\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;

@@ -35,6 +35,7 @@ static color_st bq_original_color;
 static void bq_bind_texture(unsigned reg,uint64_t handle) {
   vk_image_split_handles(OP_BIND_TEX,1,reg,1,&handle);
   if((uint32_t)S.tex[1][reg]!=(uint32_t)handle)vk_driver_state_invalidate(1,2);
+  vk_shader_image_sources_changed(1,reg,1,&handle);
   S.tex[1][reg]=handle;
 }
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)

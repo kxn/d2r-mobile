@@ -221,6 +221,8 @@ uint64_t vk_texture_descriptor_epoch(void);
 // or producer state. Separate from the unchanged 200B logical lookup entries.
 typedef struct {uint64_t epoch;int id,valid;tex_t texture;} vk_texture_source_value;
 const tex_t *vk_texture_source_resolve(vk_texture_source_value *value,int id);
+void vk_shader_image_sources_changed(unsigned,unsigned,unsigned,const uint64_t *);
+void vk_shader_image_sources_invalidate(void);
 int vk_shader_image_sources_begin(void);
 void vk_shader_image_sources_end(int token);
 

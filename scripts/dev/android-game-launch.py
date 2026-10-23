@@ -63,6 +63,7 @@ parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction
 parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental shared UBO preparation reuse (default off); verify effective backend mode')
 parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job attachment representation reuse (default off); verify effective backend mode')
 parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental validated pure-state replay segments (default off); verify effective backend mode')
+parser.add_argument('--source-partition',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental sparse image source responsibilities (default off)')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
 parser.add_argument('--descriptor-history-reference',action='store_true',help='comparison: cache only consecutive identical descriptor contents')
@@ -148,6 +149,8 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
+if args.attach and args.source_partition is not None:
+    parser.error('--source-partition is startup-only')
 if args.attach and args.state_segments is not None:
     parser.error('--state-segments/--no-state-segments are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_job_reuse is not None:
@@ -243,6 +246,8 @@ if not args.attach:
               '--ez', 'validate', str(args.validate).lower()]
     if args.image_buffer_split is not None:
         launch += ['--ez','image_buffer_split',str(args.image_buffer_split).lower()]
+    if args.source_partition is not None:
+        launch += ['--ez','source_partition',str(args.source_partition).lower()]
     if args.state_segments is not None:
         launch += ['--ez','state_segments',str(args.state_segments).lower()]
     if args.attachment_job_reuse is not None:
@@ -397,6 +402,13 @@ while time.monotonic() < deadline:
                         raise SystemExit('pool backing window policy did not apply')
                     if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
                         raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
+                    source_partition_modes=re.findall(r'\[vulkan\] image source partition enabled=([01])\b',log)
+                    actual_source_partition=bool(int(source_partition_modes[-1])) if source_partition_modes else None
+                    source_partition_hit='[vulkan] image source partition actual sparse CPU operation' in log
+                    if args.source_partition is not None and actual_source_partition != args.source_partition:
+                        raise RuntimeError('source_partition actual backend mode mismatch')
+                    if args.source_partition is True and not source_partition_hit:
+                        raise RuntimeError('source_partition sparse CPU operation not observed')
                     state_segment_modes=re.findall(r'\[vulkan state segments\] enabled=([01])\b',log)
                     actual_state_segments=bool(int(state_segment_modes[-1])) if state_segment_modes else None
                     if args.state_segments is not None and actual_state_segments != args.state_segments:
@@ -450,6 +462,9 @@ while time.monotonic() < deadline:
                               'actual_buffer_consumption_plan':actual_buffer_plan,
                               'requested_attachment_job_reuse':args.attachment_job_reuse,
                               'actual_attachment_job_reuse':actual_attachment_reuse,
+                              'requested_source_partition':args.source_partition,
+                              'actual_source_partition':actual_source_partition,
+                              'source_partition_actual_sparse':source_partition_hit,
                               'requested_state_segments':args.state_segments,
                               'actual_state_segments':actual_state_segments,
                               'first_actual_state_segment_operations':actual_state_segment_operations,
