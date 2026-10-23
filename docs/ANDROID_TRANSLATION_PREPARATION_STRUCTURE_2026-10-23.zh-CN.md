@@ -269,6 +269,27 @@ B2 的低频及核心驻留变化已保留在四轮结果，不用于此处相�
 
 后续顺序是：先完成UBO证明维护收敛的独立对照；并行关闭附件准备复用的合同与覆盖范围；再研究图像来源—物理表示—最终绑定间的重复身份解析。连续纯setter段合并排在其后，不能因非draw占四分之一就删除真实提交、查询或clear/copy。尚未找到一项能够直接省掉约10ms的单独职责。
 
+### v2：证明维护已收敛，完整时间仍未明显下降
+
+独立冻结版 `3c6381d` 将两stage共用的完整phase验证放到一次draw准入，真实owner变化入口负责失效；保留原重试及提交前保活。外线程Pool注册只发布原子registry，不修改owner的ready。Android实际ELF确认准入有3次外部getter，热路径原有的其余重复phase查询已消除。它没有扩大到SSBO、native image或跨pass复用。
+
+实际共享Buffer的三种offset模式、同draw GPU writer回调、提交与ghost、像素及所有权断言通过；alias负例保留原拒绝行为。完整非共享回归也通过，测试binary与各测试范围分别存档。四轮原生游戏同包对照如下；APK为`824374a0…`，原NSO重新加工并验证，游戏执行字节未变。
+
+| 轮次 | 计划 | 整线程Running ms/Surface | replay self | replay内部子职责 | replay合计 | Surface Hz |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| A1 | OFF | 26.8066 | 23.2973 | 2.3467 | 25.6440 | 30.347 |
+| B1 | ON | 26.8074–26.8114 | 23.0578 | 2.5548 | 25.6125 | 30.224 |
+| B2 | ON | 26.9252–26.9612 | 23.1326 | 2.5573 | 25.6899 | 30.226 |
+| A2 | OFF | 27.0190 | 23.4576 | 2.3691 | 25.8266 | 30.189 |
+
+Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相同。self两对减少约0.24/0.32ms，但内部子职责增加约0.21/0.19ms；整线程首对基本不变，反向只少约0.058–0.094ms，不能称作明显稳定提速。增加的标记对应真实`submission_index_build`及队列提交，不能擅自归到UBO保活展开。B1/B2分别有0.946/8.495ms总未知调度区间，保留严格资格失败及上表最坏上界，未重采或删窗。
+
+本轮也补齐一个整体测量边界：既有稳定PMU窗口的每秒指令事件率，两对下降约3.6%–4.1%；频率与核心驻留并不固定。没有精确PMU同窗完成帧数，因此不能据此报告每帧指令收益，更不能认定governor因为优化主动降频。反过来，也不能仅凭CPU毫秒基本不变就断言实际计算量完全未减。源码减少的工作、硬件事件率、单位帧时间分别保留。
+
+原官方工具快照显示线程为top-app、允许CPU0–7；policy3/7当时频率上限分别为2188.8/2150.4MHz，低于硬件报告的2803.2/3014.4MHz。它是测试时系统策略的证据，不是温控根因或硬件极限的证据；没有修改调频或绑核。
+
+已将完整实现及v2维护收敛合入当前源码（`504a193`、`a598163`、`02a33b6`、`ddcda87`），`dm/`与`scripts/`和实测冻结版完全相同。保留工作量成果，不冒称已达到60fps；启动实验开关仍可显式对照。四轮均完成原生命周期存档并停止，设备恢复日常稳定包。附件实验在独立分支继续，尚未交付：首次host回归发现整draw冷重试重复了前段操作，已保留失败，正在改为只重建必要的准备段，不能把这种未闭合候选合入基础运行。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -288,3 +309,6 @@ B2 的低频及核心驻留变化已保留在四轮结果，不用于此处相�
 - `.local/logs/buffer-consumption-device-v1/install-baseline.json`：恢复稳定日常 APK 与原模块字节核对记录。
 - `.local/logs/buffer-consumption-device-v1/whole-path-after-v1.md`、同名JSON：新样本的互斥父职责、旧大桶展开与未知归属。
 - `.local/logs/translation-structure-reuse-v1/attachment-structure-counts.py`、同名JSON：原NVN附件设置与后续draw频度，只整理已有LLDB快照。
+- `.local/logs/nvn-buffer-consumption-plan-v2/contract.md`、`independent-contract-review.md`、`android-phase-gate.disasm`：v2事件合同、独审及实测Android ELF检查。
+- `.local/logs/buffer-consumption-device-v2/final-independent-review.md`、`final-independent-manifest.json`、`pmu-window-review.json`：v2四轮工具数据、父子职责及PMU测量边界。
+- `.local/logs/buffer-consumption-device-v1/attachment-preparation-contract.md`：附件复用依赖与静态覆盖边界，明确已持有结果和缺少的访问证明。
