@@ -359,6 +359,16 @@ v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完�
 
 7945个普通无layout槽也不是新收益：已有普通图像组在e9四轮相同scheduler外围端点，每guest submit已经跳过6398–6502项，约584–593次成功复用。这里与单次快照不是同窗，不能相减造精确未覆盖数；但数量级已足以要求扣除既有覆盖。当前继续核对普通图像组的资格、失效及空组构建，特别检查少数变化槽是否使其他稳定槽重新准备；不能预设整组失效就是剩余大头。带layout来源、首次消费、实际写入和同步也不能按“相同ID”直接省掉。
 
+### 用次数排除重复立项，再用整线程占比确定优先级
+
+同次 v3 快照的进一步解析排除了一个假设：普通无 CPU 布局图像的相邻稳定槽共有6509项，整个普通子集不变时覆盖的也是6509项。27次普通子集变化没有留下其它稳定成员；最热两个 shader 的12个普通槽已经受既有分组保护，变化的 native／packaged 材质槽并不使这些普通槽失效。不能再以“一个槽变化拖累另外12个槽”为由重做部分分组，也不能把已经跳过的约6400–6500项再算新增收益。
+
+仍有不同的复用机会：在保守命令段内，2158次 packaged 图像槽引用中1922次在此前 draw 已见过同一 descriptor；1251次 native 引用中878次此前已见过。分别有560和641次并非紧邻上一 draw，说明只缓存上一次材质状态会漏掉旧资源再次出现的情况。这些是实际命令的逻辑身份频度，不是运行时已证明可以跳过准备的次数；CPU publication、物理表示、writer、pass/recording及所有权仍可能变化。
+
+高频也不自动等于大成本。四窗图像 prepare＋View 消费的现有父预算只有整线程采样的7.07%–8.33%，里面含首次消费和必要工作，且尚不能全部归属到上述重访。另一方面，回放外围的7.43%–8.17%也包括无法省掉的非状态操作。两个预算来自不同版本和窗口，不相加，不乘其它窗口的23ms冒充精确可省时间。优先级应综合已观察次数、所属完整路径预算和实际可删除职责，而不是只按函数调用总数。
+
+当前先验证已实现的连续纯状态段候选：42355条状态 opcode 可组成2622段，保留所有原 setter，仅减少段内反复观察器准入和计划游标交接。独立冻结版`ad44b85`及canonical APK已完成，原始NSO重新生成并验证；主机合同和原图形回归已通过，Android同包OFF/ON对照开始，尚不报告净收益。另一路研究直接扩充原 physical recipe 的消费产物，使源身份、物理准备、View及依赖履行结果贯穿各层；不能再建相同的资源目录，也不能只省一个getter却增加多层检查。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -390,3 +400,5 @@ v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完�
 - `.local/logs/native-image-coverage-snapshot-v1/`、`native-image-coverage-snapshot-v2/`：两次未完成native映射的原始失败及存档/停机记录，不作为native覆盖成功证据。
 - `.local/logs/native-image-mutex-abi-audit-v1/`：实际手机libc与历史工具证据一致性、官方反汇编和独立ABI审查。
 - `.local/logs/native-image-coverage-snapshot-v3/snapshot.json`、`coverage.json`、`root-actual-review.json`：成功的同暂停资源身份映射、静态使用机会及实际存档/恢复验收，非运行时热命中或性能测量。
+- `.local/logs/ordinary-image-coverage-v1/review.md`、`coverage.json`：已有普通分组覆盖、空组构建与非紧邻descriptor重访的次数；不将静态机会当运行时净收益。
+- `.local/logs/nvn-state-segments-v1/independent-review/ad44b85-addendum.md`、`android-ready.json`、`raw-ready.json`：冻结候选、实际消费标志及APK/ELF/原始NSO来源核对。
