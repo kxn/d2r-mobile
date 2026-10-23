@@ -70,4 +70,26 @@ A1测量及save2均成功，空字符串恢复属性被ADB shell丢参导致coll
 
 四臂原捕获、full/observable界、355项原输入复核及恢复收条见`.local/logs/current-f830-sysmem-abba-v1/`。当前新641draw GPU组缺少graphics pipeline/module关联键；同f830/950/.60的历史官方GFXReconstruct结构帧为607draw，不能把其Shader时间移用。已准备原GFXR单帧入口补当前实际Shader/变体身份，尚未执行，不当作新抓帧结果。
 
+## 当前模式的官方带宽对照
+
+在相同日常APK、f830、950、6217资源和.60下，实际完成default→SYSMEM两次新的官方Snapdragon Profiler九指标窗口；每臂按自己的完整Surface首末边界积分，不用12秒流量除8秒帧数。PSO均174→174、variants均32→32。两张营地截图未见明显缺画面或黑块；仍不代表战斗、其他场景或长时稳定性验证。
+
+|指标|default|SYSMEM|
+|---|---:|---:|
+|Surface完整间隔数|237|284|
+|Surface均值ms|33.036|27.762|
+|翻译线程Running ms/间隔|25.144|21.995|
+|总读取MB/间隔|132.826|124.203|
+|其中纹理读取MB/间隔|100.097|104.114|
+|总写入MB/间隔|61.778|65.211|
+|片元M/间隔|33.583|33.618|
+|总读取GB/s|4.020|4.472|
+|总写入GB/s|1.869|2.347|
+
+本次约30→36FPS再次复现；每个完整间隔的总读取下降约6.5%、写入增加约5.6%，两者合计下降约2.7%，而每秒读写量随吞吐增加。纹理读取已包含在总读取中，不能再相加。两个窗口GPU时钟均约500MHz，Shaders Busy分别约66.5%/73.9%；这些全局计数包含合成器，不是游戏独占GPU时间，也不能据此断定带宽饱和。CPU频率和驻核仍有变化，本轮没有PMU指令/周期，不将Running下降写成删除了相同时间的CPU准备。
+
+这不支持“SYSMEM必然以巨量额外每帧流量换帧率”的简单判断，也不支持已经降低长期温度或功耗。短窗顺序、真实绘制形状和其他场景仍有限制，不能据此永久全局强制SYSMEM；应继续定位哪些pass从模式选择获益，并保留默认驱动与完整依赖语义。
+
+两次正式GPU采集和原save2/stop均完成。SYSMEM collector原终态1另存：关闭GUI后，pluginPerfetto PID27901在身份读取期间退出，唯一收尾错误没有覆盖。独立root收条确认13个原collector、两个host工具和游戏均退出，APK、33资产、层设置及空Mesa属性均恢复；仅用该精确收条补证分析。原分析manifest还曾在sealer写末尾控制台输出前记录该日志；原清单和失败保留，最终封装仅允许这两条日志的精确哈希变化，不重采或改原数据。独立最终清单的124项文件已逐项复核，SHA为`8f04e68ef2d3ef1f860a41ffab026d480b67e31faf292a38123a2fba7b4672f3`。捕获、收条和离线结果分别见`.local/logs/current-f830-sysmem-sdp-game-v1/`、`.local/logs/current-f830-sysmem-sdp-game-v1-analysis/finalized/`。
+
 原始采集及实际恢复：`.local/logs/current-game-renderstages-v1/`；官方SQL与队列分析：`.local/logs/current-game-renderstages-v1-analysis/`；生产及严格封装：`.local/logs/perfetto-native-rebake-v1/`、`.local/logs/perfetto-native-pack-89e-v1/`；CPU批处理审查：`.local/logs/adjacent-draw-batching-audit-v1/`。工具配置可用`capture-android-scheduler.py --mesa-renderstages`请求现成数据源；请求成功仍必须核实实际GPU记录。
