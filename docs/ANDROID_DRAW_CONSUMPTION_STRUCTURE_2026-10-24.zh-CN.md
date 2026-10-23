@@ -84,3 +84,21 @@ B1原完整窗仅覆盖89.886% Running计数，不用它的52.6M子集伪称省�
 宏观互斥分区另显示：图像准备／View为8.21%–9.25%、Buffer Pool／依赖／plan为8.08%–8.87%、尚未归入前述子项的绑定装配为9.09%–10.06%、CPU source为5.46%–6.83%；剩余draw桶仍22.52%–24.84%，是尚需下钻的混合职责，不是现成可删阶段。研究优先继续落在完整资源消费、绑定与剩余draw的结构性工作，而不是凭98%左右热覆盖把附件优化宣传成能删98%的CPU。当前附件机制保留为独立已验证省工候选，尚未证明时间／FPS收益。
 
 最终CPU归因在 `.local/logs/attachment-raster-device-v1/current-off-callchain-analysis/attribution.{md,json}`，逐栈分配及原ReportLib导出同目录；原工具采集与独立OFF画面在 `current-off-callchain/`。另外完成一次独立ON营地截图，未见明显黑块／几何缺失，仅代表该画面；不使用截图即时HUD数值证明性能。两次检查均原生命周期新存档2次并停止。最后恢复日常08b APK并核对原执行文件，未操作Mali或平板。
+
+## 已合入并默认开启；剩余draw的宏观判断已修正
+
+主线 `b05c49b` 合入受测附件run，`5bfa5c0` 将Java、JNI和后端冷启动默认统一ON，保留明确OFF。该优化不是因为未即时涨帧而撤回。独立包源 `1bb086a` 的实际运行源码与主线一致，canonical APK为 `b8f4020f77d9c82de22dd51ba2a5ed0a09c1a14531402b7412c2c090ad536f82`。原始ExeFS另经完整重写及verify-only，24项执行／规则哈希仍同原部署；六库、私有include、签名、全UI词典、1340导出及527NVN入口已经核验。
+
+真机默认不传run开关，PID26957进入原游戏营地并实际累计hot307623；显式OFF新PID27743的enabled=false且四项计数全零。两次均原生命周期新存档2次并停止。证据为 `.local/logs/attachment-raster-default-on-device-v1/{default,off}/`；这只是默认桥接与基本真机资格，不追加FPS收益或持续游玩结论。
+
+进一步将旧OFF采样的remaining draw 22.52%–24.84%逐栈拆分：附件角色／访问／pass为3.81%–5.01%、几何1.90%–2.17%、shader变体及可选策略2.66%–3.82%、实际绑定／状态交付3.20%–3.59%、consumer作用域／准入1.81%–2.13%，其余分散于物理span、PSO上下文、query和仍未知的3.15%–3.34%。它不是一个20%以上尚未缓存的大循环，不能以该父桶预算启动又一套缓存。
+
+精确新ELF反汇编还核对了 `vkCmdBindPipeline`、绑定入口及PSO入口的实际调用点：部分memmove/memcmp在API调用范围内，中间驱动／helper尾调用框消失，不能误叫宿主临时结构初始化。没有补造驱动栈。原始source／ELF／逐栈归属与调用点证据为 `.local/logs/remaining-draw-761-drill-v1/`。
+
+native资源加入现有FS只读组亦降级：有明确native消费者祖先的样本并集仅0.84%–1.44%，非全部native成本上界；已有per-recording stage/page登记去重。直接放开资格还会让变化的native材质槽失效整个普通纹理组，破坏当前约6400–6500 skipped items/guest。避免此问题需要独立子集及Pool保活／GPU别名写事件合同，不能只改eligible条件；当前没有高收益预算支持实施。合同及互斥成本在 `.local/logs/native-read-group-budget-v1/`。
+
+### 必要代码执行成本的独立实验
+
+并行完成两TU `-Os` 候选 `70ccdfd`：仅 `nvn_vk_draw.c`、`nvn_vk_shader.c` 追加源级选项，其余135项宿主编译政策核对不变，浮点规则和游戏逻辑不变，13个builtin SPIR-V逐字节相同。10个主机回归及15项launcher测试通过，canonical APK和原始NSO重写／verify完成；只在独立分支保留构建开关，主线仍O3。
+
+本次实际两个对象text为165332→131996B，减20.16%；完整linked host text仅2840076→2806772B，减1.17%。这些静态尺寸不能推为动态指令、取指等待或时间收益。现有前端PMU压力提供实验依据，不证明当前瓶颈就是代码体积；原PGO、冷路径外提和布局研究的无稳定收益结果仍保留。实际两APK O3／Os／Os／O3四轮正在沿原Simpleperf组读与Perfetto同窗执行，首O3为Running26.488ms／Surface；最终结论待反序对照完成，不能因编译成功宣称有效。
