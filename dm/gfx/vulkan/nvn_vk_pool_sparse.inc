@@ -5,6 +5,13 @@
   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_INDEX_BUFFER_BIT|\
   VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT|VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT|VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT)
 #define SPARSE_POOL_FLAGS (VK_BUFFER_CREATE_SPARSE_BINDING_BIT|VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT)
+// V.resources protects all live Pool virtual reservations, including a closed
+// Pool whose unbind is still pending. sparseAddressSpaceSize is a device-wide
+// sum (VUID-vkCreateBuffer-flags-00911), independent of resident child bytes.
+static uint64_t sparse_virtual_bytes;
+static int sparse_virtual_fits(uint64_t used,uint64_t bytes,uint64_t limit) {
+  return used<=limit && bytes<=limit-used;
+}
 static VkResult sparse_pool_buffer_create(uint64_t bytes,VkBuffer *buffer,VkMemoryRequirements *needs) {
   VkExternalMemoryBufferCreateInfo external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
     .handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
@@ -36,6 +43,7 @@ static int sparse_pool_startup_probe(void) {
   // on the host software ICD. Reuse the original memfd-view startup facility
   // and actual GPU byte contract, before any guest Pool is registered.
   uint64_t bytes=2*shared_alignment;dm_guest_heap_probe_views views={0};
+  if(!sparse_virtual_fits(sparse_virtual_bytes,bytes,V.props.limits.sparseAddressSpaceSize))return 0;
   if(!dm_guest_heap_probe_views_create || !dm_guest_heap_probe_views_destroy ||
       !dm_guest_heap_probe_views_create(bytes,shared_alignment,&views))return 0;
   uint8_t *memory=views.guest;
@@ -117,9 +125,11 @@ static int sparse_pool_covered(const pool *p,uint64_t offset,uint64_t bytes) {
 static void sparse_pool_create_locked(pool *p) {
   if(p->whole.buffer.handle)return;
   if(!p->sparse_backing || !p->shared_lazy_eligible || !p->size || p->size%shared_alignment ||
-      p->size>V.props.limits.sparseAddressSpaceSize)die("Sparse Pool immutable extent unsupported");
+      !sparse_virtual_fits(sparse_virtual_bytes,p->size,V.props.limits.sparseAddressSpaceSize))
+    die("Sparse Pool immutable extent or total virtual address budget unsupported");
   VkResult result=sparse_pool_buffer_create(p->size,&p->whole.buffer.handle,&p->sparse_requirements);
   if(result!=VK_SUCCESS)die("Sparse Pool create failed=%d; no online backing fallback",result);
+  sparse_virtual_bytes+=p->size;
   p->sparse_chunks=calloc((sparse_pool_chunk_count(p)+63)/64,sizeof *p->sparse_chunks);
   if(!p->sparse_chunks)die("Sparse Pool residency metadata allocation");
   if(p->backing_generation==UINT64_MAX)die("Sparse Pool generation overflow");
@@ -191,8 +201,9 @@ static void sparse_pool_destroy_locked(pool *p) {
   // Caller has removed the closed identity from the registry and drained
   // every GPU/native/mapping owner. No new borrow can reach it. Never block
   // the completion worker on V.resources while waiting for this queue.
+  int reserved=p->whole.buffer.handle!=VK_NULL_HANDLE;
   pthread_mutex_unlock(&V.resources);
-  if(p->whole.buffer.handle) {
+  if(reserved) {
     VkSparseMemoryBind unbind={.resourceOffset=0,.size=p->size,.memory=VK_NULL_HANDLE};
     VkSparseBufferMemoryBindInfo buffer={.buffer=p->whole.buffer.handle,.bindCount=1,.pBinds=&unbind};
     VkBindSparseInfo info={.sType=VK_STRUCTURE_TYPE_BIND_SPARSE_INFO,.bufferBindCount=1,.pBufferBinds=&buffer};
@@ -204,6 +215,10 @@ static void sparse_pool_destroy_locked(pool *p) {
     memset(&p->whole,0,sizeof p->whole);
   }
   pthread_mutex_lock(&V.resources);
+  if(reserved) {
+    if(sparse_virtual_bytes<p->size)die("Sparse Pool virtual reservation underflow");
+    sparse_virtual_bytes-=p->size;
+  }
   free(p->sparse_chunks);p->sparse_chunks=NULL;
 }
 #undef SPARSE_POOL_USAGE
@@ -219,6 +234,14 @@ unsigned vk_test_sparse_pool_ranges(void) {
   p.whole=(pool_backing_span){.begin=0,.end=p.size,.generation=1,
     .buffer={.handle=(VkBuffer)(uintptr_t)123,.size=p.size}};
   unsigned checks=0;
+  const uint64_t cases[][3]={{0,4096,4096},{4096,4096,8192},{4096,4097,8192},
+    {8193,0,8192},{UINT64_MAX-4096,4096,UINT64_MAX},{UINT64_MAX,1,UINT64_MAX}};
+  const int fits[]={1,1,0,0,1,0};
+  for(unsigned k=0;k<sizeof fits/sizeof *fits;k++) {
+    if(sparse_virtual_fits(cases[k][0],cases[k][1],cases[k][2])!=fits[k])
+      die("Sparse virtual budget arithmetic contract");
+    checks++;
+  }
   // Sparse holes, word transitions 63/64 and 127/128, unaligned requests,
   // partial final child and exact end/overflow are independent of guest pages.
   for(unsigned pattern=0;pattern<4;pattern++) {
