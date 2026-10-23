@@ -15,6 +15,7 @@
 #include <stdatomic.h>
 #include "nvn_vk_render_objects.inc"
 typedef struct pl_job pl_job;
+typedef struct draw_parameters draw_parameters;
 typedef struct render_job {
   pl_job *local;
   struct render_job *next;
@@ -63,6 +64,7 @@ typedef struct render_job {
   void *raster_group; // private texture-history product, owned until job recycle
   vk_draw_emission *pending_draws;
   uint32_t pending_count,pending_capacity;
+  uint8_t parameters_seen,parameters_all;
   uint8_t pending_uncacheable; // whole-job retention abandoned; future delivery is immediate
   VkCommandBuffer retained_secondary;
   unsigned retained_slot;
@@ -70,6 +72,7 @@ typedef struct render_job {
 } render_job;
 struct vk_graphics_submission {
   render_job *jobs;
+  draw_parameters *parameters;
   size_t pending_bytes; // retained packet allocations, released only at safe recycle
   struct retained_recordings *retained;
   unsigned retained_next_job;
@@ -79,6 +82,7 @@ static vk_graphics_submission *graphics_state;
 // Keep consecutive draws to the same targets in one pass; end it for transfers,
 // query resets or target changes.
 static render_job *active_job;
+#include "nvn_vk_draw_parameters.inc"
 static int pl_render_end(render_job *job);
 static int pl_target_clear(const p_set_rt*,const p_scissor*,int,VkImageAspectFlags,const VkClearValue*);
 // Single recording owner; cross-thread getters see the last graphics_end.
@@ -813,6 +817,7 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   if(V.retained_draws)vk_record_object_tracking_enable();
   state->retained_next_job=0;
   if(state->retained)state->retained->used=0;
+  draw_parameters_begin(state->parameters);
   mip_clear_begin();
   // 按提交锁定模式；命令更新和绘制必须使用同一套失效规则。
   // Latch per submission: state updates and draws must share invalidation rules.
@@ -838,7 +843,14 @@ void vk_graphics_end(vk_graphics_submission *state) {
   atomic_store(&pixel_local_draws,draw_recorded.pixel_local_draws);
   atomic_store(&pixel_local_aborts,draw_recorded.pixel_local_aborts);
   mip_clear_publish();
+  draw_parameters_end(state->parameters);
   retained_submission_end(state);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(state->parameters && state->parameters->last_serial>vk_completed_serial()) {
+    if(vk_graphics_parameters_discard(state))die("Vulkan draw parameters released before actual completion");
+    draw_parameter_pending_rejected++;
+  }
+#endif
   graphics_state = NULL;
 }
 void vk_graphics_recycle(vk_graphics_submission *state) {
@@ -1269,9 +1281,21 @@ static VK_COLD_PHASE cached_pipeline *draw_pipeline_prepare(
     ci.stageCount=ns;ci.pStages=stages;
     int compile_trace=vk_system_trace_begin("Vulkan graphics PSO creation");
     vk_pipeline_cache_begin();
-    VkResult compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
+    VkResult compiled;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    static int uab_failed;
+    if(dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB && !uab_failed && getenv("DM_DRAW_UAB_PSO_FAIL_ONCE")) {
+      uab_failed=1;compiled=VK_ERROR_UNKNOWN;
+    } else
+#endif
+    compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
     vk_pipeline_cache_end(compiled==VK_SUCCESS);
     vk_system_trace_end(compile_trace);
+    if(compiled!=VK_SUCCESS && dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB) {
+      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
+      render_pass_release(cached->local_object);free(cached);
+      *retry=3;return NULL; // no abandon, resource replay or query reservation
+    }
     if(compiled!=VK_SUCCESS && j->local && !local_consumer &&
         j->local->shared_first_depth && !j->local->subpass &&
         ((!j->secondary && !active_job) || active_job==j)) {
@@ -1511,6 +1535,8 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   // stages have no ordered descriptor set and never read this local slot.
   vk_draw_emission emission;
   vk_uniform_offsets *uniform_offsets=emission.uniform_offsets;
+  vk_shader_prepared_values *parameter_values=V.retained_draws?
+      __builtin_alloca(6*sizeof *parameter_values):NULL;
   if (!list[0])
     die("Vulkan draw without vertex shader");
   VkShaderModule fragment_module=no_fxaa_fragment(list[1]);
@@ -1667,6 +1693,8 @@ uniform_vertex_remaining:
     vk_texture_binding_scope_end();free(local_ready);
     vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
   }
+  int prepared_parameters=parameter_values && !local_ready && !local_consumer &&
+      !(active_job && active_job->local) && !vk_ghost_replaying() && !vk_mip_clear_pending();
   vk_shader_operation_begin();
   vk_texture_shader_begin();
   for (int i = 0; i < 5; i++)
@@ -1675,7 +1703,10 @@ uniform_vertex_remaining:
         vk_texture_binding_scope_end();vk_texture_shader_abandon();vk_shader_operation_abandon();
         free(local_ready);vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
       }
-      if(i==1 && local_consumer) {
+      if(prepared_parameters) {
+        vk_shader_prepare_values(list[i],dynamic_uniforms,i==1?&texel_selection:NULL,&parameter_values[i]);
+        uniform_offsets[list[i]->set].count=0;
+      } else if(i==1 && local_consumer) {
         sets[i]=vk_shader_pixel_local_bindings(local_consumer,dynamic_uniforms,&uniform_offsets[list[i]->set],
             local_views,local_layouts,texel_selection.shader?&texel_selection:NULL);
       } else sets[i] = vk_shader_bindings_selected(list[i],dynamic_uniforms,&uniform_offsets[list[i]->set],
@@ -1904,11 +1935,28 @@ uniform_vertex_remaining:
     physical_depth=1;pipeline_depth=j->local->second_depth;
     na=j->attachment_count;memcpy(descriptions,j->attachments,na*sizeof *descriptions);
   }
+  int retained_parameters=prepared_parameters && !j->local && !sample_live &&
+      !vk_counter_active() && !vk_ghost_replaying() && !vk_mip_clear_pending();
+  if(retained_parameters && !draw_parameters_valid(graphics_state->parameters))retained_parameters=0;
+  if(retained_parameters && !vk_program_uab_layout(list))retained_parameters=0;
+  if(retained_parameters)for(unsigned i=0;i<5;i++)if(list[i]) {
+    sets[i]=parameter_values[i].count?draw_parameters_write(&graphics_state->parameters,&parameter_values[i]):VK_NULL_HANDLE;
+    if(parameter_values[i].count && !sets[i]){retained_parameters=0;break;}
+  }
+  if(prepared_parameters && !retained_parameters) {
+    draw_parameters_materialize(list,parameter_values,sets,uniform_offsets);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    draw_parameter_fallback++;
+#endif
+  }
+  int pipeline_descriptor_mode=retained_parameters?VK_DESCRIPTOR_LAYOUT_UAB:prepared_parameters?0:dynamic_uniforms;
   uint32_t effective_expansion=0;
   for(unsigned i=0;i<16;i++) if(expanded[i]) effective_expansion|=1u<<i;
+parameter_pipeline_retry:
+  ;
   pipeline_context context={.epoch=vk_pipeline_state_epoch(),.program_serial=S.program->serial,
     .fragment_module=fragment_module,.specialization_word=specialization_words[0],
-    .specialization_mask=specialization_words[1],.dynamic_uniforms=dynamic_uniforms,
+    .specialization_mask=specialization_words[1],.dynamic_uniforms=pipeline_descriptor_mode,
     .targets=S.targets.n,.attachments=na,.has_depth=physical_depth,.samples=samples,
     .topology=topology(idx?idx->prim:draw->prim),.expansion=effective_expansion,.depth=pipeline_depth};
   pipeline_depth_key(&context.ds,&ds);
@@ -1927,7 +1975,7 @@ uniform_vertex_remaining:
   if(reuse&&prepare_mode!=1) draw_recorded.prepare_reuses++;
   if(!reuse||prepare_mode) {
   pipeline_prepare_input preparation={.list=list,.draw=draw,.idx=idx,
-    .expanded=expanded,.expanded_stride=expanded_stride,.dynamic_uniforms=dynamic_uniforms,
+    .expanded=expanded,.expanded_stride=expanded_stride,.dynamic_uniforms=pipeline_descriptor_mode,
     .physical_depth=physical_depth,.original_specialized=original_specialized,.hybrid_selected=hybrid_selected,
     .na=na,.samples=samples,.ds=&ds,.descriptions=descriptions,.color=color,.pipeline_depth=pipeline_depth,
     .fragment_module=fragment_module,.specialization_words=specialization_words,.specialization_info=&specialization_info,
@@ -1935,6 +1983,16 @@ uniform_vertex_remaining:
     .reuse=reuse,.prepare_mode=prepare_mode};
   int retry=0;
   cached=draw_pipeline_prepare(&preparation,&streams,&retry);
+  if(!cached && retry==3) {
+    // Only optional UAB PSO delivery failed. The completed original owner
+    // operation, histories, query reservation and products are still valid.
+    retained_parameters=0;pipeline_descriptor_mode=0;
+    draw_parameters_materialize(list,parameter_values,sets,uniform_offsets);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    draw_parameter_fallback++;draw_parameter_pso_retry++;
+#endif
+    goto parameter_pipeline_retry;
+  }
   if(!cached) {
     // The failed unissued draw has already abandoned its shader/job effects.
     // End THIS operation before the original recursive replay entry.
@@ -2037,11 +2095,17 @@ uniform_vertex_remaining:
     if(!emission.geometry_complete)render_bind_index(j,b->handle,off,emission.index_type,state_reference);
   }
   emission.command=V.cmd;emission.pipeline=j->pipeline;emission.layout=j->layout;
+  emission.retained_parameters=retained_parameters;
+  j->parameters_all=j->parameters_seen?(j->parameters_all && retained_parameters):retained_parameters;
+  j->parameters_seen=1;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(retained_parameters)draw_parameter_actual++;
+#endif
   emission.viewport=viewport;emission.scissor=sc;
   emission.depth_bias[0]=S.offset.units;emission.depth_bias[1]=S.offset.clamp;emission.depth_bias[2]=S.offset.factor;
   emission.state_reference=state_reference;
   emission.stage_present_mask=0;
-  for(unsigned i=0;i<5;i++)if(list[i]) {
+  for(unsigned i=0;i<5;i++)if(list[i] && sets[i]) {
     emission.stage_present_mask|=1u<<i;emission.stage_set[i]=list[i]->set;
   }
   emission.bias_enabled=vk_shader_bias_snapshot(list,0,emission.bias_words);

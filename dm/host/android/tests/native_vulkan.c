@@ -808,6 +808,18 @@ static void fixed_shared_buffer_test(void) {
 #include "native_vulkan_native_retirement.inc"
 #include "native_vulkan_native_scope.inc"
 #endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static void draw_parameters_integration_check(void) {
+  extern void vk_test_draw_parameter_stats(uint64_t out[5]);
+  uint64_t v[5];vk_test_draw_parameter_stats(v);
+  CHECK(V.retained_draws?v[0]>0:v[0]==0);
+  if(V.retained_draws) {CHECK(v[3]>0);CHECK(v[4]>0);}
+  if(V.retained_draws && getenv("DM_DRAW_UAB_PSO_FAIL_ONCE"))CHECK(v[2]==1 && v[1]>0);
+  if(V.retained_draws && getenv("DM_DRAW_UAB_WRITE_FAIL_ONCE"))CHECK(v[1]>0);
+  LOG("[draw UAB integration] enabled=%u actual=%llu fallback=%llu PSO_retry=%llu completed_reuses=%llu pending_discard_refused=%llu",
+      V.retained_draws,(unsigned long long)v[0],(unsigned long long)v[1],(unsigned long long)v[2],(unsigned long long)v[3],(unsigned long long)v[4]);
+}
+#endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
@@ -1760,6 +1772,7 @@ int dm_vulkan_test_main(void) {
           (unsigned long long)m1,(unsigned long long)(a1-a0),callbacks);
     }
     CHECK(vk_validation_error_count()==0);
+    draw_parameters_integration_check();
     printf("{\"test\":\"pending-draw-prefix\",\"result\":\"passed\",\"checks\":%u,\"game_modules_executed\":false}\n",checks);
     return 0;
   }
@@ -2935,6 +2948,9 @@ int dm_vulkan_test_main(void) {
   LOG("[pending draw fixture] enabled=%u queued=%llu flushes=%llu max=%llu abandoned=%llu",
       V.retained_draws,(unsigned long long)queued,(unsigned long long)flushes,
       (unsigned long long)maximum,(unsigned long long)abandoned);
+#endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  draw_parameters_integration_check();
 #endif
   printf("{\"backend\":\"vulkan\",\"original_nvn\":true,\"checks\":%u,"
          "\"result\":\"passed\"}\n",

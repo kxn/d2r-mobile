@@ -29,5 +29,5 @@ typedef struct {
   float depth_bias[3];
   uint32_t count,instances,first,first_instance;
   int32_t vertex_offset;
-  uint8_t indexed,state_reference;
+  uint8_t indexed,state_reference,retained_parameters;
 } vk_draw_emission;
