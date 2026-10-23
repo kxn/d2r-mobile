@@ -85,6 +85,8 @@ typedef struct {
   VkPhysicalDeviceFeatures features;
   VkBool32 shader_draw_parameters;
   VkBool32 shader_float16;
+  VkBool32 retained_draws; // experimental cold feature, default disabled
+  VkPhysicalDeviceDescriptorIndexingProperties uab_properties;
   int astc_decode_mode;
   int display_timing;
   int sampler_mirror_clamp;

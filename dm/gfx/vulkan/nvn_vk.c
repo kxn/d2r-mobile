@@ -1638,7 +1638,8 @@ static void init_device(void) {
 #endif
   const char *device_extensions[24];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
-  int have_driver_properties=0;
+  int have_driver_properties=0,have_descriptor_indexing=0;
+  VkPhysicalDeviceDescriptorIndexingFeatures uab={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
   VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {
@@ -1655,6 +1656,7 @@ static void init_device(void) {
   VK_CHECK(vkEnumerateDeviceExtensionProperties(
       V.physical, NULL, &extension_count_device, available));
   for (uint32_t i = 0; i < extension_count_device; i++) {
+    if(!strcmp(available[i].extensionName,VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))have_descriptor_indexing=1;
     if (!strcmp(available[i].extensionName,VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME))
       have_driver_properties=1;
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -1738,7 +1740,27 @@ static void init_device(void) {
       float16.pNext=draw_parameters.pNext;draw_parameters.pNext=&float16;
     }
   }
+  const char *uab_request=getenv("DM_VULKAN_RETAINED_DRAWS");
+  if(uab_request && strcmp(uab_request,"0") && strcmp(uab_request,"1"))die("DM_VULKAN_RETAINED_DRAWS expects0or1");
+  if(uab_request && !strcmp(uab_request,"1")) {
+    if(have_descriptor_indexing) {
+      VkPhysicalDeviceFeatures2 query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&uab};
+      vkGetPhysicalDeviceFeatures2(V.physical,&query);
+      V.uab_properties=(VkPhysicalDeviceDescriptorIndexingProperties){.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES};
+      VkPhysicalDeviceProperties2 props={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&V.uab_properties};
+      vkGetPhysicalDeviceProperties2(V.physical,&props);
+      V.retained_draws=uab.descriptorBindingUniformBufferUpdateAfterBind && uab.descriptorBindingStorageBufferUpdateAfterBind;
+      LOG("[vulkan UAB] actual uniform=%u storage=%u pool_limit=%u enabled=%u",uab.descriptorBindingUniformBufferUpdateAfterBind,uab.descriptorBindingStorageBufferUpdateAfterBind,V.uab_properties.maxUpdateAfterBindDescriptorsInAllPools,V.retained_draws);
+      if(V.retained_draws) {
+        uab=(VkPhysicalDeviceDescriptorIndexingFeatures){.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES,
+          .descriptorBindingUniformBufferUpdateAfterBind=VK_TRUE,.descriptorBindingStorageBufferUpdateAfterBind=VK_TRUE,
+          .pNext=draw_parameters.pNext};
+        draw_parameters.pNext=&uab;
+      }
+    } else LOG("[vulkan UAB] descriptor-indexing extension unavailable; original path retained");
+  }
   dc.ppEnabledExtensionNames = device_extensions;
+  if(V.retained_draws)device_extensions[dc.enabledExtensionCount++]=VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
   if (V.surface) {
     device_extensions[dc.enabledExtensionCount++] =
         VK_KHR_SWAPCHAIN_EXTENSION_NAME;
