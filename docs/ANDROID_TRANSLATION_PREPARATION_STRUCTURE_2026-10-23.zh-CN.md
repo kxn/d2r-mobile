@@ -248,6 +248,27 @@ v1 不是少算了一次哈希：它跨过了前置 VS require 和后续 Pool �
 
 同时继续看完整回放父职责，而不是把9次检查当成新的全部问题。旧 Pool 路径本来绝大多数就是快命中，其调用量下降不能自动解释为等比例时间下降。需要并列新四轮的资源、附件、Buffer、描述值、驱动编码与非draw职责，确认还有哪些完整处理段没有被跳过。该独立离线分析与 v2 合同审查并行；在证据补齐前不再将旧约11.18ms资源预算重复分配给下一候选。
 
+### 新样本的整条职责分布与后续优先级
+
+独立分析已将旧 `remaining draw/replay/driver` 三个大桶继续按父职责展开。下表为三次独立 Simpleperf record 窗口，每个样本只计一处；不是按另一 Perfetto 窗口换算出的毫秒。
+
+| 父职责 | A1 OFF（592样本） | B1 ON（615样本） | A2 OFF（610样本） |
+| --- | ---: | ---: | ---: |
+| 资源来源、视图、附件及访问历史 | 151／25.5% | 159／25.9% | 182／29.8% |
+| 非draw规划、命令遍历、提交与实际副作用 | 151／25.5% | 165／26.8% | 146／23.9% |
+| PSO、draw状态组装与驱动编码 | 120／20.3% | 102／16.6% | 117／19.2% |
+| Buffer解析、依赖、准入及新增计划维护 | 84／14.2% | 71／11.5% | 75／12.3% |
+| 其余绑定结果与descriptor处理 | 50／8.4% | 73／11.9% | 54／8.9% |
+| 无法恢复父职责 | 36／6.1% | 45／7.3% | 36／5.9% |
+
+B2 的低频及核心驻留变化已保留在四轮结果，不用于此处相近频率比较。A1 record 中还有一次 specialization 扩展；少量样本变化不能单独证明某职责回归。原 OFF Pool 消费约99.948%为命中，slow 约9次/guest submit，ON仍约9次；本次消掉的是命中后的维护，不是成千次分配和上传。
+
+最具体的下一整段机会是**附件表示解析与通道组装**：三轮均有39／39／47个样本，约6.6%／6.3%／7.7%。现在每draw仍从附件准备进入图像解析，再得到range/format/view，组装附件描述、extent和有效管线上下文。已有RenderPass、Framebuffer、View对象缓存不等于这段准备已消失。应先查现有render job持有的结果能否直接交付后续draw，避免另造一套相同缓存；实际读写登记和数据依赖必须保留。该预算包含必要访问，不能宣称全部可删。
+
+已有NVN命令快照中，68次SET_RT对应2445条draw，按保守内容/顺序边界形成48个有draw的段。颜色附件出现1582项，其中1536项是段内后续draw；另外1583项绑定了深度附件，其中1563项重复。深度是否真正纳入pass仍由运行时决定，隐含重入和内部提交也会进一步分段。这些数只证明准备频度，不能当作本版本合法复用命中率。
+
+后续顺序是：先完成UBO证明维护收敛的独立对照；并行关闭附件准备复用的合同与覆盖范围；再研究图像来源—物理表示—最终绑定间的重复身份解析。连续纯setter段合并排在其后，不能因非draw占四分之一就删除真实提交、查询或clear/copy。尚未找到一项能够直接省掉约10ms的单独职责。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -265,3 +286,5 @@ v1 不是少算了一次哈希：它跨过了前置 VS require 和后续 Pool �
 - `.local/logs/nvn-buffer-consumption-plan-v1/independent-full-review.md`：冻结版独立源码与 host 验证，明确不代替真机性能结论。
 - `.local/logs/buffer-consumption-device-v1/final-independent-review.md`、`final-independent-manifest.json`：四轮官方工具结果、B2资格边界及完整证据指纹。
 - `.local/logs/buffer-consumption-device-v1/install-baseline.json`：恢复稳定日常 APK 与原模块字节核对记录。
+- `.local/logs/buffer-consumption-device-v1/whole-path-after-v1.md`、同名JSON：新样本的互斥父职责、旧大桶展开与未知归属。
+- `.local/logs/translation-structure-reuse-v1/attachment-structure-counts.py`、同名JSON：原NVN附件设置与后续draw频度，只整理已有LLDB快照。
