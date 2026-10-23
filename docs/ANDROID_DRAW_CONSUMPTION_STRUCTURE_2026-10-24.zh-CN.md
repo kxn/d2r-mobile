@@ -102,3 +102,9 @@ native资源加入现有FS只读组亦降级：有明确native消费者祖先的
 并行完成两TU `-Os` 候选 `70ccdfd`：仅 `nvn_vk_draw.c`、`nvn_vk_shader.c` 追加源级选项，其余135项宿主编译政策核对不变，浮点规则和游戏逻辑不变，13个builtin SPIR-V逐字节相同。10个主机回归及15项launcher测试通过，canonical APK和原始NSO重写／verify完成；只在独立分支保留构建开关，主线仍O3。
 
 本次实际两个对象text为165332→131996B，减20.16%；完整linked host text仅2840076→2806772B，减1.17%。这些静态尺寸不能推为动态指令、取指等待或时间收益。现有前端PMU压力提供实验依据，不证明当前瓶颈就是代码体积；原PGO、冷路径外提和布局研究的无稳定收益结果仍保留。实际两APK O3／Os／Os／O3四轮正在沿原Simpleperf组读与Perfetto同窗执行，首O3为Running26.488ms／Surface；最终结论待反序对照完成，不能因编译成功宣称有效。
+
+四轮现已全部完成：完整NvN Running为26.488／26.321／26.417／27.140ms/Surface；第一对用户周期从33.573–33.876M升至34.235–34.512M，增加1.06%–2.80%，未证明指令减少。末O3完整窗缺CPU0/2/7，原机械裁剪后仍缺CPU0/2计数，保留覆盖子集与无整TID上界，不借此宣称第二对周期减少。候选较低Running伴随较高频率及不同驻留，不按MHz归一。Os的两个宽状态窗variants30→32，其余为32→32／30→30，工作量差异保留。
+
+使用现成TraceProcessor再核已有trace，四轮整个trace及full Surface窗中的graphics PSO／compute PSO／shader module创建标记均0，含未结束slice也为0。因此不能用上述宽状态变化声称8秒工具窗正在编译；trace外较宽record部分未知，不再改选窗口或扣时间。独立实验未证明动态净省工，保留 `codex/draw-shader-os-v1` 构建选项、不在主线默认启用；不将这一负结果升级为已排除所有取指瓶颈。
+
+四轮均原生命周期新存档2次、停止及工具清理通过。Q735最终恢复已验收的O3／默认附件run ON包，APK哈希实际读回吻合、进程不存在；仍未操作暂停的Mali和平板。完整计数、BuildID、工作量、创建标记及最终状态见 `.local/logs/draw-shader-os-device-v1/{four-arm-review.md,creation-markers.json,root-final-state.json}`。目标仍未完成：当前约26–27ms CPU预算不足以达到同负载60FPS。
