@@ -186,6 +186,35 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 
 最终同一host测试binary在独立测试目录的五项现有验证均通过，包含真实嵌套ghost/promotion及两种回调位置，Vulkan/CoreSYNC无报错。中途两项full测试因复用已预热的PSO目录而失败；失败输出保留，使用独立空目录后通过，没有修改断言。A→不合格B→A与内部提交的未来组合仍需完整计划验证；源码独立审查不代替这些用例，也不代替Android游戏性能测量。
 
+### 图像也要区分整组稳定与部分槽稳定
+
+对同一v3快照继续连接最终shader采样图像槽，没有新增采集。排除671个texel消费机会、7个潜在替代/局部图像变体后，得到11354个采样图像消费机会。在同shader、同保守命令段的9349个相邻槽对中，8031个NVN图像索引及完整handle相同。这里的条件是同一阶段的shader，不要求另一个阶段的program也相同。
+
+| 稳定形状 | 相邻stage对 | 稳定图像槽消费机会 |
+| --- | ---: | ---: |
+| 整个图像集合不变 | 1063 | 3880 |
+| 部分图像变化，其余稳定 | 346 | 4151 |
+
+两个消费最多的FS分别使用15/16个图像槽，通常只改变3/4个槽。它们各有同样的12个NVN槽持续稳定，合计4980个稳定槽机会。整组不变的1063对中，又有313对的guest Buffer来源发生变化。这说明应把图像与Buffer的失效分开，也不能因一小部分图像改变就重做其余所有槽。
+
+这组数字不能全部算作下一优化的收益：快照来自旧稳定版，主线后来加入的普通图像子集已覆盖其中一部分。NVN索引不变也不证明registry中的texture身份、native类型、物理View、内容或访问状态不变。当前证据不能把4980项分为native/普通，也不能连接到当前合法跳过的调用数。下一图像方案必须先在原冷消费中取得实际资源证明，并扣除已有组的覆盖；不会仅凭这组数再加一层逐draw检查。
+
+## 用整条路径判断实验结果
+
+每个候选需同时回答三个问题：从哪里开始省、在哪里仍必须消费、为维护证明新增了什么。以当前UBO候选为例：
+
+| 位置 | 预期变化 | 不应混淆的保留工作 |
+| --- | --- | --- |
+| NVN绑定更新 | 仅真实改变的槽使相应准备结果失效 | 同值setter仍更新原状态，不能改变命令语义 |
+| draw前置VS依赖 | 对已证明的稳定只读UBO跳过原require链 | VBO/IBO、未知或写入范围继续原路径 |
+| Buffer消费 | 跳过同一有效范围的别名、Pool/span、保活和访问记录整段重复准备 | 真正的新范围、writer、物理pass或recording变化重新准备 |
+| descriptor交付 | 沿用已准备的值，不逐draw复制整组值 | Vulkan要求的当前动态offset前缀仍须完整交付，其他类型消费者照常执行 |
+| ownership与提交 | 每stage借用已证明的distinct-Pool前缀，提交前转为现有保活 | 完成线程仍按真实GPU完成释放，不提前回收 |
+
+不能只看Pool命中数下降就宣布成功。对照必须在同APK里确认开关确实生效，同时检查前置require和后段消费是否一起减少；再以原官方CPU采样和调度窗口查看整条回放时间及新增维护成本。若次数降了而时间没有可靠下降，应回到这些父职责检查剩余消费、失效和驱动编码，不能继续把同一份旧预算分配给新缓存。
+
+当前全链候选尚在独立分支验证，编译通过不等于已在真机命中。Android冷启动开关与实际后端模式核对已单独接好；未部署、没有新的CPU毫秒或FPS收益结论。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -197,4 +226,5 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 - `.local/logs/image-buffer-split-device-v1/final-independent-review.md`：原六轮官方性能结果及计数分母勘误。
 - `.local/logs/nvn-command-setter-snapshot-v2/setter-analysis.json`、`analyze_setters.py`：原NVN命令/入口状态的离线整理及口径限制。
 - `.local/logs/nvn-command-setter-snapshot-v3/used-slot-analysis.json`：完整control与最终schema连接后的真实使用槽频度；包含官方反汇编、输入指纹和局限。
+- `.local/logs/nvn-command-setter-snapshot-v3/image-identity-analysis.json`：同一快照中整组/部分图像稳定度，明确尚未证明物理身份与当前优化剩余覆盖。
 - `.local/logs/nvn-buffer-consumption-plan-v1/design.md`：完整消费计划的资格、事件、所有权及回退设计。
