@@ -60,9 +60,13 @@ typedef struct render_job {
   uint8_t ds_written;
   uint8_t attachment_representation_valid;
   void *raster_group; // private texture-history product, owned until job recycle
+  vk_draw_emission *pending_draws;
+  uint32_t pending_count,pending_capacity;
+  uint8_t pending_uncacheable; // whole-job retention abandoned; future delivery is immediate
 } render_job;
 struct vk_graphics_submission {
   render_job *jobs;
+  size_t pending_bytes; // retained packet allocations, released only at safe recycle
 };
 static vk_graphics_submission *graphics_state;
 // 同目标的连续绘制保持通道打开；传输、查询重置或目标变化时再结束。
@@ -309,6 +313,7 @@ static int readonly_depth_target(const p_set_rt *targets,int may_write,draw_targ
 int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
                            VkImageAspectFlags aspect,
                            const VkClearValue *value) {
+  vk_draw_flush_pending();
   if(pl_target_clear(rt,sc,index,aspect,value))return 1;
   if (rt->n < 0 || rt->n > 8)
     die("Vulkan clear render target count");
@@ -509,6 +514,7 @@ int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
   return 1;
 }
 void vk_nvn_barrier(uint32_t flags) {
+  if(flags)vk_draw_flush_pending();
   vk_texture_raster_break();
   if(flags)vk_image_split_break();
   vk_mip_clear_drain();
@@ -567,10 +573,13 @@ static struct {
 } end_sites[64];
 static unsigned end_site_count;
 void vk_render_end_at(const char *file, unsigned line) {
+  vk_draw_flush_pending();
   vk_texture_raster_break();
   vk_image_split_break();
   vk_ubo_plan_break();
   if (active_job && !vk_pool_maintenance_active()) vk_ghost_flush();
+  // Ghost completion may itself prepare more ordinary draws in this job.
+  vk_draw_flush_pending();
   if(active_job && active_job->local) {pl_render_end(active_job);mip_clear_materialize();return;}
   if (active_job) {
     if (V.options.stats) {
@@ -825,6 +834,9 @@ void vk_graphics_recycle(vk_graphics_submission *state) {
     else {vk_record_object_retired();vkDestroyRenderPass(V.device,j->pass,NULL);}
     if(j->final_pass_object) render_pass_release(j->final_pass_object);
     vk_texture_raster_free(j->raster_group);
+    if(j->pending_count)die("Vulkan pending draws escaped pass end");
+    state->pending_bytes-=(size_t)j->pending_capacity*sizeof *j->pending_draws;
+    free(j->pending_draws);
     free(j->local);free(j);
   }
 }
@@ -1966,6 +1978,9 @@ uniform_vertex_remaining:
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(draw_emission_test_reference())emission.geometry_complete=0;
 #endif
+  // The exceptional path still interleaves physical lookup and Vk binding.
+  // Deliver preceding complete draws before its first binding, not afterwards.
+  if(!emission.geometry_complete)vk_draw_flush_pending();
   emission.vertex_mask=streams;emission.index_bound=0;
   for (int i = 0; i < 16; i++)
     if (streams & (1u << i)) {
@@ -2016,7 +2031,7 @@ uniform_vertex_remaining:
   emission.first=idx||quads?0:draw->first;
   emission.vertex_offset=quads?draw->first:idx?idx->base_vertex:0;
   emission.first_instance=idx?idx->base_instance:0;
-  draw_emission_immediate(j,&emission,occlusion);
+  draw_emission_deliver(j,&emission,occlusion);
   if(local_consumer && active_job==local_job) {local_job->local->finished=1;draw_recorded.pixel_local_draws++;}
   if(vk_mip_clear_pending() && mip_clear.returned && active_job==mip_clear.job)
     mip_clear_recorded.continued++;

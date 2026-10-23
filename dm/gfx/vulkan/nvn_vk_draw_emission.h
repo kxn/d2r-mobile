@@ -2,8 +2,8 @@
 #include "nvn_vk_shader.h"
 
 // Resolved Vulkan encoding values only: no guest addresses, resource lookup
-// keys, or ownership authority. This first producer/consumer is synchronous;
-// deferring or persisting it requires the original recording's lifetimes.
+// keys, or ownership authority. Immediate and pending consumers share the
+// original recording's lifetimes; this payload grants no cross-frame ownership.
 typedef struct {
   VkBuffer buffer;
   VkDeviceSize offset;

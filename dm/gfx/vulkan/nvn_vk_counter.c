@@ -85,12 +85,14 @@ void vk_counter_query_stats(uint64_t *begins, uint64_t *ends, int *span) {
 }
 void vk_counter_pass_end(void) {
   if (!active_query.pool) return;
+  vk_draw_flush_pending();
   vkCmdEndQuery(V.cmd,active_query.pool,active_query.index);
   atomic_fetch_add(&query_ends,1);
   active_query=(vk_sample_query){0};
 }
 void vk_counter_draw_begin(vk_sample_query query) {
   if (!query.pool) return;
+  vk_draw_flush_pending();
   if (active_query.pool) die("Vulkan overlapping occlusion query");
   vkCmdBeginQuery(V.cmd,query.pool,query.index,
       V.features.occlusionQueryPrecise?VK_QUERY_CONTROL_PRECISE_BIT:0);
@@ -99,6 +101,7 @@ void vk_counter_draw_begin(vk_sample_query query) {
 }
 void vk_counter_draw_end(vk_sample_query query) {
   if (!query.pool || atomic_load(&span_active)) return;
+  vk_draw_flush_pending();
   vkCmdEndQuery(V.cmd,query.pool,query.index);
   atomic_fetch_add(&query_ends,1);
 }
@@ -154,6 +157,7 @@ vk_sample_query vk_counter_draw_prepare(void) {
     return (vk_sample_query){0};
   if (active_query.pool)
     return (vk_sample_query){0};
+  vk_draw_flush_pending();
   if (sample_count == sample_capacity) {
     unsigned n = sample_capacity ? sample_capacity * 2 : 128;
     sample_query **p = realloc(samples, n * sizeof *p);
@@ -262,6 +266,7 @@ static void report_gpu_cleanup(void *opaque) {
 }
 #endif
 void vk_counter_reset(uint32_t type) {
+  vk_draw_flush_pending();
   if (type != NVN_COUNTER_TYPE_TIMESTAMP &&
       type != NVN_COUNTER_TYPE_TIMESTAMP_TOP &&
       type != NVN_COUNTER_TYPE_SAMPLES_PASSED)
@@ -275,6 +280,7 @@ void vk_counter_reset(uint32_t type) {
   }
 }
 void mtl_sub_counter(uint64_t address, uint32_t type) {
+  vk_draw_flush_pending();
   if(V.options.pool_defer_publication)vk_pool_cpu_prepare(address,2*sizeof(uint64_t));
   // TOP 时间戳必须保留此前 NVN 顺序请求；BOTTOM 与采样结果已有命令位置保证。
   // A TOP timestamp must honor preceding NVN ordering. BOTTOM timestamps and

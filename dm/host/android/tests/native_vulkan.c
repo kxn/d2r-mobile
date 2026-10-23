@@ -474,6 +474,24 @@ static void attachment_fixture_mutate(void *opaque) {
   }
 }
 #endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static void pending_fixture_end(void *opaque) {
+  unsigned *calls=opaque;(*calls)++;
+  extern unsigned vk_test_draw_pending_count(void);
+  if(V.retained_draws)CHECK(vk_test_draw_pending_count()>=4);
+  vk_render_end();
+  CHECK(vk_test_draw_pending_count()==0);
+}
+static void pending_fixture_region(void *opaque) {
+  unsigned *calls=opaque;(*calls)++;
+  extern unsigned vk_test_draw_pending_count(void);
+  if(V.retained_draws)CHECK(vk_test_draw_pending_count()>=4);
+  unsigned token=vk_gpu_region_begin("pending-prefix-fixture",NULL,1,1);
+  CHECK(token!=0 && vk_test_draw_pending_count()==0);
+  vk_gpu_region_end(token);
+}
+
+#endif
 #include "native_vulkan_texel_storage.inc"
 #include "native_vulkan_texel_bits.inc"
 #include "native_vulkan_target_match.inc"
@@ -1658,6 +1676,59 @@ int dm_vulkan_test_main(void) {
   }
 #endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_PENDING_DRAW_FIXTURE")) {
+    extern void vk_test_draw_pending_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+    extern void vk_test_raster_after_draws(unsigned,void (*)(void *),void *);
+    extern unsigned vk_test_draw_pending_count(void);
+    vk_sample_liveness_reference(0);
+    for(unsigned kind=0;kind<8;kind++) {
+      uint64_t q0,f0,m0,a0,q1,f1,m1,a1;unsigned callbacks=0;
+      vk_test_draw_pending_stats(&q0,&f0,&m0,&a0);
+      if(kind==4)vk_test_raster_after_draws(4,pending_fixture_end,&callbacks);
+      if(kind==7) {vk_gpu_profile_enabled(1);vk_test_raster_after_draws(4,pending_fixture_region,&callbacks);}
+      CALL(nvnCommandBufferBeginRecording,&cmd);
+      CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
+      CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){1,0,1,1},15);
+      unsigned count=kind==5?2050:96;
+      for(unsigned k=0;k<count;k++) {
+        if(kind==3 && k==48)CALL(nvnCommandBufferBarrier,&cmd,NVN_BARRIER_ORDER_PRIMITIVES_BIT);
+        if(kind==2 && k==48)CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_TIMESTAMP,(uintptr_t)(boundaries+12));
+        CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+      }
+      // These draws have no sample consumer. The later live query must not
+      // accidentally include the deferred prefix or reserve twice on fallback.
+      CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+      if(kind==6) {
+        CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+        CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)(boundaries+14));
+      }
+      if(kind==1)CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){1,0,1,1},15);
+      submit(end());vk_test_raster_after_draws(0,NULL,NULL);
+      CHECK(vk_test_draw_pending_count()==0);
+      vk_test_draw_pending_stats(&q1,&f1,&m1,&a1);
+      CHECK(callbacks==(kind==4 || kind==7));
+      if(kind==7)vk_gpu_profile_enabled(0);
+      if(V.retained_draws) {
+        CHECK(q1>q0 && f1>f0);
+        if(kind==0)CHECK(m1>=96);
+        if(kind==5)CHECK(a1==a0+1 && q1-q0==2048 && m1==2048);
+      } else CHECK(q1==q0 && f1==f0 && a1==a0);
+      if(kind==2)CHECK(boundaries[12]!=0);
+      if(kind==6)CHECK(boundaries[14]==256);
+      CALL(nvnTextureReadTexels,&output,NULL,&region,pixels);
+      for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
+        const uint8_t *p=pixels+(y*16+x)*4;
+        if(kind==1)CHECK(p[0]==255 && p[1]==0 && p[2]==255 && p[3]==255);
+        else CHECK(p[0]==x*17 && p[1]==y*17 && p[2]==64 && p[3]==255);
+      }
+      LOG("[pending draw targeted] kind=%u enabled=%u queued=%llu flushes=%llu max=%llu abandoned=%llu callbacks=%u pixels=passed",
+          kind,V.retained_draws,(unsigned long long)(q1-q0),(unsigned long long)(f1-f0),
+          (unsigned long long)m1,(unsigned long long)(a1-a0),callbacks);
+    }
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"pending-draw-prefix\",\"result\":\"passed\",\"checks\":%u,\"game_modules_executed\":false}\n",checks);
+    return 0;
+  }
   // Actual ordinary FS sampling plus repeated attachment writes. The original
   // reference history algorithm is the private oracle; no fabricated GPU work.
   if(getenv("DM_ATTACHMENT_RASTER_FIXTURE")) {
@@ -2822,6 +2893,14 @@ int dm_vulkan_test_main(void) {
   CHECK(emission_interleaved>0);
   LOG("[resolved draw emission fixture] complete=%llu interleaved=%llu",
       (unsigned long long)emission_complete,(unsigned long long)emission_interleaved);
+  extern void vk_test_draw_pending_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+  uint64_t queued,flushes,maximum,abandoned;
+  vk_test_draw_pending_stats(&queued,&flushes,&maximum,&abandoned);
+  CHECK(V.retained_draws?queued>0:queued==0);
+  if(queued)CHECK(flushes>0 && maximum>0);
+  LOG("[pending draw fixture] enabled=%u queued=%llu flushes=%llu max=%llu abandoned=%llu",
+      V.retained_draws,(unsigned long long)queued,(unsigned long long)flushes,
+      (unsigned long long)maximum,(unsigned long long)abandoned);
 #endif
   printf("{\"backend\":\"vulkan\",\"original_nvn\":true,\"checks\":%u,"
          "\"result\":\"passed\"}\n",

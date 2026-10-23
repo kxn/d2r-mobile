@@ -86,3 +86,58 @@ static void draw_emission_immediate(render_job *j,const vk_draw_emission *p,vk_s
   else
     vkCmdDraw(V.cmd,p->count,p->instances,p->first,p->first_instance);
 }
+
+// Pending packets borrow precisely the existing recording's resource pins and
+// immutable descriptor sets. Owner preparation/history remains at the original
+// draw position. No packet can escape render_end into another command buffer.
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t draw_pending_queued,draw_pending_flushes,draw_pending_max,draw_pending_abandoned;
+unsigned vk_test_draw_pending_count(void) {return active_job?active_job->pending_count:0;}
+void vk_test_draw_pending_stats(uint64_t *queued,uint64_t *flushes,uint64_t *maximum,uint64_t *abandoned) {
+  *queued=draw_pending_queued;*flushes=draw_pending_flushes;
+  *maximum=draw_pending_max;*abandoned=draw_pending_abandoned;
+}
+#endif
+void vk_draw_flush_pending(void) {
+  render_job *j=active_job;
+  if(!j || !j->pending_count)return;
+  unsigned count=j->pending_count;
+  // Clear before emission: query hooks may call this entry, but queued draws
+  // have no query and emission never invokes owner/resource preparation.
+  j->pending_count=0;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  draw_pending_flushes++;
+#endif
+  for(unsigned i=0;i<count;i++)draw_emission_immediate(j,&j->pending_draws[i],(vk_sample_query){0});
+}
+static void draw_emission_deliver(render_job *j,const vk_draw_emission *p,vk_sample_query query) {
+  if(!V.retained_draws) {draw_emission_immediate(j,p,query);return;}
+  if(!p->geometry_complete || query.pool || j->pending_uncacheable) {
+    vk_draw_flush_pending();draw_emission_immediate(j,p,query);return;
+  }
+  if(j!=active_job || j->local || V.cmd!=j->secondary || !graphics_state)
+    die("Vulkan pending draw outside its ordinary recording");
+  if(j->pending_count==j->pending_capacity) {
+    unsigned capacity=j->pending_capacity?j->pending_capacity*2:32;
+    size_t extra=(capacity-j->pending_capacity)*sizeof *j->pending_draws;
+    vk_draw_emission *grown=NULL;
+    if(capacity<=2048 && extra<=16u*1024*1024-graphics_state->pending_bytes)
+      grown=realloc(j->pending_draws,capacity*sizeof *grown);
+    if(!grown) {
+      // A full prefix is not a persistent run: keep correctness via immediate
+      // delivery and remember that this entire job cannot later be retained.
+      vk_draw_flush_pending();j->pending_uncacheable=1;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      draw_pending_abandoned++;
+#endif
+      draw_emission_immediate(j,p,query);return;
+    }
+    j->pending_draws=grown;j->pending_capacity=capacity;
+    graphics_state->pending_bytes+=extra;
+  }
+  j->pending_draws[j->pending_count++]=*p;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  draw_pending_queued++;
+  if(j->pending_count>draw_pending_max)draw_pending_max=j->pending_count;
+#endif
+}

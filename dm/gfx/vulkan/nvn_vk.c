@@ -647,6 +647,7 @@ static void gpu_profile_begin_submit(submit_resources *r) {
 unsigned vk_gpu_region_begin(const char *kind, const char *key, unsigned x, unsigned y) {
   submit_resources *r = recording_resources;
   if (!r || !r->region_active) return 0;
+  vk_draw_flush_pending();
   if (r->region_count == GPU_REGIONS) die("Vulkan GPU region diagnostic capacity exceeded");
   unsigned i = r->region_count++;
   r->regions[i].kind = kind;
@@ -664,6 +665,7 @@ void vk_gpu_region_label(unsigned token, const char *key) {
 }
 void vk_gpu_region_end(unsigned token) {
   if (!token) return;
+  vk_draw_flush_pending();
   submit_resources *r = recording_resources;
   if (!r || token > r->region_count) die("Vulkan GPU region end outside submission");
   unsigned i = token - 1;

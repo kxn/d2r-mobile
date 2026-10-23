@@ -254,6 +254,8 @@ void vk_draw_barrier_at(const char *file,unsigned line,int vertex_images);
 #define vk_draw_barrier(vertex_images) vk_draw_barrier_at(__FILE__, __LINE__,vertex_images)
 void vk_barrier_at(const char *file, unsigned line);
 void vk_render_end_at(const char *file, unsigned line);
+// Deliver already-prepared draws before a real encoding/recording boundary.
+void vk_draw_flush_pending(void);
 #define vk_barrier() vk_barrier_at(__FILE__, __LINE__)
 #define vk_render_end() vk_render_end_at(__FILE__, __LINE__)
 void vk_render_end_stats(int print);
