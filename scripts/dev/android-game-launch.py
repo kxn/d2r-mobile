@@ -59,7 +59,7 @@ parser.add_argument('--display-refresh-hz',type=float,help='optional Android Sur
 parser.add_argument('--mailbox-present',action='store_true',help='startup-only WSI experiment: request advertised MAILBOX; otherwise FIFO remains active')
 parser.add_argument('--dedicated-present-worker',action='store_true',help='startup-only experiment: serialize WSI acquire/present on a worker with a second queue of the same family')
 parser.add_argument('--present-worker-shared-queue',action='store_true',help='isolate presentation worker scheduling while preserving the original Vulkan queue; requires --dedicated-present-worker')
-parser.add_argument('--image-buffer-split',action='store_true',help='startup-only experiment: reuse stable ordinary GPU-produced FS image consumers (default off)')
+parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction,default=None,help='startup-only stable GPU-produced FS image reuse (default on; --no-image-buffer-split for reference)')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
 parser.add_argument('--descriptor-history-reference',action='store_true',help='comparison: cache only consecutive identical descriptor contents')
@@ -143,8 +143,8 @@ if args.attach and args.legacy_astc_copy is not None:
     parser.error('--legacy-astc-copy/--no-legacy-astc-copy are startup-only and cannot be used with --attach')
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
-if args.attach and args.image_buffer_split:
-    parser.error('--image-buffer-split is startup-only and cannot be used with --attach')
+if args.attach and args.image_buffer_split is not None:
+    parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
 if args.attach and args.driver_span_reference:
     parser.error('--driver-span-reference is startup-only and cannot be used with --attach')
 if args.attach and args.pool_window_bytes is not None:
@@ -232,8 +232,8 @@ if not args.attach:
               '--ez', 'driver_constant_reference', str(not args.cache_driver_constants).lower(),
               '--ez', 'sample_liveness_reference', str(args.dead_sample_queries_reference).lower(),
               '--ez', 'validate', str(args.validate).lower()]
-    if args.image_buffer_split:
-        launch += ['--ez','image_buffer_split','true']
+    if args.image_buffer_split is not None:
+        launch += ['--ez','image_buffer_split',str(args.image_buffer_split).lower()]
     if args.driver_span_reference:
         launch += ['--ez','driver_span_reference','true']
     if args.operation_mode is not None:

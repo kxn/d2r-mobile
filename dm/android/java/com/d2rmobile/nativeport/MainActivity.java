@@ -264,7 +264,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // recreation cannot switch an already advanced decoder's backend.
         if (!hostStarted) {
             nativeDriverSpanReference(getIntent().getBooleanExtra("driver_span_reference", false));
-            nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", false));
+            nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", true));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
             nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));

@@ -364,7 +364,7 @@ static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int shared_guest_heap_startup;
 static int shared_lazy_windows_startup;
 static int shared_image_raw_observe_startup;
-static int image_buffer_split_startup;
+static int image_buffer_split_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeImageBufferSplit(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);

@@ -104,7 +104,7 @@ static void mip_stamp_test(const void *vertex,const void *fragment) {
   // A successful same-pass immutable group may omit the redundant read. Its
   // range remains after pass-begin; new pass/producer checks above and below
   // still require strict restamps. OFF retains the original strict check.
-  if(!getenv("DM_VULKAN_IMAGE_BUFFER_SPLIT") || !strcmp(getenv("DM_VULKAN_IMAGE_BUFFER_SPLIT"),"0"))
+  if(!vk_image_split_enabled())
     CHECK(c[2]>b[2]&&c[5]>b[5]);
   CHECK(c[4]==b[4]&&c[6]==b[6]);vk_internal_wait(vk_internal_commit());
   mip_stamp_pixels(&textures[2],0,16,(const uint8_t[]){255,255,0,255});

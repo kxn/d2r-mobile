@@ -473,7 +473,7 @@ void vk_native_images_release(void);
 uint64_t vk_buffer_native_image_read(uint64_t,uint64_t,VkPipelineStageFlags,uint64_t);
 #endif
 
-// Default-off ordinary-FS image subset experiment; no shader/layout ABI change.
+// Same-pass ordinary-FS image subset reuse; no shader/layout ABI change.
 typedef struct { uint64_t object,offset,range; } vk_split_descriptor_value;
 void vk_image_split_draw_begin(void);
 void vk_image_split_draw_end(void);
@@ -486,3 +486,4 @@ int vk_image_split_retry(uint64_t retry[2]);
 void vk_image_split_capture_begin(unsigned binding,unsigned slot,int sampler_slot);
 void vk_image_split_capture_end(void);
 void vk_image_split_stats(uint64_t out[6]);
+int vk_image_split_enabled(void);

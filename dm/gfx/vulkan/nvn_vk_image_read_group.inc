@@ -1,4 +1,4 @@
-// Experimental ordinary FS subset. This object is recording-thread owned.
+// Same-pass ordinary FS subset. This object is recording-thread owned.
 // A live batch borrows one immutable member vector. Every mutation which can
 // invalidate that vector first restores ordinary requests, before callbacks.
 static int split_enabled=-1;
@@ -75,7 +75,7 @@ void vk_image_split_draw_begin(void) {
   if(split_enabled<0) {
     const char *v=getenv("DM_VULKAN_IMAGE_BUFFER_SPLIT");
     if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_IMAGE_BUFFER_SPLIT expects 0 or 1");
-    split_enabled=v && !strcmp(v,"1");split_group.capture=-1;
+    split_enabled=!v || !strcmp(v,"1");split_group.capture=-1;
     atomic_store_explicit(&split_published_enabled,split_enabled,memory_order_relaxed);
   }
   if(!split_on())return;
