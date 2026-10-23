@@ -62,6 +62,7 @@ parser.add_argument('--present-worker-shared-queue',action='store_true',help='is
 parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction,default=None,help='startup-only stable GPU-produced FS image reuse (default on; --no-image-buffer-split for reference)')
 parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental shared UBO preparation reuse (default off); verify effective backend mode')
 parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job attachment representation reuse (default off); verify effective backend mode')
+parser.add_argument('--attachment-raster-run',action=argparse.BooleanOptionalAction,default=None,help='startup-only fulfilled ordinary attachment access runs (default off); verify actual history reuse')
 parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental validated pure-state replay segments (default off); verify effective backend mode')
 parser.add_argument('--source-partition',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental sparse image source responsibilities (default off)')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
@@ -155,6 +156,8 @@ if args.attach and args.state_segments is not None:
     parser.error('--state-segments/--no-state-segments are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_job_reuse is not None:
     parser.error('--attachment-job-reuse/--no-attachment-job-reuse are startup-only and cannot be used with --attach')
+if args.attach and args.attachment_raster_run is not None:
+    parser.error('--attachment-raster-run/--no-attachment-raster-run are startup-only and cannot be used with --attach')
 if args.attach and args.buffer_consumption_plan is not None:
     parser.error('--buffer-consumption-plan/--no-buffer-consumption-plan are startup-only and cannot be used with --attach')
 if args.attach and args.driver_span_reference:
@@ -252,6 +255,8 @@ if not args.attach:
         launch += ['--ez','state_segments',str(args.state_segments).lower()]
     if args.attachment_job_reuse is not None:
         launch += ['--ez','attachment_job_reuse',str(args.attachment_job_reuse).lower()]
+    if args.attachment_raster_run is not None:
+        launch += ['--ez','attachment_raster_run',str(args.attachment_raster_run).lower()]
     if args.buffer_consumption_plan is not None:
         launch += ['--ez','buffer_consumption_plan',str(args.buffer_consumption_plan).lower()]
     if args.driver_span_reference:
@@ -423,6 +428,15 @@ while time.monotonic() < deadline:
                     actual_attachment_reuse=bool(int(attachment_reuse_modes[-1])) if attachment_reuse_modes else None
                     if args.attachment_job_reuse is not None and actual_attachment_reuse != args.attachment_job_reuse:
                         raise SystemExit('attachment job reuse backend startup mode did not match explicit request')
+                    raster_modes=re.findall(r'\[vulkan attachment raster run\] enabled=([01])\b',log)
+                    actual_raster_run=bool(int(raster_modes[-1])) if raster_modes else None
+                    raster_hit='[vulkan attachment raster run] first actual fulfilled history' in log
+                    if args.attachment_raster_run is not None and actual_raster_run != args.attachment_raster_run:
+                        raise SystemExit('attachment raster run backend mode did not match explicit request')
+                    if args.attachment_raster_run is True and not raster_hit:
+                        raise SystemExit('attachment raster run enabled but no actual fulfilled history recorded')
+                    if args.attachment_raster_run is False and raster_hit:
+                        raise SystemExit('attachment raster run explicitly disabled but actual reuse recorded')
                     buffer_plan_modes=re.findall(r'\[vulkan buffer plan\] enabled=([01])\b',log)
                     actual_buffer_plan=bool(int(buffer_plan_modes[-1])) if buffer_plan_modes else None
                     if args.buffer_consumption_plan is not None and actual_buffer_plan != args.buffer_consumption_plan:
@@ -460,6 +474,9 @@ while time.monotonic() < deadline:
                     report = {'pid': int(pid), 'launch_seconds': time.monotonic() - started,
                               'requested_buffer_consumption_plan':args.buffer_consumption_plan,
                               'actual_buffer_consumption_plan':actual_buffer_plan,
+                              'requested_attachment_raster_run':args.attachment_raster_run,
+                              'actual_attachment_raster_run':actual_raster_run,
+                              'attachment_raster_first_hit':raster_hit,
                               'requested_attachment_job_reuse':args.attachment_job_reuse,
                               'actual_attachment_job_reuse':actual_attachment_reuse,
                               'requested_source_partition':args.source_partition,

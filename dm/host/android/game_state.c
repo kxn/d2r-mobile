@@ -258,6 +258,12 @@ static void observe_tick(const uint64_t *registers) {
     void vk_store_slot_stats(uint64_t *,uint64_t *);
     void vk_store_event_stats(uint64_t *,uint64_t *);
     void vk_bloom_quarter_blit_stats(uint64_t *,uint64_t *,uint64_t *);
+    void vk_attachment_raster_stats(uint64_t [4]);
+    int vk_attachment_raster_enabled(void);
+    uint64_t raster[4];vk_attachment_raster_stats(raster);
+    fprintf(state_log, ",\"attachment_raster_run\":{\"enabled\":%s,\"captures\":%llu,\"hot_records\":%llu,\"scatters\":%llu,\"expansions\":%llu}",
+      vk_attachment_raster_enabled()?"true":"false",(unsigned long long)raster[0],
+      (unsigned long long)raster[1],(unsigned long long)raster[2],(unsigned long long)raster[3]);
     void vk_image_split_stats(uint64_t [6]);
     int vk_image_split_enabled(void);
     uint64_t image_split[6];vk_image_split_stats(image_split);

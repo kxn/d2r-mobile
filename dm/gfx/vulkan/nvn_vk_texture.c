@@ -102,6 +102,7 @@ typedef struct image {
   image_view *views;
   image_access *access;
   uint64_t access_generation;
+  void *raster_run;
   uint64_t split_group_revision; // recording-owner watcher; never a CPU publication proof
   image_read_proof read_proofs[2];
   unsigned read_proof_next;
@@ -116,7 +117,9 @@ static image *private_image_cursor;
 // Provisional candidate policy, pending original-game footprint review. This
 // limits only live CPU-rebuildable private cache allocations, not RTs/native.
 static uint64_t private_image_budget=512ull<<20;
+static void raster_observe(image *i);
 static void image_rebuildable_set(image *i,int rebuildable) {
+  if(i->cpu_rebuildable!=rebuildable)raster_observe(i);
   i->cpu_rebuildable=rebuildable;
   int account=!!rebuildable && !!i->allocation_bytes;
   if(account==i->accounted_rebuildable)return;
@@ -147,15 +150,18 @@ enum {
 // physical replacement. Reject freed owners and handle-reuse ABA before any
 // cached pointer dereference. Completion only frees already-invalidated copies.
 static void image_split_changed(image *i);
+static void raster_observe(image *i);
 static void image_split_capture(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stage,int storage,const view_t *view);
 static void image_split_record_done(void);
 static void image_split_publish(void);
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 static void image_split_dependency_fixture(void);
+static void raster_test_dependency_interleave(void);
 #endif
 static int sampled_target_alias(const tex_t *,const view_t *);
 static uint64_t image_recipe_generation=1;
 static void image_recipes_changed(void) {
+  vk_texture_raster_break();
   vk_render_attachment_representation_changed();
   vk_image_split_break();
   if(++image_recipe_generation==0) die("Vulkan image recipe generation overflow");
@@ -165,6 +171,7 @@ static void image_recipes_changed(void) {
 static void image_astc_proof(image *i,int proven) {
   proven=!!proven && !i->external_access;
   if(i->astc_ldr_proven!=proven) {
+    raster_observe(i);
     i->astc_ldr_proven=proven;
     image_recipes_changed();
   }
@@ -202,6 +209,7 @@ static alias_negative_cache shared_alias_negative={.epoch=1};
 static unsigned astc_copy_live;
 static void image_shared_alias_remove(image *i) {
   if(!i->shared_alias_linked)return;
+  raster_observe(i);
   image **at=&shared_gpu_aliases;while(*at && *at!=i)at=&(*at)->shared_alias_next;
   if(!*at)die("Shared GPU image alias list lifetime");
   // Logical membership belongs to the recording owner; completion only
@@ -408,6 +416,7 @@ static int image_safe_layouts(const image *i) {
 }
 static void image_whole_layout_access(image *i,VkImageLayout next,
     VkPipelineStageFlags dst_stage,VkAccessFlags dst_access) {
+  if(i->layout!=next)raster_observe(i);
   if(i->layout==next) return;
   // A newly sampled image last accessed before this physical pass can have
   // its transition recorded on the pending primary, before BeginRenderPass.
@@ -457,6 +466,7 @@ static void image_whole_layout_access(image *i,VkImageLayout next,
 }
 static void image_range_layout_access_normalized(image *i,VkImageSubresourceRange r,VkImageLayout next,
     VkPipelineStageFlags dst_stage,VkAccessFlags dst_access) {
+  if(i->layout!=next)raster_observe(i);
   if(!image_mip_tracked(i)) { image_whole_layout_access(i,next,dst_stage,dst_access);return; }
   // A concrete whole-image layout summarizes every mip; mixed layouts use
   // MAX_ENUM. Repeated bindings need no per-mip scan when that proof matches.
@@ -2029,6 +2039,7 @@ void mtl_tex_release(tex_t *t) {
 }
 uint32_t vk_texture_count(void) { return atomic_load(&live_images); }
 static void image_destroy(image *i) {
+  raster_observe(i);
   image_list_remove(i);
 #ifdef DM_VULKAN_SHARED_POOLS
   if(i->astc_copy_encoding || i->bc_copy_decoded) {if(!astc_copy_live)die("ASTC copy live count underflow");astc_copy_live--;}
@@ -2129,6 +2140,12 @@ static void texture_binding_scope_shutdown(void);
 static void texture_lookup_scope_shutdown(void);
 void vk_texture_shutdown(void) {
   mtl_finish();
+  vk_texture_raster_break();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(raster_on())LOG("[raster run oracle] captures=%llu hot=%llu scatters=%llu expands=%llu checked=%llu",
+      (unsigned long long)raster_stats[0],(unsigned long long)raster_stats[1],
+      (unsigned long long)raster_stats[2],(unsigned long long)raster_stats[3],(unsigned long long)raster_stats[4]);
+#endif
   sampler_shutdown();
   texture_binding_scope_shutdown();
   texture_lookup_scope_shutdown();
@@ -2614,7 +2631,7 @@ static VkBufferView texel_view(VkBuffer buffer,VkFormat format,VkDeviceSize offs
   return view;
 }
 void vk_texture_end_submit(void) {
-  image_split_publish();
+  image_split_publish();raster_publish();
   // 保留翻译快照宽限期，同时检查所有内部/客体提交的真实完成序号。
   // Preserve translation-snapshot grace, independently checking actual
   // completion of every referencing guest/internal submission.

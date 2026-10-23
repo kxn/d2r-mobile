@@ -69,6 +69,7 @@ void vk_image_split_break(void) {
   split_group.valid=0;split_group.failed=1;
 }
 static void image_split_changed(image *i) {
+  raster_observe(i);
   if(split_on() && i->split_group_revision && i->split_group_revision==split_group.revision)
     vk_image_split_break();
 }
