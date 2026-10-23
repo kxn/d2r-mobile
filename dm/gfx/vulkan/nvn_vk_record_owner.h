@@ -7,6 +7,9 @@ enum { VK_RECORD_OWNER_MAX_SLOTS=64 };
 vk_record_owner *vk_record_owner_create(unsigned slots);
 void vk_record_owner_destroy(vk_record_owner *owner);
 int vk_record_owner_available(const vk_record_owner *owner);
+// Drop all executable references before retiring a packet's descriptor pools.
+// Refuses pending/open recordings; never waits or changes an in-flight owner.
+int vk_record_owner_forget(vk_record_owner *owner);
 // Begin/reset is refused while this original submission context is in flight.
 VkCommandBuffer vk_record_owner_begin(vk_record_owner *owner,unsigned slot,
                                      const VkCommandBufferInheritanceInfo *inherit);

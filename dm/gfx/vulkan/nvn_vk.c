@@ -1760,6 +1760,7 @@ static void init_device(void) {
     } else LOG("[vulkan UAB] descriptor-indexing extension unavailable; original path retained");
   }
   dc.ppEnabledExtensionNames = device_extensions;
+  LOG("[vulkan retained draws] requested=%d enabled=%d",uab_request && !strcmp(uab_request,"1"),V.retained_draws);
   if(V.retained_draws)device_extensions[dc.enabledExtensionCount++]=VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
   if (V.surface) {
     device_extensions[dc.enabledExtensionCount++] =

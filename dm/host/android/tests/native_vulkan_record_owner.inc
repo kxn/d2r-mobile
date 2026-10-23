@@ -42,6 +42,7 @@ static void retained_record_owner_test(void) {
     pthread_mutex_unlock(&V.queue_mu);VK_CHECK(queued);
     CHECK(!vk_record_owner_available(owner));CHECK(!vk_record_owner_cached(owner,0));
     CHECK(!vk_record_owner_begin(owner,0,&inherit));
+    CHECK(!vk_record_owner_forget(owner));
     VK_CHECK(vkWaitForFences(V.device,1,&fence,VK_TRUE,UINT64_MAX));
     // The original submission pool can reset without invalidating the private
     // retained secondary. Reuse opens only after this explicit completion gate.
@@ -50,6 +51,9 @@ static void retained_record_owner_test(void) {
     CHECK(vk_record_owner_cached(owner,0)==retained);
     vkDestroyFence(V.device,fence,NULL);
   }
+  CHECK(vk_record_owner_forget(owner));CHECK(!vk_record_owner_cached(owner,0));
+  CHECK(vk_record_owner_begin(owner,0,&inherit)==retained);
+  CHECK(vk_record_owner_end(owner,0));
   vk_buffer temporary={0};vk_buffer_create(&temporary,256,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   vk_buffer_destroy(&temporary);CHECK(!vk_record_owner_cached(owner,0));
   // An epoch change while recording is also rejected, even though it may be

@@ -366,6 +366,19 @@ static int shared_lazy_windows_startup;
 static int shared_image_raw_observe_startup;
 static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
+static int retained_draws_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRetainedDraws(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"retained_draws is fixed before native startup");
+    return;
+  }
+  retained_draws_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStateSegments(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -774,6 +787,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
   if(setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_RETAINED_DRAWS",retained_draws_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_ATTACHMENT_JOB_REUSE",attachment_job_reuse_startup?"1":"0",1) ||
       setenv("DM_VULKAN_ATTACHMENT_RASTER_RUN",attachment_raster_run_startup?"1":"0",1) ||

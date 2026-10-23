@@ -35,6 +35,15 @@ static record_slot *slot_at(vk_record_owner *owner,unsigned slot) {
   return &owner->slots[slot];
 }
 int vk_record_owner_available(const vk_record_owner *owner) {return owner && !owner->pending_serial;}
+int vk_record_owner_forget(vk_record_owner *owner) {
+  if(!vk_record_owner_available(owner))return 0;
+  for(unsigned i=0;i<owner->count;i++)if(owner->slots[i].recording)return 0;
+  VK_CHECK(vkResetCommandPool(V.device,owner->pool,0));
+  for(unsigned i=0;i<owner->count;i++) {
+    owner->slots[i].epoch=0;owner->slots[i].executable=0;
+  }
+  return 1;
+}
 VkCommandBuffer vk_record_owner_begin(vk_record_owner *owner,unsigned slot,
     const VkCommandBufferInheritanceInfo *inherit) {
   record_slot *s=slot_at(owner,slot);

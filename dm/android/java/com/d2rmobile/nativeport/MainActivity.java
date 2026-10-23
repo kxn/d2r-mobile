@@ -47,6 +47,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeAttachmentJobReuse(boolean enabled);
     private static native void nativeAttachmentRasterRun(boolean enabled);
     private static native void nativeStateSegments(boolean enabled);
+    private static native void nativeRetainedDraws(boolean enabled);
     private static native void nativeSourcePartition(boolean enabled);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
@@ -274,6 +275,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", true));
             nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
+            nativeRetainedDraws(getIntent().getBooleanExtra("retained_draws", false));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
@@ -510,6 +512,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("state_segments")) {
             android.util.Log.w("D2RDriver", "state_segments is startup-only; cold restart required");
             intent.removeExtra("state_segments");
+        }
+        if (intent.hasExtra("retained_draws")) {
+            android.util.Log.w("D2RDriver", "retained_draws is startup-only; cold restart required");
+            intent.removeExtra("retained_draws");
         }
         if (intent.hasExtra("attachment_job_reuse")) {
             android.util.Log.w("D2RDriver", "attachment_job_reuse is startup-only; cold restart required");
