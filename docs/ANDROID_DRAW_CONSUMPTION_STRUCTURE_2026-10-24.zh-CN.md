@@ -26,6 +26,16 @@
 
 独立工作树 `.local/worktrees/attachment-raster-run-v1`，基线 `c30662c`，默认关闭，尚在实现；没有Android部署或性能结论。验收须包含完整CPU可见image/cell/clock/alias/zero状态的ON/OFF差分，以及中途采样、清屏、barrier、mip/readproof、pixel-local、ghost和角色变化，不只比较最终像素。若完整闭包不能成立，则保留待修实验，不能以少同步换帧率。
 
+### 首批实际路径验证与保留的失败
+
+初版完整fixture两臂exit0，却没有新路径计数；v2/v3的统计曾错误地放在原测试 `_exit(0)` 之后，不可达。这些结果只证明旧回归，没有当作run验收。v4把实际门放到退出前，ON捕获1103次、hot3次、scatter3次、原算法状态oracle3次，OFF全0；两臂完整suite通过。该覆盖仍薄，因此继续短专项，没有用旧两千多万检查数冒充新路径覆盖。
+
+targeted-v3的8项同包主机ON/OFF已退出0。连续8draw实际hot7次；中间真实NVN barrier后hot6次/两次scatter；扩大scissor仍被现有job包含，hot7次，但不能称为换pass验证；第5draw前真实render_end callback使hot6次并分两段。另有hot之后直接readproof/cell观察、cold交错请求拒绝、依赖函数已借旧请求指针后强制填满并扩容的负控；像素与完整原history差分通过。关闭组hot及oracle为0。
+
+独审指出冷请求中若附件后还有普通read，则按首附件use_clock推stride会错计其它read时钟。实现已加冷资格拒绝，热路径不再扫描；targeted-v2仍真实失败于交错负例，因为测试没有先物化既有FS借组，未产生预期的真实交错。修正触发后targeted-v3保留原严格“该case不能hot”断言并通过，没有删掉负控。参考输出为 `.local/logs/attachment-raster-run-v1/{v4-results.json,targeted-v3-results.json}`，独审为同目录`independent-review/`。
+
+这些结果尚未覆盖最终新增DS/平台启动桥，也不代替Android原生游戏或性能结果。候选未冻结、未合并，下一步为完整差分覆盖、最终源码独审及canonical平台构建；不会把主机频度当真机运行频度。
+
 ## 已排除的周期猜测
 
 额外检查了旧ADPF：同一metadata区间reports增加250、guest submissions也增加250；ON trace中replay238、present239，两轮OFF为239/239。physical fence编号的步长不能当guest submission数量，因此“三个小任务各按一整帧预算汇报”不是该营地的已证错误。没有按这个猜测改ADPF或重新采集，证据为 `.local/logs/adpf-work-period-audit-v1/`。一般多guest/frame的接口契约仍可改进，但不能拿它解释本场景。
