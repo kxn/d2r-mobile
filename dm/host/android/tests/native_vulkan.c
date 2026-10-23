@@ -446,6 +446,24 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_read.inc"
 #include "native_vulkan_depth_array.inc"
 #include "native_vulkan_readonly_store.inc"
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+typedef struct {unsigned kind,calls;const tex_t *texture;VkImageView old_view;} attachment_fixture_context;
+static void attachment_fixture_mutate(void *opaque) {
+  attachment_fixture_context *context=opaque;context->calls++;
+  CHECK(vk_render_active());
+  if(context->kind==1)vk_render_end();
+  else {
+    if(context->kind==2)CHECK(vk_texture_view(2,1)!=VK_NULL_HANDLE);
+    else {
+      CHECK(context->kind==3);
+      view_t srgb={.set_format=1,.format=NVN_FORMAT_RGBA8_SRGB};
+      mtl_reg_tex(2,context->texture,&srgb);
+    }
+    CHECK(vk_texture_view(2,0)!=context->old_view);
+    CHECK(!vk_render_active());
+  }
+}
+#endif
 #include "native_vulkan_texel_storage.inc"
 #include "native_vulkan_texel_bits.inc"
 #include "native_vulkan_target_match.inc"
@@ -1536,6 +1554,10 @@ int dm_vulkan_test_main(void) {
   // while only samples after the second reset may appear in the report.
   // Cover separate submitted handles, nested calls and repeated use of the
   // exact same child command payload at different liveness positions.
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint64_t attachment_hits_before,attachment_retries_before;
+  vk_test_attachment_reuse_stats(&attachment_hits_before,&attachment_retries_before);
+#endif
   uint64_t liveness_live,liveness_dead;
   void vk_sample_liveness_stats(uint64_t *,uint64_t *);
   uint64_t liveness_elided_before,liveness_elided_after;int liveness_original_reference,liveness_actual_reference;
@@ -1575,6 +1597,12 @@ int dm_vulkan_test_main(void) {
     if(shape==1) { CALL(nvnQueueSubmitCommands,&queue,2,handles);CALL(nvnQueueFinish,&queue); }
     else submit(handles[1]);
     CHECK(boundaries[8]==128);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    uint64_t attachment_hits,attachment_retries;
+    vk_test_attachment_reuse_stats(&attachment_hits,&attachment_retries);
+    LOG("[attachment reuse query fixture] reference=%u shape=%u hits=%llu retries=%llu",query_reference,shape,
+      (unsigned long long)(attachment_hits-attachment_hits_before),(unsigned long long)(attachment_retries-attachment_retries_before));
+#endif
     mtl_stats(&passes_after,&draws_after);CHECK(draws_after-draws_before==2);
     vk_sample_liveness_stats(&liveness_live,&liveness_dead);
     vk_counter_query_stats(&queries_after,&ended_queries,&query_spans);
@@ -1590,6 +1618,64 @@ int dm_vulkan_test_main(void) {
   }
   vk_sample_query_elision_stats(&liveness_elided_after,&liveness_actual_reference);
   CHECK(liveness_elided_after>=liveness_elided_before+3);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint64_t attachment_hits_after,attachment_retries_after;
+  vk_test_attachment_reuse_stats(&attachment_hits_after,&attachment_retries_after);
+  const char *attachment_mode=getenv("DM_VULKAN_ATTACHMENT_JOB_REUSE");
+  if(attachment_mode && !strcmp(attachment_mode,"1")) {
+    CHECK(attachment_hits_after>attachment_hits_before);
+    CHECK(attachment_retries_after>attachment_retries_before);
+    CHECK(attachment_retries_after-attachment_retries_before<=12);
+  } else {
+    CHECK(attachment_hits_after==attachment_hits_before);
+    CHECK(attachment_retries_after==attachment_retries_before);
+  }
+#endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  // Actual uncounted draw, after an ordinary clear has begun the borrowed job.
+  // The RESET after drawing proves this draw dead without suppressing pixels.
+  vk_sample_liveness_reference(0);
+  CALL(nvnTexturePoolRegisterTexture,&tp,2,&output,NULL);
+  for(unsigned mutation=0;mutation<4;mutation++) {
+    attachment_fixture_context context={.kind=mutation,.texture=(const tex_t *)&output};
+    if(mutation>=2) {
+      mtl_sub_begin();context.old_view=vk_texture_view(2,0);
+      vk_internal_wait(vk_internal_commit());
+    }
+    int reuse_enabled=attachment_mode && !strcmp(attachment_mode,"1");
+    if(mutation && reuse_enabled)vk_test_attachment_reuse_callback(attachment_fixture_mutate,&context);
+    uint64_t hits0,retries0,hits1,retries1,elided0,elided1;int reference;
+    vk_test_attachment_reuse_stats(&hits0,&retries0);
+    vk_sample_query_elision_stats(&elided0,&reference);
+    vk_counter_query_stats(&queries_before,&ended_queries,&query_spans);
+    mtl_stats(&passes_before,&draws_before);
+    CALL(nvnCommandBufferBeginRecording,&cmd);
+    CALL(nvnCommandBufferSetScissor,&cmd,0,0,mutation?16:8,16);
+    CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){1,0,1,1},15);
+    CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
+    CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+    CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)(boundaries+8));
+    submit(end());
+    vk_test_attachment_reuse_callback(NULL,NULL);
+    CHECK(boundaries[8]==0);
+    vk_test_attachment_reuse_stats(&hits1,&retries1);
+    vk_sample_query_elision_stats(&elided1,&reference);
+    vk_counter_query_stats(&queries_after,&ended_queries,&query_spans);
+    mtl_stats(&passes_after,&draws_after);
+    CHECK(queries_after==queries_before && draws_after-draws_before==1);
+    CHECK(elided1-elided0==1); // The local rebuild cannot publish elision twice.
+    CHECK(hits1==hits0 && retries1-retries0==(unsigned)reuse_enabled);
+    CHECK(context.calls==(unsigned)(mutation && reuse_enabled));
+    CALL(nvnTextureReadTexels,&output,NULL,&region,pixels);
+    for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
+      const uint8_t *p=pixels+(y*16+x)*4;
+      CHECK(p[0]==x*17 && p[1]==y*17 && p[2]==64 && p[3]==255);
+    }
+    LOG("[attachment reuse invalidation fixture] kind=%u enabled=%d callback=%u retries=%llu one draw/query elision and original pixels passed",
+        mutation,reuse_enabled,context.calls,(unsigned long long)(retries1-retries0));
+  }
+#endif
   vk_sample_liveness_reference(liveness_original_reference);
   LOG("[vulkan counter replay boundary fixture] live=%llu reset_before_report=%llu; single/multiple handles, nested/repeated calls, samples=128 and both shaded halves passed",
       (unsigned long long)liveness_live,(unsigned long long)liveness_dead);
@@ -1969,12 +2055,18 @@ int dm_vulkan_test_main(void) {
       CHECK(pixel[0] == (inside ? 191 : 64) && pixel[1] == 0 && pixel[2] == 0 &&
             pixel[3] == 255);
     }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint64_t ds_attachment_hits_before,ds_attachment_retries_before;
+  vk_test_attachment_reuse_stats(&ds_attachment_hits_before,&ds_attachment_retries_before);
+#endif
   CALL(nvnCommandBufferBeginRecording, &cmd);
   // An identical logical target rebind separates planning proofs, while the
   // physical pass may remain open. A later writer must upgrade the readonly
   // layout through a real pass end before writing, never discard the write.
   CALL(nvnCommandBufferBindProgram,&cmd,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
   CALL(nvnCommandBufferBindSeparateTextures,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,1,&th);
+  CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+  // A second real readonly draw exercises the warm job before switching roles.
   CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
   CALL(nvnCommandBufferSetRenderTargets,&cmd,1,colors,NULL,&depth_texture,NULL);
   CALL(nvnDepthStencilStateSetDepthWriteEnable, &depth_state, 1);
@@ -1990,11 +2082,22 @@ int dm_vulkan_test_main(void) {
        NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
   CALL(nvnCommandBufferBindSeparateTextures,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,1,&depth_handle);
   CALL(nvnCommandBufferDrawArrays, &cmd, NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+  // These four draws are still executed, but their samples are dead; this
+  // permits real warm attachment borrowing before the depth-write transition.
+  CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
   submit(end());
   CALL(nvnTextureReadTexels, &output, NULL, &region, pixels);
   for (unsigned i = 0; i < sizeof pixels; i += 4)
     CHECK(pixels[i] == 0 && pixels[i + 1] == 0 && pixels[i + 2] == 0 &&
           pixels[i + 3] == 255);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint64_t ds_attachment_hits_after,ds_attachment_retries_after;
+  vk_test_attachment_reuse_stats(&ds_attachment_hits_after,&ds_attachment_retries_after);
+  if(attachment_mode && !strcmp(attachment_mode,"1"))CHECK(ds_attachment_hits_after>ds_attachment_hits_before);
+  else CHECK(ds_attachment_hits_after==ds_attachment_hits_before);
+  LOG("[attachment reuse depth fixture] warm_readonly=%llu; original later depth write and sampled pixels passed",
+      (unsigned long long)(ds_attachment_hits_after-ds_attachment_hits_before));
+#endif
   // 连续颜色/深度清除与绘制共用通道；清除不计入遮挡样本，查询重置不能重做清除。
   // Consecutive color/depth clears and draws share a pass. Clears must not
   // count as occlusion samples, nor be replayed when a query reset ends a pass.

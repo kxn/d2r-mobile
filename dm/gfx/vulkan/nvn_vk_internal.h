@@ -255,6 +255,11 @@ void vk_stream_target_boundary(void);
 void vk_stream_checkpoint(void);
 void vk_stream_compute_checkpoint(void);
 int vk_render_active(void);
+void vk_render_attachment_representation_changed(void);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+void vk_test_attachment_reuse_stats(uint64_t *hits,uint64_t *retries);
+void vk_test_attachment_reuse_callback(void (*callback)(void *),void *context);
+#endif
 int vk_counter_active(void);
 void vk_stream_stats(uint64_t *splits,uint64_t *boundaries,uint64_t *draws,int *reference);
 void vk_nvn_barrier(uint32_t flags);

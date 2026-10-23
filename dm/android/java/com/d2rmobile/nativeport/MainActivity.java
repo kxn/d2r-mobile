@@ -44,6 +44,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeDriverSpanReference(boolean reference);
     private static native void nativeImageBufferSplit(boolean enabled);
     private static native void nativeBufferConsumptionPlan(boolean enabled);
+    private static native void nativeAttachmentJobReuse(boolean enabled);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
     private static native void nativePoolSyncReference(boolean reference);
@@ -267,6 +268,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeDriverSpanReference(getIntent().getBooleanExtra("driver_span_reference", false));
             nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", true));
             nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", false));
+            nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
             nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));
@@ -498,6 +500,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("image_buffer_split")) {
             android.util.Log.w("D2RDriver", "image_buffer_split is startup-only; cold restart required");
             intent.removeExtra("image_buffer_split");
+        }
+        if (intent.hasExtra("attachment_job_reuse")) {
+            android.util.Log.w("D2RDriver", "attachment_job_reuse is startup-only; cold restart required");
+            intent.removeExtra("attachment_job_reuse");
         }
         if (intent.hasExtra("buffer_consumption_plan")) {
             android.util.Log.w("D2RDriver", "buffer_consumption_plan is startup-only; cold restart required");

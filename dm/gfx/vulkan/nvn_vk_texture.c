@@ -156,6 +156,7 @@ static void image_split_dependency_fixture(void);
 static int sampled_target_alias(const tex_t *,const view_t *);
 static uint64_t image_recipe_generation=1;
 static void image_recipes_changed(void) {
+  vk_render_attachment_representation_changed();
   vk_image_split_break();
   if(++image_recipe_generation==0) die("Vulkan image recipe generation overflow");
 }

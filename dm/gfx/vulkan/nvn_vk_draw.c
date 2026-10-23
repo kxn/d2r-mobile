@@ -57,6 +57,7 @@ typedef struct render_job {
   // Irreversible physical-pass may-write proof, separately for DS planes.
   // Uses existing struct tail padding; no per-descriptor state or counter.
   uint8_t ds_written;
+  uint8_t attachment_representation_valid;
 } render_job;
 struct vk_graphics_submission {
   render_job *jobs;
@@ -85,6 +86,31 @@ static int draw_state_reference(void) {
   }
   return reference;
 }
+// Representation-only experiment. Actual preparation, accesses and histories remain live.
+static int attachment_reuse_mode(void) {
+  static int enabled=-1;
+  if(enabled<0) {
+    const char *v=getenv("DM_VULKAN_ATTACHMENT_JOB_REUSE");
+    if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_ATTACHMENT_JOB_REUSE expects 0 or 1");
+    enabled=v && !strcmp(v,"1");
+    LOG("[vulkan attachment reuse] enabled=%d",enabled);
+  }
+  return enabled;
+}
+void vk_render_attachment_representation_changed(void) {
+  if(active_job)active_job->attachment_representation_valid=0;
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t attachment_reuse_hits,attachment_reuse_retries;
+static void (*attachment_test_callback)(void *);
+static void *attachment_test_context;
+void vk_test_attachment_reuse_callback(void (*callback)(void *),void *context) {
+  attachment_test_callback=callback;attachment_test_context=context;
+}
+void vk_test_attachment_reuse_stats(uint64_t *hits,uint64_t *retries) {
+  *hits=attachment_reuse_hits;*retries=attachment_reuse_retries;
+}
+#endif
 static p_set_rt active_targets;
 static uint32_t active_writes;
 static void render_binding_reset(render_job *j) {
@@ -147,6 +173,7 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
   vk_system_trace_counter("Vulkan render area width",j->area.extent.width);
   vk_system_trace_counter("Vulkan render area height",j->area.extent.height);
   j->primary=V.cmd;j->attachment_count=count;j->color_count=color_count;
+  j->attachment_representation_valid=1;
   memcpy(j->attachments,attachments,count*sizeof *attachments);
   memcpy(j->colors,colors,color_count*sizeof *colors);
   if(depth) j->depth=*depth;
@@ -1521,6 +1548,9 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   }
   if (list[2] || list[3] || list[4])
     die("Vulkan geometry/tessellation graphics setup pending");
+  int attachment_retry=0;
+attachment_prepare:
+  ; // A cold retry starts after one-time shader/bloom selection and expansion.
   int writable_buffers=0;
   // Immutable binding kinds/write flags were classified with the final
   // shader schema. Keep the dynamic VS descriptor checks below unchanged.
@@ -1658,12 +1688,50 @@ uniform_vertex_remaining:
     vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
     free(local_ready);vk_pool_operation_end(pool_operation);vk_draw_record(draw,idx,disable_local_plan);return;
   }
-  VkAttachmentDescription descriptions[9];
-  VkImageView views_[9];
-  VkAttachmentReference color[8], depth = {0};
+  VkAttachmentDescription descriptions_storage[9],*descriptions=descriptions_storage;
+  VkImageView views_storage[9],*views_=views_storage;
+  VkAttachmentReference color_storage[8],*color=color_storage, depth = {0};
   uint32_t na = 0, width = UINT32_MAX, height = UINT32_MAX;
   VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
-  for (int k = 0; k <= S.targets.n; k++) {
+  render_job *attachment_job=NULL;
+  if(attachment_reuse_mode() && !attachment_retry && !expansion && !local_ready && !local_consumer &&
+      active_job && !active_job->local && active_job->attachment_representation_valid &&
+      !vk_ghost_replaying() && !vk_mip_clear_pending() &&
+      V.cmd==active_job->secondary && render_targets_equal(&S.targets,&target_match) &&
+      include_depth==active_job->has_depth && active_job->framebuffer_object) {
+    int role_ok=1;
+    if(include_depth) {
+      int readonly=readonly_depth_target(&S.targets,ds.depthWriteEnable || stencil_writing,&target_match);
+      VkImageLayout layout=active_job->depth.layout;
+      // A newly writable DS role must still execute the original layout transition.
+      if(layout==VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL && !readonly)role_ok=0;
+    }
+    if(role_ok)attachment_job=active_job;
+  }
+  if(attachment_job) {
+    // These arrays already belong to the live job; no second representation cache.
+    descriptions=attachment_job->attachments;color=attachment_job->colors;
+    views_=attachment_job->framebuffer_object->views;depth=attachment_job->depth;
+    na=attachment_job->attachment_count;width=attachment_job->framebuffer_object->width;
+    height=attachment_job->framebuffer_object->height;samples=descriptions[0].samples;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(attachment_test_callback) {
+      void (*callback)(void *)=attachment_test_callback;void *context=attachment_test_context;
+      attachment_test_callback=NULL;attachment_test_context=NULL;callback(context);
+    }
+#endif
+    for(int k=0;k<=S.targets.n;k++) {
+      const tex_t *t=k==S.targets.n?(include_depth?S.targets.depth:NULL):S.targets.color[k];
+      const view_t *v=k==S.targets.n?(S.targets.has_dview?&S.targets.dview:NULL):
+          (S.targets.has_cview[k]?&S.targets.cview[k]:NULL);
+      if(!t)continue;
+      if(k==S.targets.n && !stencil_writing && !(ds.depthTestEnable && ds.depthWriteEnable))
+        vk_texture_attachment_read(t,v);
+      else vk_texture_attachment_record(t,v,0);
+    }
+    if(active_job!=attachment_job || !attachment_job->attachment_representation_valid ||
+        V.cmd!=attachment_job->secondary)goto attachment_cold_retry;
+  } else for (int k = 0; k <= S.targets.n; k++) {
     const tex_t *t = k == S.targets.n ? (include_depth ? S.targets.depth : NULL) : S.targets.color[k];
     const view_t *v =
         k == S.targets.n
@@ -1728,9 +1796,16 @@ uniform_vertex_remaining:
   }
   int precise_dependencies=vk_graphics_resource_dependencies(writable_buffers);
   if(precise_dependencies) vk_texture_graphics_barrier();
+  if(attachment_job && (active_job!=attachment_job ||
+      !attachment_job->attachment_representation_valid || V.cmd!=attachment_job->secondary))
+    goto attachment_cold_retry;
   int pass_before_query=vk_render_active();
   vk_sample_query occlusion = {0};
-  if(vk_pass_samples_live(draw?(const void *)draw:(const void *)idx)) {
+  int sample_live=vk_pass_samples_live(draw?(const void *)draw:(const void *)idx);
+  // A live query can reset/replace this job. Retry before reserving any slot;
+  // the true branch above has no elision publication or counter side effects.
+  if(attachment_job && sample_live)goto attachment_cold_retry;
+  if(sample_live) {
     vk_mip_clear_drain();
     occlusion=vk_counter_draw_prepare();
   } else vk_counter_pass_end();
@@ -1989,11 +2064,37 @@ uniform_vertex_remaining:
         vk_texture_trace(S.targets.color[i],
                          S.targets.has_cview[i] ? &S.targets.cview[i] : NULL,
                          list[1]->key);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(attachment_job)attachment_reuse_hits++;
+#endif
+  if(attachment_job) {
+    // One semantic admission marker; official sampling cannot identify whether
+    // a guarded draw actually retained its borrowed representation to record.
+    static int first_recorded;
+    if(!first_recorded) {
+      first_recorded=1;
+      LOG("[vulkan attachment reuse] first actual recorded draw attachments=%u",na);
+    }
+  }
   V.draws++;
   if (draw) vk_ghost_note(draw, local_consumer?local_consumer->source_shader:list[1]);
   bq_after_draw();
   vk_pool_operation_end(pool_operation);
   vk_profile_end(VK_TIME_DRAW, started);
+  return;
+attachment_cold_retry:
+  // No query slot or draw has been emitted. Keep one-time no-FXAA/bloom
+  // selection and the operation's owned Pool lifetime; only rebuild consumers.
+  // The borrowed-job path excludes instance expansion, so no old-recording
+  // expansion temporary becomes part of this separate retry contract. Full
+  // commit remains forbidden while the existing shader operation is active.
+  vk_image_split_break();vk_ubo_plan_break();
+  vk_texture_shader_abandon();vk_shader_operation_abandon();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  attachment_reuse_retries++;
+#endif
+  attachment_retry=1; // Cold path cannot jump back here again.
+  goto attachment_prepare;
 }
 void vk_draw(const p_draw *draw,const p_draw_idx *idx) {
   vk_draw_record(draw,idx,0);

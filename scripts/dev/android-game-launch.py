@@ -61,6 +61,7 @@ parser.add_argument('--dedicated-present-worker',action='store_true',help='start
 parser.add_argument('--present-worker-shared-queue',action='store_true',help='isolate presentation worker scheduling while preserving the original Vulkan queue; requires --dedicated-present-worker')
 parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction,default=None,help='startup-only stable GPU-produced FS image reuse (default on; --no-image-buffer-split for reference)')
 parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental shared UBO preparation reuse (default off); verify effective backend mode')
+parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job attachment representation reuse (default off); verify effective backend mode')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
 parser.add_argument('--descriptor-history-reference',action='store_true',help='comparison: cache only consecutive identical descriptor contents')
@@ -146,6 +147,8 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
+if args.attach and args.attachment_job_reuse is not None:
+    parser.error('--attachment-job-reuse/--no-attachment-job-reuse are startup-only and cannot be used with --attach')
 if args.attach and args.buffer_consumption_plan is not None:
     parser.error('--buffer-consumption-plan/--no-buffer-consumption-plan are startup-only and cannot be used with --attach')
 if args.attach and args.driver_span_reference:
@@ -237,6 +240,8 @@ if not args.attach:
               '--ez', 'validate', str(args.validate).lower()]
     if args.image_buffer_split is not None:
         launch += ['--ez','image_buffer_split',str(args.image_buffer_split).lower()]
+    if args.attachment_job_reuse is not None:
+        launch += ['--ez','attachment_job_reuse',str(args.attachment_job_reuse).lower()]
     if args.buffer_consumption_plan is not None:
         launch += ['--ez','buffer_consumption_plan',str(args.buffer_consumption_plan).lower()]
     if args.driver_span_reference:
@@ -387,6 +392,10 @@ while time.monotonic() < deadline:
                         raise SystemExit('pool backing window policy did not apply')
                     if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
                         raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
+                    attachment_reuse_modes=re.findall(r'\[vulkan attachment reuse\] enabled=([01])\b',log)
+                    actual_attachment_reuse=bool(int(attachment_reuse_modes[-1])) if attachment_reuse_modes else None
+                    if args.attachment_job_reuse is not None and actual_attachment_reuse != args.attachment_job_reuse:
+                        raise SystemExit('attachment job reuse backend startup mode did not match explicit request')
                     buffer_plan_modes=re.findall(r'\[vulkan buffer plan\] enabled=([01])\b',log)
                     actual_buffer_plan=bool(int(buffer_plan_modes[-1])) if buffer_plan_modes else None
                     if args.buffer_consumption_plan is not None and actual_buffer_plan != args.buffer_consumption_plan:
@@ -424,6 +433,8 @@ while time.monotonic() < deadline:
                     report = {'pid': int(pid), 'launch_seconds': time.monotonic() - started,
                               'requested_buffer_consumption_plan':args.buffer_consumption_plan,
                               'actual_buffer_consumption_plan':actual_buffer_plan,
+                              'requested_attachment_job_reuse':args.attachment_job_reuse,
+                              'actual_attachment_job_reuse':actual_attachment_reuse,
                               'requested_opus_shadow':args.opus_shadow,
                               'requested_native_opus':args.native_opus,
                               'external_profile': external, 'attached': args.attach,
