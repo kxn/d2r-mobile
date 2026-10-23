@@ -18,6 +18,7 @@ typedef struct {
 static lut_copy *source;
 static void copy_destroy(void *context) {
   lut_copy *copy = context;
+  vk_record_object_retired();
   vkDestroyImageView(V.device, copy->view, NULL);
   vkDestroyImage(V.device, copy->image, NULL);
   vkFreeMemory(V.device, copy->memory, NULL);

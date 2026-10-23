@@ -101,6 +101,7 @@ void vk_present_shader_target_create(vk_present_shader_target *target,VkImage im
   VK_CHECK(vkCreateFramebuffer(V.device,&fi,NULL,&target->framebuffer));
 }
 void vk_present_shader_target_destroy(vk_present_shader_target *target) {
+  if(target->framebuffer || target->view)vk_record_object_retired();
   if(target->framebuffer)vkDestroyFramebuffer(V.device,target->framebuffer,NULL);
   if(target->view)vkDestroyImageView(V.device,target->view,NULL);
   *target=(vk_present_shader_target){0};

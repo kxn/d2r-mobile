@@ -46,6 +46,7 @@ void vk_extrap_shift(const float previous[16],const float current[16],double wid
 }
 static void destroy_copy(void *context) {
   vk_rt_image *i=context;
+  vk_record_object_retired();
   vkDestroyImageView(V.device,i->attachment,NULL);
   vkDestroyImageView(V.device,i->view,NULL);
   vkDestroyImageView(V.device,i->stencil,NULL);

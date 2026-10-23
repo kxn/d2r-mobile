@@ -50,6 +50,9 @@ static void pipeline_cache_test(void) {
   LOG("[vulkan PSO cache fixture] real driver roundtrip, metadata/ABI/driver/UUID/checksum/truncation rejection and recovery passed");
 }
 static NVNdevice device;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+#include "native_vulkan_record_owner.inc"
+#endif
 static NVNqueue queue;
 static NVNcommandBuffer cmd;
 static NVNmemoryPool memory;
@@ -872,6 +875,7 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_RECORD_OWNER_FIXTURE")) {retained_record_owner_test();return 0;}
   persistent_texel_owner_test();
   if(getenv("DM_TEXEL_OWNER_FIXTURE")) {
     printf("{\"test\":\"persistent-texel-owner\",\"result\":\"passed\",\"game_modules_executed\":false}\n");return 0;

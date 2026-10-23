@@ -789,6 +789,7 @@ static void image_allocation_free(image *i) {
 }
 static void image_storage_destroy(void *context) {
   image *i = context;
+  vk_record_object_retired();
   while (i->views) {
     image_view *view = i->views;
     i->views = view->next;
@@ -2281,6 +2282,7 @@ static _Atomic uint32_t live_samplers;
 static VkSampler dummy_sampler;
 uint32_t vk_sampler_count(void) { return atomic_load(&live_samplers); }
 static void sampler_shutdown(void) {
+  vk_record_object_retired();
   sampler_registry_changed();
   for (int i = 0; i < sampler_capacity; i++)
     if (sampler_descriptors[i].sampler)
@@ -2590,6 +2592,7 @@ void vk_texture_end(vk_texture_submission *state) {
 void vk_texture_recycle(vk_texture_submission *state) {
   if (!state) return;
   if (texture_state == state) die("Vulkan recycling recording texture resources");
+  if(state->views)vk_record_object_retired();
   while (state->views) {
     transient_view *v = state->views;
     state->views = v->next;
@@ -2620,6 +2623,7 @@ uint64_t vk_test_owned_texel_views_destroyed(void) {return owned_texel_views_des
 void vk_buffer_views_destroy(vk_buffer *buffer) {
   struct vk_texel_view_cache *cache=buffer->texel_views;
   if(!cache)return;
+  vk_record_object_retired();
   // This is called only from the original safe Buffer destruction path. No LRU
   // eviction or view destruction at a submission boundary while another use lives.
   while(cache->all) {
@@ -2694,7 +2698,7 @@ void vk_texture_end_submit(void) {
       sp = &s->next;
       continue;
     }
-    vkDestroySampler(V.device, s->sampler, NULL);
+    vk_record_object_retired();vkDestroySampler(V.device, s->sampler, NULL);
     atomic_fetch_sub(&live_samplers, 1);
     *sp = s->next;
     free(s);

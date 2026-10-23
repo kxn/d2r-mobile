@@ -1181,6 +1181,7 @@ static void buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,in
 void vk_buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) { buffer_create(b,size,usage,0); }
 void vk_buffer_destroy(vk_buffer *b) {
   // Existing callers already retire all GPU users before destroying this owner.
+  if(b->handle)vk_record_object_retired();
   vk_buffer_views_destroy(b);
   if (b->handle)
     vkDestroyBuffer(V.device, b->handle, NULL);

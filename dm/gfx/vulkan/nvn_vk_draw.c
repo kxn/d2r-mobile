@@ -818,9 +818,9 @@ void vk_graphics_recycle(vk_graphics_submission *state) {
     render_job *j = state->jobs;
     state->jobs = j->next;
     if(j->framebuffer_object) framebuffer_release(j->framebuffer_object);
-    else vkDestroyFramebuffer(V.device,j->framebuffer,NULL);
+    else {vk_record_object_retired();vkDestroyFramebuffer(V.device,j->framebuffer,NULL);}
     if(j->pass_object) render_pass_release(j->pass_object);
-    else vkDestroyRenderPass(V.device,j->pass,NULL);
+    else {vk_record_object_retired();vkDestroyRenderPass(V.device,j->pass,NULL);}
     if(j->final_pass_object) render_pass_release(j->final_pass_object);
     vk_texture_raster_free(j->raster_group);
     free(j->local);free(j);

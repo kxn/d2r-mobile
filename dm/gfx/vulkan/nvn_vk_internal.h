@@ -35,6 +35,9 @@ typedef struct vk_buffer {
 #endif
 } vk_buffer;
 void vk_buffer_views_destroy(vk_buffer *buffer);
+// Physical retirement invalidates experimental retained recordings before
+// the driver may recycle a handle. Inactive on the default execution path.
+void vk_record_object_retired(void);
 typedef struct vk_effect {
   struct vk_effect *next;
   void *dst;

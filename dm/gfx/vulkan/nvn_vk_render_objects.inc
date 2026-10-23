@@ -63,10 +63,12 @@ static void framebuffer_unindex(framebuffer_object *f) {
 static void render_pass_release_locked(render_pass_object *p) {
   if(!p->references) die("Vulkan render pass reference underflow");
   if(!--p->references && !p->cached) {
+    vk_record_object_retired();
     vkDestroyRenderPass(V.device,p->handle,NULL);free(p->extra);free(p);
   }
 }
 static void framebuffer_destroy_locked(framebuffer_object *f) {
+  vk_record_object_retired();
   vkDestroyFramebuffer(V.device,f->handle,NULL);
   render_pass_release_locked(f->pass);free(f);
 }
@@ -159,6 +161,7 @@ static render_pass_object *render_pass_acquire(const VkRenderPassCreateInfo *ci)
       while(*at && *at!=p) at=&(*at)->hash_next;
       if(!*at) die("Vulkan render pass cache index lost");
       *at=p->hash_next;
+      vk_record_object_retired();
       vkDestroyRenderPass(V.device,p->handle,NULL);free(p->extra);free(p);
     }
   }
@@ -230,6 +233,7 @@ void *vk_test_framebuffer_acquire(void *pass,const VkFramebufferCreateInfo *ci,V
 void vk_test_framebuffer_release(void *framebuffer) { framebuffer_release(framebuffer); }
 #endif
 void vk_render_view_retired(VkImageView view) {
+  vk_record_object_retired();
   pthread_mutex_lock(&render_object_mu);
   for(framebuffer_object **at=&framebuffer_objects;*at;) {
     framebuffer_object *f=*at;unsigned k=0;

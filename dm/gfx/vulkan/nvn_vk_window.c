@@ -150,6 +150,7 @@ static unsigned acquire_slot(void) {
 typedef struct { VkImage image; VkDeviceMemory memory; } crop_retired;
 static void crop_destroy(void *context) {
   crop_retired *old = context;
+  vk_record_object_retired();
   vkDestroyImage(V.device, old->image, NULL);
   vkFreeMemory(V.device, old->memory, NULL);
   free(old);
