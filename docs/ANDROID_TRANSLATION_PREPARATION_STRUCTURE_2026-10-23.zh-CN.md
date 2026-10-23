@@ -221,7 +221,32 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 
 不能只看Pool命中数下降就宣布成功。对照必须在同APK里确认开关确实生效，同时检查前置require和后段消费是否一起减少；再以原官方CPU采样和调度窗口查看整条回放时间及新增维护成本。若次数降了而时间没有可靠下降，应回到这些父职责检查剩余消费、失效和驱动编码，不能继续把同一份旧预算分配给新缓存。
 
-当前全链候选尚在独立分支验证，编译通过不等于已在真机命中。Android冷启动开关与实际后端模式核对已单独接好；未部署、没有新的CPU毫秒或FPS收益结论。
+上述接口阶段之后，完整候选已冻结为独立分支 `78807aa`，完成实际共享 lazy Buffer 的 host 验证及下面的 Android 同包对照；没有合入日常运行版本。
+
+### 完整消费计划的四轮真机结果
+
+候选 APK SHA 为 `9c362d6f64057f98dd454acf94b9105a3e8581121238880b8a05f88e9e44c379`。四轮顺序为 OFF、ON、ON、OFF，两边均开启同一普通图像子集优化，使用相同模块、驱动、固定渲染比例与启动配置。原始 NSO 经统一入口重新生成并验证，设备执行模块与既有验证版本字节相同。没有借此修改游戏 binary 或玩法。
+
+| 轮次 | 消费计划 | 翻译线程 Running ms/Surface | replay self ms/Surface | Surface Hz | Running 加权 CPU MHz | Pool 消费/guest submit |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| A1 | OFF | 26.8984 | 23.3120 | 30.218 | 1540.7 | 17291.10 |
+| B1 | ON | 27.2065 | 23.5242 | 30.308 | 1552.4 | 9286.12 |
+| B2 | ON | 35.9963–35.9989 | 30.5080 | 20.658 | 1158.2 | 9280.30 |
+| A2 | OFF | 26.9796 | 23.2038 | 30.179 | 1540.1 | 17311.61 |
+
+Pool 消费减少46.30%／46.39%，相应 draw 与 PSO 事件变化均不超过约0.13%。这证明消掉了高频工作，但**没有证明净 CPU 或整帧收益**。Pool 计数按同端点的 guest submit 归一，不是拿 Surface 数替代分母；CPU 时间来自官方调度工具，采样栈来自另一官方窗口，两者不相乘伪造函数毫秒。
+
+B2 未通过严格零未知调度状态资格，原失败日志保留。其未知区间共0.419687ms，在159个 Surface 间隔上最多增加0.002640ms/Surface，表中明确上下界。它同时有明显的频率及核心驻留变化，不能全部归因于候选或温度，也不能删除这轮只展示有利结果。频率接近的 A1/B1 已足以说明本次尚无可靠提速证据。
+
+独立 host 验证覆盖实际共享 lazy 导入、三种动态 offset 模式、像素与所有权断言、GPU writer 后读取、非候选绑定穿插及内部提交/ghost 重入；预期 alias 拒绝单列，不当作正常渲染通过。Android 四轮均检查实际后端开关、执行模块及没有启用抓帧/验证层，结束后由原生命周期存档成功并停止。最终恢复旧稳定日常 APK `ec15c8c…`，核实游戏进程已退出。Mali 与借出的平板未参与。
+
+### 从工作量下降回到整条结构
+
+v1 不是少算了一次哈希：它跨过了前置 VS require 和后续 Pool 消费。但新方案为了证明可复用，又在多个消费入口重复验证同一组 recording、pass、writer、registry、alias 条件。源码及实际 Android ELF 审查表明，在普通双 stage、无回调且两 stage 已热的条件下，每 draw 有9次完整阶段采样，涉及43次 getter 调用；冷成功消费还会追加验证。这是特定路径的静态调用结构，不是运行时调用总量或毫秒测量。
+
+因此下一轮要改变的是**有效性证明的责任分配**：draw 入口建立一次证明，真正改变状态的入口使证明失效；下游使用已经建立的结果。必须先关闭 registry/alias 的跨线程发布、内部提交、writer、mip 及重入的所有失效入口。其他线程不能直接修改翻译线程持有的 ready masks；如果不能证明事件与观察顺序，就保留必要检查。不会仅删除 getter，也不会给每个 getter 再加一层缓存。
+
+同时继续看完整回放父职责，而不是把9次检查当成新的全部问题。旧 Pool 路径本来绝大多数就是快命中，其调用量下降不能自动解释为等比例时间下降。需要并列新四轮的资源、附件、Buffer、描述值、驱动编码与非draw职责，确认还有哪些完整处理段没有被跳过。该独立离线分析与 v2 合同审查并行；在证据补齐前不再将旧约11.18ms资源预算重复分配给下一候选。
 
 ## 可复核证据
 
@@ -237,3 +262,6 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 - `.local/logs/nvn-command-setter-snapshot-v3/used-slot-analysis.json`：完整control与最终schema连接后的真实使用槽频度；包含官方反汇编、输入指纹和局限。
 - `.local/logs/nvn-command-setter-snapshot-v3/image-identity-analysis.json`：同一快照中整组/部分图像稳定度，明确尚未证明物理身份与当前优化剩余覆盖。
 - `.local/logs/nvn-buffer-consumption-plan-v1/design.md`：完整消费计划的资格、事件、所有权及回退设计。
+- `.local/logs/nvn-buffer-consumption-plan-v1/independent-full-review.md`：冻结版独立源码与 host 验证，明确不代替真机性能结论。
+- `.local/logs/buffer-consumption-device-v1/final-independent-review.md`、`final-independent-manifest.json`：四轮官方工具结果、B2资格边界及完整证据指纹。
+- `.local/logs/buffer-consumption-device-v1/install-baseline.json`：恢复稳定日常 APK 与原模块字节核对记录。
