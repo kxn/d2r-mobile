@@ -311,6 +311,27 @@ Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相
 
 附件表示复用已在独立冻结版`e9c60cb`实现：直接借当前render job/framebuffer已有数组，保留每draw实际access和dependency。初版整draw冷重试重复nofxaa/bloom的错误已改为有界局部重建。完整host ON/OFF、真实共享lazy UBO组合、区域扩大／pass结束／Storage及格式升级／深度角色变化的专项均通过，未放宽原断言。共享UBO专项不证明附件热借用的全部联合失效组合；Android默认OFF同包对照正在进行，不预先声明净收益。
 
+### 附件表示复用：四轮真机完成
+
+冻结源码`e9c60cb`、canonical APK `3ea2afb8…`已在Q735运行原ARM64游戏，四轮均保持image split和UBO计划开启，只改变附件实验开关。原始NSO重新生成并验证，执行/规则字节和98个UI资源不变；相同APK包含重建的加载器库，不声称其字节与前版全部相同。Vulkan驱动、shader与native资源保持原配置。Simpleperf record延长为24秒、99Hz，其他官方窗口仍为8秒；不增加运行时计时器。
+
+| 轮次 | 附件复用 | Running ms/Surface | Surface Hz | Running加权CPU MHz | 附件表示解析残余样本 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| A1 | OFF | 26.2422–26.2512 | 30.310 | 1538.5 | 39/1811，2.154% |
+| B1 | ON | 34.7091 | 21.174 | 1192.7 | 4/1607，0.249% |
+| B2 | ON | 26.8941 | 30.180 | 1518.0 | 4/1823，0.219% |
+| A2 | OFF | 34.6178 | 21.245 | 1224.3 | 33/1602，2.060% |
+
+两次ON都出现真实recorded draw借用，表示解析采样权重同方向下降；它不是精确调用减少率、热覆盖率或约89%的时间节省。每guest的流记账操作约2395、pipeline prepare约2390、内部提交约7，基本持平；Pool消费反而小幅增加约0.435%/0.236%，不能称此候选减少了Pool工作。
+
+两对整线程差异方向相反：第一对ON多约8.46ms，反向少约7.72ms。OFF和ON各自都有快、慢状态，差异跨replay self、内部规划/提交和外部职责。频率、核心驻留是混杂证据，不归因温度、不做MHz线性校正，也不宣称稳定净收益或可重复回归。A1有2.102292ms总未知状态，严格资格失败，上表保留边界；B1最早stat的变体30→32，后续record/scheduler稳定。首次B1在工具采样前因编排读错日志位置退出，失败、实际命中及存档记录保留；修的是编排，没有删除慢采样窗。
+
+这个实验也定位出进一步的结构缺口：`texture_attachment`已解析image owner/range，返回值却只交付View/format/extent等，后面的`attachment_access`再次调用image_get和range解析。ON的实际access仍有26/35个样本；不能按样本上升认定回归，但源码确有产物丢失。后续应将合法owner/range交付真实access，保留每draw读写和依赖，不能删除访问本身或另建View缓存。
+
+另一个同根缺口是shared-lazy graphics的source计划：lazy admission提前返回，不消费收集列表，后续prepare/View也没有使用这份来源结果。已有source缓存仍有用，不能直接关闭后退回逐draw复制tex_t；下一设计是让来源、物理表示、descriptor和访问共享已有消费产物。native实际覆盖仍缺同次registry→image映射，正在准备最小官方LLDB只读补缺，不把旧相同handle次数当合法跳链覆盖。动态UBO在驱动仍有descriptor复制/偏移修正，但当前整set交付仅5.4%–6.5%样本；BDA/稳定布局需要单独验证实际设备能力与新增GPU代价，不当作已经找到38%收益。
+
+附件受限实现已保留到主线`8e1c46a`，`dm/`和`scripts/`与实测冻结版完全一致；实验开关默认OFF，未扩大到未验证的所有组合。四轮截图无明显黑块或缺场景，不代替全场景正确性；原生命周期存档后停止，已恢复日常稳定APK。Mali和平板未操作，60fps目标尚未达成。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -335,3 +356,6 @@ Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相
 - `.local/logs/buffer-consumption-device-v1/attachment-preparation-contract.md`：附件复用依赖与静态覆盖边界，明确已持有结果和缺少的访问证明。
 - `.local/logs/image-preparation-cost-v2/report.md`、`attribution.json`及逐窗`assignments.json`：当前图像链和混合职责的互斥分类、未知归属与跨层预算。
 - `.local/logs/attachment-job-reuse-v1/independent-review/final-review.md`、`ready.json`：附件候选失效合同与冻结host验证；`android-ready.json`单列canonical APK，不混同host结果。
+- `.local/logs/attachment-job-reuse-device-v1/final-independent-review.md`、同名JSON、`final-independent-manifest.json`：四轮官方工具和互斥会计；`root-scene-cleanup-review.json`记录画面、存档、恢复与源码核对。
+- `.local/logs/native-image-preparation-plan-v3/review.md`：统一消费产物、未闭合writer/lifetime边界及最小身份覆盖补缺。
+- `.local/logs/descriptor-delivery-architecture-v1/report.md`：descriptor表示与驱动重编码的完整路径、历史次数和当前成本，区分实际能力与未实施方案。
