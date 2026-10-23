@@ -306,6 +306,7 @@ typedef struct vk_graphics_submission vk_graphics_submission;
 vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *recycled);
 void vk_graphics_end(vk_graphics_submission *submission);
 void vk_graphics_recycle(vk_graphics_submission *submission);
+void vk_graphics_trim_idle(vk_graphics_submission *submission);
 int vk_graphics_parameters_discard_requested(const vk_graphics_submission *submission);
 // Forget executable retained CB references before releasing these pools.
 int vk_graphics_parameters_discard(vk_graphics_submission *submission);

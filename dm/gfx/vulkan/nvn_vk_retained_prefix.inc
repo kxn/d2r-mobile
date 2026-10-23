@@ -57,10 +57,11 @@ static int retained_prefix_try(render_job *j,const vk_draw_emission *draws,unsig
   if(!V.retained_draws || !graphics_state || !j->retained_slot_valid ||
       j->retained_secondary || j->retained_preceded || j->local ||
       j->pending_uncacheable || count<RETAINED_MIN_DRAWS || count>2048 ||
-      V.options.gpu_profile || vk_trace_frame_active())return 0;
+      j->gpu_region || vk_trace_frame_active())return 0;
   for(unsigned i=0;i<count;i++) {
     if(!draws[i].geometry_complete || !draws[i].retained_parameters)return 0;
-    for(unsigned s=0;s<6;s++)if(draws[i].uniform_offsets[s].count)return 0;
+    for(unsigned s=0;s<5;s++)if(draws[i].stage_present_mask&(1u<<s))
+      if(draws[i].uniform_offsets[draws[i].stage_set[s]].count)return 0;
   }
   // Deferred descriptor writes, including first immutable image values, must
   // be published before recording or replaying the first set that uses them.

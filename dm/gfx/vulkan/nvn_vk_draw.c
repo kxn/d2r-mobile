@@ -817,6 +817,12 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   if(V.retained_draws)vk_record_object_tracking_enable();
   state->retained_next_job=0;
   if(state->retained)state->retained->used=0;
+  // Other completed owners may retire physical objects after this context's
+  // recycle. Check once at begin before accepting any persistent parameter.
+  if(vk_graphics_parameters_discard_requested(state)) {
+    retained_submission_forget(state);
+    if(!vk_graphics_parameters_discard(state))die("Vulkan parameter begin before completion");
+  }
   draw_parameters_begin(state->parameters);
   mip_clear_begin();
   // 按提交锁定模式；命令更新和绘制必须使用同一套失效规则。
@@ -870,6 +876,21 @@ void vk_graphics_recycle(vk_graphics_submission *state) {
     state->pending_bytes-=(size_t)j->pending_capacity*sizeof *j->pending_draws;
     free(j->pending_draws);
     free(j->local);free(j);
+  }
+  // Original jobs are retired first: their releases can invalidate physical
+  // objects. Reset cached CBs before destroying any UAB pool they reference.
+  if(vk_graphics_parameters_discard_requested(state)) {
+    retained_submission_forget(state);
+    if(!vk_graphics_parameters_discard(state))die("Vulkan completed parameter discard ownership");
+  }
+}
+void vk_graphics_trim_idle(vk_graphics_submission *state) {
+  if(!state)return;
+  if(graphics_state==state || state->jobs)die("Vulkan retained trim outside completed idle owner");
+  retained_submission_forget(state);
+  if(!vk_graphics_parameters_discard(state))die("Vulkan idle parameter discard before completion");
+  if(state->retained) {
+    vk_record_owner_destroy(state->retained->owner);free(state->retained);state->retained=NULL;
   }
 }
 static VkPrimitiveTopology topology(int p) {

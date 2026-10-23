@@ -1084,6 +1084,7 @@ int mtl_trim_idle_resources(void) {
   // the entire idle descriptor owner so no retained/history set outlives its
   // pool; the next begin lazily rebuilds it. Active/in-flight owners stay put.
   for(submit_resources *r=available_resources;r;r=r->next) {
+    vk_graphics_trim_idle(r->graphics);
     vk_shader_destroy(r->shader);r->shader=NULL;
     pool_access_cache_trim(r);
   }

@@ -1315,6 +1315,8 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_RETAINED_PREFIX_FIXTURE")) {
     extern void vk_test_retained_prefix_stats(uint64_t *,uint64_t *);
     uint64_t captures0,replays0,captures1,replays1;
+    vk_sample_liveness_reference(0);
+    vk_gpu_profile_enabled(0);
     vk_test_retained_prefix_stats(&captures0,&replays0);
     const NVNtexture *retained_colors[]={&tex};
     // Repeat actual original NVN draws across completed contexts. Buffer
@@ -1330,7 +1332,13 @@ int dm_vulkan_test_main(void) {
       CALL(nvnCommandBufferBindUniformBuffer,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)color,16);
       for(unsigned draw=0;draw<96;draw++)
         CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+      // The original NVN liveness proof otherwise preserves tail occlusion
+      // results across submissions. Explicit reset makes this prefix dead,
+      // without bypassing any query rule or changing runtime eligibility.
+      CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+      CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)report);
       submit(end());
+      CHECK(report[0]==0);
       CALL(nvnTextureReadTexels,&tex,NULL,&region,pixels);
       for(unsigned i=0;i<sizeof pixels;i+=4)
         CHECK(pixels[i]==(uint8_t)(color[0]*255) && pixels[i+1]==(uint8_t)(color[1]*255) &&
