@@ -136,6 +136,10 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 3. 持久图像来源计划及 native 整组所有权保留为后续结构机会，排在合同和剩余预算明确之后；不同时发起多套缓存实现，也不因身份重复次数大就默认扩大。
 4. 分配慢路径、PSO miss、compute 绑定尾项暂不作为主线。也不重新写 descriptor cache 或增加更多页检查。
 
+并行审查还确认一处更上游的机会：前置规划每draw仍枚举活跃shader图像槽并查询逻辑bucket，最新外包络约12015次/guest提交；可研究在实际绑定变化时更新活跃集合，draw仅推进使用位置，并向replay传递逻辑映射。它不能传递GPU-ready或物理保活证明，也不能把未来观察提前执行。完整规划在当前六个官方窗口中为1.38–1.69ms/Surface，包含必须保留的命令校验、查询活性、clear与alias分析。
+
+这与此前 `dc515d0` 的末端事件压缩不同：旧候选已将记录约1.44万压至720，但每draw上游枚举仍执行，未证明规划CPU有稳定净下降。因此不重复实施同一压缩、不按95%记录降幅预报CPU收益；后续必须量化活跃集合真正改变的次数和clear切段次数，再决定是否优先实施。相关条件证明见 `planning-replay-review.md`。
+
 本轮没有新的运行时收益宣称；前一实验仍是工作量减少成立、稳定净 CPU 收益未建立。主线默认源码已包含普通图像子集实现，桌面交付因 Java profile 标签验收缺失已完整回滚，Q735日常包保持旧稳定版；交付回滚结束时已存档并停止。该交付问题已独立收尾，不继续占用结构优化时间。
 
 ## 真实 NVN 设置频度补证
@@ -161,6 +165,10 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 
 原型独立、默认关闭：稳定项必须跳过前置require及实际消费链，变化项沿原路径；只读结果与真实访问证明分开；内部提交前升级已有Pool借用，不能跳过所有权。还必须统一mixed descriptor值的归属，避免每draw又复制全部稳定项。若这三个部分不能形成闭合可测试单元，不将局部骨架作为已完成优化。
 
+接口子步骤已在独立分支提交 `1b484529`：顶层VS/FS准备产物持有描述值，图像组借用同一数组，nested/ghost仍用独立数组。不增加逐draw整数组复制/扫描，增加约6KiB静态存储及选择分支。Buffer原消费链、动态offset及bias计算全部保留，因此这一步没有性能收益宣称，未合入主线或部署。
+
+最终同一host测试binary在独立测试目录的五项现有验证均通过，包含真实嵌套ghost/promotion及两种回调位置，Vulkan/CoreSYNC无报错。中途两项full测试因复用已预热的PSO目录而失败；失败输出保留，使用独立空目录后通过，没有修改断言。A→不合格B→A与内部提交的未来组合仍需完整计划验证；源码独立审查不代替这些用例，也不代替Android游戏性能测量。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -168,6 +176,7 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 - 同目录 `independent-review/buffer-origin-counts.json`：剥离宿主常量后的共享导入 Buffer 身份频度。
 - 同目录 `counter-deltas.json`、`parent-budget.json`、`report.md`：当前同包A/B工作量与原互斥父职责预算。
 - 同目录 `source-review.md`：源码生命周期/已有优化审查。
+- 同目录 `planning-replay-review.md`、`planning-current-envelopes.json`：规划与回放的重复职责、已做过的事件压缩、当前完整规划包络。
 - `.local/logs/image-buffer-split-device-v1/final-independent-review.md`：原六轮官方性能结果及计数分母勘误。
 - `.local/logs/nvn-command-setter-snapshot-v2/setter-analysis.json`、`analyze_setters.py`：原NVN命令/入口状态的离线整理及口径限制。
 - `.local/logs/nvn-buffer-consumption-plan-v1/design.md`：完整消费计划的资格、事件、所有权及回退设计。
