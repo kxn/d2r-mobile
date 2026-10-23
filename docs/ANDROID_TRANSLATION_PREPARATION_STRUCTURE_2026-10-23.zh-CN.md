@@ -413,6 +413,29 @@ v3复用历史已验证的Q735 mutex读取规则，并核对实际手机libc完�
 
 本轮证据：`.local/logs/source-duty-partition-v1/`、`.local/logs/source-duty-partition-device-v1/{offline-result.json,final-interpretation.md,root-scene-cleanup-review.json}`、`.local/logs/source-partition-frequency-v1/`、`.local/logs/dynamic-ubo-page-reuse-v1/`、`.local/logs/cpu-frontend-layout-after-segments-v1/`。原始失败、各轮结果及分析边界均保留；Mali与平板未访问。
 
+### 组合复用的同窗总工作量：已减少指令，但没有等比例缩短运行时间
+
+冻结 `08b8ef0` 同一 canonical APK（SHA `d8a300df…`），Q735 真 ARM64 游戏，原模块、驱动、资源、营地、2750×1260 输出及固定 .60 比例不变。只将 Buffer 消费计划、附件表示复用、连续状态段作为一组 OFF／ON／ON／OFF；image split 固定 ON，source partition 固定 OFF。C1/C2 没有显式传这三项开关，实际启动字段和首次执行标记证明 Android 默认开启已生效。四轮均完成同 PID 原生命周期两次存档提交并停止；没有访问 Mali 或平板。
+
+本次使用现成 Simpleperf per-TID `instructions:u` 及 cycles/task-clock 累计事件组，与 Perfetto 完整 Surface 区间映射到同一 monotonic 时钟。下表采用预先声明的机械可观测窗口，不按快慢选帧；完整原窗及每核缺口同时保存。
+
+| 窗口 | 三项复用 | 完整 Surface 区间数 | 计数覆盖的 Running | 用户指令百万/Surface | 用户 cycles 百万/Surface | Running ms/Surface | Running 加权 MHz |
+|---|---|---:|---:|---:|---:|---:|---:|
+| C0 | OFF | 236 | 100% | 73.220–73.644 | 37.447–37.698 | 26.7573 | 1560.05 |
+| C1 | ON | 211 | 100% | 59.479–60.000 | 34.101–34.411 | 26.8737 | 1437.80 |
+| C2 | ON | 223 | 99.993938% | 59.462–59.910* | 34.056–34.363* | 26.7595 | 1436.37 |
+| C3 | OFF | 237 | 99.979058% | 73.249–73.671* | 37.427–37.668* | 26.7899 | 1559.91 |
+
+`*` 仅为已覆盖核心的累计计数区间，未采样核心不能按零补齐，因此不是完整线程的有限上界。C1 原完整窗覆盖只有92.559%，不能使用其低估的指令数；机械裁剪后100%覆盖，保留两个结果。C2/C3微小缺口仍不能因比例小而删掉。Surface是呈现间隔分母，不冒充精确guest draw或一一对应的guest提交；原应用工作形状计数仅作旁证。
+
+完整覆盖的 C0/C1 支持单位呈现间隔用户指令减少约18%–19%、用户周期减少约8%–10%，但 CPU Running 没有下降。其它两轮已覆盖部分方向相近，不能充作第二对严格全线程计数证明。当前变化同时包含频率及IPC：C0用户IPC约1.94–1.97，C1约1.73–1.76。删除便宜的重复指令本身会改变剩余指令混合，IPC下降不自动意味着新增缓存miss或stall；加权频率变化也不证明优化导致调频，更不能用一个MHz值线性修正实际毫秒。当前可以排除“没有涨帧便等于完全没有减少工作”的说法，但尚不能认定执行速度变化的具体原因。
+
+“每draw仍重复准备”也须收窄到实际证据。已完成状态外围和附件表示复用，其旧份额不能再次认领。最新 source 实验候选 ON 的两窗可识别 prepare/View 父职责约8.6%–8.9%、Buffer消费约10.5%–11.9%、其后驱动约17%–18%；这些含必要访问与真实编码，不是可删除比例。提交规划有同窗完整构造1.62–1.72ms/Surface，但也含必要Store/query/别名分析。当前优先继续核查规划生产到消费的重复表示、剩余动态Buffer范围，以及资源owner/range结果的跨层交付；不能以这些父职责份额承诺等量节省。CPU执行速率与调度变化另按同窗证据分析，不继续仅靠新增命中缓存解释全部23ms。
+
+与当前默认开关一致的 source OFF 两窗应单独使用：prepare/View 为9.40%–9.71%，Buffer为10.10%–11.70%，剩余driver为14.38%–15.65%，完整规划为1.616953/1.657313ms/Surface。候选ON的份额不能代替默认配置剩余预算；这两组都不证明其中全部重复。
+
+证据：`.local/logs/same-window-structural-comparison-v1/` 的四轮原采集、配置、`analysis-C*/{full,observable}/facts.json`；职责与剩余预算清单为 `.local/logs/translation-structure-reuse-v1/current-repetition-priority.{md,json,py}`。当前保留新默认APK，采集结束已核实进程退出；无稳定净FPS或60FPS达标声明。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
