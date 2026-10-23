@@ -332,6 +332,18 @@ Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相
 
 附件受限实现已保留到主线`8e1c46a`，`dm/`和`scripts/`与实测冻结版完全一致；实验开关默认OFF，未扩大到未验证的所有组合。四轮截图无明显黑块或缺场景，不代替全场景正确性；原生命周期存档后停止，已恢复日常稳定APK。Mali和平板未操作，60fps目标尚未达成。
 
+### 附件实验之后：把非 draw 的四分之一继续拆开
+
+对 e9 附件实验的四个既有 Simpleperf 窗口重新按互斥父职责归类，submission planning 加非 draw replay 占24.41%–25.89%。真正的提交、clear、dispatch、copy和query仍保留，不能把这个大类都叫重复工作。规划中的Store读取/附件收集约占3.18%–3.90%；回放的观察器入口、plan游标和外层decode合计约7.43%–8.17%，其中也有必要工作和不能细分的样本。
+
+同版命令快照中，按实际shader schema重建的Store读取槽机会为12047次，其中8427次（69.95%）在同program/stage和保守顺序段内沿用相同逻辑资源；仅复用整个stage则只能覆盖4038次（33.52%）。这说明一个变化槽使整组重做的粒度偏粗。数字是静态逻辑身份机会，不是实际合法命中率；registry变化、footprint/alias与真实访问顺序仍须保留。它不同于此前只把末端事件压缩95%的frontier实验：下一候选必须省掉上游槽枚举和bucket解析，不能再次只压缩输出。
+
+四窗freeze/runtime观察入口36/29/40/26样本、pixel-local入口12/12/12/10、deferred-mip入口7/5/5/4。这些是日常回放的固定入口，不是Profile工具插入的开销；当时freeze/extrap关闭，pixel-local虽开启但未产生计划/绘制，deferred-mip关闭。受限的连续纯状态段有机会一次完成观察器准入和plan交接，逐条原setter及其失效仍执行；活跃观察器、CALL/JUMP、query、clear、真实GPU操作、重入和提交边界继续原路径。独立候选已开始实现，尚无真机净收益。
+
+为连接实际native身份，已执行两次有界官方LLDB只读补采，均因读取编排的错误假设失败，不能当作覆盖证据：v1错误要求texture_limit不大于已分配capacity，实际二者独立；v2错误要求整个Android mutex全零，实际手机libc在normal unlock后保留额外诊断字节。原失败、detach成功、原生命周期存档两次提交、停机与工具清理均保留。当前设备libc与历史已验证文件SHA一致，官方反汇编确认应检查低16位真实state，而不能把其后的残留当持锁状态。修复仅涉及工具读取，不改运行时。
+
+v1在native映射失败前已完整读取OP/program/schema。非draw离线分析独立核对764个原始页及哈希、重新展开控制流并核对93个program/82份schema后，才使用这些字段；它不把整个快照改成成功，也不推断物理图像寿命。原始命令字段分析和native资格补缺分别记账。
+
 ## 可复核证据
 
 - `.local/logs/translation-structure-reuse-v1/count_structure.py`、`structure-counts.json`：只整理已有官方捕获输出，输入SHA保留。
@@ -359,3 +371,6 @@ Pool成功消费两对分别减少46.49%和46.53%，draw与PSO工作量基本相
 - `.local/logs/attachment-job-reuse-device-v1/final-independent-review.md`、同名JSON、`final-independent-manifest.json`：四轮官方工具和互斥会计；`root-scene-cleanup-review.json`记录画面、存档、恢复与源码核对。
 - `.local/logs/native-image-preparation-plan-v3/review.md`：统一消费产物、未闭合writer/lifetime边界及最小身份覆盖补缺。
 - `.local/logs/descriptor-delivery-architecture-v1/report.md`：descriptor表示与驱动重编码的完整路径、历史次数和当前成本，区分实际能力与未实施方案。
+- `.local/logs/replay-architecture-after-attachment-v1/report.md`、`attribution.json`、`e9-field-validation.json`：当前非draw互斥父职责、独立完整命令字段验证与变化驱动读取集合机会。
+- `.local/logs/native-image-coverage-snapshot-v1/`、`native-image-coverage-snapshot-v2/`：两次未完成native映射的原始失败及存档/停机记录，不作为native覆盖成功证据。
+- `.local/logs/native-image-mutex-abi-audit-v1/`：实际手机libc与历史工具证据一致性、官方反汇编和独立ABI审查。
