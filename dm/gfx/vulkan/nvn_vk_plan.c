@@ -261,6 +261,13 @@ unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left) {
     vk_state_op(o->opcode,o->op+sizeof(op_hdr));
   }
   replay+=n;done=1;*next=plan[replay].op;
+  // One owner-thread admission marker, after real consumption, so official
+  // A/B orchestration can reject an enabled experiment which never executed.
+  static int first_consumed;
+  if(!first_consumed) {
+    first_consumed=1;
+    LOG("[vulkan state segments] first actual state segment operations=%u",n);
+  }
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   state_segments_consumed++;state_operations_consumed+=n;
 #endif

@@ -401,6 +401,12 @@ while time.monotonic() < deadline:
                     actual_state_segments=bool(int(state_segment_modes[-1])) if state_segment_modes else None
                     if args.state_segments is not None and actual_state_segments != args.state_segments:
                         raise SystemExit('state segments backend startup mode did not match explicit request')
+                    state_segment_hits=re.findall(r'\[vulkan state segments\] first actual state segment operations=(\d+)\b',log)
+                    actual_state_segment_operations=int(state_segment_hits[-1]) if state_segment_hits else None
+                    if args.state_segments is True and not actual_state_segment_operations:
+                        raise SystemExit('state segments enabled but no actual segment consumption was recorded')
+                    if args.state_segments is False and actual_state_segment_operations is not None:
+                        raise SystemExit('state segments explicitly disabled but actual consumption was recorded')
                     attachment_reuse_modes=re.findall(r'\[vulkan attachment reuse\] enabled=([01])\b',log)
                     actual_attachment_reuse=bool(int(attachment_reuse_modes[-1])) if attachment_reuse_modes else None
                     if args.attachment_job_reuse is not None and actual_attachment_reuse != args.attachment_job_reuse:
@@ -446,6 +452,7 @@ while time.monotonic() < deadline:
                               'actual_attachment_job_reuse':actual_attachment_reuse,
                               'requested_state_segments':args.state_segments,
                               'actual_state_segments':actual_state_segments,
+                              'first_actual_state_segment_operations':actual_state_segment_operations,
                               'requested_opus_shadow':args.opus_shadow,
                               'requested_native_opus':args.native_opus,
                               'external_profile': external, 'attached': args.attach,
