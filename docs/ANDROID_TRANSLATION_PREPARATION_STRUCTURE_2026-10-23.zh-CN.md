@@ -199,6 +199,14 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 
 这组数字不能全部算作下一优化的收益：快照来自旧稳定版，主线后来加入的普通图像子集已覆盖其中一部分。NVN索引不变也不证明registry中的texture身份、native类型、物理View、内容或访问状态不变。当前证据不能把4980项分为native/普通，也不能连接到当前合法跳过的调用数。下一图像方案必须先在原冷消费中取得实际资源证明，并扣除已有组的覆盖；不会仅凭这组数再加一层逐draw检查。
 
+### draw之外的回放结构也要纳入
+
+同一v3提交的45223条OP中，2445条是绘制，42496条是绑定/光栅等状态设置，另外包含68次附件目标设置、29次清屏、10次dispatch、16次搬运/更新，以及查询/顺序/事件和命令结构。命令里的BEGIN/END/JUMP不是GPU提交次数；内部subchunk由运行时边界决定，不能由这些OP数推出。
+
+状态设置占记录约94%，但旧官方同窗采样中，状态处理及相关比较仅约0.597ms。非draw回放共约5.040ms，另外分散在flush/提交0.801ms、清屏0.685ms、逐OP规划游标与其他入口0.743ms、回放自身0.503ms、dispatch0.430ms等。这些是历史父职责预算，不能除以本次OP数获得单次耗时。还有约0.568ms没有保留完整回放祖先，不能强行分给某个优化。
+
+因此次数仍是筛选复用机会的必要依据，但还须与父职责成本一起判断：不优先为4万多次轻量setter继续加缓存；优先减少它们造成的下游整段准备重复。连续纯状态段能否共用回放准备是后续结构候选，但需保留查询、观察入口、重入及最早安全提交点。真实clear/copy/dispatch与flush提交不能因数量少或参数相同而删除；已有清屏/Store等优化也不能重复算作新收益。
+
 ## 用整条路径判断实验结果
 
 每个候选需同时回答三个问题：从哪里开始省、在哪里仍必须消费、为维护证明新增了什么。以当前UBO候选为例：
@@ -222,6 +230,7 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 - 同目录 `independent-review/buffer-origin-counts.json`：剥离宿主常量后的共享导入 Buffer 身份频度。
 - 同目录 `counter-deltas.json`、`parent-budget.json`、`report.md`：当前同包A/B工作量与原互斥父职责预算。
 - 同目录 `source-review.md`：源码生命周期/已有优化审查。
+- 同目录 `non-draw-structure.md`、`non-draw-structure.json`：整条45223命令的职责计数及非draw父预算，避免只围着资源叶子函数优化。
 - 同目录 `planning-replay-review.md`、`planning-current-envelopes.json`：规划与回放的重复职责、已做过的事件压缩、当前完整规划包络。
 - `.local/logs/image-buffer-split-device-v1/final-independent-review.md`：原六轮官方性能结果及计数分母勘误。
 - `.local/logs/nvn-command-setter-snapshot-v2/setter-analysis.json`、`analyze_setters.py`：原NVN命令/入口状态的离线整理及口径限制。
