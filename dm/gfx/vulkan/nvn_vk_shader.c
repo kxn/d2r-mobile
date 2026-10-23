@@ -2053,21 +2053,29 @@ VkPipelineLayout vk_program_layout_mode(vk_shader *const list[6],int dynamic) {
   return pipeline_layout_get(layouts,count,biased);
 }
 VkPipelineLayout vk_program_layout(vk_shader *const list[6]) { return vk_program_layout_mode(list,0); }
-void vk_shader_push_bias(vk_shader *const list[6],VkPipelineLayout layout,int compute,
-                         vk_push_bias_state *previous) {
+int vk_shader_bias_snapshot(vk_shader *const list[6],int compute,uint32_t words[32]) {
   int biased=0;
   for(unsigned i=0;i<6;i++) if(list[i]&&list[i]->storage_bias_mask) biased=1;
-  if(!biased) { if(previous) previous->layout=VK_NULL_HANDLE;return; }
-  uint32_t words[32]={0};
-  if(compute) memcpy(words,current_operation.storage_bias_words[5],sizeof words);
+  if(!biased)return 0;
+  if(compute) memcpy(words,current_operation.storage_bias_words[5],128);
   else {
     memcpy(words,current_operation.storage_bias_words[0],64);
     memcpy(words+16,current_operation.storage_bias_words[1],64);
   }
-  if(previous && previous->layout==layout && !memcmp(previous->words,words,sizeof words)) return;
+  return 1;
+}
+void vk_shader_push_bias_values(VkPipelineLayout layout,int enabled,const uint32_t words[32],
+                                vk_push_bias_state *previous) {
+  if(!enabled) { if(previous) previous->layout=VK_NULL_HANDLE;return; }
+  if(previous && previous->layout==layout && !memcmp(previous->words,words,128)) return;
   vkCmdPushConstants(V.cmd,layout,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT|VK_SHADER_STAGE_COMPUTE_BIT,
-                     0,sizeof words,words);
-  if(previous) { previous->layout=layout;memcpy(previous->words,words,sizeof words); }
+                     0,128,words);
+  if(previous) { previous->layout=layout;memcpy(previous->words,words,128); }
+}
+void vk_shader_push_bias(vk_shader *const list[6],VkPipelineLayout layout,int compute,
+                         vk_push_bias_state *previous) {
+  uint32_t words[32];int enabled=vk_shader_bias_snapshot(list,compute,words);
+  vk_shader_push_bias_values(layout,enabled,words,previous);
 }
 int vk_shader_prewarm_stage(vk_shader *s,VkShaderModule module,vk_prewarm_stage *out) {
   memset(out,0,sizeof *out);if(!s)return !module;

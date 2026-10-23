@@ -3,6 +3,7 @@
 // Map original NVN draw state to Vulkan render passes and pipelines,
 // conservatively preserving attachments and command ordering.
 #include "nvn_vk_shader.h"
+#include "nvn_vk_draw_emission.h"
 #include "nvn_vk_extrap.h"
 #include "nvn_vk_freeze.h"
 #include "nvn_vk_plan.h"
@@ -147,6 +148,7 @@ static void render_bind_index(render_job *j,VkBuffer buffer,VkDeviceSize offset,
     j->bound_index_valid=1;
   }
 }
+#include "nvn_vk_draw_emission.inc"
 static atomic_uint_fast64_t pixel_local_plans,pixel_local_draws,pixel_local_aborts;
 void vk_pixel_local_stats(uint64_t *planned,uint64_t *draws,uint64_t *aborts) {
   *planned=atomic_load(&pixel_local_plans);*draws=atomic_load(&pixel_local_draws);*aborts=atomic_load(&pixel_local_aborts);
@@ -1475,7 +1477,8 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   int dynamic_uniforms=vk_program_dynamic_uniforms(list);
   // Each active stage fills count and exactly its live offsets below. Absent
   // stages have no ordered descriptor set and never read this local slot.
-  vk_uniform_offsets uniform_offsets[6];
+  vk_draw_emission emission;
+  vk_uniform_offsets *uniform_offsets=emission.uniform_offsets;
   if (!list[0])
     die("Vulkan draw without vertex shader");
   VkShaderModule fragment_module=no_fxaa_fragment(list[1]);
@@ -1617,7 +1620,7 @@ uniform_vertex_remaining:
   // Empty indexed draws bind a valid address but fetch no index bytes.
   // size==0 remains the distinct unknown-extent VBO contract.
   if(idx && idx->count) vk_buffer_vertex_require(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4));
-  VkDescriptorSet sets[6] = {0};
+  VkDescriptorSet *sets=emission.stage_sets;memset(sets,0,sizeof emission.stage_sets);
   if(S.targets.n<0 || S.targets.n>8) die("Vulkan color target count");
   for(int k=0;k<S.targets.n;k++) if(S.targets.color[k])
     vk_texture_prepare_attachment(S.targets.color[k],S.targets.has_cview[k]?&S.targets.cview[k]:NULL);
@@ -1955,6 +1958,15 @@ uniform_vertex_remaining:
   active_job->clear_only=0;
   if(!active_job->local)cover_first_draw(active_job,list,&ds,draw,idx,cover_ready,(const float (*)[4])cover_p,cover_descriptor_epoch);
   int state_reference=draw_state_reference();
+  // Late geometry resolution has no encoding or owner callback once pending
+  // mip materialization is excluded. Other exceptional paths retain their
+  // original interleaved resolve/bind ordering.
+  emission.geometry_complete=!vk_mip_clear_pending() && !local_ready && !local_consumer &&
+      !j->local && !vk_ghost_replaying() && !sample_live && !vk_counter_active();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(draw_emission_test_reference())emission.geometry_complete=0;
+#endif
+  emission.vertex_mask=streams;emission.index_bound=0;
   for (int i = 0; i < 16; i++)
     if (streams & (1u << i)) {
       vk_buffer *b;
@@ -1966,11 +1978,13 @@ uniform_vertex_remaining:
             "size=%llu inputs=%#x",
             list[0]->key, i, (unsigned long long)S.vertex[i].address,
             (unsigned long long)S.vertex[i].size, list[0]->input_mask);
-      render_bind_vertex(j,i,b->handle,off,state_reference);
+      if(emission.geometry_complete)emission.vertices[i]=(vk_draw_vertex_emission){b->handle,off};
+      else render_bind_vertex(j,i,b->handle,off,state_reference);
     }
   if (quads) {
     vk_buffer *b=quad_index_buffer();
-    render_bind_index(j,b->handle,0,VK_INDEX_TYPE_UINT32,state_reference);
+    emission.index_bound=1;emission.index_buffer=b->handle;emission.index_offset=0;emission.index_type=VK_INDEX_TYPE_UINT32;
+    if(!emission.geometry_complete)render_bind_index(j,b->handle,0,VK_INDEX_TYPE_UINT32,state_reference);
   } else if (idx) {
     if (idx->itype != NVN_INDEX_TYPE_UNSIGNED_SHORT &&
         idx->itype != NVN_INDEX_TYPE_UNSIGNED_INT)
@@ -1983,74 +1997,26 @@ uniform_vertex_remaining:
     if (!vk_pool_address_stage(idx->ibuf,index_bytes,
                   (void **)&b,&off,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT))
       die("Vulkan index buffer missing");
-    render_bind_index(j,b->handle,off,
-                      idx->itype==1?VK_INDEX_TYPE_UINT16:VK_INDEX_TYPE_UINT32,state_reference);
+    emission.index_bound=1;emission.index_buffer=b->handle;emission.index_offset=off;
+    emission.index_type=idx->itype==1?VK_INDEX_TYPE_UINT16:VK_INDEX_TYPE_UINT32;
+    if(!emission.geometry_complete)render_bind_index(j,b->handle,off,emission.index_type,state_reference);
   }
-  vk_counter_draw_begin(occlusion);
-  if(state_reference || j->bound_pipeline!=j->pipeline) {
-    vkCmdBindPipeline(V.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, j->pipeline);
-    j->bound_pipeline=j->pipeline;
+  emission.command=V.cmd;emission.pipeline=j->pipeline;emission.layout=j->layout;
+  emission.viewport=viewport;emission.scissor=sc;
+  emission.depth_bias[0]=S.offset.units;emission.depth_bias[1]=S.offset.clamp;emission.depth_bias[2]=S.offset.factor;
+  emission.state_reference=state_reference;
+  emission.stage_present_mask=0;
+  for(unsigned i=0;i<5;i++)if(list[i]) {
+    emission.stage_present_mask|=1u<<i;emission.stage_set[i]=list[i]->set;
   }
-  vk_shader_push_bias(list,j->layout,0,state_reference?NULL:&j->bias_state);
-  float depth_bias[]={S.offset.units,S.offset.clamp,S.offset.factor};
-  if(state_reference || !j->dynamic_state_valid || memcmp(&j->viewport,&viewport,sizeof viewport)) {
-    vkCmdSetViewport(V.cmd,0,1,&viewport);j->viewport=viewport;
-  }
-  if(state_reference || !j->dynamic_state_valid || memcmp(&j->scissor,&sc,sizeof sc)) {
-    vkCmdSetScissor(V.cmd,0,1,&sc);j->scissor=sc;
-  }
-  if(state_reference || !j->dynamic_state_valid || memcmp(j->depth_bias,depth_bias,sizeof depth_bias)) {
-    vkCmdSetDepthBias(V.cmd,depth_bias[0],depth_bias[1],depth_bias[2]);
-    memcpy(j->depth_bias,depth_bias,sizeof depth_bias);
-  }
-  j->dynamic_state_valid=1;
-  if(state_reference) {
-    for(int i=0;i<5;i++) if(list[i])
-      vkCmdBindDescriptorSets(V.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, j->layout,
-                              list[i]->set, 1, &sets[i], uniform_offsets[list[i]->set].count,
-                              uniform_offsets[list[i]->set].offsets);
-  } else {
-    // Sets are immutable per draw. Bind contiguous set numbers together;
-    // holes retain their original unbound state, including absent stages.
-    VkDescriptorSet ordered[6]={0};
-    for(int i=0;i<5;i++) if(list[i]) ordered[list[i]->set]=sets[i];
-    // Different pipeline layouts may disturb other set numbers. Restrict
-    // retention to the exact layout and this secondary's own emitted state.
-    if(j->bound_layout!=j->layout) {
-      memset(j->bound_sets,0,sizeof j->bound_sets);j->bound_layout=j->layout;
-    }
-    int changed[6]={0};
-    for(unsigned i=0;i<6;i++)changed[i]=ordered[i] && (ordered[i]!=j->bound_sets[i] ||
-      uniform_offsets[i].count!=j->bound_uniform_offsets[i].count ||
-      memcmp(uniform_offsets[i].offsets,j->bound_uniform_offsets[i].offsets,
-             uniform_offsets[i].count*sizeof *uniform_offsets[i].offsets));
-    for(unsigned first=0;first<6;) {
-      if(!changed[first]) { first++;continue; }
-      unsigned end=first+1;
-      while(end<6 && changed[end])end++;
-      uint32_t offsets[6*VK_UNIFORM_OFFSET_CAPACITY],count=0;
-      for(unsigned i=first;i<end;i++) {
-        memcpy(offsets+count,uniform_offsets[i].offsets,uniform_offsets[i].count*sizeof *offsets);
-        count+=uniform_offsets[i].count;
-      }
-      vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,j->layout,
-                              first,end-first,ordered+first,count,offsets);
-      memcpy(j->bound_sets+first,ordered+first,(end-first)*sizeof *ordered);
-      for(unsigned i=first;i<end;i++) {
-        j->bound_uniform_offsets[i].count=uniform_offsets[i].count;
-        memcpy(j->bound_uniform_offsets[i].offsets,uniform_offsets[i].offsets,
-               uniform_offsets[i].count*sizeof *uniform_offsets[i].offsets);
-      }
-      first=end;
-    }
-  }
-  if (quads)
-    vkCmdDrawIndexed(V.cmd,(uint32_t)(draw->count/4)*6,1,0,draw->first,0);
-  else if (idx)
-    vkCmdDrawIndexed(V.cmd, idx->count, idx->instances, 0, idx->base_vertex,
-                     idx->base_instance);
-  else
-    vkCmdDraw(V.cmd, draw->count, 1, draw->first, 0);
+  emission.bias_enabled=vk_shader_bias_snapshot(list,0,emission.bias_words);
+  emission.indexed=quads||idx;
+  emission.count=quads?(uint32_t)(draw->count/4)*6:idx?idx->count:draw->count;
+  emission.instances=idx?idx->instances:1;
+  emission.first=idx||quads?0:draw->first;
+  emission.vertex_offset=quads?draw->first:idx?idx->base_vertex:0;
+  emission.first_instance=idx?idx->base_instance:0;
+  draw_emission_immediate(j,&emission,occlusion);
   if(local_consumer && active_job==local_job) {local_job->local->finished=1;draw_recorded.pixel_local_draws++;}
   if(vk_mip_clear_pending() && mip_clear.returned && active_job==mip_clear.job)
     mip_clear_recorded.continued++;

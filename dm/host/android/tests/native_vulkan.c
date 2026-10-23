@@ -2813,6 +2813,16 @@ int dm_vulkan_test_main(void) {
       (unsigned long long)rs[3],(unsigned long long)rs[4]);
   if(getenv("DM_ATTACHMENT_RASTER_REQUIRE_HIT")) {CHECK(rs[1]>0);CHECK(rs[4]>0);}
 #endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  extern void vk_test_draw_emission_stats(uint64_t *,uint64_t *);
+  uint64_t emission_complete,emission_interleaved;
+  vk_test_draw_emission_stats(&emission_complete,&emission_interleaved);
+  const char *emission_ref=getenv("DM_DRAW_EMISSION_REFERENCE");
+  CHECK(emission_ref&&!strcmp(emission_ref,"1")?emission_complete==0:emission_complete>0);
+  CHECK(emission_interleaved>0);
+  LOG("[resolved draw emission fixture] complete=%llu interleaved=%llu",
+      (unsigned long long)emission_complete,(unsigned long long)emission_interleaved);
+#endif
   printf("{\"backend\":\"vulkan\",\"original_nvn\":true,\"checks\":%u,"
          "\"result\":\"passed\"}\n",
          checks);

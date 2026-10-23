@@ -177,6 +177,10 @@ typedef struct {
   VkPipelineLayout layout;
   uint32_t words[32];
 } vk_push_bias_state;
+// Snapshot uses only the already prepared shader operation; no resolver/callback.
+int vk_shader_bias_snapshot(vk_shader *const shaders[6],int compute,uint32_t words[32]);
+void vk_shader_push_bias_values(VkPipelineLayout layout,int enabled,const uint32_t words[32],
+                                vk_push_bias_state *previous);
 void vk_shader_push_bias(vk_shader *const shaders[6],VkPipelineLayout layout,int compute,
                          vk_push_bias_state *previous);
 void vk_storage_bias_reference(int reference);
