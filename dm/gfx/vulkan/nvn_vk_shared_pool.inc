@@ -247,7 +247,11 @@ static void shared_probe_release(dm_guest_heap_probe_views *views,void *memory,s
   else if(memory && munmap(memory,bytes))die("Shared probe unmap failed");
 }
 #include "nvn_vk_shared_overlap_probe.inc"
+#include "nvn_vk_pool_sparse.inc"
 static void shared_device_probe(void) {
+  const char *sparse=getenv("DM_VK_SHARED_SPARSE_POOL");
+  if(sparse && strcmp(sparse,"0") && strcmp(sparse,"1"))die("DM_VK_SHARED_SPARSE_POOL expects0or1");
+  sparse_pool_requested=sparse && !strcmp(sparse,"1");
   const char *lazy=getenv("DM_VK_SHARED_LAZY_WINDOWS");
   if(lazy && strcmp(lazy,"0") && strcmp(lazy,"1"))die("DM_VK_SHARED_LAZY_WINDOWS expects0or1");
   shared_lazy_requested=lazy && !strcmp(lazy,"1");
@@ -373,12 +377,16 @@ static void shared_device_probe(void) {
   if(shared_lazy_requested) {
     static const uint8_t exact_f830[32]={0xf8,0x30,0x28,0x5f,0xe6,0x8f,0x0a,0x74,0x47,0x92,0x26,0x9d,0xa5,0xf1,0x60,0xed,
       0x86,0x36,0xc1,0x72,0xb1,0xf6,0x51,0x1d,0xb9,0xd9,0x94,0x78,0xe1,0xa2,0xac,0xce};
-    uint8_t digest[32];int provider=vk_loader_native_driver_digest(digest) && !memcmp(digest,exact_f830,32);
+    static const uint8_t sparse_a90c[32]={0xa9,0x0c,0x1b,0x4d,0xeb,0xbf,0x71,0xa7,0xb8,0x8c,0xf7,0xc5,0xda,0xa8,0xbd,0x0e,
+      0x71,0xa0,0x3b,0x77,0x47,0x62,0x9b,0x40,0x90,0x6e,0xf8,0x19,0x21,0xd8,0x24,0xff};
+    uint8_t digest[32];int provider=vk_loader_native_driver_digest(digest) && (!memcmp(digest,exact_f830,32) || (sparse_pool_requested && !memcmp(digest,sparse_a90c,32)));
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && !defined(__ANDROID__)
     // Owned software-GPU contract oracle only. Never qualifies an APP driver.
     if(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE"))provider=1;
 #endif
     shared_lazy_active=valid && shared_window_bytes && probe_coherent && provider;
+    sparse_pool_active=sparse_pool_requested && shared_lazy_active && sparse_pool_startup_probe();
+    LOG("[sparse Pool] immutable startup requested=%d active=%d",sparse_pool_requested,sparse_pool_active);
     LOG("[shared lazy] immutable startup %s; no enumeration/copy/replacement; named-buffer proofs disabled=%d",
         shared_lazy_active?"enabled experimental":"unsupported: original admission retained",shared_lazy_active);
   }

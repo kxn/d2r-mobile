@@ -72,6 +72,12 @@ static int pool_span_iter_next(pool_span_iter *it,pool_span_piece *out) {
 }
 static int pool_span_resolve(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
 #ifdef DM_VULKAN_SHARED_POOLS
+  if(p->sparse_backing) {
+    if(!sparse_pool_covered(p,offset,size))return 0;
+    *out=(pool_span_piece){&p->whole,offset,offset,size};return 1;
+  }
+#endif
+#ifdef DM_VULKAN_SHARED_POOLS
   pool_backing_span *cover=shared_lazy_cover(p,offset,size);
   if(cover) {*out=(pool_span_piece){cover,offset,offset-cover->begin,size};return 1;}
 #endif
@@ -131,7 +137,7 @@ static int shared_lazy_span_resolve(pool *p,uint64_t offset,uint64_t size,pool_s
 // A reference alone would NOT qualify an arbitrary unlocked AVL reader.
 static int pool_span_resolve_recorded(pool *p,uint64_t offset,uint64_t size,pool_span_piece *out) {
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(p->shared_lazy_eligible && size && !pool_maintenance)
+  if(!p->sparse_backing && p->shared_lazy_eligible && size && !pool_maintenance)
     return shared_lazy_span_resolve(p,offset,size,out);
 #endif
   return pool_span_resolve(p,offset,size,out);

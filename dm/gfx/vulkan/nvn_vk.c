@@ -86,6 +86,9 @@ typedef struct pool {
   // covering aliases never replace an earlier VkBuffer or its local origin.
   int shared_lazy_eligible;
   pool_backing_span *shared_covers;
+  int sparse_backing;
+  uint64_t *sparse_chunks;
+  VkMemoryRequirements sparse_requirements;
   alias_range_node *shared_buffer_index;
   uint64_t shared_import_bytes,shared_unique_bytes;
   unsigned shared_import_nodes,shared_cover_nodes;
@@ -119,6 +122,12 @@ static _Atomic uint64_t legacy_encoding_low=UINT64_MAX,legacy_encoding_high;
 static uint64_t shared_alignment,shared_window_bytes;
 static int shared_union_visibility_pending;
 static int shared_lazy_requested,shared_lazy_active;
+static int sparse_pool_requested,sparse_pool_active,sparse_queue_supported;
+static int sparse_pool_covered(const pool *,uint64_t,uint64_t);
+static pool_backing_span *sparse_pool_ensure_locked(pool *,uint64_t,uint64_t);
+static int sparse_pool_startup_probe(void);
+static void sparse_pool_destroy_locked(pool *);
+typedef struct sparse_bind_ticket {struct sparse_bind_ticket *next;VkSemaphore ready;} sparse_bind_ticket;
 static _Atomic uint64_t shared_lazy_import_bytes,shared_lazy_unique_bytes;
 static _Atomic uint64_t shared_lazy_import_nodes,shared_lazy_cover_nodes;
 static pool_backing_span *shared_lazy_ensure_locked(pool *,uint64_t,uint64_t);
@@ -414,6 +423,7 @@ typedef struct submit_resources {
 #ifdef DM_VULKAN_SHARED_POOLS
   pool_writeback *shared_publishes;
   nvn_dirty_gpu_gate *prewrite_gate;
+  sparse_bind_ticket *sparse_binds;
 #endif
   pending_cpu_copy *cpu_copies;
   pool_gpu_access *gpu_accesses;
@@ -1046,6 +1056,10 @@ static void reclaim_submissions(void) {
     vk_graphics_recycle(r->graphics);
     vk_shader_recycle(r->shader);
     vk_texture_recycle(r->texture);
+#ifdef DM_VULKAN_SHARED_POOLS
+    while(r->sparse_binds) {sparse_bind_ticket *ticket=r->sparse_binds;r->sparse_binds=ticket->next;
+      vkDestroySemaphore(V.device,ticket->ready,NULL);free(ticket);}
+#endif
     free(r->cpu_writes);
     r->cpu_writes = NULL;
     r->cpu_write_count = 0;
@@ -1591,6 +1605,9 @@ static void init_device(void) {
         }
         V.physical = devices[d];
         V.queue_family = i;
+#ifdef DM_VULKAN_SHARED_POOLS
+        sparse_queue_supported=!!(q[i].queueFlags&VK_QUEUE_SPARSE_BINDING_BIT);
+#endif
         V.timestamp_bits = q[i].timestampValidBits;
         int present_mode=vk_window_present_worker_requested_mode();
         V.queue_count=(present_mode==1 && async_submissions && q[i].queueCount>1)?2:1;
@@ -1945,6 +1962,7 @@ static void pool_add_metadata(const void *mem, uint64_t size, uint32_t flags, in
     // not publish a mixed legacy Pool after an empty lazy scope has begun.
     // Rejection is an explicit limitation of this experiment, not fallback.
     if(!p->shared_lazy_eligible)die("Shared lazy candidate unsupported Pool registration: complete committed RW alias required");
+    p->sparse_backing=sparse_pool_active;
   }
 #endif
   p->next = pools;
@@ -2073,6 +2091,9 @@ void mtl_pool_del(const void *mem) {
     atomic_fetch_sub(&shared_lazy_cover_nodes,p->shared_cover_nodes);
     pool_span_chain_destroy(p,p->shared_covers);p->shared_covers=NULL;
   }
+#endif
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(p->sparse_backing)sparse_pool_destroy_locked(p);
 #endif
   pool_spans_destroy(p);
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -4621,6 +4642,21 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
     free(copy);
   }
   s->system_trace=vk_system_trace_async_begin("Vulkan submit to observed fence",r->queue_serial);
+#ifdef DM_VULKAN_SHARED_POOLS
+  unsigned sparse_wait_count=0;
+  for(sparse_bind_ticket *t=r->sparse_binds;t;t=t->next)sparse_wait_count++;
+  VkSemaphore *sparse_waits=NULL;VkPipelineStageFlags *sparse_wait_stages=NULL;
+  if(sparse_wait_count) {
+    unsigned total=sparse_wait_count+si.waitSemaphoreCount;
+    sparse_waits=malloc(total*sizeof *sparse_waits);sparse_wait_stages=malloc(total*sizeof *sparse_wait_stages);
+    if(!sparse_waits || !sparse_wait_stages)die("Sparse Pool consumer wait allocation");
+    unsigned at=0;if(wait) {sparse_waits[at]=wait;sparse_wait_stages[at++]=wait_stage;}
+    for(sparse_bind_ticket *t=r->sparse_binds;t;t=t->next) {
+      sparse_waits[at]=t->ready;sparse_wait_stages[at++]=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    }
+    si.waitSemaphoreCount=total;si.pWaitSemaphores=sparse_waits;si.pWaitDstStageMask=sparse_wait_stages;
+  }
+#endif
   int queue_lock_trace=vk_system_trace_begin("Vulkan submit queue lock");
   pthread_mutex_lock(&V.queue_mu);
   vk_system_trace_end(queue_lock_trace);
@@ -4633,6 +4669,9 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
 #endif
   VK_CHECK(submitted_result);
   vk_system_trace_end(submit_trace);
+#ifdef DM_VULKAN_SHARED_POOLS
+  free(sparse_waits);free(sparse_wait_stages);
+#endif
   if(guest_submit) atomic_fetch_add(&sync_guest_submits,1);
   else { atomic_fetch_add(&sync_internal_submits,1);atomic_fetch_add(&sync_internal_readback_bytes,r->readback_bytes); }
 

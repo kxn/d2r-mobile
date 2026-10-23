@@ -22,6 +22,7 @@ static pool_backing_span *shared_lazy_ensure_locked(pool *p,uint64_t offset,uint
   if(!p || !p->shared_lazy_eligible || p->shared_closing || !bytes ||
       offset>p->size || bytes>p->size-offset || !shared_window_bytes)
     die("Shared lazy range/identity/closing violation");
+  if(p->sparse_backing)return sparse_pool_ensure_locked(p,offset,bytes);
   pool_span_piece prior;
   if(pool_span_resolve_locked(p,offset,bytes,&prior))return prior.backing;
   uint64_t window=shared_window_bytes,begin=offset&~(window-1),last=offset+bytes;

@@ -61,6 +61,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativePoolWindowBytes(long bytes);
     private static native void nativeSharedGuestHeap(boolean enabled);
     private static native void nativeSharedLazyWindows(boolean enabled);
+    private static native void nativeSharedSparsePool(boolean enabled);
     private static native void nativeSharedImageRawObserve(boolean enabled);
     private static native void nativeLegacyAstcCopy(boolean enabled, boolean fixture);
     private static native void nativeNativeResources(String table, String packSha256, String producerSha256, String fixtureDirectory, boolean validation);
@@ -277,6 +278,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
+            nativeSharedSparsePool(getIntent().getBooleanExtra("shared_sparse_pool", false));
             nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));
             nativeLegacyAstcCopy(getIntent().getBooleanExtra("legacy_astc_copy", false),
                     getIntent().getBooleanExtra("run_vulkan_tests", false) &&
@@ -526,6 +528,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("driver_span_reference")) {
             android.util.Log.w("D2RDriver", "driver_span_reference is startup-only; cold restart required");
             intent.removeExtra("driver_span_reference");
+        }
+        if (intent.hasExtra("shared_sparse_pool")) {
+            android.util.Log.w("D2RPool", "shared_sparse_pool is startup-only; cold restart required");
+            intent.removeExtra("shared_sparse_pool");
         }
         if (intent.hasExtra("shared_lazy_windows")) {
             android.util.Log.w("D2RPool", "shared_lazy_windows is startup-only; cold restart required");

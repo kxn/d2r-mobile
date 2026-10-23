@@ -47,6 +47,21 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertFalse(any('force-stop' in command or 'start' in command for command in commands))
             self.assertEqual(len(queries), 2 if appeared_after_wakeup else 1)
 
+    def test_sparse_pool_requires_cold_qualified_lazy_path(self):
+        self.assertNotIn('shared_sparse_pool',self.launch_command([]))
+        options=['--shared-sparse-pool','--shared-lazy-windows','--shared-guest-heap',
+                 '--expect-shared-import-windows','--pool-window-bytes','1048576']
+        command=self.launch_command(options)
+        i=command.index('shared_sparse_pool')
+        self.assertEqual(command[i-1:i+2],['--ez','shared_sparse_pool','true'])
+        for invalid in (['--shared-sparse-pool'],['--attach',*options]):
+            with patch('sys.argv',[str(LAUNCHER),*invalid]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
+
     def test_default_leaves_native_startup_default_unchanged(self):
         self.assertNotIn('pool_window_bytes', self.launch_command([]))
 

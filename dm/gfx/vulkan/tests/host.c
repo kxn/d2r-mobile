@@ -44,6 +44,12 @@ void crash_thread_init(void) {
 #include "native_layout.inc"
 #endif
 int main(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(getenv("DM_SPARSE_POOL_RANGE_FIXTURE")) {
+    extern unsigned vk_test_sparse_pool_ranges(void);
+    printf("[sparse Pool range oracle] checks=%u\n",vk_test_sparse_pool_ranges());return 0;
+  }
+#endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   const char *table=getenv("DM_NATIVE_LAYOUT_METADATA_FIXTURE");
   if(table)return native_layout_test(table);

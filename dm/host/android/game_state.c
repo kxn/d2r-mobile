@@ -517,6 +517,9 @@ static void observe_tick(const uint64_t *registers) {
       (unsigned long long)window_promotions,(unsigned long long)vk_pool_window_fallbacks());
 #ifdef DM_VULKAN_SHARED_POOLS
     void vk_pool_lazy_window_stats(int *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+    int vk_pool_sparse_mode(void);
+    fprintf(state_log, ",\"shared_sparse_pool\":{\"experimental\":true,\"active\":%s}",
+      vk_pool_sparse_mode()?"true":"false");
     int lazy_active;uint64_t lazy_unique,lazy_mapped,lazy_nodes,lazy_covers;
     vk_pool_lazy_window_stats(&lazy_active,&lazy_unique,&lazy_mapped,&lazy_nodes,&lazy_covers);
     int vk_pool_shared_image_raw_observe_mode(void);
