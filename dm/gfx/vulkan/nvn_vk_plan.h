@@ -3,6 +3,12 @@
 #pragma once
 #include "nvn_vk_internal.h"
 void vk_pass_plan_op(const uint8_t *op);
+// After the original first state/checkpoint, consume a validated pure tail.
+// Caller proves all per-op observers inactive and no nested resource operation.
+unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+void vk_test_state_segment_stats(uint64_t *segments,uint64_t *operations);
+#endif
 unsigned vk_pass_depth_need(void);
 unsigned vk_pass_depth_writes(void);
 int vk_pass_clear_without_draws(void);

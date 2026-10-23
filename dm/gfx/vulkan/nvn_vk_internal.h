@@ -49,6 +49,7 @@ typedef struct {
   int astc_decode_unorm8;
   int runtime,runtime_forced,runtime_toggle,vertex_divisor_fallback;
   int store_reference,store_check,ruler,extrap_no_pipeline,extrap_mask;
+  int state_segments; // Startup-only experimental validated state-span replay.
   int gpu_profile,trace_frame_set;
   int pool_ownership_reference;
   int pool_access_cache_reference;
@@ -164,6 +165,7 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context);
 int vk_pool_draw_operation_begin(vk_pool_operation_collect collect,void *context);
 int vk_pool_operation_begin_ranges(const vk_pool_requirement *ranges,size_t count);
 void vk_pool_operation_end(int token);
+int vk_pool_operation_active(void);
 int vk_pool_maintenance_active(void);
 
 // Recording-owner idle proofs; never synchronize or end an active scope.

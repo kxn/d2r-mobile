@@ -27,6 +27,8 @@ int vk_texture_pixel_local_depth_loaded(const tex_t *texture,const view_t *view,
     const vk_attachment *attachment);
 int vk_pixel_local_target_boundary(const void *op);
 int vk_pixel_local_replay(const uint8_t *op);
+// Recording-owner observer state; no callback or planner advancement.
+int vk_pixel_local_replay_active(void);
 
 int vk_counter_counting(void);
 

@@ -188,6 +188,11 @@ void mtl_exec(const uint8_t *p) {
     if(h.op==OP_DISPATCH) vk_stream_compute_checkpoint();
     else vk_stream_checkpoint();
     p += h.size;
+    // Keep the original first operation, observers and earliest checkpoint.
+    // A pure tail cannot create a new pass/query boundary or add GPU work.
+    // Never borrow the plan while a callback/ghost owns suspended consumers.
+    if(V.options.state_segments && nesting==1)
+      guard+=vk_pass_state_segment(&p,999999-guard);
   }
   die("Vulkan command stream guard exceeded");
 }

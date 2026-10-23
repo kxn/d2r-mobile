@@ -1459,6 +1459,8 @@ static void init_options(void) {
   o->vertex_divisor_fallback=divisor&&divisor[0]=='1';
   o->store_reference=option_one("DM_VULKAN_STORE_REFERENCE");
   o->store_check=option_one("DM_VULKAN_STORE_CHECK")||option_one("DM_VULKAN_VALIDATE");
+  o->state_segments=option_one("DM_VULKAN_STATE_SEGMENTS");
+  LOG("[vulkan state segments] enabled=%d",o->state_segments);
   o->ruler=getenv("DM_NVN_RULER")!=NULL;
   o->extrap_no_pipeline=getenv("DM_RT_TEST_NOPSO")!=NULL;
   o->extrap_mask=getenv("DM_RT_TEST_MASK")!=NULL;

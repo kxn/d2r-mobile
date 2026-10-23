@@ -5,13 +5,14 @@
 #include "nvn_vk_plan.h"
 #include "nvn_vk_shader.h"
 #include "nvn_vk_freeze.h"
+#include "nvn_vk_pixel_local_runtime.h"
 #include "nvn_vk_system_trace.h"
 #include <stdatomic.h>
 typedef struct {
   const uint8_t *op;
   // The first four bytes are written by walk; reverse-only outputs follow.
   uint8_t draw,drawing_writes,opcode,sample_counter;
-  uint8_t need,sample_live,writes;
+  uint8_t need,sample_live,writes,state_run;
 } planned_op;
 _Static_assert(OP_COUNT_<=256,"Vulkan planned opcode width");
 _Static_assert(sizeof(planned_op)==16,"Vulkan planned opcode uses existing padding");
@@ -76,6 +77,18 @@ static int planned_stencil_writer(void) {
         scan_ds.zfail_f!=NVN_STENCIL_OP_KEEP || scan_ds.zpass_f!=NVN_STENCIL_OP_KEEP)) ||
        (scan_stencil_mask[1] && (scan_ds.fail_b!=NVN_STENCIL_OP_KEEP ||
         scan_ds.zfail_b!=NVN_STENCIL_OP_KEEP || scan_ds.zpass_b!=NVN_STENCIL_OP_KEEP)));
+}
+// Exactly the original vk_state_op family. Boundaries/observers/effects are
+// deliberately absent, including SCISSOR, CALL, JUMP and END. The plan's
+// existing forward validation owns the immutable command storage until replay.
+static int pure_state_opcode(unsigned op) {
+  switch(op) {
+  case OP_BIND_PROGRAM:case OP_BIND_STATE:case OP_BIND_VATTR:case OP_BIND_VSTREAM:
+  case OP_BIND_VBUF:case OP_BIND_UBO:case OP_BIND_SSBO:case OP_BIND_TEX:
+  case OP_BIND_SAMP:case OP_BIND_IMG:case OP_STENCIL:case OP_POLY_OFFSET:
+  case OP_VIEWPORTS:case OP_DEPTH_RANGE:case OP_BLEND_COLOR:return 1;
+  default:return 0;
+  }
 }
 static int walk(const uint8_t *p, unsigned depth,store_build_context *store) {
   if (depth>32 || !p) return 0;
@@ -164,6 +177,13 @@ static void submission_index_build(const uint64_t *handles,int n) {
     unsigned opcode=plan[i].opcode;
     if(plan[i].sample_counter) samples_needed=opcode==OP_REPORT_COUNTER;
     plan[i].sample_live=samples_needed;
+    // Reuse one byte of existing padding and this mandatory reverse pass.
+    // Consecutive pure entries are physically adjacent: any CALL/JUMP/END
+    // emitted by walk has state_run=0. Cap runs without growing the plan.
+    if(V.options.state_segments) {
+      unsigned tail=i+1<count?plan[i+1].state_run:0;
+      plan[i].state_run=pure_state_opcode(opcode)?(tail<254?tail+1:255):0;
+    }
     if(opcode==OP_DRAW||opcode==OP_DRAW_IDX) {
       if(samples_needed) live_draws++;else dead_draws++;
     }
@@ -210,6 +230,41 @@ void vk_pass_plan_op(const uint8_t *op) {
   }
   replay++;
   done=0;
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t state_segments_consumed,state_operations_consumed;
+void vk_test_state_segment_stats(uint64_t *segments,uint64_t *operations) {
+  *segments=state_segments_consumed;*operations=state_operations_consumed;
+}
+#endif
+unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left) {
+  // The first original operation/checkpoint already ran. Do not recover a
+  // mismatch here: the ordinary next iteration retains query-elision's fatal
+  // mismatch rule and all original diagnostics. No new per-member checks.
+  if(!valid || !done || replay>=count || plan[replay].op!=*next)return 0;
+  unsigned n=plan[replay].state_run;
+  if(n>guard_left)n=guard_left;
+  if(!n)return 0;
+  // Admission is once per nonempty span, never once per state member.
+  // Host freeze/toggle changes are applied at owner/frame boundaries. Active
+  // runtime filtering, pass observers and suspended consumers retain the old
+  // per-op order. No producer of these scopes exists in a pure setter tail.
+  if(vk_pool_operation_active() || vk_shader_operation_active() ||
+      vk_texture_binding_scope_active() || vk_texture_shader_collecting() ||
+      vk_ghost_replaying() || vk_mip_clear_pending() ||
+      vk_pixel_local_replay_active() || !vk_replay_preserves_ops())return 0;
+  // A pure run always has a following boundary (ultimately END). vk_state_op
+  // only changes CPU state/version bookkeeping under the caller's no-operation
+  // proof; it cannot inspect the plan or enter a GPU callback in this scope.
+  for(unsigned i=0;i<n;i++) {
+    const planned_op *o=&plan[replay+i];
+    vk_state_op(o->opcode,o->op+sizeof(op_hdr));
+  }
+  replay+=n;done=1;*next=plan[replay].op;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  state_segments_consumed++;state_operations_consumed+=n;
+#endif
+  return n;
 }
 void vk_pass_plan_done(const void *payload) {
   if(valid && replay && plan[replay-1].op+8==payload) done=1;

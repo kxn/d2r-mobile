@@ -443,6 +443,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_dirty_range.inc"
 #include "native_vulkan_acquire.inc"
 #include "native_vulkan_stream.inc"
+#include "native_vulkan_state_segments.inc"
 #include "native_vulkan_read.inc"
 #include "native_vulkan_depth_array.inc"
 #include "native_vulkan_readonly_store.inc"
@@ -864,6 +865,12 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  state_segment_test();
+  if(getenv("DM_STATE_SEGMENTS_FIXTURE")) {
+    printf("{\"test\":\"validated-state-segments\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
+#endif
   if(getenv("DM_COMPUTE_BIND_FIXTURE")) {compute_bind_test();return 0;}
   if(getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE")) {
     descriptor_pool_block_test();CHECK(vk_validation_error_count()==0);

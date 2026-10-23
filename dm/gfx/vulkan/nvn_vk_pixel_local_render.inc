@@ -214,6 +214,7 @@ int vk_pixel_local_target_boundary(const void *op) {
   return active_job && active_job->local && !active_job->local->subpass &&
       active_job->local->plan.set_op==op && active_job->local->plan.generation==vk_pass_generation();
 }
+int vk_pixel_local_replay_active(void) { return active_job && active_job->local; }
 int vk_pixel_local_replay(const uint8_t *op) {
   if(!active_job || !active_job->local)return 0;
   pl_job *p=active_job->local;

@@ -342,6 +342,7 @@ static int pool_collect_batch(void *context,vk_pool_requirement_sink sink,void *
 int vk_pool_operation_begin_ranges(const vk_pool_requirement *ranges,size_t count) {
   pool_range_batch batch={ranges,count};return vk_pool_operation_begin(pool_collect_batch,&batch);
 }
+int vk_pool_operation_active(void) { return pool_operation_depth!=0; }
 void vk_pool_operation_end(int token) {
   if(!token)return;
   if((unsigned)token!=pool_operation_depth)die("Vulkan pool operation lifetime mismatch");
