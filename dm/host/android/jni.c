@@ -365,7 +365,7 @@ static int shared_guest_heap_startup;
 static int shared_lazy_windows_startup;
 static int shared_image_raw_observe_startup;
 static int image_buffer_split_startup=1;
-static int state_segments_startup;
+static int state_segments_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStateSegments(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -391,7 +391,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSourcePa
   source_partition_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
-static int attachment_job_reuse_startup;
+static int attachment_job_reuse_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachmentJobReuse(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -404,7 +404,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachme
   attachment_job_reuse_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
-static int buffer_consumption_plan_startup;
+static int buffer_consumption_plan_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeBufferConsumptionPlan(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);

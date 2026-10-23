@@ -269,9 +269,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!hostStarted) {
             nativeDriverSpanReference(getIntent().getBooleanExtra("driver_span_reference", false));
             nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", true));
-            nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", false));
-            nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", false));
-            nativeStateSegments(getIntent().getBooleanExtra("state_segments", false));
+            nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", true));
+            nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", true));
+            nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
