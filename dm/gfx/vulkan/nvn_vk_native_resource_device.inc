@@ -68,8 +68,16 @@ static void native_resource_install(void) {
   static const uint8_t coherent_turnip_linear[32]={
     0xf8,0x30,0x28,0x5f,0xe6,0x8f,0x0a,0x74,0x47,0x92,0x26,0x9d,0xa5,0xf1,0x60,0xed,
     0x86,0x36,0xc1,0x72,0xb1,0xf6,0x51,0x1d,0xb9,0xd9,0x94,0x78,0xe1,0xa2,0xac,0xce};
+  // Diagnostic build of the exact f830 source with Mesa's official Perfetto
+  // producer enabled. Image allocation/import/foreign ownership are unchanged.
+  // This residency candidate never bypasses the exact table/producer/UUID gate
+  // above; native image/game qualification belongs to this build separately.
+  static const uint8_t coherent_turnip_perfetto[32]={
+    0x89,0xe4,0xc6,0x82,0xf9,0xa4,0x10,0x05,0xd2,0x2f,0xfe,0x1b,0x4b,0xac,0x15,0x8d,
+    0x77,0xd1,0x79,0xf6,0x51,0x84,0x73,0xd8,0xa9,0xce,0xe5,0x59,0x3e,0xfa,0x64,0xe4};
   native_resident_driver=!memcmp(identity.driver_sha256,coherent_turnip,32) ||
-      !memcmp(identity.driver_sha256,coherent_turnip_linear,32);
+      !memcmp(identity.driver_sha256,coherent_turnip_linear,32) ||
+      !memcmp(identity.driver_sha256,coherent_turnip_perfetto,32);
   // One cold identity record for the existing explicit resource contract.
   printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
   for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);
