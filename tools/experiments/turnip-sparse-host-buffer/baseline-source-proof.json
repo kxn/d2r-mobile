@@ -1,0 +1,58 @@
+{
+  "source_HEAD": "e957f3a2dc141841a31ae837e40df2a2909e0167",
+  "driver": {
+    "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/source-ready-freeze/driver/libvulkan_freedreno.so",
+    "sha256": "f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce",
+    "bytes": 18755072
+  },
+  "driver_actual_sha256": "f830285fe68f0a744792269da5f160ed8636c172b1f6511db9d99478e1a2acce",
+  "compiled_inputs": {
+    "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/source-ready-freeze/android-compiled-inputs.json",
+    "sha256": "2151c86a7d683fbb848b9af144b5ffb8acaff5db76fabf67c2a3f3a42ee6086f"
+  },
+  "checked": [
+    {
+      "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/mesa-26.2.5/src/freedreno/vulkan/msm_kgsl.h",
+      "sha256": "9cde64b25857a10f26372f83e18ffcf2da951e1e9d7d519740e2eddc6991e002",
+      "bytes": 72436,
+      "actual_sha256": "9cde64b25857a10f26372f83e18ffcf2da951e1e9d7d519740e2eddc6991e002",
+      "matches": true
+    },
+    {
+      "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/mesa-26.2.5/src/freedreno/vulkan/tu_buffer.cc",
+      "sha256": "7d81b0e13b843b3e6fe2375b74cb555e951bd98e51875b941946518aa764dafb",
+      "bytes": 11254,
+      "actual_sha256": "7d81b0e13b843b3e6fe2375b74cb555e951bd98e51875b941946518aa764dafb",
+      "matches": true
+    },
+    {
+      "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/mesa-26.2.5/src/freedreno/vulkan/tu_device.cc",
+      "sha256": "ba597e19a3c594ad5d75fb4a34fc1c97bfd8d336d3f34ea7edb2c1bdb217da18",
+      "bytes": 184059,
+      "actual_sha256": "ba597e19a3c594ad5d75fb4a34fc1c97bfd8d336d3f34ea7edb2c1bdb217da18",
+      "matches": true
+    },
+    {
+      "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/mesa-26.2.5/src/freedreno/vulkan/tu_knl.cc",
+      "sha256": "3bfd0544706bd26be5d41a7dc20f64bbc6cf3e56f554e912d1218eef2fb040b5",
+      "bytes": 16240,
+      "actual_sha256": "3bfd0544706bd26be5d41a7dc20f64bbc6cf3e56f554e912d1218eef2fb040b5",
+      "matches": true
+    },
+    {
+      "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/mesa-26.2.5/src/freedreno/vulkan/tu_knl_kgsl.cc",
+      "sha256": "691fcd1f5b90643da3165c3329fd939a86d662646a7802845a1578c1a5ed48c7",
+      "bytes": 63028,
+      "actual_sha256": "691fcd1f5b90643da3165c3329fd939a86d662646a7802845a1578c1a5ed48c7",
+      "matches": true
+    },
+    {
+      "path": "/home/dl/d2r-mobile/.local/build/turnip-native-astc-whole-linear-v1/mesa-26.2.5/src/freedreno/vulkan/tu_queue.cc",
+      "sha256": "acceef421a696bdb1ebdd7164d13ec8832aa6b422ed99addb8e6519efe331464",
+      "bytes": 24348,
+      "actual_sha256": "acceef421a696bdb1ebdd7164d13ec8832aa6b422ed99addb8e6519efe331464",
+      "matches": true
+    }
+  ],
+  "scope": "Source+driver identity only; no live sparse/host-child qualification or GPU execution"
+}

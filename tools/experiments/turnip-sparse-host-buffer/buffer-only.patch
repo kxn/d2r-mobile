@@ -1,0 +1,66 @@
+--- a/src/freedreno/vulkan/tu_buffer.cc
++++ b/src/freedreno/vulkan/tu_buffer.cc
+@@ -16,0 +17,19 @@
++
++// Isolated Buffer-only host/sparse experiment. These are software eligibility
++// checks, not proof that the kernel accepts an imported host BO as a VBO child.
++// Keep the existing KGSL probes/features unchanged; the GPU oracle must verify
++// the combination before any application uses this experimental driver.
++bool
++tu_host_buffer_flags_supported(const struct tu_physical_device *pdevice,
++                               VkBufferCreateFlags flags)
++{
++   if (!pdevice->has_host_ptr_import)
++      return false;
++   if (!flags)
++      return true;
++   const VkBufferCreateFlags allowed = VK_BUFFER_CREATE_SPARSE_BINDING_BIT |
++      VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
++   return !(flags & ~allowed) &&
++      (flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) && pdevice->has_sparse &&
++      (!(flags & VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT) || pdevice->has_sparse_prr);
++}
+@@ -40 +59,2 @@
+-        pCreateInfo->flags || (replay && replay->opaqueCaptureAddress) ||
++        !tu_host_buffer_flags_supported(device->physical_device, pCreateInfo->flags) ||
++        (replay && replay->opaqueCaptureAddress) ||
+@@ -189 +209 @@
+-      if (pdevice->has_host_ptr_import && !pExternalBufferInfo->flags) {
++      if (tu_host_buffer_flags_supported(pdevice, pExternalBufferInfo->flags)) {
+--- a/src/freedreno/vulkan/tu_buffer.h
++++ b/src/freedreno/vulkan/tu_buffer.h
+@@ -20,0 +21,4 @@
++struct tu_physical_device;
++bool tu_host_buffer_flags_supported(const struct tu_physical_device *pdevice,
++                                    VkBufferCreateFlags flags);
++
+--- a/src/freedreno/vulkan/tu_queue.cc
++++ b/src/freedreno/vulkan/tu_queue.cc
+@@ -345,2 +345,3 @@
+-   /* Host imports support ordinary Buffer binding only. Check all three
+-    * sparse binding families before recording any KMD binding changes.
++   /* Experimental host-import children are admitted only for sparse Buffers.
++    * Validate the complete submission before any KMD binding changes. Image
++    * and opaque-image host imports keep the original unconditional rejection.
+@@ -349,0 +351 @@
++      VK_FROM_HANDLE(tu_buffer, buffer, bind->buffer);
+@@ -351,3 +353,16 @@
+-         VK_FROM_HANDLE(tu_device_memory, mem, bind->pBinds[j].memory);
+-         if (mem && mem->bo && mem->bo->imported_host_ptr)
+-            return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++         const VkSparseMemoryBind *range = &bind->pBinds[j];
++         VK_FROM_HANDLE(tu_device_memory, mem, range->memory);
++         if (mem && mem->bo && mem->bo->imported_host_ptr) {
++            const uint64_t page = os_page_size;
++            if (!buffer->host_external ||
++                !tu_host_buffer_flags_supported(device->physical_device,
++                                                buffer->vk.create_flags) ||
++                !(buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) ||
++                range->flags || !page || !range->size ||
++                range->resourceOffset % page || range->memoryOffset % page ||
++                range->size % page || range->resourceOffset > buffer->vk.size ||
++                range->size > buffer->vk.size - range->resourceOffset ||
++                range->memoryOffset > mem->size ||
++                range->size > mem->size - range->memoryOffset)
++               return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++         }
