@@ -161,7 +161,24 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 
 相反，VBO在这2031个间隔里只有508次整个绑定向量相同；1250个同program/命令阶段的相邻indexed draw对里，仅148对索引地址、范围和类型完全相同。这支持第一版优先处理稳定的只读shader Buffer，将几何、未知长度和临时对齐副本留在原路径。
 
-这次快照尚未连接实际shader消费mask；保守命令阶段也不等于真实Vulkan recording/pass边界。内部回调、ghost恢复、writer与别名变化仍须由运行时代码保证。当前证据足以选择**按变化槽更新的完整消费计划**原型，尚不足以给出合法跳链比例或净毫秒预测。
+首次v2快照尚未连接实际shader消费mask；保守命令阶段也不等于真实Vulkan recording/pass边界。内部回调、ghost恢复、writer与别名变化仍须由运行时代码保证。以下v3补齐使用槽，仍不提供合法跳链比例或净毫秒预测。
+
+### 补齐实际使用槽后，收窄到高频的直接 UBO
+
+已有v2保存了program对象，但134个control地址所在的guest heap页面均未捕获，无法凭地址或serial连接Shader文件。离线排除日志/库存的替代映射后，追加一次有界LLDB只读补缺：保存同次入口状态和命令，以及每个control的0x880字节、serial精确命中的运行时shader schema。v3为45223条命令、2445个录制draw，134份control完整SHA连接已核对设备库存的950链；82份实际shader schema与官方spirv-dis及对应元数据交叉核对。91个program精确命中缓存，2个cold program没有使用碰撞bucket，而是按control完整哈希连接已加载的同key不可变schema。设备仍为原稳定包，没有安装新实现；补采结束后新存档commits=2并停止。
+
+| 按实际shader使用槽统计的录制draw消费机会 | 总数 | 同program/保守命令段内与前draw地址范围相同 |
+| --- | ---: | ---: |
+| VS guest UBO，kind1 | 4819 | 3184 |
+| FS guest UBO，kind1 | 6562 | 4626 |
+| guest SSBO，kind2 | 1349 | 1088 |
+| guest UBO/SSBO合计 | 12730 | 8898 |
+
+宿主生成Uniform另3910项，image/texel另12032项，没有混入guest Buffer计数。12730个guest项均只读且地址/长度非零。稳定的8898项中，7273项之间没有setter，1625项收到同值setter而没有值变化；不是拿全部16槽估算。比如FS UBO槽4虽然设置频繁，但实际使用仅754项，其中同program/命令段的581个相邻机会全部变化；FS槽1实际使用670项，其中544个相邻机会全部不变。
+
+为减少首版合同复杂度，完整候选先只纳入**kind1 guest UBO**：11381项中的7810个稳定机会足以继续实现。1349项SSBO均具备shader bias支持，源地址不是256对齐；这不是证明设备实际发生bias，因为VkBuffer offset和设备limit不由源地址模数决定。首版直接排除所有SSBO，并在cold原消费成功后核实真正的共享lazy Pool、直接对齐Vk offset和纯几何无别名证明。
+
+以上仍是录制命令按最终schema形成的消费机会，上层zero/bloom省略、内部draw与callback未由离线分析执行，不能冒称运行时已调用或可删除7810次。实际内容改变、writer代数、Pool重新注册、recording及physical pass变化还会降低合法复用覆盖。它支持实现按变化槽更新的完整候选，不支持将7810/11381直接乘旧Buffer时间预报收益。
 
 原型独立、默认关闭：稳定项必须跳过前置require及实际消费链，变化项沿原路径；只读结果与真实访问证明分开；内部提交前升级已有Pool借用，不能跳过所有权。还必须统一mixed descriptor值的归属，避免每draw又复制全部稳定项。若这三个部分不能形成闭合可测试单元，不将局部骨架作为已完成优化。
 
@@ -179,4 +196,5 @@ Buffer 动态偏移按完整 set layout 的 binding/array 顺序解码，再加�
 - 同目录 `planning-replay-review.md`、`planning-current-envelopes.json`：规划与回放的重复职责、已做过的事件压缩、当前完整规划包络。
 - `.local/logs/image-buffer-split-device-v1/final-independent-review.md`：原六轮官方性能结果及计数分母勘误。
 - `.local/logs/nvn-command-setter-snapshot-v2/setter-analysis.json`、`analyze_setters.py`：原NVN命令/入口状态的离线整理及口径限制。
+- `.local/logs/nvn-command-setter-snapshot-v3/used-slot-analysis.json`：完整control与最终schema连接后的真实使用槽频度；包含官方反汇编、输入指纹和局限。
 - `.local/logs/nvn-buffer-consumption-plan-v1/design.md`：完整消费计划的资格、事件、所有权及回退设计。
