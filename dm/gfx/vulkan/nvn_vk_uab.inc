@@ -120,7 +120,7 @@ int vk_uab_packet_begin(vk_uab_packet *p) {
 }
 int vk_uab_packet_write(vk_uab_packet *p,unsigned index,unsigned draw,const vk_split_descriptor_value *values) {
   if(!p || index>=p->versions || draw>=p->draws || !values)return 0;
-  uab_version *v=&p->version[index];if(v->state!=1)return 0;
+  uab_version *v=&p->version[index];if(v->state!=1 || v->touched[draw])return 0;
   vk_split_descriptor_value *fixed=v->fixed+(size_t)draw*p->schema.count;
   // Inspect all values first: an immutable mismatch cannot leave a partially
   // updated set behind, including when a late image entry is the mismatch.
@@ -153,11 +153,11 @@ int vk_uab_packet_write(vk_uab_packet *p,unsigned index,unsigned draw,const vk_s
   return 1;
 }
 int vk_uab_packet_seal(vk_uab_packet *p,unsigned i) {
-  if(!p || i>=p->versions || p->version[i].state!=1 || p->version[i].written!=p->draws)return 0;
+  if(!p || i>=p->versions || p->version[i].state!=1 || !p->version[i].written)return 0;
   p->version[i].state=2;return 1;
 }
 VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *p,unsigned i,unsigned draw) {
-  return p && i<p->versions && draw<p->draws && p->version[i].state==2?p->sets[i*p->draws+draw]:VK_NULL_HANDLE;
+  return p && i<p->versions && draw<p->draws && (p->version[i].state==1 || p->version[i].state==2) && p->version[i].touched[draw] && p->version[i].initialized[draw]?p->sets[i*p->draws+draw]:VK_NULL_HANDLE;
 }
 int vk_uab_packet_pending(vk_uab_packet *p,unsigned i,uint64_t serial) {
   if(!p || i>=p->versions || p->version[i].state!=2 || !serial || serial!=vk_recording_serial())return 0;

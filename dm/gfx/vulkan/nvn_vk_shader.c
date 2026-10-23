@@ -2048,14 +2048,14 @@ VkDescriptorSet vk_shader_materialize_prepared(const vk_shader_prepared_values *
 }
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 static uint64_t prepared_roundtrip_modes[3];
-void vk_test_prepared_roundtrip_counts(uint64_t out[3]) {memcpy(out,prepared_roundtrip_modes,sizeof prepared_roundtrip_modes);}
 // Host oracle feeds the existing real draw fixtures through the public product
 // boundary once. Recreate the original descriptor encoding, not resource work.
 static VkDescriptorSet prepared_roundtrip(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
     const vk_texel_storage_selection *selection) {
   vk_shader_prepared_values p;vk_shader_prepare_values(s,dynamic,selection,&p);
   if(p.shader!=s || p.count!=s->nb || p.source_dynamic_mode!=dynamic)die("prepared product identity");
-  prepared_roundtrip_modes[dynamic]++;
+  if(p.count && (!dynamic || s->dynamic_uniform_count[dynamic-1]) && !prepared_roundtrip_modes[dynamic]++)
+    LOG("[UAB prepared product actual] mode=%d count=%u dynamic_ubos=%u",dynamic,p.count,dynamic?s->dynamic_uniform_count[dynamic-1]:0);
   if(!dynamic){if(offsets)offsets->count=0;return vk_shader_materialize_prepared(&p);}
   if(!offsets && s->dynamic_uniform_count[dynamic-1])die("prepared test missing offsets");
   if(offsets)offsets->count=s->dynamic_uniform_count[dynamic-1];

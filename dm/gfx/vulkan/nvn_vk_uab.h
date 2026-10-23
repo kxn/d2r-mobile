@@ -23,10 +23,13 @@ int vk_uab_pipeline_layout_create(vk_uab_packet *const sets[6],
     const VkPushConstantRange *push,uint32_t push_count,VkPipelineLayout *out);
 // A returned index is exclusively writable; -1 means busy/unavailable, never wait.
 int vk_uab_packet_begin(vk_uab_packet *);
+// Each editing slot may be written once; duplicate touched slots are refused.
 // 1=written, 0=invalid/immutable change. Failure does not partially update a set.
 int vk_uab_packet_write(vk_uab_packet *,unsigned version,unsigned draw,
                         const vk_split_descriptor_value *complete_values);
+// A nonempty partial block can seal; untouched sets remain inaccessible.
 int vk_uab_packet_seal(vk_uab_packet *,unsigned version);
+// Editing/sealed access only, and only a fully initialized, touched slot.
 VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *,unsigned version,unsigned draw);
 // Mark the actual original recording serial before delivery; resources and the
 // persistent CB must remain valid through its original GPU+CPU-effect completion.

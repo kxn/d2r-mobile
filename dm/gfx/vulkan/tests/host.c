@@ -53,12 +53,6 @@ int main(void) {
   if(getenv("DM_QUAD_READONLY_CONTRACT_FIXTURE"))return quad_readonly_contract_test();
   if(getenv("DM_QUAD_TRANSFER_CONTRACT_FIXTURE"))return quad_transfer_contract_test();
   if(getenv("DM_PIXEL_LOCAL_LOADER_FIXTURE")) {crash_thread_init();mtl_init();return pixel_local_loader_test();}
-  int result=dm_vulkan_test_main();
-  if(getenv("DM_UAB_PREPARED_ROUNDTRIP")) {
-    uint64_t counts[3];extern void vk_test_prepared_roundtrip_counts(uint64_t[3]);vk_test_prepared_roundtrip_counts(counts);
-    CHECK(counts[0]+counts[1]+counts[2]>0);
-    printf("[UAB prepared product actual] mode0=%llu mode1=%llu mode2=%llu\n",(unsigned long long)counts[0],(unsigned long long)counts[1],(unsigned long long)counts[2]);
-  }
-  return result;
+  return dm_vulkan_test_main();
 }
 #endif
