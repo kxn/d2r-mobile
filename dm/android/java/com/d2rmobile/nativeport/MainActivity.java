@@ -43,6 +43,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeDriverConstantReference(boolean reference);
     private static native void nativeDriverSpanReference(boolean reference);
     private static native void nativeImageBufferSplit(boolean enabled);
+    private static native void nativeBufferConsumptionPlan(boolean enabled);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
     private static native void nativePoolSyncReference(boolean reference);
@@ -265,6 +266,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!hostStarted) {
             nativeDriverSpanReference(getIntent().getBooleanExtra("driver_span_reference", false));
             nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", true));
+            nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
             nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));
@@ -496,6 +498,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("image_buffer_split")) {
             android.util.Log.w("D2RDriver", "image_buffer_split is startup-only; cold restart required");
             intent.removeExtra("image_buffer_split");
+        }
+        if (intent.hasExtra("buffer_consumption_plan")) {
+            android.util.Log.w("D2RDriver", "buffer_consumption_plan is startup-only; cold restart required");
+            intent.removeExtra("buffer_consumption_plan");
         }
         if (intent.hasExtra("driver_span_reference")) {
             android.util.Log.w("D2RDriver", "driver_span_reference is startup-only; cold restart required");

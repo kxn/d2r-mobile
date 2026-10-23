@@ -50,6 +50,21 @@ class PoolWindowLaunchTests(unittest.TestCase):
     def test_default_leaves_native_startup_default_unchanged(self):
         self.assertNotIn('pool_window_bytes', self.launch_command([]))
 
+    def test_buffer_plan_is_explicit_and_cannot_change_running_experiment(self):
+        self.assertNotIn('buffer_consumption_plan', self.launch_command([]))
+        for option,value in (('--buffer-consumption-plan','true'),
+                             ('--no-buffer-consumption-plan','false')):
+            with self.subTest(option=option):
+                command=self.launch_command([option])
+                index=command.index('buffer_consumption_plan')
+                self.assertEqual(command[index-1:index+2],['--ez','buffer_consumption_plan',value])
+                with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                        patch('subprocess.check_output') as adb, \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                    runpy.run_path(str(LAUNCHER),run_name='__main__')
+                self.assertEqual(caught.exception.code,2)
+                adb.assert_not_called()
+
     def test_exact_long_extra_including_above_double_precision(self):
         for size in (0, 4096, 1 << 20, 1 << 62):
             with self.subTest(size=size):
