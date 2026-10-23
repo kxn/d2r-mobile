@@ -49,6 +49,25 @@ CPU侧同时审查旧完整2445draw快照的批量表达机会：完整固定状
 3. 只有精确证明输入、生命周期和观察边界相同，才推进整段准备复用或批量draw；目标是取消消费路径，不在它前面再叠一层逐draw检查。
 4. 当前没有60FPS、长期温度或新默认性能收益。追踪驱动与两项冷合同保留为独立工具候选，日常驱动和设置已恢复。
 
-下一项有限实验准备比较当前日常驱动的默认GMEM决策和原驱动提供的SYSMEM路径：主组实际存在8tile重放及binning成本，值得测其工作量/带宽取舍。旧scale1.0、旧shader且未共享的GMEM/SYSMEM运行不能代替本次结果；当前先用无GPU-stage扰动的原Simpleperf/Perfetto对照，不把强制SYSMEM预设为更快或默认策略。driver、shader、原资源及.60固定分辨率保持一致，属性必须在冷启动设置并按原值恢复。
+## 默认模式与SYSMEM的实际四臂对照
+
+根据上述GPU数据，实际完成当前日常b8/d34/f830/950/6217/.60的default/SYSMEM/SYSMEM/default对照。driver、shader、原资源、分辨率和target60保持一致，没有绑核、ADPF或GPU-stage工具。各臂在冷启动设置原Mesa `debug.mesa.tu.debug`，用本次PID的官方启动日志核实位1（startup）或9（startup,sysmem），在正式测量前关闭logcat；原Simpleperf group read10秒和Perfetto8秒不变。全部按8个distinct稳定发布、tick≥1000、variants≥30预热。默认模式仍允许驱动逐pass选择GMEM或SYSMEM，不等于全帧强制GMEM。
+
+|臂|模式|Surface均值ms|owner Running ms/Surface|用户指令M/Surface|用户周期M/Surface|加权MHz|
+|---|---|---:|---:|---:|---:|---:|
+|A1，observable|default|33.026|26.635|57.879–58.312|34.432–34.726|1459.95|
+|B1|SYSMEM|27.776|21.251|57.794–58.149|33.153–33.403|1770.49|
+|B2|SYSMEM|27.744|22.768|58.221–58.577|34.083–34.323|1684.43|
+|A2|default|33.032|26.144|57.797–58.220|33.370–33.636|1435.63|
+
+两组Surface间隔分别减少15.90%/16.01%，约30→36FPS；Running分别减少20.21%/12.91%。但指令没有一致下降，cycles第一对减少2.99–4.53%，第二对反而增加1.33–2.85%；CPU频率和驻核也改变，不能按MHz归一或称减少了等量重复准备。B2为variants30→30，其它为32→32，PSO均174；工作形状差异保留。A1完整窗CPU6计数缺边界，覆盖88.103%，不能以其部分51M指令对比B1完整58M；表中A1用预先机械裁剪的231个间隔，计数覆盖100%，其它三臂完整窗也100%。
+
+节奏不是简单的均匀36FPS：A1 observable有8个约22ms、219个约33ms、4个约44ms间隔；B1为138个约22ms、143个约33ms，因此其中位数仍约33ms。这里只报告官方实际间隔，不凭它断定显示刷新率或强制帧率上限，也未实现用户暂缓的帧回调/丢帧方案。
+
+A1测量及save2均成功，空字符串恢复属性被ADB shell丢参导致collector收尾1；原错误保留，root在游戏退出后按owned值CAS恢复并独立核资产，补证收条单列。原B2在正式测量前因没有本次驱动启动日志退出，未产生性能样本；没有覆盖该失败。补官方logcat启动前唯一marker握手后，B2-qualified-v3实际取得本次PID的位9、完成正式工具及保存退出，握手不替代驱动位证明。A2也使用相同握手。实际四窗均save2、进程退出，原属性、APK、33资产和层设置已独立核实恢复。
+
+这是当前负载对渲染模式有明显且复现的整帧敏感性，不是已证CPU删工或60FPS。先不永久强制SYSMEM：它可能改变外部内存流量和功耗，下一步用原官方SDP比较同窗GB/s与每个Surface间隔的实际读写量，再决定取舍。旧scale1.0、旧shader且未共享的模式数据不能代替本轮结果。
+
+四臂原捕获、full/observable界、355项原输入复核及恢复收条见`.local/logs/current-f830-sysmem-abba-v1/`。当前新641draw GPU组缺少graphics pipeline/module关联键；同f830/950/.60的历史官方GFXReconstruct结构帧为607draw，不能把其Shader时间移用。已准备原GFXR单帧入口补当前实际Shader/变体身份，尚未执行，不当作新抓帧结果。
 
 原始采集及实际恢复：`.local/logs/current-game-renderstages-v1/`；官方SQL与队列分析：`.local/logs/current-game-renderstages-v1-analysis/`；生产及严格封装：`.local/logs/perfetto-native-rebake-v1/`、`.local/logs/perfetto-native-pack-89e-v1/`；CPU批处理审查：`.local/logs/adjacent-draw-batching-audit-v1/`。工具配置可用`capture-android-scheduler.py --mesa-renderstages`请求现成数据源；请求成功仍必须核实实际GPU记录。
