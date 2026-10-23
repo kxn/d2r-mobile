@@ -3,6 +3,16 @@
 // every index first.
 #include "nvn_vk_state.h"
 vk_state S = {.depth_range = {0, 1}, .chmask = {~0u}};
+uint64_t vk_driver_state_versions[6][2] = {{1,1},{1,1},{1,1},{1,1},{1,1},{1,1}};
+void vk_driver_state_invalidate(unsigned stage,unsigned slot) {
+  if(stage>=6 || (slot!=0 && slot!=2))die("Vulkan driver state identity");
+  if(!++vk_driver_state_versions[stage][slot/2])die("Vulkan driver state version overflow");
+}
+void vk_state_restore(const vk_state *state) {
+  S=*state;
+  for(unsigned stage=0;stage<6;stage++)for(unsigned slot=0;slot<=2;slot+=2)
+    vk_driver_state_invalidate(stage,slot);
+}
 // 只对实际变化的静态管线状态递增；动态视口、资源绑定和缓冲地址不使其失效。
 // Advance only for changed static pipeline state, excluding dynamic viewports,
 // resource bindings and buffer addresses. Owned by the translation thread.
@@ -81,6 +91,10 @@ void vk_state_op(uint32_t op, const void *data) {
     const p_bind_buf *p = data;
     bounds(p->stage, 1, 6);
     bounds(p->index, 1, 16);
+    // Conservatively invalidate on the relevant setter, without reading the
+    // old values. Graphics UBOs are separate descriptors; only CS uses c0.
+    if(op==OP_BIND_SSBO || p->stage==5)
+      vk_driver_state_invalidate(p->stage,0);
     (op == OP_BIND_UBO ? S.ubo : S.ssbo)[p->stage][p->index] = *p;
     break;
   }
@@ -90,6 +104,11 @@ void vk_state_op(uint32_t op, const void *data) {
     const p_bind_handles *p = data;
     bounds(p->stage, 1, 6);
     bounds(p->first, p->n, op == OP_BIND_IMG ? 32 : 128);
+    // Empty setters and IMG[8..31] do not intersect c2. A relevant setter
+    // invalidates even for identical/ignored bits: the existing key cache
+    // handles that case, avoiding a second walk of the supplied vector here.
+    if(p->n && (op!=OP_BIND_IMG || p->first<8))
+      vk_driver_state_invalidate(p->stage,2);
     if (op == OP_BIND_IMG)
       memcpy(S.img[p->stage] + p->first, p->h, p->n * 8);
     else

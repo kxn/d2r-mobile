@@ -1,16 +1,20 @@
-// Owner-thread exact interval index for GPU-owned NVN guest byte aliases.
-// Values are metadata only. Membership, authority and retirement remain owned
-// by the image alias list; the index must never extend any proof's lifetime.
+// Exact interval index for retained GPU byte-alias/import metadata.
+// Each typed owner keeps its original publication lock/thread and retirement;
+// the index must never extend membership, authority or any proof lifetime.
 #ifndef DM_NVN_VK_ALIAS_INTERVAL_H
 #define DM_NVN_VK_ALIAS_INTERVAL_H
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct alias_range_node {
   struct alias_range_node *left, *right;
   uint64_t start, end, max_end, serial;
   void *owner;
   unsigned height;
+  unsigned kind; // typed Buffer index only; occupies the original LP64 tail padding
 } alias_range_node;
+_Static_assert(sizeof(alias_range_node)==64 && offsetof(alias_range_node,kind)==60,
+               "Alias index kind must use existing64B LP64 node padding");
 
 static unsigned alias_range_height(const alias_range_node *n) {
   return n ? n->height : 0;

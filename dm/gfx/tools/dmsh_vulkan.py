@@ -338,6 +338,8 @@ def build(g):
                 pred_valid=(pred.is_file() and hashlib.sha256(pred.read_bytes()).hexdigest()==pred_hash) if pred_hash else not pred.exists()
                 dkey=out/(key+'.dkey');dkey_hash=cached.get('driver_keys',{}).get('sha256')
                 dkey_valid=dkey.is_file() and hashlib.sha256(dkey.read_bytes()).hexdigest()==dkey_hash
+                dspan=out/(key+'.dspan');dspan_hash=cached.get('driver_spans',{}).get('sha256')
+                dkey_valid=dkey_valid and dspan.is_file() and hashlib.sha256(dspan.read_bytes()).hexdigest()==dspan_hash
                 plocal_valid=pixel_local_cache_valid(out,key,cached,options.get('pixel_local_reflection',False))
                 plocal_valid = plocal_valid and pixel_local_runtime_cache_valid(out,key,cached,options.get('pixel_local_runtime',False))
                 if plocal_valid and dkey_valid and pred_valid and alt_valid and spec_valid and cache_inputs_match(cached,g['CHAIN'],code_hash,constants[key]) and cached.get('spirv_sha256') == hashlib.sha256(blob.read_bytes()).hexdigest() and cached.get('metadata_sha256') == hashlib.sha256((out / (key + '.meta')).read_bytes()).hexdigest():
@@ -450,8 +452,8 @@ def build(g):
             reflection['compiler_options'] = options
             write_metadata(out / (key + '.meta'), reflection)
             reflection['metadata_sha256'] = hashlib.sha256((out / (key + '.meta')).read_bytes()).hexdigest()
-            from dmsh_driver_keys import emit as emit_driver_keys
-            reflection['driver_keys']=emit_driver_keys(out,key,reflection)
+            from dmsh_driver_keys import emit_with_spans
+            reflection.update(emit_with_spans(out,key,reflection))
             if options.get('pixel_local_reflection'):
                 from dmsh_pixel_local import emit as emit_pixel_local
                 reflection['pixel_local']=emit_pixel_local(out,key,reflection)

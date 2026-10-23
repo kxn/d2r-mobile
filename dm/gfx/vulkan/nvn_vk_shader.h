@@ -29,6 +29,7 @@ typedef struct vk_shader {
   struct vk_shader *texel_storage_alternative;
   char key[17];
   uint8_t fingerprint[32];
+  uint8_t proof_fingerprint[32]; // original five-artifact identity; DPL only extends pipeline identity
   uint32_t stage, set, nb, nc1, local[3], input_mask;
   int pos_attr, pos_w1, may_discard, writes_smask;
   uint32_t color_mask;
@@ -54,6 +55,8 @@ typedef struct vk_shader {
   int specialization_integer_only,specialization_disabled,has_resource_writes;
   int has_writable_buffers; // immutable buffer-only classification; excludes image writes
   vk_driver_schema *driver_schema[2]; // c0 / c2, NULL keeps exact full key
+  uint32_t driver_span[2]; // optional all-module read bound; zero keeps 64 KiB
+  VkShaderModule driver_span_module; // new, unproved module alternatives cannot inherit a bound
   VkDescriptorSetLayout descriptors,dynamic_descriptors[2];
   VkDescriptorUpdateTemplate descriptor_templates[3];
   uint8_t dynamic_uniform_ordinals[2][128]; // narrow/extended, one-based binding order
@@ -176,6 +179,8 @@ void vk_compute_layout_reference(int reference);
 void vk_readonly_depth_reference(int reference);
 void vk_texture_prepare_attachment(const tex_t *texture,const view_t *view);
 void vk_driver_constant_reference(int reference);
+void vk_driver_span_reference_startup(int reference);
+int vk_driver_span_reference_mode(void);
 #ifdef DM_VULKAN_TEST_EMBED
 unsigned vk_driver_schema_words(const vk_shader *s,unsigned slot);
 #endif

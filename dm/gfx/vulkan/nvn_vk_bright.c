@@ -144,8 +144,8 @@ int vk_bright_apply(int id, float k) {
      .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = images+1}};
   vkUpdateDescriptorSets(V.device, 2, writes, 0, NULL);
   unsigned region = vk_gpu_region_begin("compute", "upstream-bright", lut.extent.width, lut.extent.height);
-  vkCmdBindPipeline(V.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-  vkCmdBindDescriptorSets(V.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &set, 0, NULL);
+  vk_compute_bind_pipeline(pipeline);
+  vk_compute_bind_descriptors(pipeline_layout, 0, 1, &set, 0, NULL);
   vkCmdPushConstants(V.cmd, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof k, &k);
   vkCmdDispatch(V.cmd, (lut.extent.width+3)/4, (lut.extent.height+3)/4, (lut.extent.depth+3)/4);
   vk_texture_storage_written(&lut,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);

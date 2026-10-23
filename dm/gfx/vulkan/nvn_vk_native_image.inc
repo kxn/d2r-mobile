@@ -158,6 +158,7 @@ static VkCommandBuffer native_acquire_pending_primary(image *i,VkPipelineStageFl
 }
 static void native_image_use_consumer(image *i,VkPipelineStageFlags stages,VkAccessFlags access) {
   if(!i->native_entry)return;
+  vk_pool_native_image_operation_retain(i->native_pool);
   if(!i->native_acquired) {
     uint64_t alias_generation=0;
     VkCommandBuffer command=native_acquire_pending_primary(i,stages,access,&alias_generation);

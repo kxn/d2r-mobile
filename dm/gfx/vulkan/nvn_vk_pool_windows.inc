@@ -110,6 +110,12 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
     }
     if(!whole_reference && pool_native_requirement(p,r))continue;
 #ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared_lazy_eligible) {
+      if(whole_reference)goto done;
+      continue; // validation only: no import before the complete batch passes
+    }
+#endif
+#ifdef DM_VULKAN_SHARED_POOLS
     // A manual reservation API call must never install private/mirror nodes
     // in an immutable shared-whole Pool. Normal whole lookup imports it.
     if(p->shared && !shared_window_bytes && !p->backings)goto done;
@@ -137,6 +143,16 @@ int vk_pool_reserve_ranges(const vk_pool_requirement *requirements,size_t count,
   for(size_t k=0;k<count;k++) {
     const vk_pool_requirement *r=&requirements[k];pool *p=pool_find(r->address,r->size);
     if(!whole_reference && pool_native_requirement(p,r))continue;
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(p->shared_lazy_eligible) {
+      // All range/Pool/prefix/native-kind validation above is complete.
+      // Import preserves old handles; budget/OOM remains explicit failure.
+      uint64_t bytes=p->shared_import_bytes;unsigned nodes=p->shared_import_nodes;
+      shared_lazy_ensure_locked(p,r->address-(uintptr_t)p->guest,r->size);
+      result.added_buffer_bytes+=p->shared_import_bytes-bytes;
+      result.added_spans+=p->shared_import_nodes-nodes;continue;
+    }
+#endif
     pool_span_piece existing;
     if(pool_span_resolve_locked(p,r->address-(uintptr_t)p->guest,r->size,&existing))continue;
     uint64_t begin,end;int single=pool_window_bounds(p,r,window_bytes,&begin,&end);

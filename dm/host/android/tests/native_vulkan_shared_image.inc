@@ -27,6 +27,26 @@ static void VKAPI_PTR shared_copy_dispatch_interleave(VkCommandBuffer command,ui
     dm_guest_write_prepare(at,1);*at=0x5c;
   }
 }
+#if defined(DM_VULKAN_B2T_PREFLIGHT_WRAP) && !defined(DM_ANDROID_APP)
+// Real dirty query followed by a real same-value CPU store at its return
+// boundary. No fabricated dirty result and no production callback/counter.
+int __real_nvn_dirty_since(const void *,size_t,uint64_t);
+static const void *shared_b2t_clean_query;
+static size_t shared_b2t_clean_bytes;
+static uint8_t *shared_b2t_later_cpu_write;
+static unsigned shared_b2t_clean_interleavings;
+int __wrap_nvn_dirty_since(const void *address,size_t bytes,uint64_t stamp) {
+  int dirty=__real_nvn_dirty_since(address,bytes,stamp);
+  if(shared_b2t_later_cpu_write && address==shared_b2t_clean_query && bytes==shared_b2t_clean_bytes) {
+    CHECK(!dirty);
+    uint8_t *at=shared_b2t_later_cpu_write;shared_b2t_later_cpu_write=NULL;
+    uint8_t value=*at;dm_guest_write_prepare(at,1);*at=value;
+    CHECK(__real_nvn_dirty_since(address,bytes,stamp));shared_b2t_clean_interleavings++;
+    LOG("[B2T preflight oracle] original clean query then real same-value CPU write before actual upload");
+  }
+  return dirty;
+}
+#endif
 static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
   // Keep the actual GPU command's recording copy. Shared writeback never
   // consumes legacy r->known, so it must not allocate another CPU snapshot.
@@ -84,6 +104,25 @@ static void shared_image_copy_test(NVNmemoryPool *pool,uint8_t *data) {
       .view={.set_levels=1,.base_level=1,.set_layers=1,.min_layer=1},
       .r={.width=8,.height=8,.depth=1}};
     vk_texture_copy_b2t(&copy,0,0);
+#if defined(DM_VULKAN_B2T_PREFLIGHT_WRAP) && !defined(DM_ANDROID_APP)
+    if(!f && getenv("DM_SHARED_B2T_PREFLIGHT_RACE")) {
+      // The first B2T has actual GPU writes to a's canonical source still
+      // recording. Its own-generation proof is clean, not CPU visibility.
+      // An unrelated real scope lifetime invalidates the global shortcut so
+      // the next preflight executes its genuinely clean original page query.
+      // Do not dirty d: the later unchanged-T2T oracle must remain unchanged.
+      CHECK(!__real_nvn_dirty_since(a->mem,a->L.size,nvn_dirty_now()));
+      nvn_dirty_scope *other=nvn_dirty_scope_acquire(d->mem,d->L.size);CHECK(other);
+      nvn_dirty_scope_release(other);
+      shared_b2t_clean_query=a->mem;shared_b2t_clean_bytes=a->L.size;
+      shared_b2t_later_cpu_write=a->mem+nvn_tex_level_offset(&a->d,2);
+      unsigned before=shared_b2t_clean_interleavings;uint64_t before_serial=vk_recording_serial();
+      vk_texture_copy_b2t(&copy,0,0);
+      CHECK(!shared_b2t_later_cpu_write && shared_b2t_clean_interleavings==before+1);
+      CHECK(vk_recording_serial()!=before_serial); // original real wait/reopen
+      printf("{\"test_details\":\"B2T-clean-preflight-later-same-value-CPU-write\",\"pending-retile-completed-before-conversion\":true}\n");
+    }
+#endif
     vk_buffer *gpu=vk_temp_buffer(nbytes);
     VkMemoryBarrier dependency={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT};
     vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&dependency,0,NULL,0,NULL);

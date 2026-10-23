@@ -27,6 +27,21 @@ static struct {
 static _Atomic int storage_bias_requested=-1,storage_bias_active=1;
 static _Atomic uint64_t storage_direct,storage_copy_ops,storage_copy_bytes;
 static _Atomic int driver_reference_requested=-1,driver_reference_active=1;
+// Low bit: startup span-only reference. Bit 1 freezes it before the first
+// context; setter and freeze linearize without a lock on the recording path.
+static _Atomic unsigned driver_span_policy;
+void vk_driver_span_reference_startup(int reference) {
+  unsigned prior=atomic_load(&driver_span_policy);
+  do {
+    if(prior&2)die("Vulkan driver span reference is fixed before shader startup");
+  } while(!atomic_compare_exchange_weak(&driver_span_policy,&prior,!!reference));
+}
+int vk_driver_span_reference_mode(void) { return atomic_load(&driver_span_policy)&1; }
+static int driver_span_policy_snapshot(void) {
+  unsigned prior=atomic_fetch_or(&driver_span_policy,2);
+  if(!(prior&2))LOG("[vulkan driver span] immutable startup reference=%u; proved slots=%s",prior&1,(prior&1)?"65536":"4096");
+  return prior&1;
+}
 static _Atomic uint64_t driver_last_hits,driver_content_hits,driver_misses;
 static _Atomic uint64_t descriptor_content_hits,descriptor_content_misses;
 static _Atomic uint64_t driver_arena_slots,driver_arena_zeroes,driver_arena_chunks;
@@ -110,6 +125,7 @@ typedef struct driver_constant {
   struct driver_constant *next;
   uint64_t hash;
   int slot, stage;
+  uint32_t range;
   vk_buffer *buffer;
   uint64_t offset;
   const vk_driver_schema *schema; // NULL is the existing full-key identity
@@ -119,11 +135,13 @@ typedef struct driver_constant {
 } driver_constant;
 // Uniform-only storage: neither general staging nor GPU writes may touch it.
 // A slot's zero tail is initialized once and remains zero across true fence
-// completion/reuse. Every draw keeps its own immutable 64 KiB slot.
+// completion/reuse. Each immutable slot keeps the original 64 KiB contract,
+// or 4 KiB only with a complete offline shader-read bound.
 typedef struct driver_arena {
   struct driver_arena *next;
   vk_buffer buffer;
   uint64_t stride;
+  uint32_t range;
   unsigned used,initialized;
 } driver_arena;
 // Submission-thread only, like the general completed temporary buffer pool.
@@ -232,7 +250,8 @@ struct vk_shader_submission {
   constant_copy *constant_copies[1024], *readonly_storage_copies[1024];
   driver_constant *driver_constants[1024];
   driver_constant *driver_last[6][2];
-  driver_arena *driver_arenas,*driver_arena_current;
+  uint64_t driver_last_version[6][2];
+  driver_arena *driver_arenas[2],*driver_arena_current[2];
   descriptor_content descriptor_last[6];
   descriptor_history_entry *descriptor_history[DESCRIPTOR_HISTORY_SLOTS];
   uint64_t descriptor_history_epoch;
@@ -240,6 +259,7 @@ struct vk_shader_submission {
   descriptor_batch *descriptor_batches[128];
   int storage_bias_reference;
   int driver_reference;
+  int driver_span_reference;
   uint32_t descriptor_retained;
   int descriptor_reuse_reference;
 };
@@ -733,7 +753,7 @@ static void shader_descriptor_layouts(vk_shader *s) {
 #include "nvn_vk_texel_storage.inc"
 #include "nvn_vk_pixel_local.inc"
 
-int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
+static int shader_fingerprints(const char *key,uint8_t digest[32],uint8_t proof[32]) {
   if(strlen(key)!=16 || strspn(key,"0123456789abcdef")!=16 || !V.options.shader_root)return 0;
   const char *suffixes[]={"meta","spv","spec","pred","tssbo"};
   uint8_t hashes[5][32]={{0}};
@@ -753,6 +773,9 @@ int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
   // optional closure during shader creation/prewarm verification, never draw
   // lookup. A later prewarm verification may recompute this fingerprint.
   CC_SHA256(hashes,sizeof hashes,digest);
+  // DDK/DSP prove only these five artifacts, independently of optional DPL.
+  // Save this once at load; the pipeline fingerprint still includes DPL.
+  if(proof)memcpy(proof,digest,32);
   if(vk_pixel_local_enabled()) {
     size_t local_bytes;void *local=pixel_local_read(key,"plocal",&local_bytes);
     if(local) {
@@ -761,6 +784,9 @@ int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
     }
   }
   return 1;
+}
+int vk_shader_fingerprint(const char *key,uint8_t digest[32]) {
+  return shader_fingerprints(key,digest,NULL);
 }
 vk_shader *vk_shader_get(const void *control) {
   uint8_t digest[32];
@@ -822,7 +848,7 @@ vk_shader *vk_shader_load_key(const char *key) {
     die("Vulkan shader allocation");
   s->canonical_base=s;
   strcpy(s->key, key);
-  if(!vk_shader_fingerprint(key,s->fingerprint))die("Vulkan shader fingerprint: %s",key);
+  if(!shader_fingerprints(key,s->fingerprint,s->proof_fingerprint))die("Vulkan shader fingerprint: %s",key);
   s->stage = metadata[1];
   s->set = metadata[2];
   s->nb = metadata[3];
@@ -936,6 +962,7 @@ vk_shader *vk_shader_load_key(const char *key) {
   shader_descriptor_layouts(s);
   texel_storage_load(s,spv,bytes);
   driver_schema_load(s);
+  driver_span_load(s);
   free(spv);
   s->next = shaders;
   shaders = s;
@@ -943,7 +970,9 @@ vk_shader *vk_shader_load_key(const char *key) {
   return s;
 }
 static descriptor_block *descriptor_create(void) {
-  unsigned max_sets = V.options.descriptor_sets;
+  // Physical growth quantum only. The configured retained-set budget below
+  // remains unchanged; spill chains never reset or overwrite in-flight sets.
+  unsigned max_sets = V.options.descriptor_sets<512?V.options.descriptor_sets:512;
   const VkDescriptorPoolSize sizes[] = {
       {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, max_sets * VK_PIXEL_LOCAL_MAX_INPUTS},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, max_sets * 8},
@@ -967,11 +996,21 @@ static descriptor_block *descriptor_create(void) {
   VK_CHECK(vkCreateDescriptorPool(V.device, &ci, NULL, &block->pool));
   return block;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+void vk_test_descriptor_pool_ownership(vk_shader_submission *state,
+                                       unsigned *blocks,unsigned *retained) {
+  if(!state)die("Descriptor pool fixture requires owned context");
+  *blocks=0;
+  for(descriptor_block *b=state->descriptor_blocks;b;b=b->next)(*blocks)++;
+  *retained=state->descriptor_retained;
+}
+#endif
 void vk_shader_recycle(vk_shader_submission *state) {
   if (!state) return;
   if (binding_state == state)
     die("Vulkan recycling recording descriptor resources");
   memset(state->driver_last,0,sizeof state->driver_last);
+  memset(state->driver_last_version,0,sizeof state->driver_last_version);
   memset(state->descriptor_last,0,sizeof state->descriptor_last);
   memset(state->descriptor_shader_hints,0,sizeof state->descriptor_shader_hints);
   if(!++state->descriptor_history_epoch)die("Vulkan descriptor history epoch overflow");
@@ -994,8 +1033,8 @@ void vk_shader_recycle(vk_shader_submission *state) {
     }
   }
   if(reset)state->descriptor_retained=0;
-  while(state->driver_arenas) {
-    driver_arena *a=state->driver_arenas;state->driver_arenas=a->next;a->used=0;
+  for(unsigned kind=0;kind<2;kind++)while(state->driver_arenas[kind]) {
+    driver_arena *a=state->driver_arenas[kind];state->driver_arenas[kind]=a->next;a->used=0;
     if(available_driver_arena_count<32) {
       a->next=available_driver_arenas;available_driver_arenas=a;
       available_driver_arena_count++;
@@ -1004,7 +1043,7 @@ void vk_shader_recycle(vk_shader_submission *state) {
       vk_buffer_destroy(&a->buffer);free(a);
     }
   }
-  state->driver_arena_current=NULL;
+  state->driver_arena_current[0]=state->driver_arena_current[1]=NULL;
   for (unsigned i = 0; i < 1024; i++)
     while (state->driver_constants[i]) {
       driver_constant *copy = state->driver_constants[i];
@@ -1140,6 +1179,7 @@ vk_shader_submission *vk_shader_begin(vk_shader_submission *state) {
     atomic_store(&driver_reference_requested,reference);
   }
   binding_state->driver_reference=reference;
+  binding_state->driver_span_reference=driver_span_policy_snapshot();
   atomic_store(&driver_reference_active,reference);
   if (!binding_state->descriptor_blocks)
     binding_state->descriptor_blocks = descriptor_create();
@@ -1155,31 +1195,35 @@ void vk_shader_end(vk_shader_submission *state) {
   binding_state = NULL;
 }
 static void driver_arena_store(driver_constant *copy,const uint8_t *data,size_t bytes) {
-  enum { SLOTS=8, RANGE=65536 };
-  driver_arena **at=&binding_state->driver_arena_current;
-  if(!*at) at=&binding_state->driver_arenas;
+  enum { SLOTS=8 };
+  unsigned range=copy->range,kind=range==4096?1:0;
+  if((range!=4096 && range!=65536) || bytes>range)die("Vulkan driver constant extent");
+  driver_arena **at=&binding_state->driver_arena_current[kind];
+  if(!*at) at=&binding_state->driver_arenas[kind];
   while(*at && (*at)->used==SLOTS) at=&(*at)->next;
   if(!*at) {
-    driver_arena *a=available_driver_arenas;
+    driver_arena **available=&available_driver_arenas;
+    while(*available && (*available)->range!=range)available=&(*available)->next;
+    driver_arena *a=*available;
     if(a) {
-      available_driver_arenas=a->next;available_driver_arena_count--;
+      *available=a->next;available_driver_arena_count--;
       a->next=NULL;shader_recorded.driver_arena_reuses += 1;
     } else {
       a=calloc(1,sizeof *a);
       if(!a) die("Vulkan driver uniform arena allocation");
       uint64_t align=V.props.limits.minUniformBufferOffsetAlignment;
       if(!align) align=1;
-      a->stride=(RANGE+align-1)/align*align;
+      a->range=range;a->stride=(range+align-1)/align*align;
       vk_buffer_create(&a->buffer,a->stride*SLOTS,VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
       shader_recorded.driver_arena_chunks += 1;
       atomic_fetch_add(&driver_arena_live,a->buffer.size);
     }
     *at=a;
   }
-  driver_arena *a=*at;binding_state->driver_arena_current=a;
+  driver_arena *a=*at;binding_state->driver_arena_current[kind]=a;
   copy->buffer=&a->buffer;copy->offset=a->used*a->stride;
   if(a->used==a->initialized) {
-    memset(a->buffer.map+copy->offset,0,RANGE);
+    memset(a->buffer.map+copy->offset,0,range);
     a->initialized++;shader_recorded.driver_arena_zeroes += 1;
   }
   memcpy(a->buffer.map+copy->offset,data,bytes);
@@ -1187,12 +1231,12 @@ static void driver_arena_store(driver_constant *copy,const uint8_t *data,size_t 
 }
 #ifdef DM_VULKAN_TEST_EMBED
 void vk_test_idle_driver_store(const uint8_t *data,size_t bytes,vk_buffer *buffer,uint64_t *offset) {
-  driver_constant copy={0};if(!binding_state || bytes>65536)die("Vulkan idle arena fixture");
+  driver_constant copy={.range=65536};if(!binding_state || bytes>65536)die("Vulkan idle arena fixture");
   driver_arena_store(&copy,data,bytes);*buffer=*copy.buffer;*offset=copy.offset;
 }
 #endif
-// Only these bytes vary in the driver ABI. Build exact keys from current S on
-// every call, including direct state restores; no dirty-generation prediction.
+// Only these bytes vary in the driver ABI. Build exact keys from current S
+// when a state version rejects the last immutable table, including restores.
 // c0 packs address:u64,size:u32 (the ABI record's remaining u32 is zero).
 // c2 packs low-u32 handles (the ABI cell's upper u32 and all gaps are zero).
 static size_t driver_key_build(int slot,unsigned stage,uint8_t key[1056]) {
@@ -1283,12 +1327,12 @@ static void driver_data_reference(int slot,unsigned stage,uint8_t driver_data[0x
 // constant MISS allocates, expands the original ABI and publishes its arena.
 // Scratch remains the caller's existing union; no extra large stack copy.
 static VK_COLD_PHASE vk_buffer *driver_constant_create(vk_shader *s,int slot,
-    uint64_t *offset,int reference,const vk_driver_schema *schema,uint64_t hash,
+    uint64_t *offset,uint64_t range,int reference,const vk_driver_schema *schema,uint64_t hash,
     const uint8_t *content,size_t bytes,uint8_t *driver_data,
     unsigned bucket,driver_constant **last) {
   driver_constant *copy = calloc(1, sizeof *copy + (reference?0:bytes));
   if (!copy)die("Vulkan immutable driver constant allocation");
-  copy->hash = hash;copy->slot = slot;copy->stage = s->stage;
+  copy->hash = hash;copy->slot = slot;copy->stage = s->stage;copy->range=range;
   copy->schema=schema;
   if(!reference) {
     memcpy(copy->data,content,bytes);
@@ -1309,8 +1353,8 @@ static VK_COLD_PHASE vk_buffer *driver_constant_create(vk_shader *s,int slot,
   *offset=copy->offset;
   return copy->buffer;
 }
-static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
-  *offset=0;
+static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset,uint64_t *range) {
+  *offset=0;*range=65536;
   if (slot < 0) {
     if (!support_constant.handle) {
       vk_buffer_create(&support_constant, 65536,
@@ -1360,12 +1404,26 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
   // Immutable host-generated tables: keys and GPU bytes remain frozen until
   // this physical submission completes. Slot/stage are independent identities.
   if (slot == 0 || slot == 2) {
+    int reference=binding_state->driver_reference;
+    if(!binding_state->driver_span_reference && !reference && !driver_arena_reference() && s->driver_span_module==s->module &&
+        s->driver_span[slot/2]==4096 && V.props.limits.minUniformBufferOffsetAlignment<=4096)*range=4096;
+    const vk_driver_schema *schema=reference?NULL:s->driver_schema[slot/2];
+    driver_constant **last=&binding_state->driver_last[s->stage][slot/2];
+    uint64_t version=vk_driver_state_versions[s->stage][slot/2];
+    uint64_t *last_version=&binding_state->driver_last_version[s->stage][slot/2];
+    // Only this submission owns these immutable bytes/arenas. Schema and
+    // effective range are selected afresh (including module span authority).
+    // Resource consumers still run in the surrounding binding path.
+    if(!reference && *last && *last_version==version &&
+        (*last)->schema==schema && (*last)->range==*range) {
+      shader_recorded.driver_last_hits += 1;
+      *offset=(*last)->offset;return (*last)->buffer;
+    }
+    if(reference)*last_version=0;
     // Key dies at a hit, or is frozen in copy before miss expansion. Share
     // scratch storage so hits do not add another 1056 bytes to the stack.
     union { uint8_t key[1056],data[0xa00]; } scratch;
     uint8_t *key=scratch.key,*driver_data=scratch.data;
-    int reference=binding_state->driver_reference;
-    const vk_driver_schema *schema=reference?NULL:s->driver_schema[slot/2];
     size_t bytes;
     const uint8_t *content;
     if(reference) {
@@ -1374,8 +1432,8 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
     } else {
       bytes=schema?driver_sparse_key_build(schema,slot,s->stage,key):driver_key_build(slot,s->stage,key);content=key;
     }
-    driver_constant **last=&binding_state->driver_last[s->stage][slot/2];
-    if(!reference&&*last&&(*last)->schema==schema&&!memcmp((*last)->data,content,bytes)) {
+    if(!reference&&*last&&(*last)->schema==schema&&(*last)->range==*range&&!memcmp((*last)->data,content,bytes)) {
+      *last_version=version;
       shader_recorded.driver_last_hits += 1;
       *offset=(*last)->offset;
       return (*last)->buffer;
@@ -1383,6 +1441,7 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
     uint64_t hash = 14695981039346656037ull;
     if(!reference)hash=(hash^((uint64_t)s->stage<<32 | (unsigned)slot))*1099511628211ull;
     if(schema)hash=(hash^(uintptr_t)schema)*1099511628211ull;
+    hash=(hash^*range)*1099511628211ull;
     for (size_t i = 0; i < bytes; i += 8) {
       uint64_t word;
       memcpy(&word, content + i, 8);
@@ -1391,14 +1450,17 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
     unsigned bucket = hash % 1024;
     for (driver_constant *copy = binding_state->driver_constants[bucket]; copy;
          copy = copy->next)
-      if (copy->hash == hash && copy->slot == slot && copy->stage == s->stage && copy->schema==schema &&
+      if (copy->hash == hash && copy->slot == slot && copy->stage == s->stage && copy->schema==schema && copy->range==*range &&
           !memcmp(reference?copy->buffer->map+copy->offset:copy->data,content,bytes)) {
         *last=copy;
+        if(!reference)*last_version=version;
         shader_recorded.driver_content_hits += 1;
         *offset=copy->offset;
         return copy->buffer;
       }
-    return driver_constant_create(s,slot,offset,reference,schema,hash,content,bytes,driver_data,bucket,last);
+    vk_buffer *buffer=driver_constant_create(s,slot,offset,*range,reference,schema,hash,content,bytes,driver_data,bucket,last);
+    if(!reference)*last_version=version;
+    return buffer;
   }
   vk_buffer *b = vk_temp_buffer(65536);
   memset(b->map, 0, 65536);
@@ -1433,6 +1495,15 @@ static vk_buffer *constant(vk_shader *s, int slot,uint64_t *offset) {
   }
   return b;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+// Owned functional fixtures call the production parser/constant allocator.
+// No counters, timing, proof override or new application entry point.
+void vk_test_driver_span_load(vk_shader *s) {driver_span_load(s);}
+vk_buffer *vk_test_driver_span_constant(vk_shader *s,int slot,uint64_t *offset,uint64_t *range) {
+  if(!binding_state || (slot!=0 && slot!=2))die("Vulkan driver span fixture scope");
+  return constant(s,slot,offset,range);
+}
+#endif
 static VkResult descriptor_allocate_many(VkDescriptorSetLayout layout,uint32_t count,VkDescriptorSet *sets) {
   VkDescriptorSetLayout layouts[16];for(uint32_t i=0;i<count;i++)layouts[i]=layout;
   VkDescriptorSetAllocateInfo ai={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -1684,10 +1755,9 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
         }
       }
       if (!buffer.buffer) {
-        v = constant(s, consumer?(int16_t)consumer->aux:b->kind == 0 ? -1 : b->reg,&offset);
+        v = constant(s, consumer?(int16_t)consumer->aux:b->kind == 0 ? -1 : b->reg,&offset,&buffer.range);
         buffer.buffer = v->handle;
         buffer.offset = offset;
-        buffer.range = 65536;
       }
       break;
     }
@@ -2021,10 +2091,9 @@ static void dispatch_record(const p_dispatch *p) {
   vk_compute_buffer_dependencies(uses,use_count,0);
   vk_texture_shader_barrier();
   unsigned gpu_region = vk_gpu_region_begin("compute", s->key, p->x, p->y);
-  vkCmdBindPipeline(V.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s->compute);
+  vk_compute_bind_pipeline(s->compute);
   vk_shader_push_bias(stages,s->compute_layout,1,NULL);
-  vkCmdBindDescriptorSets(V.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                          s->compute_layout, s->set, 1, &set, 0, NULL);
+  vk_compute_bind_descriptors(s->compute_layout, s->set, 1, &set, 0, NULL);
   vkCmdDispatch(V.cmd, p->x, p->y, p->z);
   for(unsigned k=0;k<use_count;k++) if(uses[k].writable) {
     int copied=0;

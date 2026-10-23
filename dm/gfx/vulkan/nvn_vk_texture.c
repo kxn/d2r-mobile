@@ -938,7 +938,7 @@ static int shared_image_backing(uint64_t address,uint64_t bytes) {
 #endif
 // Only logical copies of textures are used across a visibility callback.
 // Callers must invoke this before borrowing any image/view/descriptor/temp.
-void vk_texture_cpu_preflight(const tex_t *t) {
+static void texture_cpu_preflight(const tex_t *t,int require_source) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(t && t->has_layout && nvn_native_layout_is_marker(t->layout))return; // no CPU deswizzle/dirty-source observation
 #endif
@@ -955,7 +955,7 @@ void vk_texture_cpu_preflight(const tex_t *t) {
     }
     // A queued CPU effect has no dirty generation until completion. Publish
     // it even for an initialized/clean image, before any image/view borrows.
-    if((read || vk_pool_texture_cpu_effect_pending((uintptr_t)t->mem,t->L.size)) && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
+    if((require_source || read || vk_pool_texture_cpu_effect_pending((uintptr_t)t->mem,t->L.size)) && !vk_pool_cpu_observe_prepare((uintptr_t)t->mem,t->L.size))
       die("Shared packaged image source outside live shared Pool");
   }
 #endif
@@ -963,6 +963,7 @@ void vk_texture_cpu_preflight(const tex_t *t) {
       t->mem && t->L.size && vk_pool_cpu_prepare((uintptr_t)t->mem,t->L.size)<0)
     die("Vulkan texture CPU source lifetime changed during preflight");
 }
+void vk_texture_cpu_preflight(const tex_t *t) { texture_cpu_preflight(t,0); }
 static void image_upload(image *i);
 static image *image_get_usage(const tex_t *t,VkImageUsageFlags required) {
   if (!V.cmd)
@@ -1166,6 +1167,7 @@ static void texture_dirty_mode_begin(void) {
   }
   texture_dirty_reference_active=reference;atomic_store(&texture_dirty_active,reference);
 }
+#include "nvn_vk_image_upload.inc"
 #include "nvn_vk_image_cpu_observe.inc"
 // Keep deswizzle/staging/copy state off the high-frequency readonly proof
 // path. Only image_upload calls this after the original ordered checks; its
@@ -1206,51 +1208,10 @@ static __attribute__((noinline)) void image_upload_contents(image *i) {
       astc_unorm_format(i->format) && i->description.imageType==VK_IMAGE_TYPE_2D &&
       i->layers==1 && i->extent.depth==1;
   image_astc_proof(i,0);
-  for (uint32_t layer = 0; layer < i->layers; layer++)
-    for (uint32_t level = 0; level < i->levels; level++) {
-      uint32_t w = mip(i->extent.width, level),
-               h = mip(i->extent.height, level),
-               z = mip(i->extent.depth, level);
-      int bw, bh;
-      uint32_t bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
-      size_t pitch = (w + bw - 1) / bw * bpb, rows = (h + bh - 1) / bh;
-      // CPU BC decoding consumes these compressed bytes synchronously. They
-      // never enter a GPU command/descriptor/effect, so retaining a mapped
-      // VkBuffer through the submission and global staging cache is needless.
-      // Native compressed uploads still require their original GPU staging.
-      vk_buffer *raw = i->decoded ? NULL : vk_temp_buffer(pitch * rows * z);
-      uint8_t *raw_bytes = i->decoded ? malloc(pitch * rows * z) : raw->map;
-      if (!raw_bytes) die("Vulkan BC deswizzle CPU scratch allocation");
-      if (t->d.flags & NVN_TEXTURE_FLAGS_LINEAR) {
-        if (level || layer || z != 1)
-          die("Vulkan linear layered/mipped upload unsupported");
-        size_t stride = t->d.stride ? t->d.stride : (pitch + 31) & ~31;
-        for (size_t y = 0; y < rows; y++)
-          memcpy(raw_bytes + y * pitch, t->mem + y * stride, pitch);
-      } else if (nvn_deswizzle(&t->d, level, layer, t->mem, raw_bytes, pitch))
-        die("Vulkan deswizzle failed");
-      // Classify exactly the staging bytes consumed by this upload, never a
-      // second read of mutable guest memory. No RGBA scratch or allocation.
-      if(ldr && !nvn_astc_mip_is_ldr(raw_bytes,pitch*rows*z,bw,bh)) ldr=0;
-      vk_buffer *src = raw;
-      if (i->decoded) {
-        src = vk_temp_buffer((uint64_t)w * h * z * i->bpp);
-        for (uint32_t slice = 0; slice < z; slice++)
-          if (nvn_bc_decode(t->d.format, raw_bytes + slice * pitch * rows, pitch,
-                            w, h, src->map + (uint64_t)slice * w * h * i->bpp,
-                            w * i->bpp))
-            die("Vulkan BC decode failed");
-        free(raw_bytes);
-      }
-      VkBufferImageCopy c = {.imageSubresource = {.aspectMask = i->aspect,
-                                                  .mipLevel = level,
-                                                  .baseArrayLayer = layer,
-                                                  .layerCount = 1},
-                             .imageExtent = {w, h, z}};
-      image_transfer(i,image_layer_range(c.imageSubresource),1);
-      vkCmdCopyBufferToImage(V.cmd, src->handle, i->handle,
-                             VK_IMAGE_LAYOUT_GENERAL, 1, &c);
-    }
+  image_upload_plan plan=image_upload_plan_create(i);
+  ldr=image_upload_plan_convert(i,&plan,ldr);
+  image_upload_plan_record(i,&plan);
+  image_upload_plan_free(&plan);
   if (i->initialized)
     reuploads++;
   else
@@ -1681,13 +1642,40 @@ static int copy_pool_operation(const p_copy_b2t *p,uint64_t row,uint64_t img,int
 #endif
   return vk_pool_operation_begin(copy_pool_collect,&plan);
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && defined(DM_VULKAN_SHARED_POOLS)
+// Metadata/observation contract only: no ASTC VkImage is created or sampled.
+// Use the ACTUAL copy collector and original protected observation phase.
+void vk_test_astc_copy_cold_admission(const p_copy_t2t *p) {
+  vk_pool_span_info span;
+  if(vk_pool_span_query((uintptr_t)p->dst->mem,p->dst->L.size,&span)!=VK_POOL_SPAN_UNBACKED ||
+      !image_astc_copy_needs_span(p))die("Cold copy must request its unbacked registered destination");
+  tex_t absent=*p->dst;absent.mem=(void *)(UINTPTR_MAX-(1u<<20));
+  p_copy_t2t invalid=*p;invalid.dst=&absent;
+  if(image_astc_copy_needs_span(&invalid))die("Cold copy must not admit an unregistered destination");
+  copy_pool_plan plan={.retile=p->dst,.astc=p};
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  plan.native_source=p->src;plan.native_destination=p->dst;
+#endif
+  int operation=vk_pool_operation_begin(copy_pool_collect,&plan);
+  if(vk_pool_span_query((uintptr_t)p->dst->mem,p->dst->L.size,&span)!=VK_POOL_SPAN_SINGLE)
+    die("Cold copy admission must precede observation");
+  astc_copy_observation observed=image_astc_copy_preflight(p);
+  if(!observed.scope || !observed.stamp)die("Cold copy original observation refused");
+  astc_copy_observation_release(&observed);vk_pool_operation_end(operation);
+}
+#endif
 void vk_texture_copy_b2t(const p_copy_b2t *p, uint64_t row, uint64_t img) {
   // Copy needs an ended pass anyway. End/replay it before the final CPU
   // visibility proof, while no physical image or retile buffer is borrowed.
   vk_mip_clear_drain();vk_render_end();
   int operation=copy_pool_operation(p,row,img,0);
   // Admission may migrate storage and replay a deferred render pass.
-  vk_render_end();vk_texture_cpu_preflight(p->tex);
+  // A partial B2T preserves the rest of a packaged image. A clean observation
+  // is not a lease: a CPU store can invalidate it before image_upload decides
+  // whether to convert. Complete prior source writers before physical borrows,
+  // even when that first dirty query is clean. Native/no-layout paths retain
+  // their original exclusions; sampling keeps its original clean fast path.
+  vk_render_end();texture_cpu_preflight(p->tex,1);
   if(V.options.pool_defer_publication && p->tex && p->tex->d.format>=0x41 && p->tex->d.format<=0x50)
     vk_pool_cpu_prepare(p->src,copy_pool_footprint(p,row,img));
 #ifdef DM_VULKAN_SHARED_POOLS

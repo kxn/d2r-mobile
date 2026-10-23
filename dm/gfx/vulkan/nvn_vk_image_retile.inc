@@ -124,8 +124,8 @@ static void image_retile_publish(image *i,shared_copy_backing target,vk_buffer *
     vkUpdateDescriptorSets(V.device,2,writes,0,NULL);
     uint32_t push[]={(uint32_t)((so-sb)/4),(uint32_t)((target.offset-db+origin)/4),words,rows,(uint32_t)(pitch/4),
       rb,rs,(uint32_t)c->imageOffset.x/bw*bpb,(uint32_t)c->imageOffset.y/bh,th,td};
-    vkCmdBindPipeline(V.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,image_retile_pipeline);
-    vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_COMPUTE,image_retile_layout,0,1,&set,0,NULL);
+    vk_compute_bind_pipeline(image_retile_pipeline);
+    vk_compute_bind_descriptors(image_retile_layout,0,1,&set,0,NULL);
     vkCmdPushConstants(V.cmd,image_retile_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof push,push);
     vkCmdDispatch(V.cmd,(words*rows+63)/64,1,1);
     // Publish only the words actually written. Whole-image Invalidate could

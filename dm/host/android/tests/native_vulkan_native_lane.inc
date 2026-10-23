@@ -184,8 +184,13 @@ static void native_lane_gpu_test(void) {
     {address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0},
     {saved_address,needs.size,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0}};
   operation=vk_pool_operation_begin_ranges(copy_ranges,3);
-  CHECK(vk_pool_shared_materialized(address,needs.size));
+  int lazy_active;uint64_t lazy_unique,lazy_mapped,lazy_nodes,lazy_covers;
+  vk_pool_lazy_window_stats(&lazy_active,&lazy_unique,&lazy_mapped,&lazy_nodes,&lazy_covers);
+  // Eager reference still proves materialization before actual consumption.
+  // Lazy mode instead imports at the original real Buffer lookup below.
+  if(!lazy_active)CHECK(vk_pool_shared_materialized(address,needs.size));
   CHECK(vk_pool_address_stage(address,needs.size,&raw,&offset,VK_PIPELINE_STAGE_TRANSFER_BIT));source=raw;
+  CHECK(vk_pool_shared_materialized(address,needs.size));
   CHECK(vk_pool_address_stage(saved_address,needs.size,&saved_raw,&saved_offset,VK_PIPELINE_STAGE_TRANSFER_BIT));
   VkBufferCopy keep={.srcOffset=offset,.dstOffset=saved_offset,.size=needs.size};
   vk_transfer_buffer_dependencies((vk_buffer_use[]){{address,needs.size,0},{saved_address,needs.size,1}},2);

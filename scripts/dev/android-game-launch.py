@@ -29,6 +29,8 @@ present_modes.add_argument('--reference-present',dest='shader_present',action='s
 parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
+parser.add_argument('--shared-lazy-windows',action='store_true',help='cold experimental coherent userptr lazy windows; exact qualified provider only, default off')
+parser.add_argument('--shared-image-raw-observe',action='store_true',help='cold default-OFF coherent image observation experiment; GPU byte conflicts, CPU page conflicts retained')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
 parser.add_argument('--native-resource-table',help='cold experimental authenticated DMNTBL table; requires explicit shared heap and matching app-local Turnip')
 parser.add_argument('--native-resource-pack-sha256',help='complete native pack content SHA256; all native-resource options are required together')
@@ -57,6 +59,7 @@ parser.add_argument('--display-refresh-hz',type=float,help='optional Android Sur
 parser.add_argument('--mailbox-present',action='store_true',help='startup-only WSI experiment: request advertised MAILBOX; otherwise FIFO remains active')
 parser.add_argument('--dedicated-present-worker',action='store_true',help='startup-only experiment: serialize WSI acquire/present on a worker with a second queue of the same family')
 parser.add_argument('--present-worker-shared-queue',action='store_true',help='isolate presentation worker scheduling while preserving the original Vulkan queue; requires --dedicated-present-worker')
+parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
 parser.add_argument('--descriptor-history-reference',action='store_true',help='comparison: cache only consecutive identical descriptor contents')
 parser.add_argument('--descriptor-reuse-reference',action='store_true',help='comparison: reset descriptor pools after each completed submission')
@@ -139,6 +142,8 @@ if args.attach and args.legacy_astc_copy is not None:
     parser.error('--legacy-astc-copy/--no-legacy-astc-copy are startup-only and cannot be used with --attach')
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
+if args.attach and args.driver_span_reference:
+    parser.error('--driver-span-reference is startup-only and cannot be used with --attach')
 if args.attach and args.pool_window_bytes is not None:
     parser.error('--pool-window-bytes is startup-only and cannot be used with --attach')
 if args.attach and args.defer_pool_publication is not None:
@@ -162,6 +167,10 @@ if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
         (args.pool_window_bytes != 0 and (args.pool_window_bytes < 4096 or
          args.pool_window_bytes & (args.pool_window_bytes - 1)))):
     parser.error('--pool-window-bytes must be 0 or a power of two >= 4096, within signed 64-bit range')
+if args.shared_lazy_windows and (args.attach or args.shared_guest_heap is not True or not args.expect_shared_import_windows or not args.pool_window_bytes):
+    parser.error('--shared-lazy-windows requires cold --shared-guest-heap --expect-shared-import-windows and nonzero --pool-window-bytes')
+if args.shared_image_raw_observe and (args.attach or args.shared_guest_heap is not True):
+    parser.error('--shared-image-raw-observe requires cold --shared-guest-heap')
 if args.expect_shared_import_windows and (args.attach or args.shared_guest_heap is not True or not args.pool_window_bytes):
     parser.error('--expect-shared-import-windows requires cold --shared-guest-heap and nonzero --pool-window-bytes')
 if args.external_profile and (args.gpu_profile or args.validate):
@@ -220,6 +229,8 @@ if not args.attach:
               '--ez', 'driver_constant_reference', str(not args.cache_driver_constants).lower(),
               '--ez', 'sample_liveness_reference', str(args.dead_sample_queries_reference).lower(),
               '--ez', 'validate', str(args.validate).lower()]
+    if args.driver_span_reference:
+        launch += ['--ez','driver_span_reference','true']
     if args.operation_mode is not None:
         launch += ['--es', 'operation_mode', args.operation_mode]
     if args.legacy_astc_copy is not None:
@@ -232,6 +243,10 @@ if not args.attach:
         launch += ['--es','native_resource_table',args.native_resource_table,
                    '--es','native_resource_pack_sha256',args.native_resource_pack_sha256,
                    '--es','native_resource_producer_sha256',args.native_resource_producer_sha256]
+    if args.shared_lazy_windows:
+        launch += ['--ez','shared_lazy_windows','true']
+    if args.shared_image_raw_observe:
+        launch += ['--ez','shared_image_raw_observe','true']
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     if args.pixel_local is not None:
@@ -369,6 +384,8 @@ while time.monotonic() < deadline:
                         raise RuntimeError('Actual guest heap does not match explicit private request')
                     if args.expect_shared_import_windows and (state.get('guest_heap',{}).get('shared') is not True or '[shared pool] immutable startup shared; import_window_bytes='+str(args.pool_window_bytes) not in log):
                         raise RuntimeError('Actual shared import window startup proof did not apply')
+                    if args.shared_lazy_windows and state.get('shared_lazy_windows',{}).get('active') is not True:
+                        raise RuntimeError('Actual coherent lazy-window experiment is unsupported or did not apply')
                     if state.get('guest_heap',{}).get('shared') and state.get('pool_windows',{}).get('window_bytes') != (args.pool_window_bytes if args.expect_shared_import_windows else 0):
                         raise RuntimeError('Actual shared heap requires the fixed whole-pool policy')
                     if (not args.attach and args.pixel_local_shared_ds is not None and
@@ -411,6 +428,8 @@ while time.monotonic() < deadline:
                               'requested_vulkan_provider':args.vulkan_provider or ('adreno' if args.custom_vulkan_driver else 'system'),
                               'actual_vulkan_provider':('panvk' if '[vulkan loader] provider=panvk direct ICD=' in log else 'adreno' if '[vulkan loader] custom=' in log else 'system' if '[vulkan loader] system' in log else 'unknown'),
                               'requested_pool_window_bytes':args.pool_window_bytes,
+                              'requested_shared_lazy_windows':args.shared_lazy_windows,
+                              'actual_shared_lazy_windows':state.get('shared_lazy_windows'),
                               'requested_defer_pool_publication':args.defer_pool_publication,
                               'actual_defer_pool_publication':state.get('pool_publication',{}).get('deferred',False),
                               'requested_pool_copy_accounting':args.pool_copy_accounting,

@@ -59,7 +59,8 @@ add_dependencies(vulkan_host_test dm_vulkan_subpass_test_shader)
 
 option(DM_VULKAN_SHARED_POOLS "Build fixed lazy whole shared-pool experiment" OFF)
 if(DM_VULKAN_SHARED_POOLS)
-  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SHARED_POOLS=1)
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_SHARED_POOLS=1 DM_VULKAN_B2T_PREFLIGHT_WRAP=1)
+  target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=nvn_dirty_since")
 endif()
 
 option(DM_GUEST_HEAP_GPU_TESTS "Link real memory SVC into owned host GPU fixture" OFF)

@@ -24,6 +24,11 @@ typedef struct {
   p_poly_offset offset;
 } vk_state;
 extern vk_state S;
+// Recording-thread-owned versions of the host-generated c0/c2 ABI. Keep
+// these outside S: restoring a ghost snapshot must not roll a version back.
+extern uint64_t vk_driver_state_versions[6][2] __attribute__((visibility("hidden")));
+void vk_driver_state_invalidate(unsigned stage,unsigned slot) __attribute__((visibility("hidden")));
+void vk_state_restore(const vk_state *state) __attribute__((visibility("hidden")));
 uint64_t vk_pipeline_state_epoch(void);
 void vk_pipeline_state_changed(void);
 void vk_pipeline_state_tracking(int enabled);

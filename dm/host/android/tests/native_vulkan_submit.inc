@@ -36,7 +36,7 @@ static void float16_arithmetic_test(void) {
   S=saved;vk_pipeline_state_changed();
   LOG("[vulkan Float16 fixture] explicit half arithmetic, 32-bit storage interface, repeated CPU edits and byte guards passed");
 }
-static void descriptor_inflight_test(const prog_t *program, int texel) {
+static void descriptor_inflight_test(const prog_t *program, int texel,unsigned set_count) {
   CHECK(V.cmd == VK_NULL_HANDLE);
   if (!V.timeline_semaphore) {
     LOG("[vulkan descriptor inflight fixture] skipped: timeline semaphore unavailable");
@@ -46,7 +46,7 @@ static void descriptor_inflight_test(const prog_t *program, int texel) {
   vk_program_shaders(program, stages);
   vk_shader *shader = stages[5];
   CHECK(shader && shader->compute && shader->nb == 2);
-  enum { RUNS = 3, SETS = 6, WORDS = 64 };
+  enum { RUNS = 3, WORDS = 64 };
   VkDeviceSize align = V.props.limits.minStorageBufferOffsetAlignment;
   if (texel && align < V.props.limits.minTexelBufferOffsetAlignment)
     align = V.props.limits.minTexelBufferOffsetAlignment;
@@ -91,13 +91,21 @@ static void descriptor_inflight_test(const prog_t *program, int texel) {
       VK_CHECK(vkWaitForFences(V.device, 1, fences, VK_TRUE, 5000000000ull));
       CHECK(vkGetFenceStatus(V.device, fences[1]) == VK_NOT_READY);
       vk_shader_recycle(owners[0]);
+#ifndef DM_ANDROID_APP
+      if(getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE")) {
+        extern void vk_test_descriptor_pool_ownership(vk_shader_submission *,unsigned *,unsigned *);
+        unsigned blocks,retained;vk_test_descriptor_pool_ownership(owners[0],&blocks,&retained);
+        CHECK(blocks>=2);
+        CHECK(set_count>V.options.descriptor_sets?retained==0:retained>=set_count);
+      }
+#endif
       if (texel) vk_texture_recycle(texture_owners[0]);
     }
-    vk_buffer_create(&input[run], stride * SETS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+    vk_buffer_create(&input[run], stride * set_count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
         (texel ? VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT : 0));
-    vk_buffer_create(&output[run], stride * SETS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    memset(output[run].map, 0, stride * SETS);
-    for (unsigned set = 0; set < SETS; set++)
+    vk_buffer_create(&output[run], stride * set_count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    memset(output[run].map, 0, stride * set_count);
+    for (unsigned set = 0; set < set_count; set++)
       for (unsigned word = 0; word < WORDS; word++) {
         uint32_t value = 10000 * run + 100 * set + word;
         memcpy(input[run].map + stride * set + word * 4, &value, 4);
@@ -115,7 +123,7 @@ static void descriptor_inflight_test(const prog_t *program, int texel) {
         VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT|VK_SHADER_STAGE_COMPUTE_BIT,
         0,sizeof words,words);
     }
-    for (unsigned set = 0; set < SETS; set++) {
+    for (unsigned set = 0; set < set_count; set++) {
       VkDescriptorSet descriptors = vk_descriptor_allocate(shader->descriptors);
       VkDescriptorBufferInfo buffers[2] = {
           {input[run].handle, stride * set, WORDS * 4},
@@ -150,6 +158,14 @@ static void descriptor_inflight_test(const prog_t *program, int texel) {
     vkCmdPipelineBarrier(commands[run], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &readback, 0, NULL, 0, NULL);
     VK_CHECK(vkEndCommandBuffer(commands[run]));
+#ifndef DM_ANDROID_APP
+    if(getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE")) {
+      extern void vk_test_descriptor_pool_ownership(vk_shader_submission *,unsigned *,unsigned *);
+      unsigned blocks,retained;vk_test_descriptor_pool_ownership(owners[owner],&blocks,&retained);
+      CHECK(V.options.descriptor_sets==2048 && blocks>=2 && retained>=set_count);
+      if(set_count==768)CHECK(retained>512 && retained<=V.options.descriptor_sets);
+    }
+#endif
     vk_shader_end(owners[owner]);
     if (texel) vk_texture_end(texture_owners[owner]);
     VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -177,7 +193,7 @@ static void descriptor_inflight_test(const prog_t *program, int texel) {
   VK_CHECK(V.signal_timeline(V.device, &signal));
   VK_CHECK(vkWaitForFences(V.device, RUNS, fences, VK_TRUE, 5000000000ull));
   for (unsigned run = 0; run < RUNS; run++) {
-    for (unsigned set = 0; set < SETS; set++)
+    for (unsigned set = 0; set < set_count; set++)
       for (unsigned word = 0; word < WORDS; word++) {
         uint32_t value;
         memcpy(&value, output[run].map + stride * set + word * 4, 4);
@@ -196,7 +212,7 @@ static void descriptor_inflight_test(const prog_t *program, int texel) {
     vk_buffer_destroy(&output[run]);
   }
   CHECK(mtl_last_fence() == guest_fence);
-  LOG("[vulkan descriptor inflight fixture] passed: texel=%d two owners, three submits, 18 descriptor sets, 1152 GPU words", texel);
+  LOG("[vulkan descriptor inflight fixture] passed: texel=%d two owners, three submits, %u descriptor sets, %u GPU words",texel,RUNS*set_count,RUNS*set_count*WORDS);
 }
 
 // 登记范围在提交尾读取最终值；显式封口后再写源缓冲也不能污染回读快照。
@@ -695,7 +711,7 @@ static void texel_submission_test(void) {
   CALL(nvnCommandBufferDispatchCompute, &cmd, 1, 1, 1);
   submit(end());
   for (unsigned i = 0; i < 64; i++) CHECK(output[i] == input[i] * 3 + 7);
-  descriptor_inflight_test((const prog_t *)&program, 1);
+  descriptor_inflight_test((const prog_t *)&program, 1,6);
   CALL(nvnProgramFinalize, &program);
   CALL(nvnTextureFinalize, &texture);
   CALL(nvnTexturePoolFinalize, &pool);

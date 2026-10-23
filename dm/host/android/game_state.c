@@ -259,10 +259,11 @@ static void observe_tick(const uint64_t *registers) {
     void vk_store_event_stats(uint64_t *,uint64_t *);
     void vk_bloom_quarter_blit_stats(uint64_t *,uint64_t *,uint64_t *);
     void vk_driver_constant_stats(uint64_t *,uint64_t *,uint64_t *,int *);
+    int vk_driver_span_reference_mode(void);
     uint64_t driver_last,driver_content,driver_misses;int driver_reference;
     vk_driver_constant_stats(&driver_last,&driver_content,&driver_misses,&driver_reference);
-    fprintf(state_log, ",\"driver_constants\":{\"reference\":%s,\"last_hits\":%llu,\"content_hits\":%llu,\"misses\":%llu}",
-      driver_reference?"true":"false",(unsigned long long)driver_last,
+    fprintf(state_log, ",\"driver_constants\":{\"reference\":%s,\"span_reference\":%s,\"last_hits\":%llu,\"content_hits\":%llu,\"misses\":%llu}",
+      driver_reference?"true":"false",vk_driver_span_reference_mode()?"true":"false",(unsigned long long)driver_last,
       (unsigned long long)driver_content,(unsigned long long)driver_misses);
     void vk_descriptor_batch_stats(uint64_t *,uint64_t *,int *);
     uint64_t descriptor_calls,descriptor_sets;int descriptor_batch_reference;
@@ -501,6 +502,18 @@ static void observe_tick(const uint64_t *registers) {
       (unsigned long long)window_bytes,(unsigned long long)window_admissions,
       (unsigned long long)window_added_bytes,(unsigned long long)window_added_spans,
       (unsigned long long)window_promotions,(unsigned long long)vk_pool_window_fallbacks());
+#ifdef DM_VULKAN_SHARED_POOLS
+    void vk_pool_lazy_window_stats(int *,uint64_t *,uint64_t *,uint64_t *,uint64_t *);
+    int lazy_active;uint64_t lazy_unique,lazy_mapped,lazy_nodes,lazy_covers;
+    vk_pool_lazy_window_stats(&lazy_active,&lazy_unique,&lazy_mapped,&lazy_nodes,&lazy_covers);
+    int vk_pool_shared_image_raw_observe_mode(void);
+    // Enabled policy only: each observation still proves its Pool/page eligibility.
+    fprintf(state_log, ",\"shared_image_raw_observe\":{\"experimental\":true,\"enabled_policy\":%s}",
+      vk_pool_shared_image_raw_observe_mode()?"true":"false");
+    fprintf(state_log, ",\"shared_lazy_windows\":{\"experimental\":true,\"active\":%s,\"logical_unique_bytes\":%llu,\"import_allocation_bytes\":%llu,\"import_nodes\":%llu,\"cover_nodes\":%llu}",
+      lazy_active?"true":"false",(unsigned long long)lazy_unique,(unsigned long long)lazy_mapped,
+      (unsigned long long)lazy_nodes,(unsigned long long)lazy_covers);
+#endif
     uint64_t storage_direct,storage_copies,storage_bytes;int storage_reference;
     vk_storage_bias_stats(&storage_direct,&storage_copies,&storage_bytes,&storage_reference);
     fprintf(state_log, ",\"storage_alignment\":{\"reference\":%s,\"direct\":%llu,\"copies\":%llu,\"bytes\":%llu}",

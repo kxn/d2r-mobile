@@ -166,7 +166,7 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
   VkCommandBufferBeginInfo bi={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     .flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT|VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
     .pInheritanceInfo=&inherit};
-  VK_CHECK(vkBeginCommandBuffer(j->secondary,&bi));V.cmd=j->secondary;
+  VK_CHECK(vk_command_begin(j->secondary,&bi));V.cmd=j->secondary;
   render_binding_reset(j);
 }
 // NONE preserves the untouched plane even when the other plane is writable.
@@ -608,7 +608,7 @@ void vk_render_end_at(const char *file, unsigned line) {
       .renderPass=j->final_pass?j->final_pass:j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
       .clearValueCount=j->attachment_count,.pClearValues=j->clears};
     vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-    vkCmdExecuteCommands(V.cmd,1,&j->secondary);vkCmdEndRenderPass(V.cmd);
+    vk_command_execute(1,&j->secondary);vkCmdEndRenderPass(V.cmd);
     // Read-only depth testing/sampling may share the pass. Its physical store
     // is an access at pass end, not an imaginary write by every depth test.
     // Record stores directly even while an outer descriptor batch is pending.
@@ -1265,6 +1265,87 @@ static VK_COLD_PHASE cached_pipeline *draw_pipeline_prepare(
   prepared_pipeline=cached;prepared_context=*context;prepared_streams=streams;
   *out_streams=streams;return cached;
 }
+// The attribute/divisor predicate remains in the draw. Positive expansion
+// owns all original CPU visibility, waits, allocation and per-instance reads.
+// Output arrays are the caller's existing arrays, with no packet/S snapshot.
+static VK_COLD_PHASE int draw_expand_instances(vk_shader *const list[6],
+    const p_draw_idx *idx,uint32_t expansion,vk_buffer *expanded[16],
+    uint32_t expanded_stride[16],int ghost_cpu_guard) {
+    uint64_t count = idx ? idx->instances : 1, base = idx ? idx->base_instance : 0;
+    int pending=0;
+    // CPU-authored instance attributes need no GPU drain. Prove every source
+    // range before allocating expanded temporaries: vk_pool_read can otherwise
+    // submit the current resource owner while another stream still uses it.
+    for(unsigned i=0;i<16;i++) if((expansion&(1u<<i))&&count) {
+      uint64_t stride=S.stream[i].stride,span=expanded_stride[i];
+      uint64_t last=(count-1)/S.stream[i].divisor;
+      if(base>UINT64_MAX-last || base+last>UINT64_MAX/stride)
+        die("Vulkan instance source overflow");
+      uint64_t start=base*stride,end=(base+last)*stride;
+      if(end>S.vertex[i].size || span>S.vertex[i].size-end ||
+         S.vertex[i].address>UINT64_MAX-start)
+        die("Vulkan instance source range invalid");
+      // Restore persistent deferred bytes before allocating any expanded temp.
+      if(ghost_cpu_guard && vk_ghost_replaying()) {
+        if(vk_pool_pending_writes(S.vertex[i].address+start,end-start+span) ||
+            vk_pool_cpu_unknown(S.vertex[i].address+start,end-start+span)) {
+          return 0;
+        }
+      } else if(V.options.pool_defer_publication)
+        vk_pool_cpu_prepare(S.vertex[i].address+start,end-start+span);
+      pending|=vk_pool_pending_writes(S.vertex[i].address+start,end-start+span);
+    }
+    if(pending) {
+      if(ghost_cpu_guard && vk_ghost_replaying()) {
+        return 0;
+      }
+      // Actual GPU-produced inputs retain the proven synchronous fallback.
+      // InstanceIndex/BaseInstance and CPU publication semantics are unchanged.
+      int wait_trace=vk_system_trace_begin("Vulkan vertex expansion waits GPU");
+      uint64_t fence=mtl_last_fence();
+      vk_internal_wait(vk_internal_commit());mtl_sub_begin();
+      vk_system_trace_end(wait_trace);
+      if(mtl_last_fence()!=fence) die("Internal vertex expansion advanced guest fence");
+    }
+    for (unsigned i = 0; i < 16; ++i) if (expansion & (1u << i)) {
+      uint32_t stride = (expanded_stride[i] + 3) & ~3u;
+      uint64_t elements = base + (count ? count : 1);
+      if (elements > UINT64_MAX / stride) die("Vulkan instance expansion overflow");
+      expanded_stride[i] = stride;
+      expanded[i] = vk_temp_buffer(elements * stride);
+      vk_buffer *source;
+      uint64_t offset;
+      if (!S.vertex[i].address ||
+          !vk_pool_address_stage(S.vertex[i].address,S.vertex[i].size,(void **)&source,&offset,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT))
+        die("Vulkan instance source outside pool");
+      // 只复制实际用到的属性跨度，既支持紧密的字节属性，也不越过最后一项。
+      // Copy the actual attribute span, supporting packed byte attributes
+      // without reading beyond the final source element.
+      unsigned span = 0;
+      for (unsigned a = 0; a < 16; ++a)
+        if ((list[0]->input_mask & (1u << a)) && S.attr[a].fmt && S.attr[a].stream == i) {
+          unsigned end = S.attr[a].offset + nvn_fmt_bpb(S.attr[a].fmt, NULL, NULL);
+          if (end > span) span = end;
+        }
+      for (uint64_t instance = 0; instance < count; ++instance) {
+        uint64_t element = base + instance / S.stream[i].divisor;
+        if (element > UINT64_MAX / S.stream[i].stride)
+          die("Vulkan instance source overflow");
+        uint64_t at = element * S.stream[i].stride;
+        if (at > S.vertex[i].size || span > S.vertex[i].size - at)
+          die("Vulkan instance source range invalid");
+        if(ghost_cpu_guard && vk_ghost_replaying()) {
+          if(vk_pool_try_read(S.vertex[i].address+at,span,
+                              expanded[i]->map+(base+instance)*stride)!=1) {
+            return 0;
+          }
+        } else if(vk_pool_read(S.vertex[i].address+at,span,
+                               expanded[i]->map+(base+instance)*stride)<0)
+          die("Vulkan instance source CPU read failed");
+      }
+    }
+  return 1;
+}
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
 static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   vk_texture_lookup_scope_begin();int source_operation=vk_shader_image_sources_begin();
@@ -1311,7 +1392,7 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   // it must never demand/commit inside an outer draw's borrowed resources.
   if(cpu_preflight && !vk_ghost_replaying())vk_shader_cpu_sources(list,&S,0);
   draw_pool_plan pool_plan={idx};
-  int pool_operation=vk_pool_operation_begin(draw_pool_collect,&pool_plan);
+  int pool_operation=vk_pool_draw_operation_begin(draw_pool_collect,&pool_plan);
   vk_texel_storage_selection texel_selection;
   if(list[1] && list[1]->texel_storage_alternative) {
     uint32_t storage_descriptors=0;
@@ -1394,80 +1475,8 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
         if (span > expanded_stride[stream]) expanded_stride[stream] = span;
       }
     }
-  if (expansion) {
-    uint64_t count = idx ? idx->instances : 1, base = idx ? idx->base_instance : 0;
-    int pending=0;
-    // CPU-authored instance attributes need no GPU drain. Prove every source
-    // range before allocating expanded temporaries: vk_pool_read can otherwise
-    // submit the current resource owner while another stream still uses it.
-    for(unsigned i=0;i<16;i++) if((expansion&(1u<<i))&&count) {
-      uint64_t stride=S.stream[i].stride,span=expanded_stride[i];
-      uint64_t last=(count-1)/S.stream[i].divisor;
-      if(base>UINT64_MAX-last || base+last>UINT64_MAX/stride)
-        die("Vulkan instance source overflow");
-      uint64_t start=base*stride,end=(base+last)*stride;
-      if(end>S.vertex[i].size || span>S.vertex[i].size-end ||
-         S.vertex[i].address>UINT64_MAX-start)
-        die("Vulkan instance source range invalid");
-      // Restore persistent deferred bytes before allocating any expanded temp.
-      if(ghost_cpu_guard && vk_ghost_replaying()) {
-        if(vk_pool_pending_writes(S.vertex[i].address+start,end-start+span) ||
-            vk_pool_cpu_unknown(S.vertex[i].address+start,end-start+span)) {
-          free(local_ready);vk_pool_operation_end(pool_operation);return;
-        }
-      } else if(V.options.pool_defer_publication)
-        vk_pool_cpu_prepare(S.vertex[i].address+start,end-start+span);
-      pending|=vk_pool_pending_writes(S.vertex[i].address+start,end-start+span);
-    }
-    if(pending) {
-      if(ghost_cpu_guard && vk_ghost_replaying()) {
-        free(local_ready);vk_pool_operation_end(pool_operation);return;
-      }
-      // Actual GPU-produced inputs retain the proven synchronous fallback.
-      // InstanceIndex/BaseInstance and CPU publication semantics are unchanged.
-      int wait_trace=vk_system_trace_begin("Vulkan vertex expansion waits GPU");
-      uint64_t fence=mtl_last_fence();
-      vk_internal_wait(vk_internal_commit());mtl_sub_begin();
-      vk_system_trace_end(wait_trace);
-      if(mtl_last_fence()!=fence) die("Internal vertex expansion advanced guest fence");
-    }
-    for (unsigned i = 0; i < 16; ++i) if (expansion & (1u << i)) {
-      uint32_t stride = (expanded_stride[i] + 3) & ~3u;
-      uint64_t elements = base + (count ? count : 1);
-      if (elements > UINT64_MAX / stride) die("Vulkan instance expansion overflow");
-      expanded_stride[i] = stride;
-      expanded[i] = vk_temp_buffer(elements * stride);
-      vk_buffer *source;
-      uint64_t offset;
-      if (!S.vertex[i].address ||
-          !vk_pool_address_stage(S.vertex[i].address,S.vertex[i].size,(void **)&source,&offset,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT))
-        die("Vulkan instance source outside pool");
-      // 只复制实际用到的属性跨度，既支持紧密的字节属性，也不越过最后一项。
-      // Copy the actual attribute span, supporting packed byte attributes
-      // without reading beyond the final source element.
-      unsigned span = 0;
-      for (unsigned a = 0; a < 16; ++a)
-        if ((list[0]->input_mask & (1u << a)) && S.attr[a].fmt && S.attr[a].stream == i) {
-          unsigned end = S.attr[a].offset + nvn_fmt_bpb(S.attr[a].fmt, NULL, NULL);
-          if (end > span) span = end;
-        }
-      for (uint64_t instance = 0; instance < count; ++instance) {
-        uint64_t element = base + instance / S.stream[i].divisor;
-        if (element > UINT64_MAX / S.stream[i].stride)
-          die("Vulkan instance source overflow");
-        uint64_t at = element * S.stream[i].stride;
-        if (at > S.vertex[i].size || span > S.vertex[i].size - at)
-          die("Vulkan instance source range invalid");
-        if(ghost_cpu_guard && vk_ghost_replaying()) {
-          if(vk_pool_try_read(S.vertex[i].address+at,span,
-                              expanded[i]->map+(base+instance)*stride)!=1) {
-            free(local_ready);vk_pool_operation_end(pool_operation);return;
-          }
-        } else if(vk_pool_read(S.vertex[i].address+at,span,
-                               expanded[i]->map+(base+instance)*stride)<0)
-          die("Vulkan instance source CPU read failed");
-      }
-    }
+  if (expansion && !draw_expand_instances(list,idx,expansion,expanded,expanded_stride,ghost_cpu_guard)) {
+    free(local_ready);vk_pool_operation_end(pool_operation);return;
   }
   if (vk_trace_frame_active()) {
     LOG("[vulkan trace] frame=%llu draw=%llu vs=%s ps=%s count=%u first=%u "
@@ -1508,7 +1517,8 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
     if(kind==1 && reg>=3 && reg<19) buffer=&S.ubo[0][reg-3];
     if((kind==2||kind==8) && reg>=0 && reg<16)
       buffer=kind==8?&S.ubo[0][reg]:&S.ssbo[0][reg];
-    if(buffer) vk_buffer_vertex_require(buffer->addr,buffer->size);
+    if(buffer && buffer->addr && buffer->size)
+      vk_buffer_vertex_require(buffer->addr,buffer->size);
   }
   // Consecutive attributes often share one complete VBO range. Only reuse
   // the immediately preceding require in this draw; a different range must
@@ -1532,7 +1542,9 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
       previous_vertex_valid=command==V.cmd && serial==vk_recording_serial() && pass==V.passes &&
           epoch==V.buffer_epoch && state==vk_pipeline_state_epoch();
     }
-  if(idx) vk_buffer_vertex_require(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4));
+  // Empty indexed draws bind a valid address but fetch no index bytes.
+  // size==0 remains the distinct unknown-extent VBO contract.
+  if(idx && idx->count) vk_buffer_vertex_require(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4));
   VkDescriptorSet sets[6] = {0};
   if(S.targets.n<0 || S.targets.n>8) die("Vulkan color target count");
   for(int k=0;k<S.targets.n;k++) if(S.targets.color[k])
@@ -1841,7 +1853,10 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
       die("Vulkan 8-bit indices pending");
     vk_buffer *b;
     uint64_t off;
-    if (!vk_pool_address_stage(idx->ibuf,(uint64_t)idx->count*(idx->itype==1?2:4),
+    // Match admission and original Metal: prove the binding address even
+    // when no indices are fetched. The one-byte ledger use is conservative.
+    uint64_t index_bytes=idx->count?(uint64_t)idx->count*(idx->itype==1?2:4):1;
+    if (!vk_pool_address_stage(idx->ibuf,index_bytes,
                   (void **)&b,&off,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT))
       die("Vulkan index buffer missing");
     render_bind_index(j,b->handle,off,

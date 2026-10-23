@@ -109,6 +109,30 @@ static void pool_operation_bound_nodes(pool_operation_plan *plan) {
   }
   pthread_mutex_unlock(&V.resources);
 }
+#ifdef DM_VULKAN_SHARED_POOLS
+static void shared_lazy_pin_recorded(pool *p) {
+  if(!pool_operation_depth)return;
+  pool_operation_plan *plan=pool_operation_plans[pool_operation_depth-1];
+  for(size_t k=0;k<plan->pin_count;k++)if(plan->pins[k]==p)return;
+  if(plan->pin_count==VK_POOL_RESERVE_MAX_REQUIREMENTS || !recording_resources ||
+      p->access_serial!=recording_resources->queue_serial || !p->recording_access)
+    die("Shared lazy actual recording borrow missing");
+  size_t k=plan->pin_count++;
+  plan->pins[k]=p;plan->owned_pins[k/64]&=~(UINT64_C(1)<<(k%64));
+  plan->borrowed_recording_serial=recording_resources->queue_serial;
+}
+static void shared_lazy_pin_locked(pool *p) {
+  if(!pool_operation_depth)return;
+  pool_operation_plan *plan=pool_operation_plans[pool_operation_depth-1];
+  for(size_t k=0;k<plan->pin_count;k++)if(plan->pins[k]==p)return;
+  if(recording_resources && p->access_serial==recording_resources->queue_serial && p->recording_access) {
+    shared_lazy_pin_recorded(p);return;
+  }
+  if(plan->pin_count==VK_POOL_RESERVE_MAX_REQUIREMENTS)die("Shared lazy operation owner capacity");
+  size_t k=plan->pin_count++;plan->pins[k]=p;
+  plan->owned_pins[k/64]|=UINT64_C(1)<<(k%64);plan->owned_pin_count++;p->references++;
+}
+#endif
 static int pool_operation_pin(pool_operation_plan *plan) {
   pool_operation_geometry_begin(plan);
   int good=1,geometry_epoch_checked=0;pthread_mutex_lock(&V.resources);
@@ -159,6 +183,9 @@ static int pool_operation_retains_locked(const pool *p) {
 // immediately after reopen, before the interrupted original operation.
 static void pool_policy_promote(uint64_t base,uint64_t identity,int reopen,
     const vk_pool_requirement *trigger) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_lazy_active)die("Shared lazy imports cannot migrate or quiescent-promote");
+#endif
   if(pool_operation_depth || pool_maintenance || vk_shader_operation_active() ||
       vk_texture_binding_scope_active() || vk_texture_shader_collecting())
     die("Vulkan pool promotion attempted while physical handles are borrowed");
@@ -210,6 +237,9 @@ static int pool_window_full_reference(void) {
       (atomic_load(&pool_sync_requested)<0 && atomic_load(&pool_sync_active));
 }
 static void pool_window_before_submission(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_lazy_active && pool_window_full_reference())die("Shared lazy imports cannot enable whole-pool sync reference");
+#endif
   if(!V.options.pool_window_bytes || V.cmd || pool_maintenance || !pool_window_full_reference())return;
   // A reference transition is global, before begin creates a recording owner.
   // Even an unrelated partial pool must be whole before eager sync visits it.
@@ -224,13 +254,24 @@ static void pool_window_before_submission(void) {
   }
   die("Vulkan whole-reference pool registry did not settle");
 }
-int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
+static int pool_operation_begin(vk_pool_operation_collect collect,void *context,int lazy_draw) {
   if(!V.options.pool_window_bytes)return 0;
   if(!collect || pool_operation_depth==POOL_OPERATION_DEPTH)
     die("Vulkan invalid/nested pool operation plan");
   pool_operation_plan **slot=&pool_operation_plans[pool_operation_depth];
   if(!*slot) {*slot=calloc(1,sizeof **slot);if(!*slot)die("Vulkan pool operation scratch allocation");}
   pool_operation_plan *plan=*slot;
+#ifndef DM_VULKAN_SHARED_POOLS
+  (void)lazy_draw;
+#endif
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_lazy_active && lazy_draw) {
+    if(pool_window_full_reference())die("Shared lazy imports cannot enable whole-pool sync reference");
+    if(plan->pin_count || plan->owned_pin_count)die("Shared lazy stale operation borrows");
+    plan->count=0;plan->geometry_registry_epoch=0;
+    return (int)++pool_operation_depth; // consumers retain actual owners lazily
+  }
+#endif
   for(unsigned tries=0;tries<VK_POOL_RESERVE_MAX_REQUIREMENTS;tries++) {
     if(plan->pin_count)die("Vulkan stale operation plan pins");
     plan->count=0;
@@ -265,6 +306,14 @@ int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
     return (int)++pool_operation_depth;
   }
   die("Vulkan pool operation registry did not settle");return 0;
+}
+// Generic copy/transfer/dispatch admission must precede physical observation.
+// Only draw's complete actual-consumer path opts into demand-only imports.
+int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
+  return pool_operation_begin(collect,context,0);
+}
+int vk_pool_draw_operation_begin(vk_pool_operation_collect collect,void *context) {
+  return pool_operation_begin(collect,context,1);
 }
 typedef struct {const vk_pool_requirement *ranges;size_t count;} pool_range_batch;
 static int pool_collect_batch(void *context,vk_pool_requirement_sink sink,void *out) {

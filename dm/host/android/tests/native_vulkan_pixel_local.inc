@@ -84,6 +84,26 @@ static int pixel_local_render_test(void) {
   NVNshaderData shaders[]={{.control=controls[0]},{.control=controls[1]}};
   CHECK(CALL(nvnProgramInitialize,&producer,&device));CHECK(CALL(nvnProgramSetShaders,&producer,2,shaders));
   shaders[1].control=controls[2];CHECK(CALL(nvnProgramInitialize,&consumer,&device));CHECK(CALL(nvnProgramSetShaders,&consumer,2,shaders));
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_DRIVER_PROOF_DPL_ALT_FIXTURE")) {
+    CHECK(vk_pixel_local_enabled());vk_shader *base=vk_shader_get(controls[2]);
+    // Seed logical proof pointers before the first real DPL alternative is
+    // created. Restore the base before any draw; only the new module must
+    // discard an authorization that does not cover its code bytes.
+    vk_driver_schema *schemas[2]={base->driver_schema[0],base->driver_schema[1]};
+    struct {uint32_t count;uint16_t words[2];} schema={.count=1};
+    uint32_t spans[2]={base->driver_span[0],base->driver_span[1]};VkShaderModule token=base->driver_span_module;
+    base->driver_schema[0]=base->driver_schema[1]=(vk_driver_schema *)&schema;
+    base->driver_span[0]=base->driver_span[1]=4096;base->driver_span_module=base->module;
+    const vk_pixel_local_proof *proof=vk_shader_pixel_local(base,base->module);
+    base->driver_schema[0]=schemas[0];base->driver_schema[1]=schemas[1];
+    memcpy(base->driver_span,spans,sizeof spans);base->driver_span_module=token;
+    CHECK(proof && proof->shader && proof->shader!=base);
+    CHECK(proof->shader->module!=base->module);
+    CHECK(!proof->shader->driver_schema[0] && !proof->shader->driver_schema[1]);
+    CHECK(proof->shader->driver_span_module!=proof->shader->module);
+  }
+#endif
   shaders[1].control=controls[3];CHECK(CALL(nvnProgramInitialize,&single,&device));CHECK(CALL(nvnProgramSetShaders,&single,2,shaders));
   shaders[1].control=controls[4];CHECK(CALL(nvnProgramInitialize,&neighbor,&device));CHECK(CALL(nvnProgramSetShaders,&neighbor,2,shaders));
   shaders[1].control=controls[5];CHECK(CALL(nvnProgramInitialize,&alpha,&device));CHECK(CALL(nvnProgramSetShaders,&alpha,2,shaders));

@@ -436,6 +436,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_quad.inc"
 #include "native_vulkan_extrap.inc"
 #include "native_vulkan_submit.inc"
+#include "native_vulkan_descriptor_pool.inc"
 #include "native_vulkan_command_reset.inc"
 #include "native_vulkan_buffer_partition.inc"
 #include "native_vulkan_pool.inc"
@@ -461,6 +462,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_present.inc"
 #include "native_vulkan_sampled_array.inc"
 #include "native_vulkan_bc_cpu_scratch.inc"
+#include "native_vulkan_upload_regions.inc"
 #include "native_vulkan_clear_group.inc"
 #include "native_vulkan_vertex_binding.inc"
 #include "native_vulkan_vertex_require.inc"
@@ -482,6 +484,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_upload_page_span.inc"
 #include "native_vulkan_scan_pairs.inc"
 #include "native_vulkan_idle_trim.inc"
+#include "native_vulkan_driver_span.inc"
 #include "native_vulkan_pool_access_cache.inc"
 #include "native_vulkan_temp_age.inc"
 #include "native_vulkan_image_trim.inc"
@@ -490,6 +493,7 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_ds_plane_store.inc"
 #include "native_vulkan_astc_decode.inc"
 #include "native_vulkan_event.inc"
+#include "native_vulkan_compute_bind.inc"
 #ifdef DM_VULKAN_SHARED_POOLS
 extern int vk_test_fixed_shared_pool(uint64_t,int *,int *,uint32_t *);
 extern void vk_test_shared_close_arm(void),vk_test_shared_close_wait(void);
@@ -576,8 +580,67 @@ static void review_generic_cpu_write(void *destination) {
   dm_guest_write_prepare(destination,sizeof(uint32_t));
   __atomic_store_n((uint32_t *)destination,7,__ATOMIC_RELEASE);
 }
+#ifndef DM_ANDROID_APP
+// Real GPU publication held pending by the existing completion callback gate.
+// CPU begin either observes disjoint bytes safely or rejects a true dependency;
+// no sleeps, elapsed measurements, completion spoofing or game code.
+static void shared_image_observe_dependency_test(const char *mode) {
+  int cpu=!strcmp(mode,"image-observe-cpu"),same=!strcmp(mode,"image-observe-same"),
+      cache=!strcmp(mode,"image-observe-cache");
+  CHECK(cpu || same || cache || !strcmp(mode,"image-observe-neighbor"));
+  CHECK(V.timeline_semaphore && vk_async_submissions());
+  int on=V.options.shared_image_raw_observe;
+  CHECK(!setenv("DM_VK_SHARED_IMAGE_RAW_OBSERVE",on?"0":"1",1));
+  CHECK(V.options.shared_image_raw_observe==on); // cold selection never re-reads env
+  uint32_t *a=(void *)(bytes+(3u<<20)),*b=same?a:a+64,*c=a+128;
+  *a=0;*b=0x55;*c=0;
+  // Import real coherent Buffer storage before acquiring its CPU image scope.
+  mtl_sub_begin();review_fill_shared(c,3);vk_internal_wait(vk_internal_commit());
+  nvn_dirty_scope *scope=nvn_dirty_scope_acquire(b,4);CHECK(scope);
+  if(cache) {extern void vk_test_shared_dependency_arm(int);vk_test_shared_dependency_arm(1);}
+  extern int vk_test_shared_image_raw_scope(uint64_t,uint64_t,int);
+  int allow=vk_test_shared_image_raw_scope((uintptr_t)b,4,0);
+  CHECK(allow==(on && !cache && !getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE")));
+  for(int edge=1;edge<=4;edge++)CHECK(!vk_test_shared_image_raw_scope((uintptr_t)b,4,edge));
+  mtl_sub_begin();if(!cpu)review_fill_shared(a,7);
+  vk_completion(review_effect_gate,NULL);
+  if(cpu)vk_completion_write(review_generic_cpu_write,a,a,sizeof *a);
+  uint64_t first=vk_internal_commit();
+  pthread_mutex_lock(&review_effect_mu);
+  while(!review_effect_entered)pthread_cond_wait(&review_effect_cv,&review_effect_mu);
+  pthread_mutex_unlock(&review_effect_mu);
+  // This old raw query may cache a negative. It cannot suppress the larger
+  // CPU-effect page query in the split-scope prepare/begin below.
+  mtl_sub_begin();CHECK(vk_pool_pending_writes((uintptr_t)b,4)==same);
+  int current_gpu=!cpu && !cache && !getenv("DM_SHARED_IMAGE_FORCE_PREWRITE_GATE");
+  if(current_gpu)review_fill_shared(c,9);uint64_t recording=vk_recording_serial();VkCommandBuffer command=V.cmd;
+  vk_shared_cpu_observation token={0};
+  if(allow && !cpu && !same) {
+    CHECK(vk_pool_shared_cpu_observe_prepare((uintptr_t)b,4));
+    CHECK(vk_recording_serial()==recording && V.cmd==command); // no neighbor-only forced submit
+    CHECK(vk_pool_shared_cpu_observe_begin((uintptr_t)b,4,&token));
+    CHECK(*b==0x55);vk_pool_shared_cpu_observe_end(&token);
+    pthread_mutex_lock(&review_effect_mu);CHECK(!review_effect_release);pthread_mutex_unlock(&review_effect_mu);
+  } else CHECK(!vk_pool_shared_cpu_observe_begin((uintptr_t)b,4,&token));
+  pthread_mutex_lock(&review_effect_mu);review_effect_release=1;
+  pthread_cond_broadcast(&review_effect_cv);pthread_mutex_unlock(&review_effect_mu);
+  vk_internal_wait(first);vk_internal_wait(vk_internal_commit());
+  CHECK(*a==7 && *b==(same?7u:0x55u) && *c==(current_gpu?9u:3u));
+  // True producer completion now makes the same real image source readable.
+  CHECK(vk_pool_shared_cpu_observe_prepare((uintptr_t)b,4));
+  CHECK(vk_pool_shared_cpu_observe_begin((uintptr_t)b,4,&token));
+  CHECK(*b==(same?7u:0x55u));vk_pool_shared_cpu_observe_end(&token);
+  uint32_t gpu_read=0;mtl_sub_begin();pool_window_read((uint8_t *)b,4,(uint8_t *)&gpu_read);
+  vk_internal_wait(vk_internal_commit());CHECK(gpu_read==(same?7u:0x55u));
+  nvn_dirty_scope_release(scope);
+  printf("{\"test_details\":\"shared-image-byte-observation\",\"mode\":\"%s\",\"startup_raw\":%d,\"actual_GPU_bytes\":true,\"CPU_page_preserved\":true,\"raw_negative_cache_not_page_proof\":true,\"guard_metadata_edges_not_NC_hardware\":true}\n",mode,on);
+}
+#endif
 static void fixed_shared_dependency_test(void) {
   const char *mode=getenv("DM_FIXED_SHARED_DEPENDENCY_TEST");
+#ifndef DM_ANDROID_APP
+  if(!strncmp(mode,"image-observe-",14)) {shared_image_observe_dependency_test(mode);return;}
+#endif
   int separate=!strcmp(mode,"disjoint"),cache=!strcmp(mode,"cache-phase"),page=!strcmp(mode,"page-effect") || !strcmp(mode,"page-effect-roi-negative");
   int gpu_only=!strcmp(mode,"gpu-only");
   CHECK(separate || cache || page || gpu_only || !strcmp(mode,"cpu-effect") || !strcmp(mode,"same-recording"));
@@ -690,6 +753,7 @@ static void fixed_shared_buffer_test(void) {
 }
 #include "native_vulkan_shared_image.inc"
 #include "native_vulkan_shared_import_windows.inc"
+#include "native_vulkan_shared_lazy_alias.inc"
 #endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 #include "native_vulkan_native_resource.inc"
@@ -699,6 +763,13 @@ static void fixed_shared_buffer_test(void) {
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  const char *span_reference=getenv("DM_DRIVER_SPAN_REFERENCE");
+  if(span_reference) {
+    CHECK(!strcmp(span_reference,"0") || !strcmp(span_reference,"1"));
+    vk_driver_span_reference_startup(!strcmp(span_reference,"1"));
+  }
+#endif
 #ifdef DM_VULKAN_SHARED_POOLS
   if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE"))vk_legacy_astc_copy_startup(1);
 #endif
@@ -714,7 +785,10 @@ int dm_vulkan_test_main(void) {
     dm_gfx_suspend(0);
   }
   vk_graphics_prepare_mode(2);
-  setenv("DM_TEST_VULKAN_DESCRIPTOR_POOL_SETS", "4", 1);
+#ifndef DM_ANDROID_APP
+  if(!getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE"))
+#endif
+    setenv("DM_TEST_VULKAN_DESCRIPTOR_POOL_SETS", "4", 1);
   setenv("DM_VULKAN_GPU_PROFILE", "1", 1);
   setenv("DM_VULKAN_STORE_CHECK", "1", 1);
   {
@@ -771,6 +845,11 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
+  if(getenv("DM_COMPUTE_BIND_FIXTURE")) {compute_bind_test();return 0;}
+  if(getenv("DM_DESCRIPTOR_POOL_BLOCK_FIXTURE")) {
+    descriptor_pool_block_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"descriptor-pool-blocks\",\"checks\":%u,\"physical_sets\":512,\"retention_budget\":2048,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){vk_test_image_source_flow(1);source_flow_observe=1;}
   if(getenv("DM_IMAGE_SOURCE_FLOW_FIXTURE")) {
@@ -851,6 +930,9 @@ int dm_vulkan_test_main(void) {
   }
   if(getenv("DM_MIXED_COMPRESSED_COPY_FIXTURE")) {mixed_compressed_copy_test();return 0;}
   if(getenv("DM_SHARED_WINDOW_STARTUP_FALLBACK_FIXTURE")) {shared_window_startup_fallback_test();return 0;}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && defined(DM_VULKAN_SHARED_IMPORT_WINDOWS)
+  if(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE") && !strcmp(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE"),"1")) {shared_lazy_alias_gpu_test();return 0;}
+#endif
   if(getenv("DM_SHARED_IMPORT_WINDOW_FIXTURE")) {shared_import_windows_test();return 0;}
   if(getenv("DM_SHARED_IMAGE_NC_GATE_FIXTURE"))return shared_image_nc_gate_test();
 #ifdef DM_VULKAN_NATIVE_RESOURCES
@@ -904,6 +986,9 @@ int dm_vulkan_test_main(void) {
     return 0;
   }
   if(getenv("DM_IMAGE_PRESSURE_TRIM_FIXTURE")) {image_pressure_trim_test();printf("{\"test\":\"image-pressure-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_TEXTURE_UPLOAD_REGIONS_FIXTURE")) {upload_regions_gpu_test();printf("{\"test\":\"texture-upload-regions\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#endif
   if(getenv("DM_BC_CPU_SCRATCH_FIXTURE")) {bc_cpu_scratch_test();printf("{\"test\":\"bc-cpu-scratch\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_RETAINED_UPDATE_FIXTURE")) {retained_update_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"retained-update\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_TEXTURE_RANGE_DIRTY_FIXTURE")) {texture_range_dirty_proof_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"texture-range-dirty\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
@@ -911,6 +996,9 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_UPLOAD_PAGE_SPAN_FIXTURE")) {upload_page_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"upload-page-span\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_ACCESS_CACHE_FIXTURE")) {pool_access_cache_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-access-cache\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {idle_cache_trim_test();printf("{\"test\":\"idle-cache-trim\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_DRIVER_SPAN_FIXTURE")) {driver_span_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"driver-span\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;}
+#endif
   if(getenv("DM_TEMP_CACHE_AGE_FIXTURE")) {temporary_cache_age_test();printf("{\"test\":\"temporary-cache-age\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_PUBLICATION_FIXTURE")) {pool_publication_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-publication\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
   if(getenv("DM_POOL_BINDING_MASK_FIXTURE")) {shader_pool_ranges_test();pool_binding_mask_gpu_test();CHECK(vk_validation_error_count()==0);printf("{\"test\":\"pool-binding-mask\",\"checks\":%u,\"result\":\"passed\"}\n",checks);return 0;}
@@ -1128,7 +1216,7 @@ int dm_vulkan_test_main(void) {
   submit(end());
   for (unsigned i = 0; i < 256; i++)
     CHECK(dst[i] == src[i] * 3 + 7);
-  descriptor_inflight_test((const prog_t *)&compute, 0);
+  descriptor_inflight_test((const prog_t *)&compute, 0,6);
   CALL(nvnCommandBufferBeginRecording, &cmd);
   CALL(nvnCommandBufferBindStorageBuffer, &cmd, NVN_SHADER_STAGE_COMPUTE, 0,
        (uintptr_t)(src + 1), 1024);
@@ -2408,7 +2496,9 @@ int dm_vulkan_test_main(void) {
   deferred_mip_clear_test(controls[0],controls[1],controls[5],controls[9],controls[2]);
   logical_preflight_test(controls[3],controls[4]);
   pending_cpu_read_test();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   driver_compact_key_test();
+#endif
   buffer_visibility_intersection_test(controls[0],controls[5]);
   texel_storage_bits_test(controls[0]);
   compute_sample_layout_test();
