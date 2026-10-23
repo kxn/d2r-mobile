@@ -452,7 +452,12 @@ typedef struct {unsigned kind,calls;const tex_t *texture;VkImageView old_view;} 
 static void attachment_fixture_mutate(void *opaque) {
   attachment_fixture_context *context=opaque;context->calls++;
   CHECK(vk_render_active());
-  if(context->kind==1)vk_render_end();
+  if(context->kind>=4) {
+    extern void vk_test_raster_observe(unsigned);
+    if(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN") && !strcmp(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN"),"1"))
+      vk_test_raster_observe(context->kind-4);
+  }
+  else if(context->kind==1)vk_render_end();
   else {
     if(context->kind==2)CHECK(vk_texture_view(2,1)!=VK_NULL_HANDLE);
     else {
@@ -1644,6 +1649,51 @@ int dm_vulkan_test_main(void) {
   }
 #endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  // Actual ordinary FS sampling plus repeated attachment writes. The original
+  // reference history algorithm is the private oracle; no fabricated GPU work.
+  if(getenv("DM_ATTACHMENT_RASTER_FIXTURE")) {
+    extern void vk_test_raster_stats(uint64_t out[5]);
+    extern void vk_test_raster_after_draws(unsigned,void (*)(void *),void *);
+    int enabled=getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN") &&
+        !strcmp(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN"),"1");
+    vk_sample_liveness_reference(0);
+    for(unsigned kind=0;kind<8;kind++) {
+      extern void vk_test_raster_interleave(unsigned);
+      extern unsigned vk_test_raster_forced_expands(void);
+      vk_test_raster_interleave(kind==6?1:(kind==7 && enabled?2:0));
+      uint64_t before[5],after[5];vk_test_raster_stats(before);
+      attachment_fixture_context context={.kind=kind>=4?kind:1,.texture=(const tex_t *)&output};
+      if(kind>=3 && kind<=5)vk_test_raster_after_draws(4,attachment_fixture_mutate,&context);
+      CALL(nvnCommandBufferBeginRecording,&cmd);
+      CALL(nvnCommandBufferSetScissor,&cmd,0,0,kind==2?8:16,16);
+      CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){1,0,1,1},15);
+      for(unsigned k=0;k<8;k++) {
+        if(k==4 && kind==1)CALL(nvnCommandBufferBarrier,&cmd,NVN_BARRIER_ORDER_PRIMITIVES_BIT);
+        if(k==4 && kind==2)CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
+        CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+      }
+      CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+      submit(end());vk_test_raster_after_draws(0,NULL,NULL);
+      vk_test_raster_stats(after);
+      CHECK(context.calls==(unsigned)(kind>=3 && kind<=5));
+      if(kind==6)CHECK(after[1]==before[1]);
+      else if(enabled) {CHECK(after[1]-before[1]>=(kind==7?4:6));CHECK(after[2]>before[2]);CHECK(after[4]>before[4]);}
+      if(kind==7 && enabled)CHECK(vk_test_raster_forced_expands()==1);
+      vk_test_raster_interleave(0);
+      if(!enabled)CHECK(after[1]==before[1] && after[4]==before[4]);
+      CALL(nvnTextureReadTexels,&output,NULL,&region,pixels);
+      for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
+        const uint8_t *p=pixels+(y*16+x)*4;
+        CHECK(p[0]==x*17 && p[1]==y*17 && p[2]==64 && p[3]==255);
+      }
+      LOG("[raster targeted fixture] kind=%u enabled=%d hot=%llu scatters=%llu oracle=%llu callbacks=%u pixels=passed",
+          kind,enabled,(unsigned long long)(after[1]-before[1]),
+          (unsigned long long)(after[2]-before[2]),(unsigned long long)(after[4]-before[4]),context.calls);
+    }
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"attachment-raster-run\",\"result\":\"passed\",\"checks\":%u,\"game_modules_executed\":false}\n",checks);
+    return 0;
+  }
   // Actual uncounted draw, after an ordinary clear has begun the borrowed job.
   // The RESET after drawing proves this draw dead without suppressing pixels.
   vk_sample_liveness_reference(0);
@@ -2068,18 +2118,40 @@ int dm_vulkan_test_main(void) {
             pixel[3] == 255);
     }
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  extern void vk_test_raster_stats(uint64_t out[5]);
+  if(getenv("DM_ATTACHMENT_RASTER_DEPTH_FIXTURE")) {
+    // Earlier raw-view promotion tests deliberately mark their output external.
+    // Use a new ordinary target; do not weaken the production exclusion.
+    NVNtextureBuilder rb;CALL(nvnTextureBuilderSetDefaults,&rb);
+    CALL(nvnTextureBuilderSetDevice,&rb,&device);CALL(nvnTextureBuilderSetTarget,&rb,NVN_TEXTURE_TARGET_2D);
+    CALL(nvnTextureBuilderSetWidth,&rb,16);CALL(nvnTextureBuilderSetHeight,&rb,16);
+    CALL(nvnTextureBuilderSetFormat,&rb,NVN_FORMAT_RGBA8);
+    CALL(nvnTextureBuilderSetStorage,&rb,&memory,(3<<20)+1015808);
+    CHECK(CALL(nvnTextureInitialize,&output,&rb));
+  }
+  uint64_t raster_ds_before[5];vk_test_raster_stats(raster_ds_before);
+  extern void vk_test_raster_interleave(unsigned);
+  extern unsigned vk_test_raster_forced_expands(void);
+  if(getenv("DM_ATTACHMENT_RASTER_DEPTH_LATE"))vk_test_raster_interleave(3);
   uint64_t ds_attachment_hits_before,ds_attachment_retries_before;
   vk_test_attachment_reuse_stats(&ds_attachment_hits_before,&ds_attachment_retries_before);
 #endif
   CALL(nvnCommandBufferBeginRecording, &cmd);
+  if(getenv("DM_ATTACHMENT_RASTER_DEPTH_FIXTURE")) {
+    CALL(nvnCommandBufferSetRenderTargets,&cmd,1,colors,NULL,&depth_texture,NULL);
+    CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){0,0,0,1},15);
+  }
   // An identical logical target rebind separates planning proofs, while the
   // physical pass may remain open. A later writer must upgrade the readonly
   // layout through a real pass end before writing, never discard the write.
   CALL(nvnCommandBufferBindProgram,&cmd,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
   CALL(nvnCommandBufferBindSeparateTextures,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,1,&th);
   CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
-  // A second real readonly draw exercises the warm job before switching roles.
-  CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+  // The optional run fixture keeps the original mixed FS-read / readonly-DS
+  // consumer, then exercises the original later writer and sampled result.
+  unsigned readonly_repeats=getenv("DM_ATTACHMENT_RASTER_DEPTH_FIXTURE")?7:1;
+  for(unsigned k=0;k<readonly_repeats;k++)
+    CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
   CALL(nvnCommandBufferSetRenderTargets,&cmd,1,colors,NULL,&depth_texture,NULL);
   CALL(nvnDepthStencilStateSetDepthWriteEnable, &depth_state, 1);
   CALL(nvnCommandBufferBindDepthStencilState, &cmd, &depth_state);
@@ -2109,6 +2181,20 @@ int dm_vulkan_test_main(void) {
   else CHECK(ds_attachment_hits_after==ds_attachment_hits_before);
   LOG("[attachment reuse depth fixture] warm_readonly=%llu; original later depth write and sampled pixels passed",
       (unsigned long long)(ds_attachment_hits_after-ds_attachment_hits_before));
+  if(getenv("DM_ATTACHMENT_RASTER_DEPTH_FIXTURE")) {
+    uint64_t after[5];vk_test_raster_stats(after);
+    int enabled=getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN") && !strcmp(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN"),"1");
+    int late=getenv("DM_ATTACHMENT_RASTER_DEPTH_LATE")!=NULL;
+    if(enabled) {
+      CHECK(after[1]-raster_ds_before[1]>=(late?4:7));CHECK(after[4]-raster_ds_before[4]>=2);
+      if(late)CHECK(vk_test_raster_forced_expands()==1);
+    } else CHECK(after[1]==raster_ds_before[1]);
+    vk_test_raster_interleave(0);
+    LOG("[raster mixed depth oracle] enabled=%d late_read=%d hot=%llu checked_members=%llu later_writer_and_sample_pixels=passed",
+        enabled,late,(unsigned long long)(after[1]-raster_ds_before[1]),(unsigned long long)(after[4]-raster_ds_before[4]));
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"attachment-raster-mixed-depth\",\"result\":\"passed\",\"game_modules_executed\":false}\n");return 0;
+  }
 #endif
   // 连续颜色/深度清除与绘制共用通道；清除不计入遮挡样本，查询重置不能重做清除。
   // Consecutive color/depth clears and draws share a pass. Clears must not
@@ -2711,6 +2797,14 @@ int dm_vulkan_test_main(void) {
       image_reference,(unsigned long long)image_transitions,(unsigned long long)image_safe,(unsigned long long)image_fallback);
   pipeline_cache_test();
   vk_test_upload_dual_enable(old_upload_dual);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  extern void vk_test_raster_stats(uint64_t out[5]);
+  uint64_t rs[5];vk_test_raster_stats(rs);
+  LOG("[raster actual coverage] captures=%llu hot=%llu scatters=%llu expansions=%llu oracle=%llu",
+      (unsigned long long)rs[0],(unsigned long long)rs[1],(unsigned long long)rs[2],
+      (unsigned long long)rs[3],(unsigned long long)rs[4]);
+  if(getenv("DM_ATTACHMENT_RASTER_REQUIRE_HIT")) {CHECK(rs[1]>0);CHECK(rs[4]>0);}
+#endif
   printf("{\"backend\":\"vulkan\",\"original_nvn\":true,\"checks\":%u,"
          "\"result\":\"passed\"}\n",
          checks);

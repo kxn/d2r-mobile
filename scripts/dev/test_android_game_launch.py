@@ -80,6 +80,21 @@ class PoolWindowLaunchTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code,2)
                 adb.assert_not_called()
 
+    def test_attachment_raster_run_is_explicit_and_cannot_change_running_experiment(self):
+        self.assertNotIn('attachment_raster_run', self.launch_command([]))
+        for option,value in (('--attachment-raster-run','true'),
+                             ('--no-attachment-raster-run','false')):
+            with self.subTest(option=option):
+                command=self.launch_command([option])
+                index=command.index('attachment_raster_run')
+                self.assertEqual(command[index-1:index+2],['--ez','attachment_raster_run',value])
+                with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                        patch('subprocess.check_output') as adb, \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                    runpy.run_path(str(LAUNCHER),run_name='__main__')
+                self.assertEqual(caught.exception.code,2)
+                adb.assert_not_called()
+
     def test_buffer_plan_is_explicit_and_cannot_change_running_experiment(self):
         self.assertNotIn('buffer_consumption_plan', self.launch_command([]))
         for option,value in (('--buffer-consumption-plan','true'),

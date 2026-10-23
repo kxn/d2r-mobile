@@ -1,6 +1,7 @@
 // Read-only admission: never allocate/upload/promote while another pass is
 // being kept open. Packaged CPU-backed images are deliberately out of scope.
 int vk_texture_mip_clear_admit(const tex_t *t,const view_t *v,VkImage *handle) {
+  vk_texture_raster_break();
   if(!t || !v || !v->set_levels || v->nlevels!=1 || t->has_layout ||
       t->d.target!=NVN_TEXTURE_TARGET_2D || t->d.samples>1 || t->L.layers!=1 ||
       t->d.levels<2 || t->d.levels>16 || v->base_level<0 || v->base_level>=t->d.levels ||
@@ -54,6 +55,7 @@ int vk_texture_mip_clear_admit_views(const tex_t *t,const view_t *const *views,
   return 0;
 }
 void vk_texture_mip_clear_mark(const tex_t *t,const view_t *v) {
+  vk_texture_raster_break();
   for(image *i=image_buckets[t->serial%8192];i;i=i->hash_next)if(i->tex.serial==t->serial) {
     // Logical content is now pending, not known zero and not yet a physical
     // GPU writer. Consumer hooks drain before using layout/visibility facts.

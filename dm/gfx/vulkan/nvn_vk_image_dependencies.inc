@@ -19,8 +19,9 @@ typedef struct {
   size_t writer_begin;
   int writer_suffix;
   int split_read_group; // one borrowed immutable FS group, no per-draw members
+  void *raster_group; // job-owned prospective attachment vector
 } image_batch;
-_Static_assert(sizeof(image_batch)==40,"Image phase artifact retains existing padding");
+_Static_assert(sizeof(image_batch)==48,"Image batch adds one job-owned raster vector reference");
 // Original drag-follow rendering can replay a draw while ending another
 // operation's previous pass. Preserve the outer descriptor batch across it.
 static image_batch image_batches[8];
@@ -72,9 +73,11 @@ static image_request image_request_make(image *i,VkImageSubresourceRange r,
   return (image_request){i,image_access_range(i,r),stages,access};
 }
 static image_access *image_cell(image *i,unsigned aspect,unsigned level,unsigned layer) {
+  raster_observe(i);
   return &i->access[((size_t)aspect*i->levels+level)*i->layers+layer];
 }
 static image_read_proof *image_read_cached(image *i,VkImageSubresourceRange r) {
+  raster_observe(i);
   for(unsigned k=0;k<2;k++) {
     image_read_proof *p=&i->read_proofs[k];
     if(p->generation==i->access_generation && !memcmp(&p->range,&r,sizeof r)) return p;
@@ -132,6 +135,7 @@ static __attribute__((noinline)) void image_record_cells(image *i,VkImageSubreso
 }
 static void image_record_normalized(image *i,VkImageSubresourceRange r,VkPipelineStageFlags stages,
                           VkAccessFlags access,int visibility_proven) {
+  raster_observe(i);
   int writing=!!image_writes(access);
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(i->native_entry)native_image_record(i,r,stages,access);
@@ -179,6 +183,7 @@ static void image_record(image *i,VkImageSubresourceRange r,VkPipelineStageFlags
   image_record_normalized(i,image_access_range(i,r),stages,access,visibility_proven);
 }
 static void image_unknown(image *i) {
+  raster_observe(i);
   if(i->astc_copy_encoding || i->bc_copy_decoded)die("ASTC propagated image cannot escape as untyped logical BC3 storage");
   i->external_access=1;
   image_astc_proof(i,0);
@@ -230,6 +235,7 @@ void vk_texture_pass_begin(void) {
 static void image_dependencies_batch(const image_request *requests,size_t count,int preserve_render,int covered,image_batch *batch) {
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(batch) {
+    raster_test_dependency_interleave();
     image_split_dependency_fixture();
     requests=batch->requests;count=batch->count;
   }
@@ -347,13 +353,17 @@ void vk_texture_shader_begin(void) {
   image_binding_active++;
   if(image_binding_count) die("Vulkan unfinished image operation");
   image_batch_current.writer_begin=SIZE_MAX;image_batch_current.writer_suffix=1;
-  image_batch_current.split_read_group=0;
+  image_batch_current.split_read_group=0;image_batch_current.raster_group=NULL;
 }
 // Only immutable physical-view recipes may bypass normalization here. The
 // stored access range is separate from the VkImageView's range: coupled DS
 // aspects and a 3D slice's dependency layer zero must not change that view.
 static void image_request_add_normalized(image *i,VkImageSubresourceRange r,
     VkPipelineStageFlags stages,VkAccessFlags access) {
+  // Even a non-overlapping late read belongs AFTER the borrowed attachment
+  // vector. Expand before appending so readonly depth keeps its original clock order.
+  if(image_binding_active && image_batch_current.raster_group)vk_texture_raster_break();
+  raster_observe(i);
   if(!image_binding_active || !stages) { image_unknown(i);return; }
   // Prospective writers conservatively invalidate before appending. This
   // may materialize reads/reallocate, before any caller borrows the new slot;
@@ -380,6 +390,7 @@ static void image_request_add(image *i,VkImageSubresourceRange r,VkPipelineStage
   if(!image_binding_active || !stages) { image_unknown(i);return; }
   image_request_add_normalized(i,image_access_range(i,r),stages,access);
 }
+#include "nvn_vk_attachment_raster_run.inc"
 static VkPipelineStageFlags image_shader_stages(VkShaderStageFlagBits stage) {
   switch(stage) {
   case VK_SHADER_STAGE_VERTEX_BIT:return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
@@ -433,10 +444,11 @@ void vk_texture_shader_abandon(void) {
   // Those commands publish their own histories immediately. The collected
   // shader requests are only prospective: no draw/dispatch consumed them, so
   // neither access nor visibility may be published while discarding a retry.
-  image_batch_current.split_read_group=0;
+  image_batch_current.split_read_group=0;image_batch_current.raster_group=NULL;
   image_binding_count=0;image_binding_active--;
 }
 void vk_texture_shader_record(void) {
+  raster_capture_begin();
   if(!image_binding_active) die("Vulkan image operation not begun");
   // Query all old histories before recording any part of this operation.
   // Clear old histories of written cells once, then union all simultaneous
@@ -464,6 +476,7 @@ void vk_texture_shader_record(void) {
       }
     }
   }
+  raster_record_done();
   image_split_record_done();
   image_batch_current.split_read_group=0;
   image_binding_count=0;image_binding_active--;

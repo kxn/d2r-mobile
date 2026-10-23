@@ -404,6 +404,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachme
   attachment_job_reuse_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
+static int attachment_raster_run_startup=0;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachmentRasterRun(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"attachment_raster_run is fixed before native startup");
+    return;
+  }
+  attachment_raster_run_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int buffer_consumption_plan_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeBufferConsumptionPlan(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -763,6 +776,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   if(setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_ATTACHMENT_JOB_REUSE",attachment_job_reuse_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_ATTACHMENT_RASTER_RUN",attachment_raster_run_startup?"1":"0",1) ||
       setenv("DM_VULKAN_BUFFER_CONSUMPTION_PLAN",buffer_consumption_plan_startup?"1":"0",1) ||
       setenv("DM_VULKAN_IMAGE_BUFFER_SPLIT",image_buffer_split_startup?"1":"0",1) ||
       setenv("DM_VK_SHARED_LAZY_WINDOWS",shared_lazy_windows_startup?"1":"0",1) ||

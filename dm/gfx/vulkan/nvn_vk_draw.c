@@ -58,6 +58,7 @@ typedef struct render_job {
   // Uses existing struct tail padding; no per-descriptor state or counter.
   uint8_t ds_written;
   uint8_t attachment_representation_valid;
+  void *raster_group; // private texture-history product, owned until job recycle
 } render_job;
 struct vk_graphics_submission {
   render_job *jobs;
@@ -506,6 +507,7 @@ int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
   return 1;
 }
 void vk_nvn_barrier(uint32_t flags) {
+  vk_texture_raster_break();
   if(flags)vk_image_split_break();
   vk_mip_clear_drain();
   if (flags & ~255u)
@@ -563,6 +565,7 @@ static struct {
 } end_sites[64];
 static unsigned end_site_count;
 void vk_render_end_at(const char *file, unsigned line) {
+  vk_texture_raster_break();
   vk_image_split_break();
   vk_ubo_plan_break();
   if (active_job && !vk_pool_maintenance_active()) vk_ghost_flush();
@@ -819,6 +822,7 @@ void vk_graphics_recycle(vk_graphics_submission *state) {
     if(j->pass_object) render_pass_release(j->pass_object);
     else vkDestroyRenderPass(V.device,j->pass,NULL);
     if(j->final_pass_object) render_pass_release(j->final_pass_object);
+    vk_texture_raster_free(j->raster_group);
     free(j->local);free(j);
   }
 }
@@ -1248,6 +1252,7 @@ static VK_COLD_PHASE cached_pipeline *draw_pipeline_prepare(
         if(graphics_state->jobs!=j)die("Vulkan unrecorded pixel-local job order");
         graphics_state->jobs=j->next;
         framebuffer_release(j->framebuffer_object);render_pass_release(j->pass_object);
+        vk_texture_raster_free(j->raster_group);
         free(j->local);free(j);draw_recorded.pixel_local_plans--;
       } else vk_render_end();
       *retry=1;return NULL;
@@ -1403,6 +1408,7 @@ static void draw_vertex_binding_require(const vk_binding *binding,int *writable_
 }
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
 static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
+  vk_texture_raster_draw_enter();
   vk_image_split_draw_begin();
   vk_ubo_plan_draw_enter();
   vk_texture_lookup_scope_begin();int source_operation=vk_shader_image_sources_begin();
@@ -1410,6 +1416,7 @@ static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_
   vk_shader_image_sources_end(source_operation);vk_texture_lookup_scope_end();
   vk_image_split_draw_end();
   vk_ubo_plan_draw_leave();
+  vk_texture_raster_draw_leave();
 }
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   // A state change outside the complete planned sequence cannot enable
@@ -1720,7 +1727,10 @@ uniform_vertex_remaining:
       attachment_test_callback=NULL;attachment_test_context=NULL;callback(context);
     }
 #endif
-    for(int k=0;k<=S.targets.n;k++) {
+    int raster_borrowed=!writable_buffers &&
+        vk_texture_raster_borrow(attachment_job->raster_group,
+            stencil_writing || (ds.depthTestEnable && ds.depthWriteEnable));
+    if(!raster_borrowed)for(int k=0;k<=S.targets.n;k++) {
       const tex_t *t=k==S.targets.n?(include_depth?S.targets.depth:NULL):S.targets.color[k];
       const view_t *v=k==S.targets.n?(S.targets.has_dview?&S.targets.dview:NULL):
           (S.targets.has_cview[k]?&S.targets.cview[k]:NULL);
@@ -2055,6 +2065,9 @@ uniform_vertex_remaining:
   if(ds.depthTestEnable && ds.depthWriteEnable) j->ds_written |= VK_IMAGE_ASPECT_DEPTH_BIT;
   if(stencil_writing) j->ds_written |= VK_IMAGE_ASPECT_STENCIL_BIT;
   vk_pass_plan_done(draw?(const void *)draw:(const void *)idx);
+  if(attachment_reuse_mode() && !writable_buffers && !local_ready && !local_consumer && !vk_ghost_replaying() &&
+      !expansion && !vk_mip_clear_pending() && j==active_job)
+    vk_texture_raster_capture(&j->raster_group);
   vk_texture_shader_record();
   vk_shader_writebacks();
   vk_ubo_plan_recorded();
