@@ -71,7 +71,7 @@ static int raster_on(void) {
   if(raster_enabled<0) {
     const char *e=getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN");
     if(e && strcmp(e,"0") && strcmp(e,"1"))die("DM_VULKAN_ATTACHMENT_RASTER_RUN expects 0 or 1");
-    raster_enabled=e && !strcmp(e,"1");
+    raster_enabled=!e || !strcmp(e,"1");
     atomic_store_explicit(&raster_published_enabled,raster_enabled,memory_order_relaxed);
     LOG("[vulkan attachment raster run] enabled=%d",raster_enabled);
   }

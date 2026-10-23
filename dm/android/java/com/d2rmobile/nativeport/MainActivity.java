@@ -272,7 +272,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", true));
             nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", true));
             nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", true));
-            nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", false));
+            nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));

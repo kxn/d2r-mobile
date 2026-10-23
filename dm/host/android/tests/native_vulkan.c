@@ -448,13 +448,14 @@ static void pool_copy_signal(void *context);
 #include "native_vulkan_depth_array.inc"
 #include "native_vulkan_readonly_store.inc"
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+extern int vk_attachment_raster_enabled(void);
 typedef struct {unsigned kind,calls;const tex_t *texture;VkImageView old_view;} attachment_fixture_context;
 static void attachment_fixture_mutate(void *opaque) {
   attachment_fixture_context *context=opaque;context->calls++;
   CHECK(vk_render_active());
   if(context->kind>=4) {
     extern void vk_test_raster_observe(unsigned);
-    if(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN") && !strcmp(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN"),"1"))
+    if(vk_attachment_raster_enabled())
       vk_test_raster_observe(context->kind-4);
   }
   else if(context->kind==1)vk_render_end();
@@ -1654,8 +1655,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_ATTACHMENT_RASTER_FIXTURE")) {
     extern void vk_test_raster_stats(uint64_t out[5]);
     extern void vk_test_raster_after_draws(unsigned,void (*)(void *),void *);
-    int enabled=getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN") &&
-        !strcmp(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN"),"1");
+    int enabled=vk_attachment_raster_enabled();
     vk_sample_liveness_reference(0);
     for(unsigned kind=0;kind<8;kind++) {
       extern void vk_test_raster_interleave(unsigned);
@@ -2183,7 +2183,7 @@ int dm_vulkan_test_main(void) {
       (unsigned long long)(ds_attachment_hits_after-ds_attachment_hits_before));
   if(getenv("DM_ATTACHMENT_RASTER_DEPTH_FIXTURE")) {
     uint64_t after[5];vk_test_raster_stats(after);
-    int enabled=getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN") && !strcmp(getenv("DM_VULKAN_ATTACHMENT_RASTER_RUN"),"1");
+    int enabled=vk_attachment_raster_enabled();
     int late=getenv("DM_ATTACHMENT_RASTER_DEPTH_LATE")!=NULL;
     if(enabled) {
       CHECK(after[1]-raster_ds_before[1]>=(late?4:7));CHECK(after[4]-raster_ds_before[4]>=2);

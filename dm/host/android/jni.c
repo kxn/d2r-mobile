@@ -404,7 +404,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachme
   attachment_job_reuse_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
-static int attachment_raster_run_startup=0;
+static int attachment_raster_run_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachmentRasterRun(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
