@@ -37,6 +37,7 @@ void crash_thread_init(void) {
 }
 #include "../../../host/android/tests/native_vulkan.c"
 #ifdef DM_VULKAN_TEST_EMBED
+#include "uab_parameters.inc"
 #include "pixel_local_loader.inc"
 #include "quad_transfer_contract.inc"
 #include "quad_readonly_contract.inc"
@@ -44,6 +45,7 @@ void crash_thread_init(void) {
 #include "native_layout.inc"
 #endif
 int main(void) {
+  if(getenv("DM_UAB_PARAMETERS_FIXTURE")){crash_thread_init();mtl_init();return uab_parameters_test();}
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   const char *table=getenv("DM_NATIVE_LAYOUT_METADATA_FIXTURE");
   if(table)return native_layout_test(table);

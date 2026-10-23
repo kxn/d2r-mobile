@@ -2222,3 +2222,5 @@ void vk_dispatch(const p_dispatch *p) {
   dispatch_record(p);vk_pool_operation_end(token);
   vk_shader_image_sources_end(source_operation);vk_texture_lookup_scope_end();
 }
+
+#include "nvn_vk_uab.inc"
