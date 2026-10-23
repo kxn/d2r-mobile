@@ -68,8 +68,16 @@ static void native_resource_install(void) {
   static const uint8_t coherent_turnip_linear[32]={
     0xf8,0x30,0x28,0x5f,0xe6,0x8f,0x0a,0x74,0x47,0x92,0x26,0x9d,0xa5,0xf1,0x60,0xed,
     0x86,0x36,0xc1,0x72,0xb1,0xf6,0x51,0x1d,0xb9,0xd9,0x94,0x78,0xe1,0xa2,0xac,0xce};
+  // Experimental Buffer-sparse extension of the same coherent provider.
+  // Its image allocation/host-image-copy/foreign ownership implementation is
+  // unchanged. The table still requires this exact active binary and actual
+  // producer UUIDs; admission here never substitutes an older driver's table.
+  static const uint8_t coherent_turnip_sparse[32]={
+    0xa9,0x0c,0x1b,0x4d,0xeb,0xbf,0x71,0xa7,0xb8,0x8c,0xf7,0xc5,0xda,0xa8,0xbd,0x0e,
+    0x71,0xa0,0x3b,0x77,0x47,0x62,0x9b,0x40,0x90,0x6e,0xf8,0x19,0x21,0xd8,0x24,0xff};
   native_resident_driver=!memcmp(identity.driver_sha256,coherent_turnip,32) ||
-      !memcmp(identity.driver_sha256,coherent_turnip_linear,32);
+      !memcmp(identity.driver_sha256,coherent_turnip_linear,32) ||
+      !memcmp(identity.driver_sha256,coherent_turnip_sparse,32);
   // One cold identity record for the existing explicit resource contract.
   printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
   for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);
