@@ -379,7 +379,9 @@ static void shared_device_probe(void) {
       0x86,0x36,0xc1,0x72,0xb1,0xf6,0x51,0x1d,0xb9,0xd9,0x94,0x78,0xe1,0xa2,0xac,0xce};
     static const uint8_t sparse_a90c[32]={0xa9,0x0c,0x1b,0x4d,0xeb,0xbf,0x71,0xa7,0xb8,0x8c,0xf7,0xc5,0xda,0xa8,0xbd,0x0e,
       0x71,0xa0,0x3b,0x77,0x47,0x62,0x9b,0x40,0x90,0x6e,0xf8,0x19,0x21,0xd8,0x24,0xff};
-    uint8_t digest[32];int provider=vk_loader_native_driver_digest(digest) && (!memcmp(digest,exact_f830,32) || (sparse_pool_requested && !memcmp(digest,sparse_a90c,32)));
+    // The experimental ICD preserves the normal host-import contract. Keep
+    // lazy admission identical in sparse OFF/ON; only the backing changes.
+    uint8_t digest[32];int provider=vk_loader_native_driver_digest(digest) && (!memcmp(digest,exact_f830,32) || !memcmp(digest,sparse_a90c,32));
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && !defined(__ANDROID__)
     // Owned software-GPU contract oracle only. Never qualifies an APP driver.
     if(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE"))provider=1;
