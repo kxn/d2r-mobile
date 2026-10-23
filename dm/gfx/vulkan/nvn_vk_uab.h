@@ -11,6 +11,17 @@ typedef struct {
   uint8_t dynamic_ordinal[VK_UAB_MAX_BINDINGS];
 } vk_uab_schema;
 typedef struct vk_uab_packet vk_uab_packet;
+typedef struct vk_uab_batch vk_uab_batch;
+// Recording-owner only, one explicit scope per graphics context. No new cache.
+// Capacity is VkWriteDescriptorSet count (1..1024); payload storage never moves.
+vk_uab_batch *vk_uab_batch_create(unsigned capacity);
+int vk_uab_batch_begin(vk_uab_batch *);
+void vk_uab_batch_flush(vk_uab_batch *);
+int vk_uab_batch_end(vk_uab_batch *);
+int vk_uab_batch_destroy(vk_uab_batch *); // refuses an active scope
+int vk_uab_packet_write_batch(vk_uab_packet *,unsigned version,unsigned draw,
+    const vk_split_descriptor_value *complete_values,vk_uab_batch *);
+
 int vk_uab_schema_from_shader(const vk_shader *,int dynamic,vk_uab_schema *);
 int vk_uab_normalize_values(const vk_uab_schema *,const vk_split_descriptor_value *,
                            const vk_uniform_offsets *,vk_split_descriptor_value *);
@@ -30,6 +41,9 @@ int vk_uab_packet_write(vk_uab_packet *,unsigned version,unsigned draw,
 // A nonempty partial block can seal; untouched sets remain inaccessible.
 int vk_uab_packet_seal(vk_uab_packet *,unsigned version);
 // Editing/sealed access only, and only a fully initialized, touched slot.
+// First publication flushes the shared batch before exposing immutable bindings.
+// Warm UAB-only updates may remain queued: flush before consumer submission.
+// pending/abandon/destroy also flush this packet's outstanding batch references.
 VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *,unsigned version,unsigned draw);
 // Mark the actual original recording serial before delivery; resources and the
 // persistent CB must remain valid through its original GPU+CPU-effect completion.

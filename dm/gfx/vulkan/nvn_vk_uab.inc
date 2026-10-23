@@ -4,7 +4,7 @@
 typedef struct {
   uint64_t serial;
   unsigned state,written; // 0 reusable,1 editing,2 sealed,3 pending
-  uint8_t *initialized,*touched;
+  uint8_t *initialized,*touched,*unpublished;
   vk_split_descriptor_value *fixed;
 } uab_version;
 struct vk_uab_packet {
@@ -15,7 +15,66 @@ struct vk_uab_packet {
   uint32_t draws,versions;
   uint64_t descriptors;
   uab_version version[VK_UAB_MAX_VERSIONS];
+  vk_uab_batch *queued_batch;
 };
+struct vk_uab_batch {
+  unsigned capacity,count,active;
+  VkWriteDescriptorSet *writes;
+  descriptor_payload *payloads;
+  vk_uab_packet **owners;
+  uint8_t **publication;
+};
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t uab_update_calls,uab_update_writes;
+void vk_test_uab_batch_stats(uint64_t *calls,uint64_t *writes) {*calls=uab_update_calls;*writes=uab_update_writes;}
+#endif
+static void uab_update(unsigned count,const VkWriteDescriptorSet *writes) {
+  if(!count)return;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uab_update_calls++;uab_update_writes+=count;
+#endif
+  vkUpdateDescriptorSets(V.device,count,writes,0,NULL);
+}
+vk_uab_batch *vk_uab_batch_create(unsigned capacity) {
+  if(!capacity || capacity>1024)return NULL;
+  vk_uab_batch *b=calloc(1,sizeof *b);if(!b)return NULL;
+  b->capacity=capacity;b->writes=calloc(capacity,sizeof *b->writes);b->payloads=calloc(capacity,sizeof *b->payloads);
+  b->owners=calloc(capacity,sizeof *b->owners);b->publication=calloc(capacity,sizeof *b->publication);
+  if(!b->writes || !b->payloads || !b->owners || !b->publication) {
+    free(b->publication);free(b->owners);free(b->payloads);free(b->writes);free(b);return NULL;
+  }
+  return b;
+}
+int vk_uab_batch_begin(vk_uab_batch *b) {
+  if(!b || b->active || b->count)return 0;b->active=1;return 1;
+}
+void vk_uab_batch_flush(vk_uab_batch *b) {
+  if(!b || !b->count)return;
+  uab_update(b->count,b->writes);
+  for(unsigned n=0;n<b->count;n++) {
+    b->owners[n]->queued_batch=NULL;
+    if(b->publication[n])*b->publication[n]=0;
+  }
+  b->count=0;
+}
+int vk_uab_batch_end(vk_uab_batch *b) {
+  if(!b || !b->active)return 0;vk_uab_batch_flush(b);b->active=0;return 1;
+}
+int vk_uab_batch_destroy(vk_uab_batch *b) {
+  if(!b)return 1;if(b->active)return 0;
+  vk_uab_batch_flush(b);free(b->publication);free(b->owners);free(b->payloads);free(b->writes);free(b);return 1;
+}
+static void uab_batch_append(vk_uab_batch *b,vk_uab_packet *p,uint8_t *publication,
+    VkWriteDescriptorSet write,const descriptor_payload *payload) {
+  if(b->count==b->capacity)vk_uab_batch_flush(b);
+  unsigned n=b->count++;b->writes[n]=write;b->payloads[n]=*payload;b->owners[n]=p;b->publication[n]=publication;
+  if(publication)*publication=1;
+  p->queued_batch=b;
+  b->writes[n].pBufferInfo=NULL;b->writes[n].pImageInfo=NULL;b->writes[n].pTexelBufferView=NULL;
+  if(write.pBufferInfo)b->writes[n].pBufferInfo=&b->payloads[n].buffer;
+  else if(write.pTexelBufferView)b->writes[n].pTexelBufferView=&b->payloads[n].texel;
+  else b->writes[n].pImageInfo=&b->payloads[n].image;
+}
 static uint64_t uab_pool_descriptors;
 static int uab_buffer_type(VkDescriptorType t) {
   return t==VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER || t==VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -81,9 +140,9 @@ vk_uab_packet *vk_uab_packet_create(const vk_uab_schema *s,uint32_t draws,uint32
   p->schema=*s;p->draws=draws;p->versions=versions;p->descriptors=descriptors;
   p->sets=calloc(draws*versions,sizeof *p->sets);if(!p->sets)goto failed;
   for(unsigned v=0;v<versions;v++) {
-    p->version[v].initialized=calloc(draws,1);p->version[v].touched=calloc(draws,1);
+    p->version[v].initialized=calloc(draws,1);p->version[v].touched=calloc(draws,1);p->version[v].unpublished=calloc(draws,1);
     p->version[v].fixed=calloc((size_t)draws*s->count,sizeof(vk_split_descriptor_value));
-    if(!p->version[v].initialized || !p->version[v].touched || !p->version[v].fixed)goto failed;
+    if(!p->version[v].initialized || !p->version[v].touched || !p->version[v].unpublished || !p->version[v].fixed)goto failed;
   }
   VkDescriptorBindingFlags flags[VK_UAB_MAX_BINDINGS];
   for(unsigned n=0;n<s->count;n++)flags[n]=uab_buffer_type(s->bindings[n].descriptorType)?VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT:0;
@@ -105,7 +164,7 @@ vk_uab_packet *vk_uab_packet_create(const vk_uab_schema *s,uint32_t draws,uint32
   uab_pool_descriptors+=descriptors;return p;
 failed:
   if(p->pool)vkDestroyDescriptorPool(V.device,p->pool,NULL);
-  for(unsigned v=0;v<versions;v++){free(p->version[v].fixed);free(p->version[v].initialized);free(p->version[v].touched);}
+  for(unsigned v=0;v<versions;v++){free(p->version[v].fixed);free(p->version[v].initialized);free(p->version[v].touched);free(p->version[v].unpublished);}
   free(p->sets);free(p);return NULL;
 }
 int vk_uab_packet_begin(vk_uab_packet *p) {
@@ -118,7 +177,8 @@ int vk_uab_packet_begin(vk_uab_packet *p) {
   }
   return -1;
 }
-int vk_uab_packet_write(vk_uab_packet *p,unsigned index,unsigned draw,const vk_split_descriptor_value *values) {
+int vk_uab_packet_write_batch(vk_uab_packet *p,unsigned index,unsigned draw,const vk_split_descriptor_value *values,vk_uab_batch *batch) {
+  if(batch && !batch->active)return 0;
   if(!p || index>=p->versions || draw>=p->draws || !values)return 0;
   uab_version *v=&p->version[index];if(v->state!=1 || v->touched[draw])return 0;
   vk_split_descriptor_value *fixed=v->fixed+(size_t)draw*p->schema.count;
@@ -132,10 +192,11 @@ int vk_uab_packet_write(vk_uab_packet *p,unsigned index,unsigned draw,const vk_s
       if(!values[n].object || !values[n].range || values[n].range>max || values[n].offset%alignment || values[n].offset>UINT64_MAX-values[n].range)return 0;
     } else if(v->initialized[draw] && memcmp(&fixed[n],&values[n],sizeof *values))return 0;
   }
+  if(p->queued_batch && p->queued_batch!=batch)vk_uab_batch_flush(p->queued_batch);
   VkWriteDescriptorSet writes[VK_UAB_MAX_BINDINGS];descriptor_payload payload[VK_UAB_MAX_BINDINGS];unsigned nw=0;
   for(unsigned n=0;n<p->schema.count;n++) {
     VkDescriptorType type=p->schema.bindings[n].descriptorType;
-    if(v->initialized[draw] && !uab_buffer_type(type))continue;
+    if(v->initialized[draw] && (!uab_buffer_type(type) || !memcmp(&fixed[n],&values[n],sizeof *values)))continue;
     writes[nw]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=p->sets[index*p->draws+draw],
       .dstBinding=p->schema.bindings[n].binding,.descriptorType=type,.descriptorCount=1};
     if(uab_buffer_type(type)) {
@@ -145,36 +206,45 @@ int vk_uab_packet_write(vk_uab_packet *p,unsigned index,unsigned draw,const vk_s
     } else {
       payload[nw].image=(VkDescriptorImageInfo){(VkSampler)(uintptr_t)values[n].offset,(VkImageView)(uintptr_t)values[n].object,(VkImageLayout)values[n].range};writes[nw].pImageInfo=&payload[nw].image;
     }
-    nw++;
+    fixed[n]=values[n];nw++;
   }
-  vkUpdateDescriptorSets(V.device,nw,writes,0,NULL);
-  if(!v->initialized[draw])memcpy(fixed,values,p->schema.count*sizeof *values);
+  if(batch)for(unsigned n=0;n<nw;n++)uab_batch_append(batch,p,v->initialized[draw]?NULL:&v->unpublished[draw],writes[n],&payload[n]);
+  else uab_update(nw,writes);
   v->initialized[draw]=1;if(!v->touched[draw])v->touched[draw]=1,v->written++;
   return 1;
+}
+int vk_uab_packet_write(vk_uab_packet *p,unsigned version,unsigned draw,const vk_split_descriptor_value *values) {
+  return vk_uab_packet_write_batch(p,version,draw,values,NULL);
 }
 int vk_uab_packet_seal(vk_uab_packet *p,unsigned i) {
   if(!p || i>=p->versions || p->version[i].state!=1 || !p->version[i].written)return 0;
   p->version[i].state=2;return 1;
 }
 VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *p,unsigned i,unsigned draw) {
-  return p && i<p->versions && draw<p->draws && (p->version[i].state==1 || p->version[i].state==2) && p->version[i].touched[draw] && p->version[i].initialized[draw]?p->sets[i*p->draws+draw]:VK_NULL_HANDLE;
+  if(!p || i>=p->versions || draw>=p->draws || (p->version[i].state!=1 && p->version[i].state!=2) ||
+     !p->version[i].touched[draw] || !p->version[i].initialized[draw])return VK_NULL_HANDLE;
+  if(p->version[i].unpublished[draw])vk_uab_batch_flush(p->queued_batch);
+  return p->sets[i*p->draws+draw];
 }
 int vk_uab_packet_pending(vk_uab_packet *p,unsigned i,uint64_t serial) {
   if(!p || i>=p->versions || p->version[i].state!=2 || !serial || serial!=vk_recording_serial())return 0;
+  vk_uab_batch_flush(p->queued_batch);
   p->version[i].serial=serial;p->version[i].state=3;return 1;
 }
 int vk_uab_packet_abandon(vk_uab_packet *p,unsigned i) {
   if(!p || i>=p->versions || p->version[i].state==3 || !p->version[i].state)return 0;
+  vk_uab_batch_flush(p->queued_batch);
   p->version[i].state=0;return 1;
 }
 int vk_uab_packet_destroy(vk_uab_packet *p) {
   if(!p)return 1;
   uint64_t complete=vk_completed_serial();
   for(unsigned i=0;i<p->versions;i++)if(p->version[i].state==3 && p->version[i].serial>complete)return 0;
+  vk_uab_batch_flush(p->queued_batch);
   vkDestroyDescriptorPool(V.device,p->pool,NULL);
   if(uab_pool_descriptors<p->descriptors)die("UAB pool budget underflow");
   uab_pool_descriptors-=p->descriptors;
-  for(unsigned i=0;i<p->versions;i++){free(p->version[i].fixed);free(p->version[i].initialized);free(p->version[i].touched);}
+  for(unsigned i=0;i<p->versions;i++){free(p->version[i].fixed);free(p->version[i].initialized);free(p->version[i].touched);free(p->version[i].unpublished);}
   free(p->sets);free(p);return 1;
 }
 

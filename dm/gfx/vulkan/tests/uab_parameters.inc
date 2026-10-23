@@ -3,6 +3,12 @@
 static int uab_parameters_test(void) {
   if(!V.retained_draws) {printf("{\"test\":\"UAB parameters\",\"result\":\"not_enabled\",\"actual_feature_enabled\":false}\n");return 0;}
   unsigned checks_before=checks;
+  extern void vk_test_uab_batch_stats(uint64_t *,uint64_t *);
+  int batched=getenv("DM_UAB_BATCH_FIXTURE")!=NULL;
+  unsigned batch_capacity=getenv("DM_UAB_BATCH_CAPACITY")?atoi(getenv("DM_UAB_BATCH_CAPACITY")):5;
+  vk_uab_batch *batch=batched?vk_uab_batch_create(batch_capacity):NULL;
+  if(batched){CHECK(batch);CHECK(!vk_uab_batch_create(1025));CHECK(vk_uab_batch_begin(batch));CHECK(!vk_uab_batch_begin(batch));CHECK(!vk_uab_batch_destroy(batch));}
+
   VkDeviceSize stride=V.props.limits.minUniformBufferOffsetAlignment;
   if(stride<V.props.limits.minStorageBufferOffsetAlignment)stride=V.props.limits.minStorageBufferOffsetAlignment;
   if(stride<256)stride=256;
@@ -31,7 +37,8 @@ static int uab_parameters_test(void) {
   reflected[2].count=2;CHECK(!vk_uab_schema_from_shader(&reflected_shader,1,&actual));reflected[2].count=1;
   vk_split_descriptor_value high[4]={{1,UINT64_C(0x100000000),16}},normalized[4];vk_uniform_offsets high_offsets={.count=1,.offsets={0x123400}};
   CHECK(vk_uab_normalize_values(&schema,high,&high_offsets,normalized));CHECK(normalized[0].offset==UINT64_C(0x100123400));
-  vk_uab_packet *packet=vk_uab_packet_create(&schema,3,2);CHECK(packet);
+  vk_uab_packet *packet=vk_uab_packet_create(&schema,3,1);CHECK(packet);
+  vk_uab_packet *packets[2]={packet,vk_uab_packet_create(&schema,3,1)};CHECK(packets[1]);
   vk_uab_schema invalid=schema;invalid.bindings[0].descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;CHECK(!vk_uab_packet_create(&invalid,2,2));
   CHECK(!vk_uab_packet_create(&schema,VK_UAB_MAX_DRAWS+1,2));
   VkPipelineLayout explicit_layout;vk_uab_packet *stage_sets[6]={packet};
@@ -63,40 +70,79 @@ static int uab_parameters_test(void) {
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,NULL,0,NULL,1,&ib);
   vk_split_descriptor_value values[4]={{(uint64_t)input.handle,0,16},{(uint64_t)output.handle,0,4},{(uint64_t)texel,0,0},{(uint64_t)image_view,(uint64_t)sampler,VK_IMAGE_LAYOUT_GENERAL}},complete[4];
   for(unsigned v=0;v<2;v++) {
-    CHECK(vk_uab_packet_begin(packet)==(int)v);CHECK(!vk_uab_packet_seal(packet,v));
-    CHECK(!vk_uab_packet_set(packet,v,0));CHECK(!vk_uab_packet_set(packet,v,2));
+    vk_uab_packet *active=packets[v];
+    CHECK(vk_uab_packet_begin(active)==0);CHECK(!vk_uab_packet_seal(active,0));
+    CHECK(!vk_uab_packet_set(active,0,0));CHECK(!vk_uab_packet_set(active,0,2));
     VkCommandBufferInheritanceInfo inherit={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
     VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.pInheritanceInfo=&inherit};VK_CHECK(vkBeginCommandBuffer(cb[v],&begin));
     vkCmdBindPipeline(cb[v],VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
     for(unsigned draw=0;draw<2;draw++) {
       vk_uniform_offsets offsets={.count=1,.offsets={(v*2+draw)*stride}};values[1].offset=(v*2+draw)*stride;
       CHECK(vk_uab_normalize_values(&schema,values,&offsets,complete));CHECK(complete[0].offset==(v*2+draw)*stride);
-      CHECK(vk_uab_packet_write(packet,v,draw,complete));
+      CHECK(vk_uab_packet_write_batch(active,0,draw,complete,batch));
       vk_split_descriptor_value duplicate[4];memcpy(duplicate,complete,sizeof duplicate);duplicate[0].offset=((v*2+draw+1)%4)*stride;
-      CHECK(!vk_uab_packet_write(packet,v,draw,duplicate));
-      VkDescriptorSet set=vk_uab_packet_set(packet,v,draw);CHECK(set);
+      CHECK(!vk_uab_packet_write_batch(active,0,draw,duplicate,batch));
+      VkDescriptorSet set=vk_uab_packet_set(active,0,draw);CHECK(set);
       vkCmdBindDescriptorSets(cb[v],VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,0,1,&set,0,NULL);vkCmdDispatch(cb[v],1,1,1);
     }
-    CHECK(vk_uab_packet_seal(packet,v));CHECK(!vk_uab_packet_set(packet,v,2));
+    CHECK(vk_uab_packet_seal(active,0));CHECK(!vk_uab_packet_set(active,0,2));
     VK_CHECK(vkEndCommandBuffer(cb[v]));vkCmdExecuteCommands(V.cmd,1,&cb[v]);
-    CHECK(vk_uab_packet_pending(packet,v,vk_recording_serial()));CHECK(!vk_uab_packet_write(packet,v,0,complete));CHECK(!vk_uab_packet_abandon(packet,v));
+    CHECK(vk_uab_packet_pending(active,0,vk_recording_serial()));CHECK(!vk_uab_packet_write(active,0,0,complete));CHECK(!vk_uab_packet_abandon(active,0));
   }
   CHECK(vk_uab_packet_begin(packet)==-1);CHECK(!vk_uab_packet_destroy(packet));
   VkMemoryBarrier readback={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&readback,0,NULL,0,NULL);
+  if(batch)CHECK(vk_uab_batch_end(batch));
   vk_internal_wait(vk_internal_commit());
   for(unsigned i=0;i<4;i++){uint32_t got;memcpy(&got,output.map+i*stride,4);CHECK(got==numbers[i]+18);}
+  CHECK(vk_uab_packet_begin(packets[1])==0);
   CHECK(vk_uab_packet_begin(packet)==0);CHECK(!vk_uab_packet_set(packet,0,0));CHECK(!vk_uab_packet_set(packet,0,1));
+  if(batch)CHECK(vk_uab_batch_begin(batch));
   vk_split_descriptor_value bad[4];memcpy(bad,complete,sizeof bad);bad[2].object=(uint64_t)other;
-  CHECK(!vk_uab_packet_write(packet,0,0,bad)); // immutable mismatch before any writes
-  bad[2].object=(uint64_t)texel;bad[0].offset=1;CHECK(!vk_uab_packet_write(packet,0,0,bad));
+  CHECK(!vk_uab_packet_write_batch(packet,0,0,bad,batch)); // immutable mismatch before any writes
+  bad[2].object=(uint64_t)texel;bad[0].offset=1;CHECK(!vk_uab_packet_write_batch(packet,0,0,bad,batch));
   values[0].offset=UINT64_MAX;vk_uniform_offsets overflow={.count=1,.offsets={1}};CHECK(!vk_uab_normalize_values(&schema,values,&overflow,bad));values[0].offset=0;
-  for(unsigned draw=0;draw<2;draw++) {vk_uniform_offsets offsets={.count=1,.offsets={(3-draw)*stride}};values[1].offset=(4+draw)*stride;CHECK(vk_uab_normalize_values(&schema,values,&offsets,complete));CHECK(vk_uab_packet_write(packet,0,draw,complete));}
+  uint64_t calls_before,writes_before,calls_now,writes_now;vk_test_uab_batch_stats(&calls_before,&writes_before);
+  for(unsigned v=0;v<2;v++)for(unsigned draw=0;draw<2;draw++) {
+    vk_uniform_offsets offsets={.count=1,.offsets={(3-(v*2+draw))*stride}};values[1].offset=(4+v*2+draw)*stride;
+    CHECK(vk_uab_normalize_values(&schema,values,&offsets,complete));
+    CHECK(vk_uab_packet_write_batch(packets[v],0,draw,complete,batch));
+    CHECK(vk_uab_packet_set(packets[v],0,draw)); // warm UAB-only update need not flush yet
+  }
+  vk_test_uab_batch_stats(&calls_now,&writes_now);
+  if(batch){CHECK(calls_now-calls_before==7/batch_capacity);CHECK(writes_now-writes_before==(7/batch_capacity)*batch_capacity);}
+  for(unsigned v=0;v<2;v++)CHECK(vk_uab_packet_seal(packets[v],0));
+  mtl_sub_begin();vkCmdExecuteCommands(V.cmd,2,cb);
+  for(unsigned v=0;v<2;v++)CHECK(vk_uab_packet_pending(packets[v],0,vk_recording_serial()));
+  if(batch)CHECK(vk_uab_batch_end(batch));
+  vk_test_uab_batch_stats(&calls_now,&writes_now);
+  if(batch){CHECK(calls_now-calls_before==(8+batch_capacity-1)/batch_capacity);CHECK(writes_now-writes_before==8);}
+  vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&readback,0,NULL,0,NULL);vk_internal_wait(vk_internal_commit());
+  for(unsigned draw=0;draw<4;draw++){uint32_t got;memcpy(&got,output.map+(4+draw)*stride,4);CHECK(got==numbers[3-draw]+18);}
+  uint64_t warm_calls=calls_now-calls_before,warm_writes=writes_now-writes_before;
+  // Same resolved Buffer tuple: touch this frame, but emit no descriptor update.
+  CHECK(vk_uab_packet_begin(packet)==0);if(batch)CHECK(vk_uab_batch_begin(batch));
+  vk_test_uab_batch_stats(&calls_before,&writes_before);
+  for(unsigned draw=0;draw<2;draw++) {
+    vk_uniform_offsets offsets={.count=1,.offsets={(3-draw)*stride}};values[1].offset=(4+draw)*stride;
+    CHECK(vk_uab_normalize_values(&schema,values,&offsets,complete));CHECK(vk_uab_packet_write_batch(packet,0,draw,complete,batch));
+  }
   CHECK(vk_uab_packet_seal(packet,0));mtl_sub_begin();vkCmdExecuteCommands(V.cmd,1,&cb[0]);CHECK(vk_uab_packet_pending(packet,0,vk_recording_serial()));
+  if(batch)CHECK(vk_uab_batch_end(batch));vk_test_uab_batch_stats(&calls_now,&writes_now);
+  CHECK(calls_now==calls_before);CHECK(writes_now==writes_before);
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&readback,0,NULL,0,NULL);vk_internal_wait(vk_internal_commit());
   for(unsigned draw=0;draw<2;draw++){uint32_t got;memcpy(&got,output.map+(4+draw)*stride,4);CHECK(got==numbers[3-draw]+18);}
-  vkDestroyCommandPool(V.device,pool,NULL);vkDestroyPipeline(V.device,pipeline,NULL);vkDestroyShaderModule(V.device,shader,NULL);CHECK(vk_uab_packet_destroy(packet));CHECK(vk_shader_uab_layout(&reflected_shader)==saved);CHECK(vk_program_uab_layout(program)==pipeline_layout);
+  if(batch) {
+    // Never leave queued driver payload pointers into a destroyed packet.
+    CHECK(vk_uab_batch_begin(batch));vk_uab_packet *temporary=vk_uab_packet_create(&schema,1,1);CHECK(temporary);
+    CHECK(vk_uab_packet_begin(temporary)==0);CHECK(vk_uab_packet_write_batch(temporary,0,0,complete,batch));
+    CHECK(vk_uab_packet_abandon(temporary,0));CHECK(vk_uab_packet_destroy(temporary));vk_uab_batch_flush(batch);
+    temporary=vk_uab_packet_create(&schema,1,1);CHECK(temporary);CHECK(vk_uab_packet_begin(temporary)==0);
+    CHECK(vk_uab_packet_write_batch(temporary,0,0,complete,batch));CHECK(vk_uab_packet_destroy(temporary));vk_uab_batch_flush(batch);
+    CHECK(vk_uab_batch_end(batch));CHECK(vk_uab_batch_destroy(batch));
+  }
+  vkDestroyCommandPool(V.device,pool,NULL);CHECK(vk_uab_packet_destroy(packets[1]));vkDestroyPipeline(V.device,pipeline,NULL);vkDestroyShaderModule(V.device,shader,NULL);CHECK(vk_uab_packet_destroy(packet));CHECK(vk_shader_uab_layout(&reflected_shader)==saved);CHECK(vk_program_uab_layout(program)==pipeline_layout);
   vkDestroySampler(V.device,sampler,NULL);vkDestroyImageView(V.device,image_view,NULL);vkDestroyImage(V.device,image,NULL);vk_memory_free(allocation);vkDestroyBufferView(V.device,texel,NULL);vkDestroyBufferView(V.device,other,NULL);vk_buffer_destroy(&input);vk_buffer_destroy(&output);
   CHECK(vk_validation_error_count()==0);
-  printf("{\"test\":\"UAB parameters\",\"result\":\"passed\",\"checks\":%u,\"actual_feature_enabled\":true,\"secondary_reexecuted_without_recording\":true,\"mixed_image_texel_shader_reads\":true,\"partial_blocks\":true,\"duplicate_slots_refused\":true,\"game_modules_executed\":false}\n",checks-checks_before);return 0;
+  printf("{\"test\":\"UAB parameters\",\"result\":\"passed\",\"checks\":%u,\"actual_feature_enabled\":true,\"secondary_reexecuted_without_recording\":true,\"mixed_image_texel_shader_reads\":true,\"batched_update_test\":%s,\"batch_capacity\":%u,\"warm_update_calls\":%llu,\"warm_update_writes\":%llu,\"unchanged_update_calls\":0,\"partial_blocks\":true,\"duplicate_slots_refused\":true,\"game_modules_executed\":false}\n",checks-checks_before,batched?"true":"false",batched?batch_capacity:0,(unsigned long long)warm_calls,(unsigned long long)warm_writes);return 0;
 }
