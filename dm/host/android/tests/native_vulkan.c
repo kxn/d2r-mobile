@@ -1299,6 +1299,40 @@ int dm_vulkan_test_main(void) {
   NVNpolygonState ps;
   CALL(nvnColorStateSetDefaults, &cs);
   CALL(nvnPolygonStateSetDefaults, &ps);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_RETAINED_PREFIX_FIXTURE")) {
+    extern void vk_test_retained_prefix_stats(uint64_t *,uint64_t *);
+    uint64_t captures0,replays0,captures1,replays1;
+    vk_test_retained_prefix_stats(&captures0,&replays0);
+    const NVNtexture *retained_colors[]={&tex};
+    // Repeat actual original NVN draws across completed contexts. Buffer
+    // contents change each frame; a replay of stale parameters is visible.
+    for(unsigned frame=0;frame<12;frame++) {
+      color[0]=(frame&1)?1:0;color[1]=(frame&2)?1:0;
+      color[2]=(frame&4)?1:0;color[3]=1;
+      CALL(nvnCommandBufferBeginRecording,&cmd);
+      CALL(nvnCommandBufferSetRenderTargets,&cmd,1,retained_colors,NULL,NULL,NULL);
+      CALL(nvnCommandBufferBindProgram,&cmd,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+      CALL(nvnCommandBufferBindColorState,&cmd,&cs);
+      CALL(nvnCommandBufferBindPolygonState,&cmd,&ps);
+      CALL(nvnCommandBufferBindUniformBuffer,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)color,16);
+      for(unsigned draw=0;draw<96;draw++)
+        CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+      submit(end());
+      CALL(nvnTextureReadTexels,&tex,NULL,&region,pixels);
+      for(unsigned i=0;i<sizeof pixels;i+=4)
+        CHECK(pixels[i]==(uint8_t)(color[0]*255) && pixels[i+1]==(uint8_t)(color[1]*255) &&
+          pixels[i+2]==(uint8_t)(color[2]*255) && pixels[i+3]==255);
+    }
+    vk_test_retained_prefix_stats(&captures1,&replays1);
+    CHECK(!V.retained_draws || (captures1>captures0 && replays1>replays0));
+    CHECK(V.retained_draws || (captures1==captures0 && replays1==replays0));
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"retained-prefix-changing-ubo\",\"captures\":%llu,\"replays\":%llu,\"checks\":%u,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
+      (unsigned long long)(captures1-captures0),(unsigned long long)(replays1-replays0),checks);
+    return 0;
+  }
+#endif
   CALL(nvnCommandBufferBeginRecording, &cmd);
   const NVNtexture *colors[] = {&tex};
   CALL(nvnCommandBufferSetRenderTargets, &cmd, 1, colors, NULL, NULL, NULL);

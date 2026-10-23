@@ -23,3 +23,6 @@ void vk_record_owner_pending(vk_record_owner *owner,uint64_t queue_serial);
 void vk_record_owner_reclaim(vk_record_owner *owner,uint64_t queue_serial);
 // Enabled only by creating an experimental owner. No per-draw object registry.
 uint64_t vk_record_object_epoch(void);
+
+// Enable before any persistent parameter packet can retain physical handles.
+void vk_record_object_tracking_enable(void);

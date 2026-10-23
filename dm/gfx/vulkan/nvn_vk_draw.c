@@ -810,6 +810,7 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   }
   if (state->jobs) die("Vulkan graphics resources reused before recycling");
   graphics_state = state;
+  if(V.retained_draws)vk_record_object_tracking_enable();
   state->retained_next_job=0;
   if(state->retained)state->retained->used=0;
   mip_clear_begin();

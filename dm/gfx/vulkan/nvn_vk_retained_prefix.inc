@@ -17,6 +17,13 @@ typedef struct retained_recordings {
   int used;
 } retained_recordings;
 
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t retained_test_captures,retained_test_replays;
+void vk_test_retained_prefix_stats(uint64_t *captures,uint64_t *replays) {
+  *captures=retained_test_captures;*replays=retained_test_replays;
+}
+#endif
+
 // Compare only consumed values. Unused slots, padding and the transient
 // command-buffer handle are not part of the fixed GPU encoding.
 static int retained_draw_equal(const vk_draw_emission *a,const vk_draw_emission *b) {
@@ -71,6 +78,9 @@ static int retained_prefix_try(render_job *j,const vk_draw_emission *draws,unsig
   if(same)for(unsigned i=0;i<count;i++)if(!retained_draw_equal(&entry->keys[i],&draws[i])) {same=0;break;}
   if(same) {
     j->retained_secondary=cached;r->used=1;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    retained_test_replays++;
+#endif
     static int first_replay;
     if(!first_replay) {first_replay=1;LOG("[vulkan retained draws] first replay draws=%u slot=%u recording=%llu",count,index,(unsigned long long)vk_recording_serial());}
     return 1;
@@ -106,6 +116,9 @@ static int retained_prefix_try(render_job *j,const vk_draw_emission *draws,unsig
   memcpy(entry->keys,draws,(size_t)count*sizeof *draws);
   entry->count=count;entry->pass=j->pass;entry->framebuffer=j->framebuffer;entry->area=j->area;
   j->retained_secondary=command;r->used=1;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  retained_test_captures++;
+#endif
   static int first_record;
   if(!first_record) {first_record=1;LOG("[vulkan retained draws] first recording draws=%u slot=%u",count,index);}
   return 1;

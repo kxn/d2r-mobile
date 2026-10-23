@@ -2,6 +2,9 @@
 #include <stdatomic.h>
 static atomic_int record_owners_enabled;
 static atomic_uint_fast64_t record_object_epoch=1;
+void vk_record_object_tracking_enable(void) {
+  atomic_store_explicit(&record_owners_enabled,1,memory_order_release);
+}
 void vk_record_object_retired(void) {
   if(!atomic_load_explicit(&record_owners_enabled,memory_order_relaxed))return;
   uint64_t before=atomic_fetch_add_explicit(&record_object_epoch,1,memory_order_release);
@@ -28,7 +31,7 @@ vk_record_owner *vk_record_owner_create(unsigned slots) {
   VkCommandPoolCreateInfo ci={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
     .flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,.queueFamilyIndex=V.queue_family};
   VK_CHECK(vkCreateCommandPool(V.device,&ci,NULL,&owner->pool));owner->count=slots;
-  atomic_store_explicit(&record_owners_enabled,1,memory_order_release);return owner;
+  vk_record_object_tracking_enable();return owner;
 }
 static record_slot *slot_at(vk_record_owner *owner,unsigned slot) {
   if(!owner || slot>=owner->count)die("Vulkan retained recording slot outside owner");
