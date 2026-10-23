@@ -34,7 +34,7 @@
 
 上表 Running 是真实调度时间，不乘独立 30 秒样本份额制造函数毫秒。睡眠约 6.2–6.9ms / Surface；阻塞 D 约 0.002–0.004ms。该场景不能通过只消除阻塞锁等待补足到 16.67ms。驻核、频率和 GPU 负载仍可能影响执行效率，不能把频率变化直接认定为温控原因或线性归一。
 
-现有 owner 发布计数在各自较宽的 record 前后状态窗中也稳定：每原 guest submit 的提前提交 draw 累计约 2395、raster 热复用约 2341、texture prepare 早命中约 4186–4187、View recipe 命中约 4145–4147、Pool range 约 6153–6156、PSO lookup 约 390–391。提前提交 draw 不含最终剩余块，不能作完整帧 draw 总数；View 消费还须加约 695–696 次 MISS。这些不是函数采样次数，也不与内层 236 个 Surface 混用分母。多数 PSO 已提前复用，不能再以所有 draw 数预支 key-cache 收益。
+现有 owner 发布计数在各自较宽的 record 前后状态窗中也稳定：每原 guest submit 的提前提交 draw 累计约 2395、raster 热复用约 2341、texture prepare 早命中约 4186–4187、View recipe 命中约 4145–4147、Pool range 已覆盖复用命中约 6153–6156、PSO lookup 约 390–391。提前提交 draw 不含最终剩余块，不能作完整帧 draw 总数；View 消费还须加约 695–696 次 MISS。这些不是函数采样次数，也不与内层 236 个 Surface 混用分母。多数 PSO 已提前复用，不能再以所有 draw 数预支 key-cache 收益。
 
 原始及分析目录：`.local/logs/current-default-on-callchain-v1/`。其中 `root-quality-review.json`、`scheduler/summary.json`、`state-work-brackets.json`、官方 Inferno / callgraph HTML 与逐栈互斥归属可复核。`report-path-erratum.json` 保留 wrapper 结果字段中的 config 路径笔误；实际加载输入、选项与 APK 均已核验，没有为修正文案重采。
 
@@ -97,7 +97,7 @@ v4 后继现已在同一 Q735 完成 Shader 与异步排序资格，没有重复
 
 ## 逐 draw 准备的次数与可删除预算
 
-当前三窗每 guest submit 的提前提交 draw 累计约 2395（不是完整帧总 draw），texture prepare 早命中约 4186，View recipe 命中约 4146、MISS 约 696（合计约 4842 次 View 消费），Pool range 约 6154。这些是不同语义计数，prepare 本身只计早命中，不能把它当全部调用数或慢处理数，更不能当重新建图或上传。采样能定位职责，不能单凭调用栈得知对象内容或类型是否变化。
+当前三窗每 guest submit 的提前提交 draw 累计约 2395（不是完整帧总 draw），texture prepare 早命中约 4186，View recipe 命中约 4146、MISS 约 696（合计约 4842 次 View 消费），Pool range 已覆盖复用命中约 6154。这些是不同语义计数，Pool ranges 字段实际只计 record_pool_range 的已覆盖早退，不是新范围登记或全部消费；prepare 本身只计早命中，不能把它当全部调用数或慢处理数，更不能当重新建图或上传。采样能定位职责，不能单凭调用栈得知对象内容或类型是否变化。
 
 当前 image prepare / View 父桶的互斥细分为：shader 遍历／组准入 0.91–1.15%，逐 image prepare 1.34–1.65%，View 消费 6.04–6.89%。View 还包含布局／反馈、请求构造、物理元信息、持久 View 查询、上传前置、native 保活和逻辑 recipe 交付；并非全部是 Vulkan 对象创建。详见 `.local/logs/current-image-prepare-roles-v1/`。这些是整线程份额，不与父桶再次相加，也未全部认领可省。
 

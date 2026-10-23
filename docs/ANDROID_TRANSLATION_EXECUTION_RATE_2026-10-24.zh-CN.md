@@ -70,3 +70,28 @@ P5A → P7A：总 Running 26.694→20.839ms，少5.855ms；总 Sleeping 增5.585
 本次没有把执行带到16.67ms，也不能推广为 ADPF 对任何设备／场景都无效。不再把相同接口开关当下一项省工优化。原记录／125项输入核验在 `.local/logs/nvn-owner-affinity-adpf-v1/four-arm-offline-review.{md,json}`；根另核实际TID／target／计数覆盖、保存退出与原输入。
 
 十个正式窗口和一次正式工具前的预热拒绝均已完成原生命周期存档两次并退出（A2即时stop校验race的补证仍单列）。原日常 APK `b8f4020f…` 已实际恢复，原f830／模块28项／native表及原CASC逐SHA复核，进程缺席。实际恢复收条 `.local/logs/nvn-owner-affinity-device-v1/restore-result.json`，不是仅准备的恢复计划。诊断源码分支已推至用户fork备份，主线默认未启用绑核。
+
+## 当前日常资源上的官方 GPU 实测
+
+恢复原日常包之后，重建唯一属于本次的官方 SDP2026.9 Realtime GUI，Q-only ADB wrapper 排除借出的其它设备；实际暂停控件、九指标及当次 GUI／13个collector身份核验后，原 helper 执行12秒Realtime及其中8秒官方Perfetto。游戏仍为b8f/d34、原f830/950/6217混合ASTC4＋6/.60，无绑核、hint reference，不更改驱动或游戏产物。预热到tick1020后，正式窗PSO174／variants32前后不变。
+
+官方窗8.005945s，游戏同一SurfaceView的239个PresentFenceSignaled形成238个完整间隔；完整窗7.850245s，平均32.984222ms。九指标每项157个正式样本，最大gap59.903ms，原字段定义／global／有限值／覆盖均通过。使用实际REALTIME↔BOOTTIME clock_snapshot和首末Surface fence裁剪分子与分母，没有12秒流量除8秒帧。
+
+|官方全局 GPU 指标|正式窗时间加权均值|完整 Surface 窗每间隔|
+|---|---:|---:|
+|GPU clocks|499.986 M/s|16.492 M reported clocks|
+|Shaders Busy|66.522%|66.513%|
+|Texture Pipes Busy|41.261%|41.260%|
+|L1 hit / Texture L2 miss|64.501% / 8.616%|64.510% / 8.624%|
+|总读|4.011 GB/s|132.347 MB|
+|其中纹理读|3.016 GB/s|99.531 MB|
+|总写|1.865 GB/s|61.564 MB|
+|Fragments Shaded|1.014 G/s|33.484 M|
+
+GB/MB为十进制。纹理读是总读的子集，不相加；busy指标有不同且重叠的定义，不相加或换算游戏GPU毫秒。全局包括compositor，fragments不是唯一屏幕像素数，不能称overdraw倍数。没有实际带宽峰值／stall证据，不能把4.011GB/s写成带宽饱和或纯ALU瓶颈。
+
+同完整Surface窗的翻译线程Running25.014ms/interval、1405.835MHz，CPU频率覆盖100%；仍大于16.67ms，不能说只剩GPU问题。原replay/planning/present调用分母和嵌套关系另存，不与这个整线程数相加。SurfaceFlinger的213条GPU Deadline Missed属于合成器，不是游戏独占GPU pass时间。旧全ASTC4只证明工具可复用，不作资源优化因果对照。
+
+实际PID15843原生命周期save2、游戏退出；根独立核GUI/Xvfb/13个collector均缺席、层设置不变、原日常APK与32项资源身份不变。采集在 `.local/logs/current-execution-rate-sdp-game-v1/`；原工具分析及46项输入／输出哈希在 `.local/logs/current-execution-rate-sdp-game-v1-analysis/`。
+
+下一工具缺口是GPU队列／renderstage的实际时间，而不是重复猜测逐draw成本。原f830构建关闭Mesa Perfetto；已另开独立构建，仅启用Mesa现成Perfetto SDK／官方`gpu.renderstages` producer，先核KGSL已有timestamp支持与工具本身的捕获扰动。它不是自制计时器，当前未换日常驱动、未改资源身份、未通过GPU资格；编译完成也不能冒充已取得队列Profile。CPU侧同时完成Buffer阶段聚合资格审查：范围账本与保活已有复用，尚不能把9%父桶视为可删；有限几何预解析须先补实际Pool／别名／发布边界资格，不立即增加另一层检查。见 `.local/logs/current-buffer-phase-aggregation-v1/`。
