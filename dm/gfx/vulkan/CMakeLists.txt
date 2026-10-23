@@ -41,6 +41,12 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nvn_test_names.inc" "")
 foreach(name ${names})
   file(APPEND "${CMAKE_CURRENT_BINARY_DIR}/nvn_test_names.inc" "\"${name}\",\n")
 endforeach()
+# Explicit host-code-size experiment; no shader compiler or floating-point flags.
+option(DM_VULKAN_DRAW_SHADER_OS "Compile only NVN draw/shader host translation units with -Os" OFF)
+if(DM_VULKAN_DRAW_SHADER_OS)
+  set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/nvn_vk_draw.c" "${CMAKE_CURRENT_SOURCE_DIR}/nvn_vk_shader.c"
+    APPEND PROPERTY COMPILE_OPTIONS -Os)
+endif()
 file(GLOB BACKEND CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 add_executable(vulkan_host_test tests/host.c ${BACKEND} "${GFX}/../third_party/volk/volk.c"
   "${GFX}/nvn/nvn_platform.c" "${GFX}/nvn/nvn_dirty.c" "${GFX}/nvn/nvn_tex.c" "${GFX}/nvn/nvn_native_layout.c"

@@ -13,6 +13,7 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
+parser.add_argument('--draw-shader-os',action='store_true',help='experimental -Os for only nvn_vk_draw.c and nvn_vk_shader.c; other host code remains O3')
 parser.add_argument('--thinlto',action='store_true',help='experimental Clang ThinLTO for host C/C++, lld backends limited to2')
 parser.add_argument('--native-resources',action='store_true',help='compile default-OFF host-native texture protocol; requires shared pools')
 parser.add_argument('--shared-pools',action='store_true',help='compile default-OFF fixed shared Pool/early guest heap experiment')
@@ -22,6 +23,8 @@ parser.add_argument('--tlsdesc', action='store_true', help='Native dynamic TLS, 
 parser.add_argument('--opt-level', choices=['1', '2', '3'], default='3', help='native host optimization; preserves debug symbols and frame pointers')
 parser.add_argument('--renderdoc-api', action='store_true', help='optional official application-API capture, not custom timing')
 args = parser.parse_args()
+if args.draw_shader_os and (args.opt_level != '3' or args.thinlto):
+    parser.error('--draw-shader-os requires --opt-level 3 and no ThinLTO for an isolated two-TU comparison')
 if args.shared_import_windows and not args.shared_pools:
     parser.error("--shared-import-windows requires --shared-pools")
 if args.native_resources and not args.shared_pools:
@@ -50,7 +53,8 @@ run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-
     '-DDM_VULKAN_NATIVE_RESOURCES=' + ('ON' if args.native_resources else 'OFF'),
     '-DDM_ANDROID_RENDERDOC_API=' + ('ON' if args.renderdoc_api else 'OFF'),
     '-DDM_RENDERDOC_INCLUDE_DIR=' + str(ROOT/'.local/tools/Arm_Performance_Studio_2026.5/renderdoc_for_arm_gpus/include'),
-    '-DDM_ANDROID_RUNTIME_OPT_LEVEL=' + args.opt_level)
+    '-DDM_ANDROID_RUNTIME_OPT_LEVEL=' + args.opt_level,
+    '-DDM_VULKAN_DRAW_SHADER_OS=' + ('ON' if args.draw_shader_os else 'OFF'))
 run('cmake', '--build', ROOT / '.local/build/android-native', '-j'+str(args.native_jobs), '--target', 'dmhost_android')
 rows = {row['键']: row for row in csv.DictReader((ROOT / 'dm/i18n/ui_text.tsv').open(), delimiter='\t')}
 shutil.rmtree(OUT / 'res', ignore_errors=True)
@@ -154,6 +158,9 @@ opus_provenance={'upstream':json.loads(opus_upstream.read_text()),
 manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),
           'apk_sha256':sha(apk),'host_library_sha256':sha(native_build/'libdmhost_android.so'),
           'tlsdesc':args.tlsdesc,'host_opt_level':args.opt_level,'contains_game_binary':False,
+          'host_draw_shader_os':args.draw_shader_os,
+          'host_source_compile_options':({name:['-Os'] for name in
+              ['dm/gfx/vulkan/nvn_vk_draw.c','dm/gfx/vulkan/nvn_vk_shader.c']} if args.draw_shader_os else {}),
           'official_renderdoc_api':args.renderdoc_api,
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,

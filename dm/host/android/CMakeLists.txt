@@ -65,6 +65,12 @@ add_executable(native_pace_test "${GFX}/vulkan/tests/pace.c" "${GFX}/vulkan/nvn_
 target_link_libraries(native_pace_test PRIVATE m)
 target_link_options(native_pace_test PRIVATE -Wl,-z,max-page-size=16384)
 include("${GFX}/vulkan/builtins.cmake")
+# Explicit host-code-size experiment; no shader compiler or floating-point flags.
+option(DM_VULKAN_DRAW_SHADER_OS "Compile only NVN draw/shader host translation units with -Os" OFF)
+if(DM_VULKAN_DRAW_SHADER_OS)
+  set_property(SOURCE "${GFX}/vulkan/nvn_vk_draw.c" "${GFX}/vulkan/nvn_vk_shader.c"
+    APPEND PROPERTY COMPILE_OPTIONS -Os)
+endif()
 set(VK_SOURCES "${GFX}/vulkan/nvn_vk_freeze.c" "${GFX}/vulkan/nvn_vk_bright.c" "${GFX}/vulkan/nvn_vk_ghost.c" "${GFX}/vulkan/nvn_vk_capture.c" "${GFX}/vulkan/nvn_vk_window.c" "${GFX}/vulkan/nvn_vk_draw.c" "${GFX}/vulkan/nvn_vk_state.c" "${GFX}/vulkan/nvn_vk_shader.c" "${GFX}/vulkan/nvn_vk_counter.c" "${GFX}/vulkan/nvn_vk_query.c" "${GFX}/vulkan/nvn_vk.c" "${GFX}/vulkan/nvn_vk_format.c" "${GFX}/vulkan/nvn_vk_replay.c" "${GFX}/vulkan/nvn_vk_texture.c" "${GFX}/nvn/nvn_platform.c" "${GFX}/nvn/nvn_tex.c" "${GFX}/nvn/nvn_native_layout.c" "${GFX}/tex/nvn_deswizzle.c" "${GFX}/tex/nvn_bcdec.c")
 get_target_property(NATIVE_SOURCES dmhost_native SOURCES)
 list(PREPEND VK_SOURCES "${GFX}/vulkan/nvn_vk_pace.c")
