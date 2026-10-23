@@ -169,6 +169,16 @@ int vk_pool_maintenance_active(void);
 // Recording-owner idle proofs; never synchronize or end an active scope.
 int vk_shader_operation_active(void);
 int vk_texture_binding_scope_active(void);
+// Full-consumption experiment: opaque Pool owners are borrowed only by the
+// current recording; an internal commit upgrades active operations first.
+int vk_pool_uniform_capture(uint64_t addr,uint64_t size,void **buffer,uint64_t *offset,VkPipelineStageFlags stages,void **owner);
+uint64_t vk_pool_uniform_epoch(void);
+int vk_pool_uniform_group_add(unsigned stage,void *owner);
+int vk_pool_uniform_group_borrow(unsigned stage);
+uint64_t vk_texture_uniform_alias_epoch(void);
+int vk_texture_uniform_alias_proved(uint64_t address,uint64_t bytes);
+void vk_ubo_plan_break(void);
+void vk_ubo_plan_changed(unsigned stage,unsigned slot,uint64_t address,uint64_t size);
 int vk_pool_address_stage(uint64_t addr,uint64_t size,void **buffer,uint64_t *offset,VkPipelineStageFlags stages);
 int vk_pool_address_overwrite(uint64_t addr,uint64_t size,void **buffer,uint64_t *offset,VkPipelineStageFlags stages);
 void vk_pool_overwritten(uint64_t addr,uint64_t size);

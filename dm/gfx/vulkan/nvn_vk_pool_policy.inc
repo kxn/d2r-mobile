@@ -19,6 +19,7 @@ static int pool_operation_add(void *context,const vk_pool_requirement *range) {
   plan->ranges[plan->count++]=*range;return 1;
 }
 static void pool_operation_unpin(pool_operation_plan *plan) {
+  plan->uniform_group_count[0]=plan->uniform_group_count[1]=0;
   // No reference was added when all owners were already retained by the
   // current recording. Commit upgrades them before it publishes that owner.
   if(!plan->owned_pin_count) {plan->pin_count=0;return;}
@@ -40,12 +41,26 @@ static __attribute__((noinline)) void pool_operation_before_commit(void) {
   int borrowed=0;
   for(unsigned d=0;d<pool_operation_depth;d++) {
     pool_operation_plan *plan=pool_operation_plans[d];
-    if(plan->pin_count!=plan->owned_pin_count) {borrowed=1;break;}
+    if(plan->pin_count!=plan->owned_pin_count || plan->uniform_group_count[0] || plan->uniform_group_count[1]) {borrowed=1;break;}
   }
   if(!borrowed)return;
   pthread_mutex_lock(&V.resources);
   for(unsigned d=0;d<pool_operation_depth;d++) {
     pool_operation_plan *plan=pool_operation_plans[d];
+    for(unsigned stage=0;stage<2;stage++) {
+      unsigned n=plan->uniform_group_count[stage];
+      if(n && (!recording_resources || uniform_groups[stage].serial!=recording_resources->queue_serial ||
+          n>uniform_groups[stage].count))die("Uniform group borrowed prefix lifetime mismatch");
+      for(unsigned j=0;j<n;j++) {
+        pool *p=uniform_groups[stage].owners[j];size_t k=0;
+        for(;k<plan->pin_count;k++)if(plan->pins[k]==p)break;
+        if(k==plan->pin_count) {
+          if(k==VK_POOL_RESERVE_MAX_REQUIREMENTS)die("Uniform group operation owner capacity");
+          plan->pins[k]=p;plan->owned_pins[k/64]&=~(UINT64_C(1)<<(k%64));plan->pin_count++;
+        }
+      }
+      plan->uniform_group_count[stage]=0;
+    }
     if(plan->pin_count==plan->owned_pin_count)continue;
     if(!recording_resources || plan->borrowed_recording_serial!=recording_resources->queue_serial)
       die("Vulkan operation borrowed recording lifetime mismatch");
@@ -173,6 +188,8 @@ static int pool_operation_retains_locked(const pool *p) {
   for(unsigned d=0;d<pool_operation_depth;d++) {
     const pool_operation_plan *plan=pool_operation_plans[d];
     for(size_t k=0;k<plan->pin_count;k++)if(plan->pins[k]==p)return 1;
+    for(unsigned st=0;st<2;st++)for(unsigned k=0;k<plan->uniform_group_count[st];k++)
+      if(uniform_groups[st].owners[k]==p)return 1;
   }
   return 0;
 }

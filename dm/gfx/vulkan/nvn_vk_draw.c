@@ -537,6 +537,7 @@ static struct {
 static unsigned end_site_count;
 void vk_render_end_at(const char *file, unsigned line) {
   vk_image_split_break();
+  vk_ubo_plan_break();
   if (active_job && !vk_pool_maintenance_active()) vk_ghost_flush();
   if(active_job && active_job->local) {pl_render_end(active_job);mip_clear_materialize();return;}
   if (active_job) {
@@ -1348,13 +1349,40 @@ static VK_COLD_PHASE int draw_expand_instances(vk_shader *const list[6],
     }
   return 1;
 }
+static void draw_vertex_binding_require(const vk_binding *binding,int *writable_buffers) {
+    int kind=binding->kind,reg=binding->reg;
+    if(kind==7||kind==9) {
+      // Buffer textures consume the same pool bytes as UBO/SSBO bindings.
+      // A readonly view does not depend on unrelated fragment/image writes.
+      // Keep unknown descriptors and writable views on the full dependency.
+      tex_t texture;
+      int limit=kind==9?32:128;
+      if(reg<0||reg>=limit || vk_binding_writable(binding)) *writable_buffers=1;
+      else {
+        uint64_t handle=kind==9?S.img[0][reg]:S.tex[0][reg];
+        if(!vk_texture_descriptor(handle&0xfffff,&texture) ||
+           texture.d.target!=NVN_TEXTURE_TARGET_BUFFER ||
+           !texture.mem || !texture.L.size)
+          *writable_buffers=1;
+        else vk_buffer_vertex_require((uintptr_t)texture.mem,texture.L.size);
+      }
+    }
+    const p_bind_buf *buffer=NULL;
+    if(kind==1 && reg>=3 && reg<19) buffer=&S.ubo[0][reg-3];
+    if((kind==2||kind==8) && reg>=0 && reg<16)
+      buffer=kind==8?&S.ubo[0][reg]:&S.ssbo[0][reg];
+    if(buffer && buffer->addr && buffer->size)
+      vk_buffer_vertex_require(buffer->addr,buffer->size);
+}
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
 static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   vk_image_split_draw_begin();
+  vk_ubo_plan_draw_enter();
   vk_texture_lookup_scope_begin();int source_operation=vk_shader_image_sources_begin();
   vk_draw_record_impl(draw,idx,disable_local_plan);
   vk_shader_image_sources_end(source_operation);vk_texture_lookup_scope_end();
   vk_image_split_draw_end();
+  vk_ubo_plan_draw_leave();
 }
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   // A state change outside the complete planned sequence cannot enable
@@ -1498,32 +1526,35 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   // shader schema. Keep the dynamic VS descriptor checks below unchanged.
   for(unsigned stage=0;stage<5;stage++)
     if(list[stage] && list[stage]->has_writable_buffers) writable_buffers=1;
-  for(unsigned n=0;n<list[0]->nb;n++) {
-    const vk_binding *binding=&list[0]->bindings[n];
-    int kind=binding->kind,reg=binding->reg;
-    if(kind==7||kind==9) {
-      // Buffer textures consume the same pool bytes as UBO/SSBO bindings.
-      // A readonly view does not depend on unrelated fragment/image writes.
-      // Keep unknown descriptors and writable views on the full dependency.
-      tex_t texture;
-      int limit=kind==9?32:128;
-      if(reg<0||reg>=limit || vk_binding_writable(binding)) writable_buffers=1;
-      else {
-        uint64_t handle=kind==9?S.img[0][reg]:S.tex[0][reg];
-        if(!vk_texture_descriptor(handle&0xfffff,&texture) ||
-           texture.d.target!=NVN_TEXTURE_TARGET_BUFFER ||
-           !texture.mem || !texture.L.size)
-          writable_buffers=1;
-        else vk_buffer_vertex_require((uintptr_t)texture.mem,texture.L.size);
-      }
-    }
-    const p_bind_buf *buffer=NULL;
-    if(kind==1 && reg>=3 && reg<19) buffer=&S.ubo[0][reg-3];
-    if((kind==2||kind==8) && reg>=0 && reg<16)
-      buffer=kind==8?&S.ubo[0][reg]:&S.ssbo[0][reg];
-    if(buffer && buffer->addr && buffer->size)
-      vk_buffer_vertex_require(buffer->addr,buffer->size);
+  if(vk_ubo_plan_active()) {
+    int uniform_plan_ok=active_job && !active_job->local && !local_ready && !local_consumer &&
+        !vk_ghost_replaying() && !writable_buffers && !vk_mip_clear_pending();
+    for(unsigned st=0;st<5;st++)if(list[st] && list[st]->has_resource_writes)uniform_plan_ok=0;
+    if(list[1] && (list[1]->quad_readonly_sources || list[1]->texel_storage_alternative))uniform_plan_ok=0;
+    vk_ubo_plan_admit(list,dynamic_uniforms,uniform_plan_ok);
   }
+  uint64_t uniform_vs_skipped[2]={0,0};
+  vk_ubo_plan_vertex_mask(list[0],uniform_vs_skipped);
+  uint64_t uniform_vs_remaining[2]={
+      (list[0]->nb>=64?UINT64_MAX:(UINT64_C(1)<<list[0]->nb)-1)&~uniform_vs_skipped[0],
+      (list[0]->nb<=64?0:list[0]->nb==128?UINT64_MAX:(UINT64_C(1)<<(list[0]->nb-64))-1)&~uniform_vs_skipped[1]};
+  int uniform_vs_sparse=!!(uniform_vs_skipped[0]|uniform_vs_skipped[1]);
+uniform_vertex_remaining:
+  if(!uniform_vs_sparse) {
+    for(unsigned n=0;n<list[0]->nb;n++)draw_vertex_binding_require(&list[0]->bindings[n],&writable_buffers);
+  } else {
+    for(unsigned word=0;word<2;word++)while(uniform_vs_remaining[word]) {
+      unsigned n=word*64+__builtin_ctzll(uniform_vs_remaining[word]);
+      uniform_vs_remaining[word]&=uniform_vs_remaining[word]-1;
+      draw_vertex_binding_require(&list[0]->bindings[n],&writable_buffers);
+    }
+  }
+  if(vk_ubo_plan_vertex_retry(uniform_vs_skipped)) {
+    uniform_vs_remaining[0]=uniform_vs_skipped[0];uniform_vs_remaining[1]=uniform_vs_skipped[1];
+    uniform_vs_skipped[0]=uniform_vs_skipped[1]=0;uniform_vs_sparse=1;
+    goto uniform_vertex_remaining;
+  }
+  vk_ubo_plan_vertex_done();
   // Consecutive attributes often share one complete VBO range. Only reuse
   // the immediately preceding require in this draw; a different range must
   // still run, even if an earlier stream already named the same bytes.
@@ -1951,6 +1982,7 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   vk_pass_plan_done(draw?(const void *)draw:(const void *)idx);
   vk_texture_shader_record();
   vk_shader_writebacks();
+  vk_ubo_plan_recorded();
   if (list[1] && vk_trace_frame_active() && V.trace_directory)
     for (int i = 0; i < S.targets.n; i++)
       if (S.targets.color[i])

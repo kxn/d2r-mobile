@@ -19,6 +19,9 @@ typedef struct {
   uint64_t owned_pins[(VK_POOL_RESERVE_MAX_REQUIREMENTS+63)/64];
   size_t owned_pin_count;
   uint64_t borrowed_recording_serial;
+  // Immutable prefixes of the two recording-local Uniform owner groups.
+  // No per-UBO pin search on a stable draw. Expanded before enqueue only.
+  unsigned uniform_group_count[2];
   pool_operation_geometry *geometry;
   size_t geometry_capacity;
   uint64_t geometry_registry_epoch;
@@ -26,6 +29,39 @@ typedef struct {
   struct {uint32_t stamp;uint16_t row,reserved;} geometry_slots[POOL_GEOMETRY_SLOTS];
 } pool_operation_plan;
 static pool_operation_plan *pool_operation_plans[POOL_OPERATION_DEPTH];
+enum { UNIFORM_GROUP_OWNERS=64 };
+static struct {uint64_t serial;unsigned count;pool *owners[UNIFORM_GROUP_OWNERS];} uniform_groups[2];
+uint64_t vk_pool_uniform_epoch(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  if(shared_lazy_active && pool_operation_depth==1)
+    return atomic_load_explicit(&pool_registry_epoch,memory_order_acquire);
+#endif
+  return 0;
+}
+int vk_pool_uniform_group_add(unsigned stage,void *owner) {
+  if(stage>=2 || !owner || !recording_resources || pool_operation_depth!=1)return 0;
+  uint64_t serial=recording_resources->queue_serial;
+  if(uniform_groups[stage].serial!=serial) {
+    // before_commit materializes every live prefix before old refs can drain.
+    for(unsigned d=0;d<pool_operation_depth;d++)
+      if(pool_operation_plans[d]->uniform_group_count[stage])die("Uniform group changed under borrow");
+    uniform_groups[stage].count=0;uniform_groups[stage].serial=serial;
+  }
+  pool *p=owner;
+  if(p->access_serial!=serial || !p->recording_access)die("Uniform capture missing recording owner");
+  unsigned n=uniform_groups[stage].count;
+  for(unsigned k=0;k<n;k++)if(uniform_groups[stage].owners[k]==p)return 1;
+  if(n==UNIFORM_GROUP_OWNERS)return 0;
+  uniform_groups[stage].owners[n]=p;uniform_groups[stage].count=n+1;return 1;
+}
+int vk_pool_uniform_group_borrow(unsigned stage) {
+  if(stage>=2 || !recording_resources || pool_operation_depth!=1 ||
+      uniform_groups[stage].serial!=recording_resources->queue_serial)return 0;
+  pool_operation_plan *plan=pool_operation_plans[0];
+  plan->uniform_group_count[stage]=uniform_groups[stage].count;
+  plan->borrowed_recording_serial=recording_resources->queue_serial;
+  return 1;
+}
 static unsigned pool_geometry_slot(uint64_t address,uint64_t size) {
   return ((address>>4)^(address>>20)^(size*UINT64_C(0x9e3779b1)))&(POOL_GEOMETRY_SLOTS-1);
 }
@@ -100,6 +136,11 @@ int vk_test_pool_operation_geometry(uint64_t address,uint64_t size,vk_pool_span_
   return found;
 }
 uint64_t vk_test_pool_operation_geometry_uses(void) {return pool_operation_geometry_uses;}
+unsigned vk_test_pool_uniform_borrowed(void) {
+  if(!pool_operation_depth)return 0;
+  const pool_operation_plan *p=pool_operation_plans[pool_operation_depth-1];
+  return p->uniform_group_count[0]+p->uniform_group_count[1];
+}
 void vk_test_pool_operation_pin_counts(size_t *owned,size_t *borrowed) {
   pool_operation_plan *plan=pool_operation_depth?pool_operation_plans[pool_operation_depth-1]:NULL;
   *owned=plan?plan->owned_pin_count:0;

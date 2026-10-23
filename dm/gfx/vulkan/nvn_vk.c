@@ -2262,7 +2262,8 @@ VkBuffer vk_test_recording_span_hint(uint64_t address,uint64_t size,unsigned *co
   pthread_mutex_unlock(&V.resources);return handle;
 }
 #endif
-static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents) {
+static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,int initial_contents,void **uniform_owner) {
+  if(uniform_owner)*uniform_owner=NULL;
   vk_mip_clear_buffer_access(addr,len);
 #ifdef DM_VULKAN_SHARED_POOLS
   if(shared_active || legacy_astc_copy_enabled)vk_texture_shared_linear_access(addr,len);
@@ -2283,6 +2284,9 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
         pool_initialize_range(geometry_owner,geometry.logical,len);
         *buf=&geometry.backing->buffer;*off=geometry.offset;
         record_pool_range(use,geometry.logical,len,stages,initial_contents);
+#ifdef DM_VULKAN_SHARED_POOLS
+        if(uniform_owner && geometry_owner->shared_lazy_eligible)*uniform_owner=geometry_owner;
+#endif
         pool_lookup_hits++;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
         pool_operation_geometry_uses++;
@@ -2305,6 +2309,9 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
         r->pool_lookups[k].span_hint=geometry.backing;
         if(r->pool_lookup_count<8)r->pool_lookup_count++;
         pool_recording_span_remember(r,use,geometry.backing);
+#ifdef DM_VULKAN_SHARED_POOLS
+        if(uniform_owner && geometry_owner->shared_lazy_eligible)*uniform_owner=geometry_owner;
+#endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
         pool_operation_geometry_uses++;
 #endif
@@ -2344,6 +2351,9 @@ static int pool_address(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPi
       pool_initialize_range(p,logical,len);
       *buf=&span.backing->buffer;*off=span.offset;
       record_pool_range(r->pool_lookups[k].use,logical,len,stages,initial_contents);
+#ifdef DM_VULKAN_SHARED_POOLS
+      if(uniform_owner && p->shared_lazy_eligible)*uniform_owner=p;
+#endif
       if(remember_span)pool_recording_span_remember(r,r->pool_lookups[k].use,span.backing);
       pool_lookup_hits++;return 1;
     }
@@ -2391,6 +2401,9 @@ pool_address_locked_miss:
     pool_initialize_range(p,logical,len);
     *buf=&span.backing->buffer;*off=span.offset;
     pool_gpu_access *use=record_pool_use(p,use_logical,use_bytes,stages,initial_contents);
+#ifdef DM_VULKAN_SHARED_POOLS
+    if(uniform_owner && p->shared_lazy_eligible)*uniform_owner=p;
+#endif
     if(r && use && !r->pool_lookup_reference) {
       pool_recording_hints_refresh(r);
       unsigned k=r->pool_lookup_next++%8;
@@ -2403,13 +2416,16 @@ pool_address_locked_miss:
   pthread_mutex_unlock(&V.resources);
   return p != NULL;
 }
+int vk_pool_uniform_capture(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages,void **owner) {
+  return pool_address(addr,len,buf,off,stages,1,owner);
+}
 int vk_pool_address_stage(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages) {
-  return pool_address(addr,len,buf,off,stages,1);
+  return pool_address(addr,len,buf,off,stages,1,NULL);
 }
 // Only exact transfer destinations use this lookup. Shader writable bindings
 // remain ordinary reads: a writable descriptor does not prove full coverage.
 int vk_pool_address_overwrite(uint64_t addr,uint64_t len,void **buf,uint64_t *off,VkPipelineStageFlags stages) {
-  return pool_address(addr,len,buf,off,stages,0);
+  return pool_address(addr,len,buf,off,stages,0,NULL);
 }
 // Call after recording the exact write, including any nested render-pass end
 // replay. Never publish this proof at lookup time, before the command exists.
@@ -2863,6 +2879,7 @@ uint64_t vk_buffer_native_image_read(uint64_t address,uint64_t size,VkPipelineSt
 }
 #endif
 static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStageFlags producers) {
+  vk_ubo_plan_break();
   if(!address||!size) return;
   if(size>UINT64_MAX-address) die("Vulkan buffer producer range overflow");
 #ifdef DM_VULKAN_NATIVE_RESOURCES
@@ -2922,6 +2939,7 @@ static void vertex_buffer_produced(uint64_t address,uint64_t size,VkPipelineStag
   vertex_buffer_writes[at].visible=0;vertex_buffer_write_count++;
 }
 void vk_buffer_transfer_written_range(uint64_t address,uint64_t size) {
+  vk_ubo_plan_break();
 #ifdef DM_VULKAN_SHARED_POOLS
   if(shared_active || legacy_astc_copy_enabled)vk_texture_shared_source_written(address,size);
 #endif
@@ -3069,7 +3087,7 @@ static _Atomic int graphics_stage_reference = -1;
 static _Atomic uint64_t graphics_stage_relaxed, graphics_stage_fallback;
 // Typed dependency decisions remain unchanged; batch only their diagnostics.
 static uint64_t recorded_graphics_stage_relaxed,recorded_graphics_stage_fallback;
-void vk_buffer_transfer_written(void) { buffer_transfer_pending = 1;buffer_transfer_visible=0; }
+void vk_buffer_transfer_written(void) { vk_ubo_plan_break();buffer_transfer_pending = 1;buffer_transfer_visible=0; }
 void vk_graphics_stage_reference(int reference) { atomic_store(&graphics_stage_reference,!!reference); }
 void vk_graphics_stage_stats(uint64_t *relaxed,uint64_t *fallback,int *reference) {
   *relaxed=atomic_load(&graphics_stage_relaxed);*fallback=atomic_load(&graphics_stage_fallback);
@@ -4225,6 +4243,7 @@ void vk_effect_copy(void *dst,const void *src,size_t size) {
 }
 static void buffer_writeback_intent(uint64_t dst,uint64_t size,const uint8_t *known,
                              VkPipelineStageFlags producers,int actual_write,void *native_token) {
+  vk_ubo_plan_break();
   V.buffer_epoch++;
   if (!size) return;
   if (!recording_resources) die("Vulkan writeback outside a submission");

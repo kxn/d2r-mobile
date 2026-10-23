@@ -10,6 +10,7 @@ void vk_driver_state_invalidate(unsigned stage,unsigned slot) {
 }
 void vk_state_restore(const vk_state *state) {
   vk_image_split_break();
+  vk_ubo_plan_break();
   S=*state;
   for(unsigned stage=0;stage<6;stage++)for(unsigned slot=0;slot<=2;slot+=2)
     vk_driver_state_invalidate(stage,slot);
@@ -96,6 +97,7 @@ void vk_state_op(uint32_t op, const void *data) {
     // old values. Graphics UBOs are separate descriptors; only CS uses c0.
     if(op==OP_BIND_SSBO || p->stage==5)
       vk_driver_state_invalidate(p->stage,0);
+    if(op==OP_BIND_UBO)vk_ubo_plan_changed(p->stage,p->index,p->addr,p->size);
     (op == OP_BIND_UBO ? S.ubo : S.ssbo)[p->stage][p->index] = *p;
     break;
   }

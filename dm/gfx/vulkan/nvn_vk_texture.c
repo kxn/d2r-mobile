@@ -2055,6 +2055,13 @@ void vk_texture_shared_source_written(uint64_t address,uint64_t bytes) {
 #endif
   nvn_dirty_scope_gpu_write((void *)(uintptr_t)address,bytes);
 }
+uint64_t vk_texture_uniform_alias_epoch(void) {return shared_alias_negative.epoch;}
+int vk_texture_uniform_alias_proved(uint64_t address,uint64_t bytes) {
+  if(!bytes || bytes>UINT64_MAX-address || !shared_alias_negative.epoch)return 0;
+  return !shared_gpu_alias_ranges ||
+      alias_negative_matches(&shared_alias_negative,address,address+bytes) ||
+      alias_negative_gap_matches(&shared_alias_negative,address,address+bytes);
+}
 static int image_shared_alias_eligible(const alias_range_node *node,int shared) {
   const image *i=node->owner;
   // Initialized/encoding can change without membership changes; do not cache
@@ -2104,6 +2111,10 @@ void vk_texture_shared_pool_close(uint64_t address,uint64_t bytes) {
 }
 #endif
 
+#ifndef DM_VULKAN_SHARED_POOLS
+uint64_t vk_texture_uniform_alias_epoch(void) {return 0;}
+int vk_texture_uniform_alias_proved(uint64_t address,uint64_t bytes) {(void)address;(void)bytes;return 0;}
+#endif
 void mtl_pkg_stats(uint64_t *u, uint64_t *r) {
   *u = uploads;
   *r = reuploads;

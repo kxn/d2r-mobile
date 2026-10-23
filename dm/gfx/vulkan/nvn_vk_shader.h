@@ -123,6 +123,14 @@ void vk_shader_destroy(vk_shader_submission *submission);
 // Only offsets[0..count) are initialized/observable. Consumers must not compare
 // or copy the complete struct: unused tail words are not part of binding state.
 typedef struct { uint32_t count,offsets[VK_UNIFORM_OFFSET_CAPACITY]; } vk_uniform_offsets;
+int vk_ubo_plan_active(void);
+void vk_ubo_plan_draw_enter(void);
+void vk_ubo_plan_draw_leave(void);
+void vk_ubo_plan_admit(vk_shader *const list[6],int dynamic,int eligible);
+void vk_ubo_plan_vertex_mask(vk_shader *shader,uint64_t skip[2]);
+int vk_ubo_plan_vertex_retry(uint64_t skip[2]);
+void vk_ubo_plan_vertex_done(void);
+void vk_ubo_plan_recorded(void);
 VkDescriptorSet vk_shader_bindings_selected(vk_shader *s,int dynamic,vk_uniform_offsets *offsets,
                                            const vk_texel_storage_selection *selection);
 VkDescriptorSet vk_shader_pixel_local_bindings(const vk_pixel_local_proof *proof,int dynamic,

@@ -754,6 +754,7 @@ static void fixed_shared_buffer_test(void) {
 #include "native_vulkan_shared_image.inc"
 #include "native_vulkan_shared_import_windows.inc"
 #include "native_vulkan_shared_lazy_alias.inc"
+#include "native_vulkan_uniform_plan.inc"
 #endif
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 #include "native_vulkan_native_resource.inc"
@@ -931,6 +932,7 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_MIXED_COMPRESSED_COPY_FIXTURE")) {mixed_compressed_copy_test();return 0;}
   if(getenv("DM_SHARED_WINDOW_STARTUP_FALLBACK_FIXTURE")) {shared_window_startup_fallback_test();return 0;}
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && defined(DM_VULKAN_SHARED_IMPORT_WINDOWS)
+  if(getenv("DM_UNIFORM_PLAN_FIXTURE")) {uniform_plan_gpu_test();return 0;}
   if(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE") && !strcmp(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE"),"1")) {shared_lazy_alias_gpu_test();return 0;}
 #endif
   if(getenv("DM_SHARED_IMPORT_WINDOW_FIXTURE")) {shared_import_windows_test();return 0;}

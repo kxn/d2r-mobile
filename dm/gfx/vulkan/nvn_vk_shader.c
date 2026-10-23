@@ -155,12 +155,12 @@ typedef struct {
   int writable;
 } storage_copy;
 typedef vk_split_descriptor_value descriptor_value;
-// Interface prototype only: this does NOT skip any Buffer consumer, source
-// publication, dependency, Pool borrow or access ledger. A future dirty-mask
-// plan can update this same stage payload in place instead of copying stable
-// descriptor entries into the ordinary stack array on every draw.
+// One stage-owned descriptor payload supports the optional complete Uniform
+// consumption plan. The older payload-only flag still skips no Buffer work.
+// Nested operations retain independent stack payloads.
 static int buffer_plan_payload_enabled=-1;
 static descriptor_value buffer_plan_payloads[2][128];
+#include "nvn_vk_uniform_plan.inc"
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 static uint64_t buffer_payload_uses,buffer_payload_nested_fallbacks;
 void vk_test_buffer_plan_payload(uint64_t out[2],int *enabled) {
@@ -1166,11 +1166,12 @@ void vk_shader_destroy(vk_shader_submission *state) {
 }
 vk_shader_submission *vk_shader_begin(vk_shader_submission *state) {
   if (binding_state) die("Vulkan nested descriptor recording");
+  ubo_plan_startup();
   if(buffer_plan_payload_enabled<0) {
     const char *setting=getenv("DM_VULKAN_BUFFER_PLAN_PAYLOAD");
     if(setting && strcmp(setting,"0") && strcmp(setting,"1"))
       die("DM_VULKAN_BUFFER_PLAN_PAYLOAD expects 0 or 1");
-    buffer_plan_payload_enabled=setting && !strcmp(setting,"1");
+    buffer_plan_payload_enabled=ubo_plan_enabled || (setting && !strcmp(setting,"1"));
   }
   int reference=atomic_load(&storage_bias_requested);
   if(reference<0) {
@@ -1768,6 +1769,9 @@ static VkDescriptorSet shader_bindings_selected_impl(vk_shader *s,int dynamic,vk
       vk_image_split_values(local_views?NULL:s,s->nb,split_skip,prepared_values):NULL;
   int split_values=values!=NULL;
   if(!values)values=prepared_values?prepared_values:local_values;
+  uint64_t uniform_skipped[2]={0,0};
+  uniform_consumption_plan *uniform_plan=ubo_plan_values(s,dynamic,local_views!=NULL,values,offsets,uniform_skipped);
+  split_skip[0]|=uniform_skipped[0];split_skip[1]|=uniform_skipped[1];
   const struct vk_binding_consumer *program=vk_binding_consumer_reference_mode()?NULL:s->binding_consumers;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(program)binding_consumer_test_compiled+=s->nb;else binding_consumer_test_reference+=s->nb;
@@ -1801,9 +1805,17 @@ consume_split_remaining:
         (const p_bind_buf *)((const uint8_t *)&S+consumer->source)):
         b->kind==1 && b->reg>=3 && b->reg<19?&S.ubo[s->stage][b->reg-3]:NULL;
       if (u) {
+        unsigned uniform_slot=b->kind==1 && b->reg>=3 && b->reg<19?(unsigned)b->reg-3:16;
+        uint64_t uniform_version=uniform_plan && uniform_slot<16?uniform_plan->versions[uniform_slot]:0;
+        uint64_t uniform_revision=ubo_plan_revision;
+        uint64_t uniform_address=u->addr,uniform_size=u->size;
+        void *uniform_owner=NULL;
         if(s->stage<5) vk_buffer_shader_read(u->addr,u->size,producing_stage);
-        if (u->addr && u->size &&
-            vk_pool_address_stage(u->addr,u->size,(void **)&v,&offset,producing_stage) &&
+        int resolved=0;
+        if(u->addr && u->size)resolved=uniform_plan?
+            vk_pool_uniform_capture(u->addr,u->size,(void **)&v,&offset,producing_stage,&uniform_owner):
+            vk_pool_address_stage(u->addr,u->size,(void **)&v,&offset,producing_stage);
+        if (resolved &&
             !(offset % V.props.limits.minUniformBufferOffsetAlignment)) {
           // 原 Metal 路径直接引用池内常量；符合 Vulkan 对齐时同样直接绑定，保留
           // GPU 更新顺序。 Like original Metal, directly bind pool uniforms
@@ -1812,6 +1824,8 @@ consume_split_remaining:
           buffer.buffer = v->handle;
           buffer.offset = offset;
           buffer.range = u->size < 65536 ? u->size : 65536;
+          ubo_plan_capture(uniform_plan,n,uniform_slot,uniform_version,uniform_revision,
+              uniform_address,uniform_size,uniform_owner);
         }
       }
       if (!buffer.buffer) {
@@ -1939,6 +1953,7 @@ consume_split_remaining:
         // are supplied again on every draw, including a descriptor cache hit.
         unsigned ordinal=dynamic_ordinal-1;
         offsets->offsets[ordinal]=(uint32_t)buffer.offset;
+        if(uniform_plan)uniform_plan->offsets[ordinal]=(uint32_t)buffer.offset;
         buffer.offset &= ~UINT64_C(0xffffffff);
       }
       values[n]=(descriptor_value){(uint64_t)buffer.buffer,buffer.offset,buffer.range};
@@ -1951,7 +1966,12 @@ consume_split_remaining:
     }
   }
   vk_image_split_capture_end();
-  if(split_values && vk_image_split_retry(consume)) {sparse=1;goto consume_split_remaining;}
+  int retry_values=split_values && vk_image_split_retry(consume);
+  retry_values|=ubo_plan_retry(uniform_plan,uniform_skipped,consume);
+  if(retry_values) {sparse=1;goto consume_split_remaining;}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  ubo_test_consumed+=__builtin_popcountll(uniform_skipped[0])+__builtin_popcountll(uniform_skipped[1]);
+#endif
   // Resolve every descriptor and its dependencies before checking the final
   // immutable contents. Buffer data changes still take the normal upload /
   // writeback paths; the set only stores a handle, offset and range.
