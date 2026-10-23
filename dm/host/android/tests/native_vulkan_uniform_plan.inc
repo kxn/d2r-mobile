@@ -15,6 +15,29 @@ static void uniform_plan_commit_callback(void *context) {
   CHECK(owned>=1 && !borrowed && !vk_test_pool_uniform_borrowed());
   mtl_sub_begin();CHECK(vk_recording_serial()!=serial);
 }
+static void uniform_plan_writer_callback(void *context) {
+  unsigned *calls=context;(*calls)++;
+  CHECK(vk_test_pool_uniform_borrowed()>0);
+  // Execute a real producer after the outer draw has selected stable VS UBOs.
+  // The render/transfer boundary invalidates the admission before that draw
+  // resumes; its retries must consume the original chain exactly once.
+  vk_render_end();uint64_t offset;
+  vk_buffer written=lazy_alias_resolve(bytes+3*65536,16,&offset);
+  lazy_alias_fill(written,offset,bytes+3*65536,16,0x3f000000u);
+}
+static void uniform_plan_alias_callback(void *context) {
+  NVNmemoryPool *pool=context;
+  CHECK(vk_test_pool_uniform_borrowed()>0);
+  // A new logical optimal-image alias after the VS mask has been selected.
+  // No NVN UBO setter changes. Resuming the outer draw must reach the original
+  // unsupported-alias diagnostic rather than consume a cached old descriptor.
+  NVNtexture alias;NVNtextureBuilder ab;CALL(nvnTextureBuilderSetDefaults,&ab);
+  CALL(nvnTextureBuilderSetDevice,&ab,&device);CALL(nvnTextureBuilderSetWidth,&ab,4);
+  CALL(nvnTextureBuilderSetHeight,&ab,4);CALL(nvnTextureBuilderSetFormat,&ab,NVN_FORMAT_RGBA8);
+  CALL(nvnTextureBuilderSetStorage,&ab,pool,65536);CHECK(CALL(nvnTextureInitialize,&alias,&ab));
+  p_clear_tex ac={.tex=(const tex_t *)&alias,.r={0,0,0,4,4,1},.mask=15,.c.f={1,0,0,1}};
+  vk_texture_clear(&ac);CHECK(vk_texture_shared_linear_conflict((uintptr_t)bytes+3*65536,16));
+}
 static void uniform_plan_gpu_test(void) {
   enum {W=65536};
   CHECK(vk_pool_shared_mode());vk_state saved=S;
@@ -72,7 +95,9 @@ static void uniform_plan_gpu_test(void) {
       // changes every draw. No whole-stage invalidation or offset truncation.
       vk_state_op(OP_BIND_UBO,&vs);vk_state_op(OP_BIND_UBO,&fs);
       moving.addr=(uintptr_t)bytes+(n&1?5:4)*W;vk_state_op(OP_BIND_UBO,&moving);
-      if(mode==0 && n==5 && getenv("DM_UNIFORM_PLAN_ALIAS_FATAL")) {
+      if(mode==0 && n==5 && getenv("DM_UNIFORM_PLAN_ALIAS_FATAL") && enabled)
+        vk_test_ubo_before_require(uniform_plan_alias_callback,&uniform_pool);
+      if(mode==0 && n==5 && getenv("DM_UNIFORM_PLAN_ALIAS_FATAL") && !enabled) {
         // A real nonnative optimal-image writer acquires an alias of the
         // formerly proved UBO. The following read must re-enter the existing
         // unsupported-alias error, never reuse its old negative proof.
@@ -102,10 +127,15 @@ static void uniform_plan_gpu_test(void) {
     if(enabled)CHECK(after[0]>before[0]);
     // A real GPU transfer changes the same UBO without a setter. Its original
     // dependency/publication chain must run again; check fresh GPU pixels.
-    vk_render_end();uint64_t written_offset;
-    vk_buffer written=lazy_alias_resolve(bytes+3*W,16,&written_offset);
-    lazy_alias_fill(written,written_offset,bytes+3*W,16,0x3f000000u);
+    unsigned writer_calls=0;
+    if(enabled)vk_test_ubo_before_require(uniform_plan_writer_callback,&writer_calls);
+    else {
+      vk_render_end();uint64_t written_offset;
+      vk_buffer written=lazy_alias_resolve(bytes+3*W,16,&written_offset);
+      lazy_alias_fill(written,written_offset,bytes+3*W,16,0x3f000000u);
+    }
     S.scissor=(p_scissor){0,0,16,16};vk_test_ubo_consumption(before,&enabled);vk_draw(&draw,NULL);
+    CHECK(writer_calls==(unsigned)enabled);
     vk_test_ubo_consumption(after,&enabled);CHECK(after[0]==before[0]);
     vk_internal_wait(vk_internal_commit());CALL(nvnTextureReadTexels,&target,NULL,&region,pixels);
     for(unsigned n=0;n<256;n++)CHECK(abs((int)pixels[n*4]-128)<=1 && abs((int)pixels[n*4+1]-128)<=1 &&

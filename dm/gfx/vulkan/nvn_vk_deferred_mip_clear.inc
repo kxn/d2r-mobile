@@ -183,7 +183,9 @@ int vk_mip_clear_try(const p_set_rt *rt,const p_scissor *sc,const p_clear_color 
       handle!=mip_clear.handles[clear->index] || memcmp(&r->clear,clear,sizeof *clear)) {
     mip_clear_recorded.rejected++;vk_mip_clear_drain();return 0;
   }
-  if(!mip_clear.issued)mip_clear_recorded.admitted++;
+  if(!mip_clear.issued) {
+    vk_ubo_plan_break();mip_clear_recorded.admitted++;
+  }
   mip_clear.issued++;
   vk_texture_mip_clear_mark(rt->color[clear->index],
       rt->has_cview[clear->index]?&rt->cview[clear->index]:NULL);

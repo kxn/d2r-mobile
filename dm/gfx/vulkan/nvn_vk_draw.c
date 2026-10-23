@@ -455,7 +455,7 @@ int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
     active_job = job;
     active_targets = *rt;
     active_writes = 0;
-    V.passes++;
+    vk_ubo_plan_break();V.passes++;
     if(rt->depth && !job->has_depth) {
       uint64_t n=(draw_recorded.depth_omissions += 1);
       if(n<=4 || (V.options.stats && n%600==0))
@@ -1859,7 +1859,7 @@ uniform_vertex_remaining:
     active_job = j;
     active_writes = 0;
     active_targets = S.targets;
-    V.passes++;
+    vk_ubo_plan_break();V.passes++;
     if (S.targets.depth && !j->has_depth) {
       uint64_t n = (draw_recorded.depth_omissions += 1);
       if (n<=4 || (V.options.stats && n%600==0))

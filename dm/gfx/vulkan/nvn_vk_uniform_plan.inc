@@ -13,11 +13,16 @@ typedef struct {
 typedef struct {
   const vk_shader *shader;
   int dynamic,admitted;
-  ubo_plan_phase phase;
   uint64_t ready[2],pending[2],slots[16][2],versions[16];
   uint32_t offsets[VK_UNIFORM_OFFSET_CAPACITY];
 } uniform_consumption_plan;
 static uniform_consumption_plan ubo_plans[2];
+// One owner-thread admission proof shared by both stages. Mid-draw callbacks
+// invalidate admitted/ready at the mutation, rather than polling this phase at
+// each consumer/capture/retry. Pool registration alone may occur off-thread;
+// its atomic registry publication is observed here on the next draw. Existing
+// retained shared-lazy spans cannot move, and overlapping Pools are rejected.
+static ubo_plan_phase ubo_admitted_phase;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 // Host fixture oracles only. vertex_skipped counts initial attempts; a later
 // callback may retry them. These are not production saved-work measurements.
@@ -65,11 +70,10 @@ static int ubo_phase_equal(ubo_plan_phase a,ubo_plan_phase b) {
   return a.serial==b.serial && a.pass==b.pass && a.buffer_epoch==b.buffer_epoch &&
       a.registry==b.registry && a.alias==b.alias && a.registry && a.alias;
 }
-static int ubo_plan_current(uniform_consumption_plan *p) {
-  if(!p->admitted)return 0;
-  if(ubo_draw_depth!=1 || vk_ghost_replaying() || vk_mip_clear_pending() ||
-      !ubo_phase_equal(p->phase,ubo_phase())) {vk_ubo_plan_break();return 0;}
-  return 1;
+static int ubo_plan_current(const uniform_consumption_plan *p) {
+  // Owner events clear this before any nested consumer resumes. Keep the
+  // callback retry point, but do not repeat five external getter calls here.
+  return p->admitted;
 }
 void vk_ubo_plan_draw_enter(void) {
   if(!ubo_plan_enabled)return;
@@ -82,9 +86,11 @@ void vk_ubo_plan_draw_leave(void) {
 }
 void vk_ubo_plan_admit(vk_shader *const list[6],int dynamic,int eligible) {
   if(!ubo_plan_enabled)return;
+  if(!eligible || ubo_draw_depth!=1) {vk_ubo_plan_break();return;}
   ubo_plan_phase phase=ubo_phase();
-  if(!eligible || ubo_draw_depth!=1 || !phase.registry || !phase.alias) {
-    vk_ubo_plan_break();return;
+  if(!phase.registry || !phase.alias) {vk_ubo_plan_break();return;}
+  if(!ubo_phase_equal(ubo_admitted_phase,phase)) {
+    vk_ubo_plan_break();ubo_admitted_phase=phase;
   }
   for(unsigned st=0;st<2;st++) {
     uniform_consumption_plan *p=&ubo_plans[st];
@@ -92,8 +98,7 @@ void vk_ubo_plan_admit(vk_shader *const list[6],int dynamic,int eligible) {
       ubo_plan_clear(p);memset(p->slots,0,sizeof p->slots);
       p->shader=list[st];p->dynamic=dynamic;
     }
-    if(!ubo_phase_equal(p->phase,phase))ubo_plan_clear(p);
-    p->phase=phase;p->admitted=list[st]!=NULL;
+    p->admitted=list[st]!=NULL;
   }
 }
 void vk_ubo_plan_vertex_mask(vk_shader *shader,uint64_t skip[2]) {

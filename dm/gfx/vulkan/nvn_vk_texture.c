@@ -203,6 +203,9 @@ static void image_shared_alias_remove(image *i) {
   if(!i->shared_alias_linked)return;
   image **at=&shared_gpu_aliases;while(*at && *at!=i)at=&(*at)->shared_alias_next;
   if(!*at)die("Shared GPU image alias list lifetime");
+  // Logical membership belongs to the recording owner; completion only
+  // frees retired physical storage. Invalidate before publishing the change.
+  vk_ubo_plan_break();
   int removed=0;
   shared_gpu_alias_ranges=alias_range_remove(shared_gpu_alias_ranges,&i->shared_alias_range,&removed);
   if(!removed)die("Shared GPU image alias index lifetime");
@@ -230,6 +233,7 @@ static void image_shared_alias_write(image *i) {
   i->shared_alias_range=(alias_range_node){.start=(uintptr_t)i->tex.mem,
       .end=(uintptr_t)i->tex.mem+i->tex.L.size,.serial=i->tex.serial,.owner=i,.height=1};
   i->shared_alias_range.max_end=i->shared_alias_range.end;
+  vk_ubo_plan_break();
   int inserted=0;
   shared_gpu_alias_ranges=alias_range_insert(shared_gpu_alias_ranges,&i->shared_alias_range,&inserted);
   if(!inserted)die("Shared GPU image alias index duplicate");
@@ -1409,7 +1413,7 @@ static void clear_image(image *i, const view_t *v, VkImageAspectFlags aspect,
     vk_texture_attachment_record(&i->tex,v,0);
     vk_defer_pass(pass, framebuffer);
     i->initialized = 1;
-    V.passes++;
+    vk_ubo_plan_break();V.passes++;
     return;
   }
   image_general_transfer(i);image_transfer(i,r,1);
@@ -1420,7 +1424,7 @@ static void clear_image(image *i, const view_t *v, VkImageAspectFlags aspect,
     vkCmdClearDepthStencilImage(V.cmd, i->handle, VK_IMAGE_LAYOUT_GENERAL,
                                 &value->depthStencil, 1, &r);
   i->initialized = 1;
-  V.passes++;
+  vk_ubo_plan_break();V.passes++;
 }
 void vk_target_clear_color(const p_set_rt *rt, const p_scissor *sc,
                            const p_clear_color *p) {

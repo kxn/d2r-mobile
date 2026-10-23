@@ -391,6 +391,7 @@ void vk_shader_writebacks(void) {
       if(!current_operation.precise_compute_outputs) vk_compute_produced();
     }
     else vk_barrier();
+    vk_ubo_plan_break();
     V.buffer_epoch++;
   }
   current_operation.shader_buffer_writes = 0;

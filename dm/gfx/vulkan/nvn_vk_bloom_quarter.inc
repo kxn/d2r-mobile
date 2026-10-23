@@ -390,7 +390,7 @@ static void bq_capture(void) {
   vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,bq_layout,0,1,&set,0,NULL);
   vkCmdPushConstants(V.cmd,bq_layout,VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof bq.parameters,&bq.parameters);
   vkCmdDraw(V.cmd,3,1,0,0);vkCmdEndRenderPass(V.cmd);
-  vk_texture_shader_record();V.draws++;V.passes++;atomic_fetch_add(&bq_replaced,1);
+  vk_texture_shader_record();V.draws++;vk_ubo_plan_break();V.passes++;atomic_fetch_add(&bq_replaced,1);
 }
 // Metal deletes C and feeds B1 directly to D. Define the compatibility B0
 // as a linear-clamp enlargement of that B1, not the original four-offset blur.

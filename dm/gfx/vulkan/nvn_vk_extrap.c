@@ -253,7 +253,7 @@ int vk_extrap_encode(const vk_rt_image *hdr,const vk_rt_image *depth,
   vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&set,0,NULL);
   vkCmdPushConstants(V.cmd,layout,VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof constants,&constants);
   vkCmdDraw(V.cmd,3,1,0,0);vkCmdEndRenderPass(V.cmd);vk_gpu_region_end(region);
-  vk_defer_pass(VK_NULL_HANDLE,framebuffer);V.passes++;V.draws++;vk_barrier();
+  vk_defer_pass(VK_NULL_HANDLE,framebuffer);vk_ubo_plan_break();V.passes++;V.draws++;vk_barrier();
   if (active->masked) {
     VkDescriptorSet mask_set=vk_descriptor_allocate(descriptors);
     VkDescriptorImageInfo mask_image={nearest_sampler,hole_image->view,VK_IMAGE_LAYOUT_GENERAL};
@@ -269,7 +269,7 @@ int vk_extrap_encode(const vk_rt_image *hdr,const vk_rt_image *depth,
     vkCmdSetViewport(V.cmd,0,1,&viewport);vkCmdSetScissor(V.cmd,0,1,&begin.renderArea);
     vkCmdBindDescriptorSets(V.cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&mask_set,0,NULL);
     vkCmdDraw(V.cmd,3,1,0,0);vkCmdEndRenderPass(V.cmd);vk_gpu_region_end(region);
-    vk_defer_pass(VK_NULL_HANDLE,framebuffer);V.passes++;V.draws++;vk_barrier();
+    vk_defer_pass(VK_NULL_HANDLE,framebuffer);vk_ubo_plan_break();V.passes++;V.draws++;vk_barrier();
   }
   return 1;
 }

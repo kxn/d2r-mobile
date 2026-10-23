@@ -4079,6 +4079,7 @@ static void trace_begin_submit(void) {
 }
 static void pool_window_before_submission(void);
 static void begin_submission(int pool_migration) {
+  vk_ubo_plan_break();
   mtl_init();
   if(!pool_migration)pool_window_before_submission();
   vk_graphics_prewarm();
