@@ -84,3 +84,19 @@ ON 编码含重录合计 1.463/1.424/1.951ms；新增 UAB 资格、参数、更�
 同包OFF后继qualified现已结束：236个Surface，Running26.488ms、Surface33.024ms，PSO316/variants32稳定；已覆盖核指令58.686–59.110M、周期34.409–34.702M。CPU0/1/2合1.129113ms Running缺计数边界，覆盖99.98194%，因此本次不能重用旧62552的100% OFF口径给严格增幅下界。ON/OFF仍没有证明整线程净省工或出图改善。原A1在正式测量前缺本PID启动位日志的失败单列，qualified不是覆盖重采同一性能窗。486项收口输入经根逐项哈希复核，见 `.local/logs/retained-uab-schema-index-device-v1/current-review.md`。
 
 另完成独立无抓帧/采样工具的b16 ON真实游戏营地画面检查：角色、场景和原控制UI可见，无该画面中明显黑块/几何缺失；仅此场景资格，不代表战斗/全场景。启动瞬间截图的HUD数字不作为稳态FPS。原进程10961 fresh save commits=2后停止，未让游戏空跑。记录在 `.local/logs/retained-uab-schema-index-visual-v1/capture/`。
+
+### ordinary source 前置复用：已实机测试，尚无稳定净收益
+
+独立后继 `f460841` 保留已有 ordinary FS image group 的 CPU-no-source 完成事实，提前跳过其逻辑源解析和空预检；不跳过 native/packaged、目标预检或后续 GPU consume/history/pins。发布或回调使事实失效时，一次关闭优化的原遍历补偿。原 source plan 的消费入口是 Pool collector，当前 shared-lazy 本来绕过该 collector，因此不能将 plan 不完整误称为必然增加一次 View/native 解析。这个候选默认OFF、retained OFF独立测，不将分段录制改变混进对照。
+
+主机原真实 GPU 用例覆盖连续12次绘制跳过10次普通源解析、同ID更换成CPU发布资源、真正提交/完成/重开、状态恢复、nested负例与shader切换；原完整OFF/ON各23,780,782项检查通过。已有宽source-flow组合的失败在OFF/ON相同，单列而未改松断言。这些是功能资格，不是手机命中率或性能证据。APK SHA `33ed525a8d47a558f204a565bcefacdf1636e76db7b725652362d4ca16bd8a87`，ELF SHA `400566496479515d4806d16b0ecf2d26e74ce075b0c23ec639ddbf4791aea0bd`，原入口1043项实际源码和六库归档在 `.local/build/ordinary-source-forward-v1-final/`；游戏模块、f830、shader链、6217项资源与.60输出不变。
+
+同包A1 OFF / B1 ON均PSO321、variants32稳定，原存档2次并停止、33项资产及属性恢复。各自同窗Running为26.560 / 26.237ms，Surface33.028 / 33.083ms；仅单对，没有稳定涨帧证据。已覆盖CPU指令区间59.576–60.000 / 58.809–59.234M，周期34.506–34.783 / 34.655–34.952M/Surface；OFF缺8.698385ms计数边界、覆盖99.86123%，ON缺0.128073ms、覆盖99.997923%，因此不能把covered-only约0.57–1.99%的指令差声称完整线程严格净界，周期区间也重叠。完整报告在 `.local/logs/ordinary-source-forward-device-v1/comparison-A1-B1/`，根已逐项核对B1原142项输入/输出哈希。
+
+独立ON三份官方完整栈中，CPU source仍5.27–6.68%，image prepare/View8.52–9.72%，Buffer准备8.49–8.81%，绑定组装10.58–11.47%。新static body在多数样本中不再保留旧public父帧，已用实际符号和LLVM inline共同归类，不能靠旧名消失认领收益。新组资格可见0/3/5样本；循环和entry metadata仍在。OFF三份原采集已正式完成并原save2/stop，六窗对照继续离线收口；报告不以ON单边或重命名宣称整段准备已复用。目录 `.local/logs/ordinary-source-forward-callchains-v1/`。
+
+### 标准 descriptor buffer 后继：查询和主机功能资格
+
+对UAB剩余参数/更新管理，独立原型使用标准 `VK_EXT_descriptor_buffer`，不是私有descriptor字节或改写shader地址。主机原GPU图形/compute与跨提交secondary重放、两份值版本/ordinal、混合image/sampler/texel/UBO/SSBO、pending覆盖拒绝和原回退等3组通过；这不代表Android游戏功能或性能已通过。源码冻结 `ab172d69ce992db0f166add3409b6965a10044ca`，证据 `.local/logs/descriptor-buffer-host-contract-v1/`。
+
+Q735独立cap-only v3在实际f830下完成标准能力查询：SHA、实际映射文件dev/inode及driver UUID均核对；descriptorBuffer/BDA=true，single-array=true，offset alignment64，UBO descriptor64、SSBO128、combined image sampler128字节。未创建VkDevice、Buffer或GPU工作，不能据此称手机GPU验证或认领收益。此前loader trampoline误判、v2目录准备错误及Java拒绝结果覆盖/退出顺序问题均保留原失败，修复后用独立v3 namespace，未覆盖旧结果。实际记录 `.local/logs/descriptor-buffer-capability-v3/device-query/`。后继仍需完整pipeline/layout、BDA分配/导入、texel原consumer地址交付和完成后arena覆盖合同，原资源准备不因此自动消失。
