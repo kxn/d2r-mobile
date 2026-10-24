@@ -187,16 +187,21 @@ static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_sh
 static void draw_parameters_end(draw_parameters *p) {
   if(!p)return;
   if(!p->active)die("Vulkan draw parameters end outside recording");
-  draw_parameters_flush(p);
+  if(!V.descriptor_buffers)draw_parameters_flush(p);
   uint64_t serial=vk_recording_serial();
-  for(draw_parameter_schema *s=p->schemas;s;s=s->next)
-    for(draw_parameter_block *b=s->blocks;b;b=b->next)if(b->version>=0) {
-      // A rejected first immutable write may have reserved an empty slot.
-      if(vk_uab_packet_seal(b->packet,b->version)) {
-        if(!vk_uab_packet_pending(b->packet,b->version,serial))die("Vulkan draw parameter pending ownership");
-      } else if(!vk_uab_packet_abandon(b->packet,b->version))die("Vulkan empty draw parameter abandonment");
-    }
-  if(!V.descriptor_buffers && !vk_uab_batch_end(p->batch))die("Vulkan draw parameter batch end");
+  // Descriptor-buffer arenas have no packet versions or batch publication:
+  // writes are already coherent and their pending lifetime is the context's
+  // active/last_serial contract below. Only UAB packets need per-block sealing.
+  if(!V.descriptor_buffers) {
+    for(draw_parameter_schema *s=p->schemas;s;s=s->next)
+      for(draw_parameter_block *b=s->blocks;b;b=b->next)if(b->version>=0) {
+        // A rejected first immutable write may have reserved an empty slot.
+        if(vk_uab_packet_seal(b->packet,b->version)) {
+          if(!vk_uab_packet_pending(b->packet,b->version,serial))die("Vulkan draw parameter pending ownership");
+        } else if(!vk_uab_packet_abandon(b->packet,b->version))die("Vulkan empty draw parameter abandonment");
+      }
+    if(!vk_uab_batch_end(p->batch))die("Vulkan draw parameter batch end");
+  }
   p->last_serial=serial;p->active=0;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(V.descriptor_buffers && getenv("DM_DESCRIPTOR_ARENA_PENDING_FIXTURE") && serial>vk_completed_serial()) {
