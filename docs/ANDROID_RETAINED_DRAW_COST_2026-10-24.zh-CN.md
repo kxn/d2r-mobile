@@ -80,3 +80,7 @@ ON 编码含重录合计 1.463/1.424/1.951ms；新增 UAB 资格、参数、更�
 新图中的采样user交付编码（含真实重录）约1.16–1.79ms/Surface，UAB资格+参数+updates约2.41–3.71ms，另有retained/pending约0.80–1.51ms。不能把其较低毫秒全部归给索引：频率1425–1496MHz，旧ON1143–1210MHz，且本版第三窗Surface仍慢至48.139ms，全部保留。原source失败断言和离线路径错误也独立保留，没有覆盖成成功。完整原始/新图位于 `.local/logs/retained-uab-schema-index-callchains-v1/ON/`，PMU在 `.local/logs/retained-uab-schema-index-device-v1/`。本版OFF首试在测量前未取得原driver启动位证明而拒绝，未生成性能窗；后继qualified另存，原失败不覆盖。
 
 前置准备审计又纠正了三个推断：shared-lazy的Pool operation入口根本不调用draw_pool_collect；UBO ready已经在VS prerequisite之前生效；image group也在图像预检之前生效。因此不能为这三处再加一层缓存。实际尚可向前交付的是既有ordinary FS group的CPU-no-source事实：`!has_layout`且defer publication关闭时，其CPU preflight本来没有动作，前面的logical resolve仍执行。该受限后继只在独立树研究，native/packaged/target原路、registry/revision/phase回调失效及末尾补偿必须闭合；当前约3% wrapper包络含其它类型，不当作可省预算。报告为 `.local/logs/prepared-resource-front-stage-audit-v1/report.md`。
+
+同包OFF后继qualified现已结束：236个Surface，Running26.488ms、Surface33.024ms，PSO316/variants32稳定；已覆盖核指令58.686–59.110M、周期34.409–34.702M。CPU0/1/2合1.129113ms Running缺计数边界，覆盖99.98194%，因此本次不能重用旧62552的100% OFF口径给严格增幅下界。ON/OFF仍没有证明整线程净省工或出图改善。原A1在正式测量前缺本PID启动位日志的失败单列，qualified不是覆盖重采同一性能窗。486项收口输入经根逐项哈希复核，见 `.local/logs/retained-uab-schema-index-device-v1/current-review.md`。
+
+另完成独立无抓帧/采样工具的b16 ON真实游戏营地画面检查：角色、场景和原控制UI可见，无该画面中明显黑块/几何缺失；仅此场景资格，不代表战斗/全场景。启动瞬间截图的HUD数字不作为稳态FPS。原进程10961 fresh save commits=2后停止，未让游戏空跑。记录在 `.local/logs/retained-uab-schema-index-visual-v1/capture/`。
