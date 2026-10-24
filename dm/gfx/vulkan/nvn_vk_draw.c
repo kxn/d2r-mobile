@@ -826,7 +826,7 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   // recycle. Check once at begin before accepting any persistent parameter.
   if(vk_graphics_parameters_discard_requested(state)) {
     retained_submission_forget(state);
-    if(!vk_graphics_parameters_discard(state))die("Vulkan parameter begin before completion");
+    if(!draw_parameters_reset_completed(state))die("Vulkan parameter begin before completion");
   }
   draw_parameters_begin(state->parameters);
   mip_clear_begin();
@@ -858,6 +858,7 @@ void vk_graphics_end(vk_graphics_submission *state) {
   retained_submission_end(state);
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(state->parameters && state->parameters->last_serial>vk_completed_serial()) {
+    if(draw_parameters_reset_completed(state))die("Vulkan draw parameters reset before actual completion");
     if(vk_graphics_parameters_discard(state))die("Vulkan draw parameters released before actual completion");
     draw_parameter_pending_rejected++;
   }
@@ -883,10 +884,11 @@ void vk_graphics_recycle(vk_graphics_submission *state) {
     free(j->local);free(j);
   }
   // Original jobs are retired first: their releases can invalidate physical
-  // objects. Reset cached CBs before destroying any UAB pool they reference.
+  // objects. Forget cached CBs before invalidating their immutable descriptor
+  // contents. Keep completed pools/sets; explicit idle trim still destroys them.
   if(vk_graphics_parameters_discard_requested(state)) {
     retained_submission_forget(state);
-    if(!vk_graphics_parameters_discard(state))die("Vulkan completed parameter discard ownership");
+    if(!draw_parameters_reset_completed(state))die("Vulkan completed parameter reset ownership");
   }
 }
 void vk_graphics_trim_idle(vk_graphics_submission *state) {

@@ -119,9 +119,14 @@ void vk_draw_flush_pending(void) {
   for(unsigned i=retained;i<count;i++)draw_emission_immediate(j,&j->pending_draws[i],(vk_sample_query){0});
 }
 static void draw_emission_deliver(render_job *j,const vk_draw_emission *p,vk_sample_query query) {
-  if(!V.retained_draws) {draw_emission_immediate(j,p,query);return;}
+  if(!V.retained_draws) {
+    if(p->retained_parameters)draw_parameters_flush(graphics_state?graphics_state->parameters:NULL);
+    draw_emission_immediate(j,p,query);return;
+  }
   if(!p->geometry_complete || query.pool || j->pending_uncacheable) {
-    vk_draw_flush_pending();draw_emission_immediate(j,p,query);return;
+    vk_draw_flush_pending();
+    if(p->retained_parameters)draw_parameters_flush(graphics_state?graphics_state->parameters:NULL);
+    draw_emission_immediate(j,p,query);return;
   }
   if(j!=active_job || j->local || V.cmd!=j->secondary || !graphics_state)
     die("Vulkan pending draw outside its ordinary recording");
@@ -138,6 +143,7 @@ static void draw_emission_deliver(render_job *j,const vk_draw_emission *p,vk_sam
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
       draw_pending_abandoned++;
 #endif
+      if(p->retained_parameters)draw_parameters_flush(graphics_state?graphics_state->parameters:NULL);
       draw_emission_immediate(j,p,query);return;
     }
     j->pending_draws=grown;j->pending_capacity=capacity;

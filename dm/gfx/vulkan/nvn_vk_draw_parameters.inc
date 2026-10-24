@@ -98,7 +98,7 @@ static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_sh
     // Root may discard only after forgetting every retained CB using this pool.
     p->discard=1;return VK_NULL_HANDLE;
   }
-  return vk_uab_packet_set(b->packet,b->version,slot);
+  return vk_uab_packet_set_deferred(b->packet,b->version,slot);
 }
 static void draw_parameters_end(draw_parameters *p) {
   if(!p)return;
@@ -118,6 +118,20 @@ static void draw_parameters_end(draw_parameters *p) {
 int vk_graphics_parameters_discard_requested(const vk_graphics_submission *state) {
   return state && state->parameters && (state->parameters->discard ||
       state->parameters->object_epoch!=vk_record_object_epoch());
+}
+// Called only after retained_submission_forget and original transient command
+// pool reset at the actual completion boundary. Rebuild contents, not allocation.
+static int draw_parameters_reset_completed(vk_graphics_submission *state) {
+  if(!state || !state->parameters)return 1;
+  draw_parameters *p=state->parameters;
+  if(p->active || p->last_serial>vk_completed_serial())return 0;
+  for(draw_parameter_schema *s=p->schemas;s;s=s->next)
+    for(draw_parameter_block *b=s->blocks;b;b=b->next) {
+      if(!vk_uab_packet_reset_completed(b->packet))die("Vulkan completed parameter reset ownership");
+      b->version=-1;b->used=0;
+    }
+  p->discard=0;p->object_epoch=vk_record_object_epoch();
+  return 1;
 }
 // Caller must first vk_record_owner_forget/reset every CB borrowing these sets.
 // This is not an automatic recycle operation: executable CB references persist.

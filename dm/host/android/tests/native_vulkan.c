@@ -1315,6 +1315,9 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_RETAINED_SEGMENT_FIXTURE")) {
     extern void vk_test_retained_prefix_stats(uint64_t *,uint64_t *);
     uint64_t captures0,replays0,captures1,replays1;unsigned mixed=0;
+    int reset_completed=getenv("DM_UAB_CONTEXT_RESET_FIXTURE")!=NULL;
+    extern void vk_test_uab_pool_stats(uint64_t [3]);
+    uint64_t pools_before_reset[3]={0},pools_after_reset[3]={0};
     vk_test_retained_prefix_stats(&captures0,&replays0);
     vk_sample_liveness_reference(0);vk_gpu_profile_enabled(0);
     NVNblendState additive;CALL(nvnBlendStateSetDefaults,&additive);
@@ -1359,6 +1362,21 @@ int dm_vulkan_test_main(void) {
       }
       vk_test_retained_prefix_stats(&after_c,&after_r);
       if(after_c>before_c && after_r>before_r)mixed++;
+      if(reset_completed && frame==4) {
+        vk_test_uab_pool_stats(pools_before_reset);
+        // Real draws have completed and both ordinary contexts have been used.
+        // The original retire notification invalidates their cached products;
+        // begin/recycle must forget retained CBs before rewriting these sets.
+        vk_record_object_retired();
+      }
+    }
+    if(reset_completed) {
+      vk_test_uab_pool_stats(pools_after_reset);
+      CHECK(pools_after_reset[0]==pools_before_reset[0]);
+      CHECK(pools_after_reset[1]==pools_before_reset[1]);
+      CHECK(pools_after_reset[2]>pools_before_reset[2]);
+      LOG("[draw completed reset] pools_created=0 pools_destroyed=0 reset_packets=%llu real_gpu_pixels=passed",
+          (unsigned long long)(pools_after_reset[2]-pools_before_reset[2]));
     }
     vk_test_retained_prefix_stats(&captures1,&replays1);
     CHECK(!V.retained_draws || (captures1>captures0 && replays1>replays0 && mixed>0));
@@ -3011,7 +3029,9 @@ int dm_vulkan_test_main(void) {
   extern void vk_test_draw_pending_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *);
   uint64_t queued,flushes,maximum,abandoned;
   vk_test_draw_pending_stats(&queued,&flushes,&maximum,&abandoned);
-  CHECK(V.retained_draws?queued>0:queued==0);
+  // The reference emitter deliberately marks every product interleaved, so
+  // it exercises immediate delivery (and its immutable-publication flush).
+  CHECK(V.retained_draws && !(emission_ref&&!strcmp(emission_ref,"1"))?queued>0:queued==0);
   if(queued)CHECK(flushes>0 && maximum>0);
   LOG("[pending draw fixture] enabled=%u queued=%llu flushes=%llu max=%llu abandoned=%llu",
       V.retained_draws,(unsigned long long)queued,(unsigned long long)flushes,

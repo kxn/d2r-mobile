@@ -4,6 +4,7 @@ static int uab_parameters_test(void) {
   if(!V.retained_draws) {printf("{\"test\":\"UAB parameters\",\"result\":\"not_enabled\",\"actual_feature_enabled\":false}\n");return 0;}
   unsigned checks_before=checks;
   extern void vk_test_uab_batch_stats(uint64_t *,uint64_t *);
+  extern void vk_test_uab_pool_stats(uint64_t [3]);
   int batched=getenv("DM_UAB_BATCH_FIXTURE")!=NULL;
   unsigned batch_capacity=getenv("DM_UAB_BATCH_CAPACITY")?atoi(getenv("DM_UAB_BATCH_CAPACITY")):5;
   vk_uab_batch *batch=batched?vk_uab_batch_create(batch_capacity):NULL;
@@ -97,6 +98,7 @@ static int uab_parameters_test(void) {
   VkPipeline pipeline;VK_CHECK(vkCreateComputePipelines(V.device,V.pipeline_cache,1,&pci,NULL,&pipeline));
   VkCommandPool pool;VkCommandPoolCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.queueFamilyIndex=V.queue_family};VK_CHECK(vkCreateCommandPool(V.device,&cp,NULL,&pool));
   VkCommandBuffer cb[2];VkCommandBufferAllocateInfo ca={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=pool,.level=VK_COMMAND_BUFFER_LEVEL_SECONDARY,.commandBufferCount=2};VK_CHECK(vkAllocateCommandBuffers(V.device,&ca,cb));
+  VkDescriptorSet original_sets[2][2]={{0}};
   mtl_sub_begin();
   VkImageMemoryBarrier ib={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,.newLayout=VK_IMAGE_LAYOUT_GENERAL,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.image=image,.subresourceRange=iv.subresourceRange};
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&ib);
@@ -106,7 +108,7 @@ static int uab_parameters_test(void) {
   vk_split_descriptor_value values[4]={{(uint64_t)input.handle,0,16},{(uint64_t)output.handle,0,4},{(uint64_t)texel,0,0},{(uint64_t)image_view,(uint64_t)sampler,VK_IMAGE_LAYOUT_GENERAL}},complete[4];
   for(unsigned v=0;v<2;v++) {
     vk_uab_packet *active=packets[v];
-    CHECK(vk_uab_packet_begin(active)==0);CHECK(!vk_uab_packet_seal(active,0));
+    CHECK(vk_uab_packet_begin(active)==0);CHECK(!vk_uab_packet_reset_completed(active));CHECK(!vk_uab_packet_seal(active,0));
     CHECK(!vk_uab_packet_set(active,0,0));CHECK(!vk_uab_packet_set(active,0,2));
     VkCommandBufferInheritanceInfo inherit={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
     VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.pInheritanceInfo=&inherit};VK_CHECK(vkBeginCommandBuffer(cb[v],&begin));
@@ -117,14 +119,14 @@ static int uab_parameters_test(void) {
       CHECK(vk_uab_packet_write_batch(active,0,draw,complete,batch));
       vk_split_descriptor_value duplicate[4];memcpy(duplicate,complete,sizeof duplicate);duplicate[0].offset=((v*2+draw+1)%4)*stride;
       CHECK(!vk_uab_packet_write_batch(active,0,draw,duplicate,batch));
-      VkDescriptorSet set=vk_uab_packet_set(active,0,draw);CHECK(set);
+      VkDescriptorSet set=vk_uab_packet_set(active,0,draw);CHECK(set);original_sets[v][draw]=set;
       vkCmdBindDescriptorSets(cb[v],VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,0,1,&set,0,NULL);vkCmdDispatch(cb[v],1,1,1);
     }
     CHECK(vk_uab_packet_seal(active,0));CHECK(!vk_uab_packet_set(active,0,2));
     VK_CHECK(vkEndCommandBuffer(cb[v]));vkCmdExecuteCommands(V.cmd,1,&cb[v]);
     CHECK(vk_uab_packet_pending(active,0,vk_recording_serial()));CHECK(!vk_uab_packet_write(active,0,0,complete));CHECK(!vk_uab_packet_abandon(active,0));
   }
-  CHECK(vk_uab_packet_begin(packet)==-1);CHECK(!vk_uab_packet_destroy(packet));
+  CHECK(vk_uab_packet_begin(packet)==-1);CHECK(!vk_uab_packet_destroy(packet));CHECK(!vk_uab_packet_reset_completed(packet));
   VkMemoryBarrier readback={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&readback,0,NULL,0,NULL);
   if(batch)CHECK(vk_uab_batch_end(batch));
@@ -167,6 +169,64 @@ static int uab_parameters_test(void) {
   CHECK(calls_now==calls_before);CHECK(writes_now==writes_before);
   vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&readback,0,NULL,0,NULL);vk_internal_wait(vk_internal_commit());
   for(unsigned draw=0;draw<2;draw++){uint32_t got;memcpy(&got,output.map+(4+draw)*stride,4);CHECK(got==numbers[3-draw]+18);}
+  // Completion alone is insufficient: forget all executable consumers first.
+  // Reset reuses the exact pool/set identities but forces ALL bindings to be
+  // written, including equal tuples (the raw-handle ABA case). The second round
+  // also changes a non-UAB texel binding, legal only after this forget boundary.
+  uint64_t pool_before[3],pool_after[3];vk_test_uab_pool_stats(pool_before);
+  vk_uab_batch *reset_batch=vk_uab_batch_create(1024);CHECK(reset_batch);
+  for(unsigned reset_round=0;reset_round<2;reset_round++) {
+    VK_CHECK(vkResetCommandPool(V.device,pool,0));
+    for(unsigned v=0;v<2;v++) {
+      CHECK(vk_uab_packet_reset_completed(packets[v]));
+      CHECK(!vk_uab_packet_set_deferred(packets[v],0,0));
+      CHECK(vk_uab_packet_begin(packets[v])==0);
+    }
+    CHECK(vk_uab_batch_begin(reset_batch));
+    vk_test_uab_batch_stats(&calls_before,&writes_before);
+    VkDescriptorSet staged[2][2];
+    values[2].object=(uint64_t)(reset_round?other:texel);
+    for(unsigned v=0;v<2;v++)for(unsigned draw=0;draw<2;draw++) {
+      vk_uniform_offsets offsets={.count=1,.offsets={(3-(v*2+draw))*stride}};
+      values[1].offset=(4+v*2+draw)*stride;
+      CHECK(vk_uab_normalize_values(&schema,values,&offsets,complete));
+      CHECK(vk_uab_packet_write_batch(packets[v],0,draw,complete,reset_batch));
+      staged[v][draw]=vk_uab_packet_set_deferred(packets[v],0,draw);
+      CHECK(staged[v][draw]==original_sets[v][draw]);
+      CHECK(!vk_uab_packet_reset_completed(packets[v]));
+    }
+    vk_test_uab_batch_stats(&calls_now,&writes_now);
+    CHECK(calls_now==calls_before && writes_now==writes_before);
+    // The emission boundary, not each owned handle accessor, publishes all16.
+    vk_uab_batch_flush(reset_batch);
+    vk_test_uab_batch_stats(&calls_now,&writes_now);
+    CHECK(calls_now==calls_before+1 && writes_now==writes_before+16);
+    mtl_sub_begin();
+    for(unsigned v=0;v<2;v++) {
+      VkCommandBufferInheritanceInfo inherit={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+      VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.pInheritanceInfo=&inherit};
+      VK_CHECK(vkBeginCommandBuffer(cb[v],&begin));vkCmdBindPipeline(cb[v],VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
+      for(unsigned draw=0;draw<2;draw++) {
+        vkCmdBindDescriptorSets(cb[v],VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,0,1,&staged[v][draw],0,NULL);
+        vkCmdDispatch(cb[v],1,1,1);
+      }
+      VK_CHECK(vkEndCommandBuffer(cb[v]));CHECK(vk_uab_packet_seal(packets[v],0));
+      vkCmdExecuteCommands(V.cmd,1,&cb[v]);
+      CHECK(vk_uab_packet_pending(packets[v],0,vk_recording_serial()));
+      CHECK(!vk_uab_packet_reset_completed(packets[v]));
+    }
+    CHECK(vk_uab_batch_end(reset_batch));
+    vkCmdPipelineBarrier(V.cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&readback,0,NULL,0,NULL);
+    vk_internal_wait(vk_internal_commit());
+    for(unsigned draw=0;draw<4;draw++) {
+      uint32_t got;memcpy(&got,output.map+(4+draw)*stride,4);
+      CHECK(got==numbers[3-draw]+(reset_round?30:18));
+    }
+  }
+  CHECK(vk_uab_batch_destroy(reset_batch));
+  vk_test_uab_pool_stats(pool_after);
+  CHECK(pool_after[0]==pool_before[0] && pool_after[1]==pool_before[1] && pool_after[2]==pool_before[2]+4);
+  LOG("[uab completed reset] same_sets=4 resets=4 create=0 destroy=0 forced_writes=32 publication_calls=2 actual_gpu_rounds=2");
   if(batch) {
     // Never leave queued driver payload pointers into a destroyed packet.
     CHECK(vk_uab_batch_begin(batch));vk_uab_packet *temporary=vk_uab_packet_create(&schema,1,1);CHECK(temporary);

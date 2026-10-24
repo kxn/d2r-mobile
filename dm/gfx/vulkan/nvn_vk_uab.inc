@@ -26,6 +26,8 @@ struct vk_uab_batch {
 };
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 static uint64_t uab_update_calls,uab_update_writes;
+static uint64_t uab_pool_creates,uab_pool_destroys,uab_content_resets;
+void vk_test_uab_pool_stats(uint64_t out[3]) {out[0]=uab_pool_creates;out[1]=uab_pool_destroys;out[2]=uab_content_resets;}
 void vk_test_uab_batch_stats(uint64_t *calls,uint64_t *writes) {*calls=uab_update_calls;*writes=uab_update_writes;}
 #endif
 static void uab_update(unsigned count,const VkWriteDescriptorSet *writes) {
@@ -161,7 +163,11 @@ vk_uab_packet *vk_uab_packet_create(const vk_uab_schema *s,uint32_t draws,uint32
     VkDescriptorSetAllocateInfo allocate={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=p->pool,.descriptorSetCount=1,.pSetLayouts=&p->layout};
     if(vkAllocateDescriptorSets(V.device,&allocate,&p->sets[i])!=VK_SUCCESS)goto failed;
   }
-  uab_pool_descriptors+=descriptors;return p;
+  uab_pool_descriptors+=descriptors;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uab_pool_creates++;
+#endif
+  return p;
 failed:
   if(p->pool)vkDestroyDescriptorPool(V.device,p->pool,NULL);
   for(unsigned v=0;v<versions;v++){free(p->version[v].fixed);free(p->version[v].initialized);free(p->version[v].touched);free(p->version[v].unpublished);}
@@ -220,11 +226,35 @@ int vk_uab_packet_seal(vk_uab_packet *p,unsigned i) {
   if(!p || i>=p->versions || p->version[i].state!=1 || !p->version[i].written)return 0;
   p->version[i].state=2;return 1;
 }
-VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *p,unsigned i,unsigned draw) {
+VkDescriptorSet vk_uab_packet_set_deferred(const vk_uab_packet *p,unsigned i,unsigned draw) {
   if(!p || i>=p->versions || draw>=p->draws || (p->version[i].state!=1 && p->version[i].state!=2) ||
      !p->version[i].touched[draw] || !p->version[i].initialized[draw])return VK_NULL_HANDLE;
-  if(p->version[i].unpublished[draw])vk_uab_batch_flush(p->queued_batch);
   return p->sets[i*p->draws+draw];
+}
+VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *p,unsigned i,unsigned draw) {
+  VkDescriptorSet set=vk_uab_packet_set_deferred(p,i,draw);
+  if(set && p->version[i].unpublished[draw])vk_uab_batch_flush(p->queued_batch);
+  return set;
+}
+int vk_uab_packet_reset_completed(vk_uab_packet *p) {
+  if(!p)return 1;
+  if(p->queued_batch)return 0;
+  uint64_t complete=vk_completed_serial();
+  for(unsigned i=0;i<p->versions;i++) {
+    const uab_version *v=&p->version[i];
+    if(v->state==1 || v->state==2 || (v->state==3 && v->serial>complete))return 0;
+  }
+  // No Vulkan pool reset: sets and their allocation budget remain owned. Old
+  // fixed tuples are inaccessible until initialized is re-established by a
+  // complete write, which also defeats ABA of recycled raw Vulkan handles.
+  for(unsigned i=0;i<p->versions;i++) {
+    uab_version *v=&p->version[i];v->state=0;v->serial=0;v->written=0;
+    memset(v->initialized,0,p->draws);memset(v->touched,0,p->draws);memset(v->unpublished,0,p->draws);
+  }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uab_content_resets++;
+#endif
+  return 1;
 }
 int vk_uab_packet_pending(vk_uab_packet *p,unsigned i,uint64_t serial) {
   if(!p || i>=p->versions || p->version[i].state!=2 || !serial || serial!=vk_recording_serial())return 0;
@@ -242,6 +272,9 @@ int vk_uab_packet_destroy(vk_uab_packet *p) {
   for(unsigned i=0;i<p->versions;i++)if(p->version[i].state==3 && p->version[i].serial>complete)return 0;
   vk_uab_batch_flush(p->queued_batch);
   vkDestroyDescriptorPool(V.device,p->pool,NULL);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uab_pool_destroys++;
+#endif
   if(uab_pool_descriptors<p->descriptors)die("UAB pool budget underflow");
   uab_pool_descriptors-=p->descriptors;
   for(unsigned i=0;i<p->versions;i++){free(p->version[i].fixed);free(p->version[i].initialized);free(p->version[i].touched);free(p->version[i].unpublished);}

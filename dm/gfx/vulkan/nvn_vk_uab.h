@@ -45,6 +45,15 @@ int vk_uab_packet_seal(vk_uab_packet *,unsigned version);
 // Warm UAB-only updates may remain queued: flush before consumer submission.
 // pending/abandon/destroy also flush this packet's outstanding batch references.
 VkDescriptorSet vk_uab_packet_set(const vk_uab_packet *,unsigned version,unsigned draw);
+// Owned resolved products only: obtaining this handle does NOT publish queued
+// immutable bindings. The owner MUST flush the batch before recording any bind
+// (including an immediate fallback), or before executing a retained consumer.
+VkDescriptorSet vk_uab_packet_set_deferred(const vk_uab_packet *,unsigned version,unsigned draw);
+// After actual GPU+CPU completion AND forgetting/resetting every CB referencing
+// these sets, invalidate all content proofs while retaining pool/set identities.
+// Refuses editing/sealed/pending-in-flight versions and queued publication.
+// Even equal raw object handles must be freshly written after this operation.
+int vk_uab_packet_reset_completed(vk_uab_packet *);
 // Mark the actual original recording serial before delivery; resources and the
 // persistent CB must remain valid through its original GPU+CPU-effect completion.
 int vk_uab_packet_pending(vk_uab_packet *,unsigned version,uint64_t recording_serial);
