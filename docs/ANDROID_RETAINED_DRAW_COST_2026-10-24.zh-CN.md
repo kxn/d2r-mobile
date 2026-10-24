@@ -177,3 +177,13 @@ A1 缺 CPU0 的 0.251094ms 计数边界，覆盖99.995945%；A2 缺 CPU1 的0.24
 独立合同复核现已完成，报告 `.local/logs/retained-private-reasons-actual-review-v1/report.md`，根逐项核验31个封存引用。另一六帧窗口中，同一CB寿命的136对重录有74对pass变化，实际为D16深度与RGBA8颜色切换，或HDR颜色+深度模板与纯深度模板切换，并非仅load/store变体；FB也不同。另62对同继承信息的重录全部为2750×1260、四顶点、stride20的绘制，真实VBO/offset改变；全部至少一个偏移差不能被20整除，不能直接改成firstVertex或忽略绑定。两窗口分母不同，不把这些比例套到4200次诊断决策。当前同pool更早完整命令序列也没有可直接替换的精确匹配，单换slot目录不能认领命中。
 
 因此本轮没有可安全实施的“放宽pass/vertex比较”补丁。可研究的结构是稳定的pass角色与参数槽共同对应，或在完成context内把合格小几何内容交付到稳定地址；后者必须先证明实际源字节范围、CPU/GPU写入与同步合同，计入新增copy成本。它们都只可能提高编码复用，不自动消除仍约8ms的资源准备。当前没有已证数毫秒可删的新预算，不能把首因次数写成承诺收益；应把准备、编码、管理与GPU路径分别立账。
+
+### 缓存前移的边界：与保留旧命令分别验收
+
+再次沿7dc实际控制流核对：`vk_draw_record_impl` 先做CPU source、Pool operation、UBO/图像准入和真实资源消费，生成prepared values及几何emission；`draw_emission_deliver` 之后才在retained开启时保存本次pending packets，flush时比较旧chunk。没有cached command时不比较完整旧draw key，但仍需要本次准备、准入、首次录制和保存key；不相同时在已完成owner中reset旧CB并重录，不会将旧内容与新内容各执行一次。整prefix资格失败时才原路交付一次；私有录制与已发布执行分开，不能将CPU回退中的弃用录制说成双重GPU绘制。
+
+`!V.retained_draws` 在deliver直接走原即时编码，`parameter_values`也不启用这套retained参数准备。因此“没有旧命令执行”不等于“复用实验没有管理成本”；关闭实验才绕过其额外管理。已提交未完成的CB/资源必须保留到完成，这是原异步生命周期；已完成CB继续保存供将来复用则是可选优化，两者不能混称。约2.60ms为新参数与管理职责的合包，不是保存旧CB本身的精确耗时。
+
+资源准备缓存可以独立于retained实现：复用稳定的逻辑描述符解析、物理owner/view/span和绑定计划，保留本次执行的publication、alias/hazard、阶段可见性和引用交付。缓存只证明“解析结果仍有效”，不能以绑定未改证明CPU没有写内存，或GPU没有通过别名写入。事件失效须覆盖原绑定/恢复、registry/Pool生命周期、物理promotion和实际写入；任何会reenter/提交/改变表示的回调之后都需重新验证，不借缓存指针跨过失效边界。
+
+已有UBO ready mask在VS require之前，已有普通FS image group在image prepare及binding consumer之前；普通source前移也已独立试过，不能重新列为尚未实现。native/packaged图像、VBO/IBO的真实消费合同尚不能一并跳过。后继优先判断能否从这些路径中分离并前移稳定解析部分，在不启用retained/descriptor-buffer实验的ordinary分支独立对照；收益须从原约8ms混合准备职责中实测，不预设全段可删。此节为源码合同核对与实验约束，未新增运行时缓存或认领性能收益。
