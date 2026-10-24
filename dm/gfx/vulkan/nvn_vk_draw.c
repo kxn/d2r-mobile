@@ -1965,6 +1965,20 @@ uniform_vertex_remaining:
   }
   int retained_parameters=prepared_parameters && !j->local && !sample_live &&
       !vk_counter_active() && !vk_ghost_replaying() && !vk_mip_clear_pending();
+  // Only the first unresolved prefix can ever become a retained secondary.
+  // Once this job has emitted a prefix/tail, exceeded its slot budget, or
+  // abandoned queueing, use the already prepared values through the original
+  // ordinary materializer. Never pay UAB management for a proven dead end.
+  // A newly allocated job receives its slot only in render_record_begin below.
+  // Do not reject its first draw merely because that assignment is pending.
+  int retained_slot_exhausted=j->secondary?!j->retained_slot_valid:
+      graphics_state->retained_next_job>=RETAINED_MAX_JOBS;
+  if(retained_parameters && (j->retained_preceded || retained_slot_exhausted || j->pending_uncacheable)) {
+    retained_parameters=0;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    draw_parameter_unretainable++;
+#endif
+  }
   if(retained_parameters && !draw_parameters_valid(graphics_state->parameters))retained_parameters=0;
   if(retained_parameters && !vk_program_uab_layout(list))retained_parameters=0;
   if(retained_parameters)for(unsigned i=0;i<5;i++)if(list[i]) {

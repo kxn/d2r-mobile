@@ -1812,9 +1812,11 @@ int dm_vulkan_test_main(void) {
     extern void vk_test_draw_pending_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *);
     extern void vk_test_raster_after_draws(unsigned,void (*)(void *),void *);
     extern unsigned vk_test_draw_pending_count(void);
+    extern uint64_t vk_test_draw_parameter_unretainable(void);
     vk_sample_liveness_reference(0);
     for(unsigned kind=0;kind<8;kind++) {
       uint64_t q0,f0,m0,a0,q1,f1,m1,a1;unsigned callbacks=0;
+      uint64_t unretainable_before=vk_test_draw_parameter_unretainable();
       vk_test_draw_pending_stats(&q0,&f0,&m0,&a0);
       if(kind==4)vk_test_raster_after_draws(4,pending_fixture_end,&callbacks);
       if(kind==7) {vk_gpu_profile_enabled(1);vk_test_raster_after_draws(4,pending_fixture_region,&callbacks);}
@@ -1845,6 +1847,11 @@ int dm_vulkan_test_main(void) {
         if(kind==0)CHECK(m1>=96);
         if(kind==5)CHECK(a1==a0+1 && q1-q0==2048 && m1==2048);
       } else CHECK(q1==q0 && f1==f0 && a1==a0);
+      uint64_t unretainable_after=vk_test_draw_parameter_unretainable();
+      if(V.retained_draws && (kind==3 || kind==5))CHECK(unretainable_after>unretainable_before);
+      if(!V.retained_draws)CHECK(unretainable_after==unretainable_before);
+      LOG("[UAB ineligible tail] kind=%u ordinary_prepared_draws=%llu",
+          kind,(unsigned long long)(unretainable_after-unretainable_before));
       if(kind==2)CHECK(boundaries[12]!=0);
       if(kind==6)CHECK(boundaries[14]==256);
       CALL(nvnTextureReadTexels,&output,NULL,&region,pixels);

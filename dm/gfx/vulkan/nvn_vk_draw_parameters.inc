@@ -24,6 +24,8 @@ enum { DRAW_PARAMETER_BLOCK_SLOTS=32,DRAW_PARAMETER_MAX_BLOCKS=256 };
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 static uint64_t draw_parameter_actual,draw_parameter_fallback,draw_parameter_pso_retry;
 static uint64_t draw_parameter_reuses,draw_parameter_pending_rejected;
+static uint64_t draw_parameter_unretainable;
+uint64_t vk_test_draw_parameter_unretainable(void) {return draw_parameter_unretainable;}
 #endif
 static void draw_parameters_flush(draw_parameters *p) {if(p)vk_uab_batch_flush(p->batch);}
 static void draw_parameters_begin(draw_parameters *p) {
