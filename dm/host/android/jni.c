@@ -368,6 +368,19 @@ static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int retained_draws_startup;
 static int source_read_group_startup;
+static int retained_descriptor_buffer_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRetainedDescriptorBuffer(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"retained_descriptor_buffer is fixed before native startup");
+    return;
+  }
+  retained_descriptor_buffer_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSourceReadGroup(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -800,6 +813,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
   if(setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_RETAINED_DESCRIPTOR_BUFFER",retained_descriptor_buffer_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SOURCE_READ_GROUP",source_read_group_startup?"1":"0",1) ||
       setenv("DM_VULKAN_RETAINED_DRAWS",retained_draws_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||

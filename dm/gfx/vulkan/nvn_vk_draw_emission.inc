@@ -42,7 +42,24 @@ static void draw_emission_immediate(render_job *j,const vk_draw_emission *p,vk_s
     memcpy(j->depth_bias,depth_bias,sizeof p->depth_bias);
   }
   j->dynamic_state_valid=1;
-  if(p->state_reference) {
+  if(p->descriptor_buffer_mode) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    db_test_stats[6]++;
+#endif
+    static int logged;
+    if(!logged){logged=1;LOG("[vulkan descriptor buffer] first actual draw encoding");}
+    VkDescriptorBufferBindingInfoEXT bindings[5];uint32_t indices[5],count=0;
+    for(unsigned i=0;i<5;i++)if(p->stage_present_mask&(1u<<i)) {
+      indices[i]=count;bindings[count++]=(VkDescriptorBufferBindingInfoEXT){.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT,
+        .address=p->descriptor_buffers[i].address,.usage=VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT|VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT};
+    }
+    if(count)vkCmdBindDescriptorBuffersEXT(V.cmd,count,bindings);
+    for(unsigned i=0;i<5;i++)if(p->stage_present_mask&(1u<<i))
+      vkCmdSetDescriptorBufferOffsetsEXT(V.cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,p->layout,p->stage_set[i],1,&indices[i],&p->descriptor_buffers[i].offset);
+    // Descriptor-buffer commands disturb ordinary-set state. A later fallback
+    // must rebind its original descriptors, even if raw handles compare equal.
+    j->bound_layout=VK_NULL_HANDLE;memset(j->bound_sets,0,sizeof j->bound_sets);
+  } else if(p->state_reference) {
     for(int i=0;i<5;i++) if(p->stage_present_mask&(1u<<i))
       vkCmdBindDescriptorSets(V.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout,
                               p->stage_set[i], 1, &p->stage_sets[i], uniform_offsets[p->stage_set[i]].count,

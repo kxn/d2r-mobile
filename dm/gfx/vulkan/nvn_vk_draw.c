@@ -1236,6 +1236,7 @@ static VK_COLD_PHASE cached_pipeline *draw_pipeline_prepare(
       .pColorBlendState = &blend,
       .pDynamicState = &dyn,
       .renderPass = j->pass,.subpass=local_subpass};
+  if(dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_BUFFER)ci.flags|=VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
   pipeline_key key;
   memset(&key, 0, sizeof key);
   key.specialization_word=specialization_words[0];key.specialization_mask=specialization_words[1];
@@ -1312,14 +1313,14 @@ static VK_COLD_PHASE cached_pipeline *draw_pipeline_prepare(
     VkResult compiled;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
     static int uab_failed;
-    if(dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB && !uab_failed && getenv("DM_DRAW_UAB_PSO_FAIL_ONCE")) {
+    if((dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB || dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_BUFFER) && !uab_failed && getenv("DM_DRAW_UAB_PSO_FAIL_ONCE")) {
       uab_failed=1;compiled=VK_ERROR_UNKNOWN;
     } else
 #endif
     compiled=vkCreateGraphicsPipelines(V.device,V.pipeline_cache,1,&ci,NULL,&cached->pipeline);
     vk_pipeline_cache_end(compiled==VK_SUCCESS);
     vk_system_trace_end(compile_trace);
-    if(compiled!=VK_SUCCESS && dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB) {
+    if(compiled!=VK_SUCCESS && (dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB || dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_BUFFER)) {
       if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
       render_pass_release(cached->local_object);free(cached);
       *retry=3;return NULL; // no abandon, resource replay or query reservation
@@ -1980,10 +1981,11 @@ uniform_vertex_remaining:
 #endif
   }
   if(retained_parameters && !draw_parameters_valid(graphics_state->parameters))retained_parameters=0;
-  if(retained_parameters && !vk_program_uab_layout(list))retained_parameters=0;
+  int retained_mode=V.descriptor_buffers?VK_DESCRIPTOR_LAYOUT_BUFFER:VK_DESCRIPTOR_LAYOUT_UAB;
+  if(retained_parameters && !vk_program_layout_mode(list,retained_mode))retained_parameters=0;
   if(retained_parameters)for(unsigned i=0;i<5;i++)if(list[i]) {
-    sets[i]=parameter_values[i].count?draw_parameters_write(&graphics_state->parameters,&parameter_values[i]):VK_NULL_HANDLE;
-    if(parameter_values[i].count && !sets[i]){retained_parameters=0;break;}
+    sets[i]=parameter_values[i].count?draw_parameters_write(&graphics_state->parameters,&parameter_values[i],&emission.descriptor_buffers[i]):VK_NULL_HANDLE;
+    if(parameter_values[i].count && !(V.descriptor_buffers?emission.descriptor_buffers[i].address!=0:sets[i]!=VK_NULL_HANDLE)){retained_parameters=0;break;}
   }
   if(prepared_parameters && !retained_parameters) {
     draw_parameters_materialize(list,parameter_values,sets,uniform_offsets);
@@ -1991,7 +1993,7 @@ uniform_vertex_remaining:
     draw_parameter_fallback++;
 #endif
   }
-  int pipeline_descriptor_mode=retained_parameters?VK_DESCRIPTOR_LAYOUT_UAB:prepared_parameters?0:dynamic_uniforms;
+  int pipeline_descriptor_mode=retained_parameters?retained_mode:prepared_parameters?0:dynamic_uniforms;
   uint32_t effective_expansion=0;
   for(unsigned i=0;i<16;i++) if(expanded[i]) effective_expansion|=1u<<i;
 parameter_pipeline_retry:
@@ -2138,6 +2140,7 @@ parameter_pipeline_retry:
   }
   emission.command=V.cmd;emission.pipeline=j->pipeline;emission.layout=j->layout;
   emission.retained_parameters=retained_parameters;
+  emission.descriptor_buffer_mode=retained_parameters && V.descriptor_buffers;
   j->parameters_all=j->parameters_seen?(j->parameters_all && retained_parameters):retained_parameters;
   j->parameters_seen=1;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
@@ -2147,7 +2150,7 @@ parameter_pipeline_retry:
   emission.depth_bias[0]=S.offset.units;emission.depth_bias[1]=S.offset.clamp;emission.depth_bias[2]=S.offset.factor;
   emission.state_reference=state_reference;
   emission.stage_present_mask=0;
-  for(unsigned i=0;i<5;i++)if(list[i] && sets[i]) {
+  for(unsigned i=0;i<5;i++)if(list[i] && (emission.descriptor_buffer_mode?parameter_values[i].count!=0:sets[i]!=VK_NULL_HANDLE)) {
     emission.stage_present_mask|=1u<<i;emission.stage_set[i]=list[i]->set;
   }
   emission.bias_enabled=vk_shader_bias_snapshot(list,0,emission.bias_words);

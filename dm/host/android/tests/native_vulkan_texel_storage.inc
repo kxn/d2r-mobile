@@ -92,6 +92,44 @@ static void texel_storage_test(const void *vertex) {
       } else if(y!=4)CHECK(p[0]==0&&p[1]==0&&p[2]==0&&p[3]==0);
     }
   }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_DESCRIPTOR_ARENA_TEXEL_FIXTURE")) {
+    extern void vk_test_draw_descriptor_buffer_stats(uint64_t out[9]);
+    uint64_t before[9],after[9];vk_test_draw_descriptor_buffer_stats(before);
+    vk_texel_storage_enabled(0);vk_uniform_specialization_enabled(0);
+    vk_sample_liveness_reference(0);vk_gpu_profile_enabled(0);
+    uint64_t *report=(uint64_t *)(storage+0x80000);
+    for(unsigned frame=0;frame<8;frame++) {
+      const float *expected=frame&1?second:first;
+      for(unsigned n=0;n<8;n++)memcpy(storage+n*16,expected,16);
+      mtl_reg_tex(slot,(const tex_t *)&texture[0],NULL);
+      CALL(nvnCommandBufferBeginRecording,&cmd);
+      const NVNtexture *targets[]={&texture[2]};
+      CALL(nvnCommandBufferSetRenderTargets,&cmd,1,targets,NULL,NULL,NULL);
+      CALL(nvnCommandBufferSetViewports,&cmd,0,1,(float[]){0,0,16,6});
+      CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,6);
+      CALL(nvnCommandBufferBindProgram,&cmd,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+      CALL(nvnCommandBufferBindPolygonState,&cmd,&polygon);
+      CALL(nvnCommandBufferBindDepthStencilState,&cmd,&ds);
+      CALL(nvnCommandBufferBindColorState,&cmd,&color);
+      CALL(nvnCommandBufferBindChannelMaskState,&cmd,&channels);
+      NVNseparateTextureHandle handle=CALL(nvnDeviceGetSeparateTextureHandle,&device,slot);
+      CALL(nvnCommandBufferBindSeparateTextures,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,1,&handle);
+      CALL(nvnCommandBufferBindUniformBuffer,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)storage+0x10000,65536);
+      for(unsigned n=0;n<96;n++)CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+      CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+      CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)report);
+      submit(end());CHECK(report[0]==0);
+      uint8_t pixels[16*6*4];NVNcopyRegion region={0,0,0,16,6,1};CALL(nvnTextureReadTexels,&texture[2],NULL,&region,pixels);
+      for(unsigned y=0;y<6;y++)for(unsigned x=1;x<=8;x++)for(unsigned c=0;c<4;c++)
+        CHECK(abs((int)pixels[(y*16+x)*4+c]-(int)lroundf(expected[c]*255))<=1);
+    }
+    vk_test_draw_descriptor_buffer_stats(after);
+    CHECK(!V.descriptor_buffers || (after[7]>before[7] && after[6]>before[6]));
+    LOG("[descriptor arena texel actual] encoded=%llu draw_emissions=%llu eight original NVN submissions, CPU source updates, typed GPU pixels passed",
+        (unsigned long long)(after[7]-before[7]),(unsigned long long)(after[6]-before[6]));
+  }
+#endif
   uint64_t hits,fallback;vk_texel_storage_stats(&hits,&fallback);CHECK(hits>hit0&&fallback>fall0);
   CHECK(alt->specialization_count>=2 || alt->specialization_disabled);
   vk_texel_storage_enabled(0);vk_uniform_specialization_enabled(spec_enabled);vk_graphics_prepare_mode(2);

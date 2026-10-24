@@ -58,6 +58,7 @@ typedef struct vk_shader {
   uint32_t driver_span[2]; // optional all-module read bound; zero keeps 64 KiB
   VkShaderModule driver_span_module; // new, unproved module alternatives cannot inherit a bound
   VkDescriptorSetLayout descriptors,dynamic_descriptors[2],uab_descriptors;
+  struct vk_descriptor_buffer_schema *descriptor_buffer_schema;
   struct vk_uab_shader_qualification *uab_qualification; // immutable final-schema/device lifetime
   VkDescriptorUpdateTemplate descriptor_templates[3];
   uint8_t dynamic_uniform_ordinals[2][128]; // narrow/extended, one-based binding order
@@ -316,6 +317,7 @@ void vk_defer_pass(VkRenderPass pass, VkFramebuffer framebuffer);
 void vk_shader_writebacks(void);
 
 VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlags stages);
+VkBufferView vk_texel_buffer_resolved(int id,int storage,int writable,VkPipelineStageFlags stages,VkDescriptorAddressInfoEXT *address);
 
 void vk_uniform_specialization_enabled(int enabled);
 void vk_uniform_specialization_stats(uint64_t *hits,uint64_t *pending,uint64_t *limits,uint64_t *variants,int *enabled);
@@ -333,7 +335,8 @@ int vk_shader_cpu_sources_ready(vk_shader *const list[6],const vk_state *state,i
 int vk_ghost_cpu_draw_ready(vk_shader *const list[6],const vk_state *state,const p_draw *,const p_draw_idx *);
 
 // PSO-only layout variant. Never pass 3 to resource consumers / dynamic arrays.
-enum { VK_DESCRIPTOR_LAYOUT_UAB=3 };
+enum { VK_DESCRIPTOR_LAYOUT_UAB=3,VK_DESCRIPTOR_LAYOUT_BUFFER=4 };
+VkPipelineLayout vk_program_descriptor_buffer_layout(vk_shader *const shaders[6]);
 VkDescriptorSetLayout vk_shader_uab_layout(vk_shader *);
 VkPipelineLayout vk_program_uab_layout(vk_shader *const shaders[6]);
 // Caller-owned resolved product, valid after callbacks/nested consumption.
@@ -343,6 +346,7 @@ typedef struct {
   int source_dynamic_mode;
   uint32_t count;
   vk_split_descriptor_value values[128]; // full effective Buffer byte offsets
+  VkDescriptorAddressInfoEXT texel_addresses[128]; // original texel consumer output, descriptor-buffer mode only
 } vk_shader_prepared_values;
 void vk_shader_prepare_values(vk_shader *,int dynamic,const vk_texel_storage_selection *,vk_shader_prepared_values *);
 // Fallback delivers ordinary immutable descriptors: select PSO mode0 with it.

@@ -35,6 +35,7 @@ typedef struct vk_buffer {
 #endif
 } vk_buffer;
 void vk_buffer_views_destroy(vk_buffer *buffer);
+VkResult vk_buffer_create_optional(vk_buffer *,uint64_t,VkBufferUsageFlags);
 // Physical retirement invalidates experimental retained recordings before
 // the driver may recycle a handle. Inactive on the default execution path.
 void vk_record_object_retired(void);
@@ -85,6 +86,8 @@ typedef struct {
   VkPhysicalDeviceFeatures features;
   VkBool32 shader_draw_parameters;
   VkBool32 shader_float16;
+  VkBool32 descriptor_buffers;
+  VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_properties;
   VkBool32 retained_draws; // experimental cold feature, default disabled
   VkPhysicalDeviceDescriptorIndexingProperties uab_properties;
   int astc_decode_mode;

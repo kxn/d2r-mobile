@@ -49,6 +49,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeStateSegments(boolean enabled);
     private static native void nativeRetainedDraws(boolean enabled);
     private static native void nativeSourceReadGroup(boolean enabled);
+    private static native void nativeRetainedDescriptorBuffer(boolean enabled);
     private static native void nativeSourcePartition(boolean enabled);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
@@ -276,6 +277,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", true));
             nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
+            nativeRetainedDescriptorBuffer(getIntent().getBooleanExtra("retained_descriptor_buffer", false));
             nativeSourceReadGroup(getIntent().getBooleanExtra("source_read_group", false));
             nativeRetainedDraws(getIntent().getBooleanExtra("retained_draws", false));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
@@ -514,6 +516,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("state_segments")) {
             android.util.Log.w("D2RDriver", "state_segments is startup-only; cold restart required");
             intent.removeExtra("state_segments");
+        }
+        if (intent.hasExtra("retained_descriptor_buffer")) {
+            android.util.Log.w("D2RDriver", "retained_descriptor_buffer is startup-only; cold restart required");
+            intent.removeExtra("retained_descriptor_buffer");
         }
         if (intent.hasExtra("source_read_group")) {
             android.util.Log.w("D2RDriver", "source_read_group is startup-only; cold restart required");

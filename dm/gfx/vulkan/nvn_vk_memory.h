@@ -7,7 +7,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-VkResult vk_memory_init(VkInstance instance, VkPhysicalDevice physical, VkDevice device);
+VkResult vk_memory_init(VkInstance instance, VkPhysicalDevice physical, VkDevice device,int device_address);
 VkResult vk_memory_buffer(VkBuffer buffer, VkDeviceMemory *memory, uint8_t **map, void **allocation);
 VkResult vk_memory_buffer_readback(VkBuffer buffer,VkDeviceMemory *memory,uint8_t **map,void **allocation);
 VkMemoryPropertyFlags vk_memory_properties(void *allocation);

@@ -1165,7 +1165,7 @@ static VkResult buffer_try_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags 
   vk_buffer fresh={0};
   VkBufferCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                            .size = size,
-                           .usage = usage};
+                           .usage = usage | (V.descriptor_buffers?VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT:0)};
   VkResult result=vkCreateBuffer(V.device,&ci,NULL,&fresh.handle);
   if(result!=VK_SUCCESS)return result;
   result=readback?vk_memory_buffer_readback(fresh.handle,&fresh.memory,&fresh.map,&fresh.allocation):
@@ -1181,6 +1181,7 @@ static void buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage,in
   if(readback&&!logged++) LOG("[vulkan readback] preferred HOST_CACHED actual_flags=%#x invalidate_after_fence=%d",b->properties,
       !(b->properties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 }
+VkResult vk_buffer_create_optional(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) {return buffer_try_create(b,size,usage,0);}
 void vk_buffer_create(vk_buffer *b,uint64_t size,VkBufferUsageFlags usage) { buffer_create(b,size,usage,0); }
 void vk_buffer_destroy(vk_buffer *b) {
   // Existing callers already retire all GPU users before destroying this owner.
@@ -1639,9 +1640,12 @@ static void init_device(void) {
   if(shared && strcmp(shared,"0") && strcmp(shared,"1"))die("DM_VULKAN_SHARED_POOLS expects0or1");
   shared_requested=shared && !strcmp(shared,"1");
 #endif
-  const char *device_extensions[24];
+  const char *device_extensions[32];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
   int have_driver_properties=0,have_descriptor_indexing=0;
+  int have_descriptor_buffer=0,have_bda=0,have_sync2=0;
+  VkPhysicalDeviceDescriptorBufferFeaturesEXT db_feature={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT};
+  VkPhysicalDeviceBufferDeviceAddressFeatures bda_feature={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
   VkPhysicalDeviceDescriptorIndexingFeatures uab={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
@@ -1660,6 +1664,9 @@ static void init_device(void) {
       V.physical, NULL, &extension_count_device, available));
   for (uint32_t i = 0; i < extension_count_device; i++) {
     if(!strcmp(available[i].extensionName,VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))have_descriptor_indexing=1;
+    if(!strcmp(available[i].extensionName,VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME))have_descriptor_buffer=1;
+    if(!strcmp(available[i].extensionName,VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME))have_bda=1;
+    if(!strcmp(available[i].extensionName,VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME))have_sync2=1;
     if (!strcmp(available[i].extensionName,VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME))
       have_driver_properties=1;
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -1762,6 +1769,31 @@ static void init_device(void) {
       }
     } else LOG("[vulkan UAB] descriptor-indexing extension unavailable; original path retained");
   }
+  const char *db_request=getenv("DM_VULKAN_RETAINED_DESCRIPTOR_BUFFER");
+  if(db_request && strcmp(db_request,"0") && strcmp(db_request,"1"))die("DM_VULKAN_RETAINED_DESCRIPTOR_BUFFER expects 0 or 1");
+  if(db_request && !strcmp(db_request,"1") && V.retained_draws && have_descriptor_buffer && have_bda && have_sync2) {
+    db_feature.pNext=&bda_feature;
+    VkPhysicalDeviceFeatures2 query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&db_feature};
+    vkGetPhysicalDeviceFeatures2(V.physical,&query);
+    V.descriptor_buffer_properties=(VkPhysicalDeviceDescriptorBufferPropertiesEXT){.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT};
+    VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&V.descriptor_buffer_properties};
+    vkGetPhysicalDeviceProperties2(V.physical,&properties);
+    V.descriptor_buffers=db_feature.descriptorBuffer && bda_feature.bufferDeviceAddress &&
+        V.descriptor_buffer_properties.combinedImageSamplerDescriptorSingleArray &&
+        V.descriptor_buffer_properties.descriptorBufferOffsetAlignment &&
+        V.descriptor_buffer_properties.maxDescriptorBufferBindings>=5 &&
+        V.descriptor_buffer_properties.maxResourceDescriptorBufferBindings>=5 &&
+        V.descriptor_buffer_properties.maxSamplerDescriptorBufferBindings>=5;
+    if(V.descriptor_buffers) {
+      bda_feature=(VkPhysicalDeviceBufferDeviceAddressFeatures){.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,.pNext=draw_parameters.pNext,.bufferDeviceAddress=VK_TRUE};
+      db_feature=(VkPhysicalDeviceDescriptorBufferFeaturesEXT){.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,.pNext=&bda_feature,.descriptorBuffer=VK_TRUE};
+      draw_parameters.pNext=&db_feature;
+      device_extensions[dc.enabledExtensionCount++]=VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME;
+      device_extensions[dc.enabledExtensionCount++]=VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+      device_extensions[dc.enabledExtensionCount++]=VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME;
+    }
+  }
+  LOG("[vulkan descriptor buffer] requested=%d enabled=%d",db_request&&!strcmp(db_request,"1"),V.descriptor_buffers);
   dc.ppEnabledExtensionNames = device_extensions;
   LOG("[vulkan retained draws] requested=%d enabled=%d",uab_request && !strcmp(uab_request,"1"),V.retained_draws);
   if(V.retained_draws)device_extensions[dc.enabledExtensionCount++]=VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
@@ -1813,7 +1845,7 @@ static void init_device(void) {
   VK_CHECK(vkCreateDevice(V.physical, &dc, NULL, &V.device));
   volkLoadDevice(V.device);
   LOG("[vulkan] explicit Float16 arithmetic: %s (32-bit interfaces)",V.shader_float16?"enabled":"unavailable");
-  VK_CHECK(vk_memory_init(V.instance, V.physical, V.device));
+  VK_CHECK(vk_memory_init(V.instance, V.physical, V.device,V.descriptor_buffers));
   if (V.timeline_semaphore) {
     V.signal_timeline = (PFN_vkSignalSemaphoreKHR)vkGetDeviceProcAddr(V.device, "vkSignalSemaphoreKHR");
     if (!V.signal_timeline) die("Vulkan timeline semaphore entrypoint unavailable");
@@ -1825,6 +1857,7 @@ static void init_device(void) {
   LOG("[vulkan] queue family=%u queues=%u dedicated WSI worker=%s present queue=%s",V.queue_family,V.queue_count,V.present_worker?"enabled":"reference/unavailable",V.present_queue==V.queue?"render":"separate");
 #ifdef DM_VULKAN_SHARED_POOLS
   shared_device_probe(); // once, before any NVN registration or worker
+  if(V.descriptor_buffers && shared_requested && !shared_active)die("Descriptor buffer requested shared imports failed actual byte gate");
   if(shared_active && (V.options.pool_mirror_reference || V.options.pool_defer_publication))
     die("Fixed shared mode conflicts with legacy window/mirror/defer options");
 #endif

@@ -114,7 +114,7 @@ static int pipeline_recipe_valid(const pipeline_key *k) {
 }
 static void pipeline_recipe_record(const pipeline_key *key,vk_shader *const shaders_[6]) {
   // UAB is an explicit live PSO variant, not part of the persisted recipe ABI.
-  if(key->dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB)return;
+  if(key->dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_UAB || key->dynamic_uniforms==VK_DESCRIPTOR_LAYOUT_BUFFER)return;
   if(key->multisample.pSampleMask || key->raster.pNext || key->multisample.pNext || key->depth_stencil.pNext)return;
   vk_prewarm_recipe recipe={.kind=1};
   pipeline_key copy=*key;

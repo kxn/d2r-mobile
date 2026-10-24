@@ -40,6 +40,7 @@ parser.add_argument('--expect-shared-import-windows',action='store_true',help='v
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--retained-draws',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental retained Vulkan encoding; default off, requires actual buffer update-after-bind features')
 parser.add_argument('--source-read-group',action=argparse.BooleanOptionalAction,default=None,help='startup-only reuse of existing ordinary image group CPU-source classification; default off')
+parser.add_argument('--retained-descriptor-buffer',action=argparse.BooleanOptionalAction,default=None,help='startup-only standard descriptor-buffer retained delivery; default off, requires --retained-draws and actual device features')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
 parser.add_argument('--pool-copy-accounting',action=argparse.BooleanOptionalAction,default=None,help='startup-only optional logical pool copy bytes, not bandwidth or timing (default off)')
@@ -160,6 +161,8 @@ if args.attach and args.retained_draws is not None:
     parser.error('--retained-draws/--no-retained-draws are startup-only and cannot be used with --attach')
 if args.attach and args.source_read_group is not None:
     parser.error('--source-read-group/--no-source-read-group are startup-only and cannot be used with --attach')
+if args.attach and args.retained_descriptor_buffer is not None:
+    parser.error('--retained-descriptor-buffer/--no-retained-descriptor-buffer are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_job_reuse is not None:
     parser.error('--attachment-job-reuse/--no-attachment-job-reuse are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_raster_run is not None:
@@ -263,6 +266,8 @@ if not args.attach:
         launch += ['--ez','retained_draws',str(args.retained_draws).lower()]
     if args.source_read_group is not None:
         launch += ['--ez','source_read_group',str(args.source_read_group).lower()]
+    if args.retained_descriptor_buffer is not None:
+        launch += ['--ez','retained_descriptor_buffer',str(args.retained_descriptor_buffer).lower()]
     if args.attachment_job_reuse is not None:
         launch += ['--ez','attachment_job_reuse',str(args.attachment_job_reuse).lower()]
     if args.attachment_raster_run is not None:
@@ -427,6 +432,13 @@ while time.monotonic() < deadline:
                     state_segment_modes=re.findall(r'\[vulkan state segments\] enabled=([01])\b',log)
                     retained_modes=re.findall(r'\[vulkan retained draws\] requested=([01]) enabled=([01])\b',log)
                     actual_retained_draws=bool(int(retained_modes[-1][1])) if retained_modes else None
+                    descriptor_buffer_modes=re.findall(r'\[vulkan descriptor buffer\] requested=([01]) enabled=([01])\b',log)
+                    actual_retained_descriptor_buffer=bool(int(descriptor_buffer_modes[-1][1])) if descriptor_buffer_modes else None
+                    retained_descriptor_buffer_hit='[vulkan descriptor buffer] first actual draw encoding' in log
+                    if args.retained_descriptor_buffer is not None and actual_retained_descriptor_buffer != args.retained_descriptor_buffer:
+                        raise RuntimeError('retained_descriptor_buffer actual backend mode mismatch')
+                    if args.retained_descriptor_buffer is True and not retained_descriptor_buffer_hit:
+                        raise RuntimeError('retained_descriptor_buffer actual draw encoding not observed')
                     source_group_modes=re.findall(r'\[vulkan\] ordinary source read group enabled=([01])\b',log)
                     actual_source_read_group=bool(int(source_group_modes[-1])) if source_group_modes else None
                     source_read_group_hit='[vulkan] ordinary source read group first confirmed operation' in log
@@ -505,6 +517,9 @@ while time.monotonic() < deadline:
                               'source_partition_actual_sparse':source_partition_hit,
                               'requested_state_segments':args.state_segments,
                               'requested_retained_draws':args.retained_draws,
+                              'requested_retained_descriptor_buffer':args.retained_descriptor_buffer,
+                              'actual_retained_descriptor_buffer':actual_retained_descriptor_buffer,
+                              'retained_descriptor_buffer_hit':retained_descriptor_buffer_hit,
                               'requested_source_read_group':args.source_read_group,
                               'actual_source_read_group':actual_source_read_group,
                               'source_read_group_hit':source_read_group_hit,

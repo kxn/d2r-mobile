@@ -31,7 +31,7 @@ void vk_test_retained_prefix_stats(uint64_t *captures,uint64_t *replays) {
 static int retained_draw_equal(const vk_draw_emission *a,const vk_draw_emission *b) {
   if(a->pipeline!=b->pipeline || a->layout!=b->layout ||
      a->vertex_mask!=b->vertex_mask || a->index_bound!=b->index_bound ||
-     a->stage_present_mask!=b->stage_present_mask ||
+     a->stage_present_mask!=b->stage_present_mask || a->descriptor_buffer_mode!=b->descriptor_buffer_mode ||
      a->bias_enabled!=b->bias_enabled || a->indexed!=b->indexed ||
      a->state_reference!=b->state_reference || a->count!=b->count ||
      a->instances!=b->instances || a->first!=b->first ||
@@ -44,7 +44,9 @@ static int retained_draw_equal(const vk_draw_emission *a,const vk_draw_emission 
   if(a->index_bound && (a->index_buffer!=b->index_buffer ||
       a->index_offset!=b->index_offset || a->index_type!=b->index_type))return 0;
   for(unsigned i=0;i<5;i++)if(a->stage_present_mask&(1u<<i)) {
-    if(a->stage_set[i]!=b->stage_set[i] || a->stage_sets[i]!=b->stage_sets[i])return 0;
+    if(a->stage_set[i]!=b->stage_set[i])return 0;
+    if(a->descriptor_buffer_mode) {if(a->descriptor_buffers[i].address!=b->descriptor_buffers[i].address || a->descriptor_buffers[i].offset!=b->descriptor_buffers[i].offset)return 0;}
+    else if(a->stage_sets[i]!=b->stage_sets[i])return 0;
     if(a->uniform_offsets[a->stage_set[i]].count || b->uniform_offsets[b->stage_set[i]].count)return 0;
   }
   if(a->bias_enabled && memcmp(a->bias_words,b->bias_words,sizeof a->bias_words))return 0;

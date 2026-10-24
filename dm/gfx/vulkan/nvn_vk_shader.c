@@ -688,7 +688,7 @@ unsigned vk_test_binding_consumer_edges(void) {
 #endif
 static void shader_descriptor_layouts(vk_shader *s) {
   s->uab_descriptors=VK_NULL_HANDLE; // Alternatives cannot inherit another schema's variant.
-  s->uab_qualification=NULL;
+  s->uab_qualification=NULL;s->descriptor_buffer_schema=NULL;
   // Base active-binding compaction and every texel/pixel alternative conversion
   // finish before this shared constructor. Never inherit a different schema's
   // index mask through the alternatives' struct copies.
@@ -1988,7 +1988,7 @@ consume_split_remaining:
         die("Vulkan texel buffer slot %d", b->reg);
       uint64_t h =consumer?*(const uint64_t *)((const uint8_t *)&S+consumer->source):
           b->kind == 9 ? S.img[s->stage][b->reg] : S.tex[s->stage][b->reg];
-      texel = vk_texel_buffer(h & 0xfffff,storage,writable,producing_stage);
+      texel = vk_texel_buffer_resolved(h & 0xfffff,storage,writable,producing_stage,prepared && V.descriptor_buffers?&prepared->texel_addresses[n]:NULL);
       break;
     }
     default: die("Vulkan binding pending: %s kind=%d", s->key, b->kind);
@@ -2092,6 +2092,7 @@ VkDescriptorSet vk_shader_bindings_mode(vk_shader *s,int dynamic,vk_uniform_offs
 VkDescriptorSet vk_shader_bindings(vk_shader *s) { return vk_shader_bindings_mode(s,0,NULL); }
 VkPipelineLayout vk_program_layout_mode(vk_shader *const list[6],int dynamic) {
   if(dynamic==VK_DESCRIPTOR_LAYOUT_UAB)return vk_program_uab_layout(list);
+  if(dynamic==VK_DESCRIPTOR_LAYOUT_BUFFER)return vk_program_descriptor_buffer_layout(list);
   if(dynamic<0 || dynamic>2)die("Vulkan pipeline layout mode");
   if(!empty_layout)empty_layout=descriptor_layout_get(NULL,0);
   VkDescriptorSetLayout layouts[6];
@@ -2277,3 +2278,4 @@ void vk_dispatch(const p_dispatch *p) {
 }
 
 #include "nvn_vk_uab.inc"
+#include "nvn_vk_descriptor_buffer.inc"

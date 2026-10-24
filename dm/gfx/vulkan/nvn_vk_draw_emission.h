@@ -1,5 +1,6 @@
 #pragma once
 #include "nvn_vk_shader.h"
+#include "nvn_vk_descriptor_buffer.h"
 
 // Resolved Vulkan encoding values only: no guest addresses, resource lookup
 // keys, or ownership authority. Immediate and pending consumers share the
@@ -20,6 +21,8 @@ typedef struct {
   VkIndexType index_type;
   // Stage order is retained for the original reference emission path.
   VkDescriptorSet stage_sets[6];
+  vk_descriptor_buffer_binding descriptor_buffers[6];
+  uint8_t descriptor_buffer_mode;
   uint8_t stage_present_mask,stage_set[6];
   vk_uniform_offsets uniform_offsets[6];
   int bias_enabled;

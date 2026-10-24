@@ -3708,7 +3708,7 @@ void vk_texture_targets_barrier(const p_set_rt *rt,int include_depth) {
   image_binding_count=0;image_binding_active--;
 }
 
-VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlags stages) {
+VkBufferView vk_texel_buffer_resolved(int id,int storage,int writable,VkPipelineStageFlags stages,VkDescriptorAddressInfoEXT *address) {
   pthread_mutex_lock(&V.resources);
   if (id < 0 || id >= texture_capacity || id >= texture_limit ||
       !texture_descriptors[id].valid)
@@ -3727,10 +3727,19 @@ VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlag
   VkFormat format = vk_nvn_format(
       d.has_view && d.view.set_format ? d.view.format : d.texture.d.format);
   VkBufferView view=texel_view(b,format,off,size);
+  if(address) {
+    VkBufferDeviceAddressInfo info={.sType=VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,.buffer=b->handle};
+    VkDeviceAddress base=vkGetBufferDeviceAddressKHR(V.device,&info);
+    *address=(VkDescriptorAddressInfoEXT){0};
+    if(V.descriptor_buffers && base && off<=b->size && size<=b->size-off && base<=UINT64_MAX-off && base+off<=UINT64_MAX-size)
+      *address=(VkDescriptorAddressInfoEXT){.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT,.address=base+off,.range=size,.format=format};
+  }
   if (writable)
     vk_buffer_writeback_stage((uintptr_t)d.texture.mem,size,stages);
   return view;
 }
+
+VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlags stages) {return vk_texel_buffer_resolved(id,storage,writable,stages,NULL);}
 
 VkImage vk_texture_native(const tex_t *t) {
   vk_mip_clear_drain();vk_texture_cpu_preflight(t);

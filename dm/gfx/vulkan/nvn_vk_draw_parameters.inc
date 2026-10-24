@@ -1,10 +1,16 @@
 // Private per-original-graphics-context UAB slots. No guest/resource lookup:
 // products have completed the original consumer and hold its recording pins.
 #include "nvn_vk_uab.h"
+#include "nvn_vk_descriptor_buffer.h"
 #include "nvn_vk_record_owner.h"
 typedef struct draw_parameter_block {
   struct draw_parameter_block *next;
   vk_uab_packet *packet;
+  vk_buffer db_buffer;
+  VkDeviceAddress db_address;
+  const vk_descriptor_buffer_schema *db_schema;
+  vk_split_descriptor_value *db_values;
+  uint32_t db_initialized,db_reset_pending;
   int version;
   unsigned used;
 } draw_parameter_block;
@@ -20,6 +26,7 @@ struct draw_parameters {
   draw_parameter_schema *schema_index[DRAW_PARAMETER_SCHEMA_BUCKETS];
   vk_uab_batch *batch;
   unsigned block_count,active,discard;
+  uint64_t descriptor_bytes;
   uint64_t last_serial,object_epoch;
 };
 enum { DRAW_PARAMETER_BLOCK_SLOTS=32,DRAW_PARAMETER_MAX_BLOCKS=256 };
@@ -49,6 +56,12 @@ static unsigned draw_parameter_schema_bucket(const vk_shader *shader) {
 #endif
   return (unsigned)((((uint64_t)(uintptr_t)shader>>4)*UINT64_C(11400714819323198485))>>57);
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t db_test_stats[9]; // alloc/free/reset/write/forced-write/pending-reject/emit/texel/buffer
+void vk_test_draw_descriptor_buffer_stats(uint64_t out[9]) {memcpy(out,db_test_stats,sizeof db_test_stats);}
+#endif
+static int draw_parameters_reset_completed(vk_graphics_submission *);
+#include "nvn_vk_draw_descriptor_buffer.inc"
 static void draw_parameters_flush(draw_parameters *p) {if(p)vk_uab_batch_flush(p->batch);}
 static void draw_parameters_begin(draw_parameters *p) {
   if(!p)return;
@@ -56,7 +69,7 @@ static void draw_parameters_begin(draw_parameters *p) {
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(p->last_serial)draw_parameter_reuses++;
 #endif
-  if(!vk_uab_batch_begin(p->batch))die("Vulkan draw parameter batch reuse");
+  if(!V.descriptor_buffers && !vk_uab_batch_begin(p->batch))die("Vulkan draw parameter batch reuse");
   p->active=1;
   for(draw_parameter_schema *s=p->schemas;s;s=s->next) {
     s->current=s->blocks;
@@ -69,14 +82,15 @@ static int draw_parameters_valid(draw_parameters *p) {
   if(!p || p->object_epoch==vk_record_object_epoch())return 1;
   p->discard=1;return 0;
 }
-static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_shader_prepared_values *values) {
+static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_shader_prepared_values *values,vk_descriptor_buffer_binding *db_binding) {
+  *db_binding=(vk_descriptor_buffer_binding){0};
   if(!values->count)return VK_NULL_HANDLE;
   draw_parameters *p=*owner;
   if(!p) {
     p=calloc(1,sizeof *p);if(!p)return VK_NULL_HANDLE;
-    p->batch=vk_uab_batch_create(1024);
-    if(!p->batch){free(p);return VK_NULL_HANDLE;}
-    if(!vk_uab_batch_begin(p->batch))die("Vulkan draw parameter initial batch");
+    if(!V.descriptor_buffers)p->batch=vk_uab_batch_create(1024);
+    if(!V.descriptor_buffers && !p->batch){free(p);return VK_NULL_HANDLE;}
+    if(!V.descriptor_buffers && !vk_uab_batch_begin(p->batch))die("Vulkan draw parameter initial batch");
     p->object_epoch=vk_record_object_epoch();
     p->active=1;*owner=p;
   }
@@ -120,13 +134,37 @@ static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_sh
   if(!b) {
     if(p->block_count==DRAW_PARAMETER_MAX_BLOCKS)return VK_NULL_HANDLE;
     b=calloc(1,sizeof *b);if(!b)return VK_NULL_HANDLE;
-    b->packet=vk_uab_packet_create(&s->schema,DRAW_PARAMETER_BLOCK_SLOTS,1);
-    if(!b->packet){free(b);return VK_NULL_HANDLE;}
+    if(V.descriptor_buffers) {if(!draw_descriptor_block_create(p,s,b)){free(b);return VK_NULL_HANDLE;}}
+    else {b->packet=vk_uab_packet_create(&s->schema,DRAW_PARAMETER_BLOCK_SLOTS,1);
+      if(!b->packet){free(b);return VK_NULL_HANDLE;}}
     b->version=-1;
     if(s->current)s->current->next=b;else s->blocks=b;
     p->block_count++;
   }
   s->current=b;
+  if(V.descriptor_buffers) {
+    unsigned slot=b->used++;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    static int db_rejected;
+    if(!db_rejected && shader->stage==1 && getenv("DM_DRAW_UAB_WRITE_FAIL_ONCE")) {
+      db_rejected=1;p->discard=1;return VK_NULL_HANDLE;
+    }
+    static int db_invalid_test;
+    if(!db_invalid_test && getenv("DM_DESCRIPTOR_ARENA_INVALID_FIXTURE")) {
+      for(unsigned n=values->count;n;n--)if(b->db_schema->schema.bindings[n-1].descriptorType==VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+        vk_shader_prepared_values invalid=*values;invalid.values[n-1].range=0;
+        size_t bytes=b->db_schema->bytes;uint8_t *before=malloc(bytes);if(!before)die("Descriptor invalid fixture allocation");
+        memcpy(before,b->db_buffer.map+slot*b->db_schema->stride,bytes);
+        vk_descriptor_buffer_binding rejected={0};
+        if(draw_descriptor_block_write(b,slot,&invalid,&rejected) || rejected.address ||
+            memcmp(before,b->db_buffer.map+slot*b->db_schema->stride,bytes))die("Descriptor invalid tail partially published");
+        free(before);db_invalid_test=1;LOG("[descriptor arena invalid] late range rejected without write; original GPU product retained");break;
+      }
+    }
+#endif
+    if(!draw_descriptor_block_write(b,slot,values,db_binding))p->discard=1;
+    return VK_NULL_HANDLE;
+  }
   if(b->version<0) {
     b->version=vk_uab_packet_begin(b->packet);
     if(b->version<0)return VK_NULL_HANDLE;
@@ -158,8 +196,14 @@ static void draw_parameters_end(draw_parameters *p) {
         if(!vk_uab_packet_pending(b->packet,b->version,serial))die("Vulkan draw parameter pending ownership");
       } else if(!vk_uab_packet_abandon(b->packet,b->version))die("Vulkan empty draw parameter abandonment");
     }
-  if(!vk_uab_batch_end(p->batch))die("Vulkan draw parameter batch end");
+  if(!V.descriptor_buffers && !vk_uab_batch_end(p->batch))die("Vulkan draw parameter batch end");
   p->last_serial=serial;p->active=0;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(V.descriptor_buffers && getenv("DM_DESCRIPTOR_ARENA_PENDING_FIXTURE") && serial>vk_completed_serial()) {
+    if(draw_parameters_reset_completed(graphics_state) || vk_graphics_parameters_discard(graphics_state))die("Descriptor arena mutated before actual completion");
+    db_test_stats[5]++;
+  }
+#endif
 }
 int vk_graphics_parameters_discard_requested(const vk_graphics_submission *state) {
   return state && state->parameters && (state->parameters->discard ||
@@ -173,7 +217,11 @@ static int draw_parameters_reset_completed(vk_graphics_submission *state) {
   if(p->active || p->last_serial>vk_completed_serial())return 0;
   for(draw_parameter_schema *s=p->schemas;s;s=s->next)
     for(draw_parameter_block *b=s->blocks;b;b=b->next) {
-      if(!vk_uab_packet_reset_completed(b->packet))die("Vulkan completed parameter reset ownership");
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      if(b->db_schema)db_test_stats[2]++;
+#endif
+      b->db_reset_pending=b->db_initialized;b->db_initialized=0;
+      if(b->packet && !vk_uab_packet_reset_completed(b->packet))die("Vulkan completed parameter reset ownership");
       b->version=-1;b->used=0;
     }
   p->discard=0;p->object_epoch=vk_record_object_epoch();
@@ -189,12 +237,18 @@ int vk_graphics_parameters_discard(vk_graphics_submission *state) {
     draw_parameter_schema *next=s->next;
     for(draw_parameter_block *b=s->blocks;b;) {
       draw_parameter_block *next_block=b->next;
-      if(!vk_uab_packet_destroy(b->packet))die("Vulkan completed draw parameter pool still pending");
+      if(b->db_buffer.handle){
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+        db_test_stats[1]++;
+#endif
+        vk_buffer_destroy(&b->db_buffer);free(b->db_values);
+      }
+      if(b->packet && !vk_uab_packet_destroy(b->packet))die("Vulkan completed draw parameter pool still pending");
       free(b);b=next_block;
     }
     free(s);s=next;
   }
-  if(!vk_uab_batch_destroy(p->batch))die("Vulkan draw parameter batch lifetime");
+  if(p->batch && !vk_uab_batch_destroy(p->batch))die("Vulkan draw parameter batch lifetime");
   free(p);state->parameters=NULL;return 1;
 }
 static void draw_parameters_materialize(vk_shader *const list[6],const vk_shader_prepared_values *products,

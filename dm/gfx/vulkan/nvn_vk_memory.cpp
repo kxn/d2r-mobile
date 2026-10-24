@@ -7,8 +7,9 @@
 #include "../../third_party/vulkan-memory-allocator/vk_mem_alloc.h"
 #include "nvn_vk_memory.h"
 static VmaAllocator allocator;
-VkResult vk_memory_init(VkInstance instance, VkPhysicalDevice physical, VkDevice device) {
+VkResult vk_memory_init(VkInstance instance, VkPhysicalDevice physical, VkDevice device,int device_address) {
   VmaAllocatorCreateInfo create = {};
+  if(device_address)create.flags|=VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
   create.instance = instance;
   create.physicalDevice = physical;
   create.device = device;

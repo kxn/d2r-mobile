@@ -1331,6 +1331,9 @@ int dm_vulkan_test_main(void) {
     int reset_completed=getenv("DM_UAB_CONTEXT_RESET_FIXTURE")!=NULL;
     extern void vk_test_uab_pool_stats(uint64_t [3]);
     uint64_t pools_before_reset[3]={0},pools_after_reset[3]={0};
+    extern void vk_test_draw_descriptor_buffer_stats(uint64_t [9]);
+    uint64_t db_before[9]={0},db_after[9]={0};
+    vk_test_draw_descriptor_buffer_stats(db_before);
     vk_test_retained_prefix_stats(&captures0,&replays0);
     vk_sample_liveness_reference(0);vk_gpu_profile_enabled(0);
     NVNblendState additive;CALL(nvnBlendStateSetDefaults,&additive);
@@ -1377,6 +1380,7 @@ int dm_vulkan_test_main(void) {
       if(after_c>before_c && after_r>before_r)mixed++;
       if(reset_completed && frame==4) {
         vk_test_uab_pool_stats(pools_before_reset);
+        if(V.descriptor_buffers)vk_test_draw_descriptor_buffer_stats(db_before);
         // Real draws have completed and both ordinary contexts have been used.
         // The original retire notification invalidates their cached products;
         // begin/recycle must forget retained CBs before rewriting these sets.
@@ -1387,9 +1391,22 @@ int dm_vulkan_test_main(void) {
       vk_test_uab_pool_stats(pools_after_reset);
       CHECK(pools_after_reset[0]==pools_before_reset[0]);
       CHECK(pools_after_reset[1]==pools_before_reset[1]);
-      CHECK(pools_after_reset[2]>pools_before_reset[2]);
+      if(V.descriptor_buffers) {
+        vk_test_draw_descriptor_buffer_stats(db_after);
+        CHECK(db_after[0]==db_before[0] && db_after[1]==db_before[1]);
+        CHECK(db_after[2]>db_before[2] && db_after[4]>db_before[4]);
+      } else CHECK(pools_after_reset[2]>pools_before_reset[2]);
       LOG("[draw completed reset] pools_created=0 pools_destroyed=0 reset_packets=%llu real_gpu_pixels=passed",
           (unsigned long long)(pools_after_reset[2]-pools_before_reset[2]));
+    }
+    if(V.descriptor_buffers) {
+      vk_test_draw_descriptor_buffer_stats(db_after);
+      CHECK(db_after[3]>0 && db_after[6]>0 && db_after[8]>0);
+      if(getenv("DM_DESCRIPTOR_ARENA_PENDING_FIXTURE"))CHECK(db_after[5]>0);
+      LOG("[descriptor arena actual] alloc=%llu free=%llu reset=%llu writes=%llu forced=%llu pending_reject=%llu emit=%llu texel=%llu buffer=%llu",
+        (unsigned long long)db_after[0],(unsigned long long)db_after[1],(unsigned long long)db_after[2],
+        (unsigned long long)db_after[3],(unsigned long long)db_after[4],(unsigned long long)db_after[5],
+        (unsigned long long)db_after[6],(unsigned long long)db_after[7],(unsigned long long)db_after[8]);
     }
     vk_test_retained_prefix_stats(&captures1,&replays1);
     CHECK(!V.retained_draws || (captures1>captures0 && replays1>replays0 && mixed>0));
@@ -3059,6 +3076,15 @@ int dm_vulkan_test_main(void) {
 #endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   draw_parameters_integration_check();
+  if(V.descriptor_buffers) {
+    extern void vk_test_draw_descriptor_buffer_stats(uint64_t out[9]);
+    uint64_t stats[9];vk_test_draw_descriptor_buffer_stats(stats);
+    CHECK(stats[3]>0 && stats[6]>0 && stats[8]>0);
+    LOG("[descriptor arena full] alloc=%llu free=%llu reset=%llu writes=%llu forced=%llu pending_reject=%llu emit=%llu texel=%llu buffer=%llu",
+      (unsigned long long)stats[0],(unsigned long long)stats[1],(unsigned long long)stats[2],
+      (unsigned long long)stats[3],(unsigned long long)stats[4],(unsigned long long)stats[5],
+      (unsigned long long)stats[6],(unsigned long long)stats[7],(unsigned long long)stats[8]);
+  }
 #endif
   printf("{\"backend\":\"vulkan\",\"original_nvn\":true,\"checks\":%u,"
          "\"result\":\"passed\"}\n",
