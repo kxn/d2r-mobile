@@ -1312,6 +1312,57 @@ int dm_vulkan_test_main(void) {
   CALL(nvnColorStateSetDefaults, &cs);
   CALL(nvnPolygonStateSetDefaults, &ps);
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_RETAINED_SEGMENT_FIXTURE")) {
+    extern void vk_test_retained_prefix_stats(uint64_t *,uint64_t *);
+    uint64_t captures0,replays0,captures1,replays1;unsigned mixed=0;
+    vk_test_retained_prefix_stats(&captures0,&replays0);
+    vk_sample_liveness_reference(0);vk_gpu_profile_enabled(0);
+    NVNblendState additive;CALL(nvnBlendStateSetDefaults,&additive);
+    CALL(nvnBlendStateSetBlendFunc,&additive,NVN_BLEND_FUNC_ONE,NVN_BLEND_FUNC_ONE,
+      NVN_BLEND_FUNC_ONE,NVN_BLEND_FUNC_ONE);
+    CALL(nvnColorStateSetBlendEnable,&cs,0,1);
+    const NVNtexture *retained_colors[]={&tex};
+    for(unsigned frame=0;frame<12;frame++) {
+      uint64_t before_c,before_r,after_c,after_r;
+      vk_test_retained_prefix_stats(&before_c,&before_r);
+      color[0]=1.f/255;color[1]=(frame&1)?1.f/255:0;color[2]=0;color[3]=1.f/255;
+      CALL(nvnCommandBufferBeginRecording,&cmd);
+      CALL(nvnCommandBufferSetRenderTargets,&cmd,1,retained_colors,NULL,NULL,NULL);
+      CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
+      CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){0,0,0,0},15);
+      CALL(nvnCommandBufferBindProgram,&cmd,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+      CALL(nvnCommandBufferBindColorState,&cmd,&cs);
+      CALL(nvnCommandBufferBindPolygonState,&cmd,&ps);
+      CALL(nvnCommandBufferBindBlendState,&cmd,&additive);
+      CALL(nvnCommandBufferBindUniformBuffer,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)color,16);
+      // Three complete64-draw chunks plus16 original tail draws. Only one
+      // draw in the middle chunk changes fixed state. Additive integer steps
+      // make duplicate/omitted cached or tail draws visible in GPU pixels.
+      for(unsigned draw=0;draw<208;draw++) {
+        if(draw==96)CALL(nvnCommandBufferSetScissor,&cmd,frame&1,frame&1,1,1);
+        if(draw==97)CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
+        CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+      }
+      CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+      CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)report);
+      submit(end());CHECK(report[0]==0);
+      CALL(nvnTextureReadTexels,&tex,NULL,&region,pixels);
+      for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
+        unsigned value=(x==(frame&1)&&y==(frame&1))?208:207;
+        const uint8_t *pixel=pixels+(y*16+x)*4;
+        CHECK(pixel[0]==value && pixel[1]==((frame&1)?value:0) && pixel[2]==0 && pixel[3]==value);
+      }
+      vk_test_retained_prefix_stats(&after_c,&after_r);
+      if(after_c>before_c && after_r>before_r)mixed++;
+    }
+    vk_test_retained_prefix_stats(&captures1,&replays1);
+    CHECK(!V.retained_draws || (captures1>captures0 && replays1>replays0 && mixed>0));
+    CHECK(V.retained_draws || (captures1==captures0 && replays1==replays0));
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"retained-segments-changing-interior\",\"captures\":%llu,\"replays\":%llu,\"mixed_frames\":%u,\"draws_per_frame\":208,\"checks\":%u,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
+      (unsigned long long)(captures1-captures0),(unsigned long long)(replays1-replays0),mixed,checks);
+    return 0;
+  }
   if(getenv("DM_RETAINED_PREFIX_FIXTURE")) {
     extern void vk_test_retained_prefix_stats(uint64_t *,uint64_t *);
     uint64_t captures0,replays0,captures1,replays1;
