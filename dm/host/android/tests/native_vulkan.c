@@ -816,6 +816,15 @@ static void draw_parameters_integration_check(void) {
   if(V.retained_draws) {CHECK(v[3]>0);CHECK(v[4]>0);}
   if(V.retained_draws && getenv("DM_DRAW_UAB_PSO_FAIL_ONCE"))CHECK(v[2]==1 && v[1]>0);
   if(V.retained_draws && getenv("DM_DRAW_UAB_WRITE_FAIL_ONCE"))CHECK(v[1]>0);
+  if(getenv("DM_DRAW_PARAMETER_HASH_COLLIDE")) {
+    extern void vk_test_draw_parameter_index_stats(uint64_t out[6]);
+    uint64_t index[6];vk_test_draw_parameter_index_stats(index);
+    CHECK(V.retained_draws && index[0]>0 && index[1]>0 && index[2]>0 && index[3]>2 && index[4]>0);
+    CHECK(index[5]==index[0]);
+    LOG("[draw schema collision GPU] lookups=%llu traversed=%llu hits=%llu schemas=%llu collisions=%llu verified=%llu",
+      (unsigned long long)index[0],(unsigned long long)index[1],(unsigned long long)index[2],
+      (unsigned long long)index[3],(unsigned long long)index[4],(unsigned long long)index[5]);
+  }
   LOG("[draw UAB integration] enabled=%u actual=%llu fallback=%llu PSO_retry=%llu completed_reuses=%llu pending_discard_refused=%llu",
       V.retained_draws,(unsigned long long)v[0],(unsigned long long)v[1],(unsigned long long)v[2],(unsigned long long)v[3],(unsigned long long)v[4]);
 }

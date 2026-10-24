@@ -9,13 +9,15 @@ typedef struct draw_parameter_block {
   unsigned used;
 } draw_parameter_block;
 typedef struct draw_parameter_schema {
-  struct draw_parameter_schema *next;
+  struct draw_parameter_schema *next,*bucket_next;
   vk_shader *shader; // original device-lifetime immutable schema identity
   vk_uab_schema schema;
   draw_parameter_block *blocks,*current;
 } draw_parameter_schema;
+enum { DRAW_PARAMETER_SCHEMA_BUCKETS=128 };
 struct draw_parameters {
   draw_parameter_schema *schemas,*last[6];
+  draw_parameter_schema *schema_index[DRAW_PARAMETER_SCHEMA_BUCKETS];
   vk_uab_batch *batch;
   unsigned block_count,active,discard;
   uint64_t last_serial,object_epoch;
@@ -25,8 +27,28 @@ enum { DRAW_PARAMETER_BLOCK_SLOTS=32,DRAW_PARAMETER_MAX_BLOCKS=256 };
 static uint64_t draw_parameter_actual,draw_parameter_fallback,draw_parameter_pso_retry;
 static uint64_t draw_parameter_reuses,draw_parameter_pending_rejected;
 static uint64_t draw_parameter_unretainable;
+static uint64_t draw_parameter_index_lookups,draw_parameter_index_steps,draw_parameter_index_hits;
+static uint64_t draw_parameter_index_created,draw_parameter_index_collisions,draw_parameter_index_verified;
+void vk_test_draw_parameter_index_stats(uint64_t out[6]) {
+  out[0]=draw_parameter_index_lookups;out[1]=draw_parameter_index_steps;
+  out[2]=draw_parameter_index_hits;out[3]=draw_parameter_index_created;
+  out[4]=draw_parameter_index_collisions;out[5]=draw_parameter_index_verified;
+}
+static int draw_parameter_collision_test(void) {
+  static int enabled=-1;
+  if(enabled<0)enabled=getenv("DM_DRAW_PARAMETER_HASH_COLLIDE")!=NULL;
+  return enabled;
+}
 uint64_t vk_test_draw_parameter_unretainable(void) {return draw_parameter_unretainable;}
 #endif
+// Shader identities have device lifetime. The ownership list stays separate:
+// only last-shader misses use this index; reset/discard still walk all schemas.
+static unsigned draw_parameter_schema_bucket(const vk_shader *shader) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(draw_parameter_collision_test())return 0;
+#endif
+  return (unsigned)((((uint64_t)(uintptr_t)shader>>4)*UINT64_C(11400714819323198485))>>57);
+}
 static void draw_parameters_flush(draw_parameters *p) {if(p)vk_uab_batch_flush(p->batch);}
 static void draw_parameters_begin(draw_parameters *p) {
   if(!p)return;
@@ -63,11 +85,33 @@ static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_sh
   if(shader->set>=6)return VK_NULL_HANDLE;
   draw_parameter_schema *s=p->last[shader->set];
   if(!s || s->shader!=shader) {
-    for(s=p->schemas;s && s->shader!=shader;s=s->next) {}
+    unsigned bucket=draw_parameter_schema_bucket(shader);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    draw_parameter_index_lookups++;
+#endif
+    for(s=p->schema_index[bucket];s && s->shader!=shader;s=s->bucket_next) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      draw_parameter_index_steps++;
+#endif
+    }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(s)draw_parameter_index_hits++;
+    if(draw_parameter_collision_test()) {
+      draw_parameter_schema *reference=p->schemas;
+      while(reference && reference->shader!=shader)reference=reference->next;
+      if(reference!=s)die("Vulkan draw schema index disagrees with ownership list");
+      draw_parameter_index_verified++;
+    }
+#endif
     if(!s) {
       s=calloc(1,sizeof *s);if(!s)return VK_NULL_HANDLE;
       if(!vk_uab_schema_from_shader(shader,0,&s->schema)) {free(s);return VK_NULL_HANDLE;}
       s->shader=shader;s->next=p->schemas;p->schemas=s;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+      draw_parameter_index_created++;
+      if(p->schema_index[bucket])draw_parameter_index_collisions++;
+#endif
+      s->bucket_next=p->schema_index[bucket];p->schema_index[bucket]=s;
     }
     p->last[shader->set]=s;
   }
