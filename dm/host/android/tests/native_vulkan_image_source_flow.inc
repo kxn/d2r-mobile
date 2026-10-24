@@ -10,6 +10,28 @@ static int source_flow_observe;
 static unsigned source_partition_calls;
 static int source_partition_watch;
 static void (*source_partition_callback)(void);
+extern void vk_test_source_group_stats(uint64_t out[3]);
+static const tex_t *source_group_replacement;
+static int source_group_action,source_group_acted;
+static uint64_t source_group_threshold;
+static void source_group_before_target(void) {
+  if(!source_group_action || source_group_action==5 || source_group_acted)return;
+  uint64_t before[3];vk_test_source_group_stats(before);
+  if(before[0]<=source_group_threshold)return;
+  source_group_acted=1;
+  if(source_group_action==3) {
+    vk_shader *list[6]={0};vk_program_shaders(S.program,list);
+    int token=vk_shader_image_sources_begin();vk_shader_cpu_sources(list,&S,0);
+    vk_shader_image_sources_end(token);
+    uint64_t after[3];vk_test_source_group_stats(after);CHECK(before[0]==after[0]);
+  } else if(source_group_action==4) {
+    vk_state state=S;vk_state_restore(&state);
+  } else {
+    mtl_reg_tex(1,source_group_replacement,NULL);
+    if(source_group_action==2) {vk_internal_wait(vk_internal_commit());mtl_sub_begin();}
+  }
+}
+
 
 static unsigned source_flow_cpu_calls,source_flow_native_calls;
 static const tex_t *source_flow_last_cpu,*source_flow_last_native;
@@ -17,6 +39,7 @@ static uint64_t source_flow_last_native_serial;
 static struct {const tex_t *pointer;uint64_t generation;} source_flow_origins[8*640];
 static unsigned source_flow_origin_count;
 void __wrap_vk_texture_cpu_preflight(const tex_t *t) {
+  if(t)source_group_before_target();
   if(source_partition_watch && t) {
     source_partition_calls++;
     if(source_partition_callback) {void (*cb)(void)=source_partition_callback;source_partition_callback=NULL;cb();}

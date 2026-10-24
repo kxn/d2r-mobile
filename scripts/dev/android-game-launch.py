@@ -39,6 +39,7 @@ parser.add_argument('--vulkan-provider',choices=['system','adreno','panvk'],help
 parser.add_argument('--expect-shared-import-windows',action='store_true',help='verify experimental shared import windows; requires explicit shared heap and nonzero cold window bytes')
 parser.add_argument('--pool-window-bytes',type=int,help='startup-only pool backing window: 0 (whole pool reference) or power of two >= 4096 bytes; Android app default 16 MiB')
 parser.add_argument('--retained-draws',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental retained Vulkan encoding; default off, requires actual buffer update-after-bind features')
+parser.add_argument('--source-read-group',action=argparse.BooleanOptionalAction,default=None,help='startup-only reuse of existing ordinary image group CPU-source classification; default off')
 parser.add_argument('--pixel-local',action=argparse.BooleanOptionalAction,default=None,help='startup-only source-proved pixel-local subpasses; requires matching shader sidecars (Android default on; --no-pixel-local for reference)')
 parser.add_argument('--pixel-local-shared-ds', action=argparse.BooleanOptionalAction, default=None, help='experimental identical physical readonly DS in both pixel-local subpasses; startup-only, default OFF')
 parser.add_argument('--pool-copy-accounting',action=argparse.BooleanOptionalAction,default=None,help='startup-only optional logical pool copy bytes, not bandwidth or timing (default off)')
@@ -157,6 +158,8 @@ if args.attach and args.state_segments is not None:
     parser.error('--state-segments/--no-state-segments are startup-only and cannot be used with --attach')
 if args.attach and args.retained_draws is not None:
     parser.error('--retained-draws/--no-retained-draws are startup-only and cannot be used with --attach')
+if args.attach and args.source_read_group is not None:
+    parser.error('--source-read-group/--no-source-read-group are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_job_reuse is not None:
     parser.error('--attachment-job-reuse/--no-attachment-job-reuse are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_raster_run is not None:
@@ -258,6 +261,8 @@ if not args.attach:
         launch += ['--ez','state_segments',str(args.state_segments).lower()]
     if args.retained_draws is not None:
         launch += ['--ez','retained_draws',str(args.retained_draws).lower()]
+    if args.source_read_group is not None:
+        launch += ['--ez','source_read_group',str(args.source_read_group).lower()]
     if args.attachment_job_reuse is not None:
         launch += ['--ez','attachment_job_reuse',str(args.attachment_job_reuse).lower()]
     if args.attachment_raster_run is not None:
@@ -422,6 +427,13 @@ while time.monotonic() < deadline:
                     state_segment_modes=re.findall(r'\[vulkan state segments\] enabled=([01])\b',log)
                     retained_modes=re.findall(r'\[vulkan retained draws\] requested=([01]) enabled=([01])\b',log)
                     actual_retained_draws=bool(int(retained_modes[-1][1])) if retained_modes else None
+                    source_group_modes=re.findall(r'\[vulkan\] ordinary source read group enabled=([01])\b',log)
+                    actual_source_read_group=bool(int(source_group_modes[-1])) if source_group_modes else None
+                    source_read_group_hit='[vulkan] ordinary source read group first confirmed operation' in log
+                    if args.source_read_group is not None and actual_source_read_group != args.source_read_group:
+                        raise RuntimeError('source_read_group actual backend mode mismatch')
+                    if args.source_read_group is True and not source_read_group_hit:
+                        raise RuntimeError('source_read_group confirmed operation not observed')
                     if args.retained_draws is not None and actual_retained_draws != args.retained_draws:
                         raise SystemExit('retained draws backend startup mode did not match explicit request/capabilities')
                     actual_state_segments=bool(int(state_segment_modes[-1])) if state_segment_modes else None
@@ -493,6 +505,9 @@ while time.monotonic() < deadline:
                               'source_partition_actual_sparse':source_partition_hit,
                               'requested_state_segments':args.state_segments,
                               'requested_retained_draws':args.retained_draws,
+                              'requested_source_read_group':args.source_read_group,
+                              'actual_source_read_group':actual_source_read_group,
+                              'source_read_group_hit':source_read_group_hit,
                               'actual_retained_draws':actual_retained_draws,
                               'actual_state_segments':actual_state_segments,
                               'first_actual_state_segment_operations':actual_state_segment_operations,

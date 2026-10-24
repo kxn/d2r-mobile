@@ -212,7 +212,7 @@ static int compute_pool_requirement(void *context,const vk_pool_requirement *ran
 // Required CPU image sources are prepared at the operation boundary, before
 // physical pool admission and all shader/texture/temporary borrows. NVN state
 // is stable on the owner; registry descriptors are copied under its own lock.
-void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute) {
+static void shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute,int allow_group) {
   int packaged_only=0;
 #ifdef DM_VULKAN_SHARED_POOLS
   int shared=!V.options.pool_defer_publication && vk_pool_shared_active();
@@ -228,6 +228,18 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
   uint64_t partition_epoch=vk_texture_descriptor_epoch(),partition_version=source_partition_version;
   image_source_plan *source_plan=image_sources_start(list,state,compute);
   int source_complete=1;
+  uint64_t source_group_revision=0,source_group_skip[2]={0,0};
+  if(allow_group && source_group_enabled && source_partition_enabled!=1 &&
+      source_plan && image_source_depth==1 && state==&S && !compute &&
+      !V.options.pool_defer_publication && !vk_ghost_replaying()) {
+    int source_group_route=!vk_pool_draw_source_handoff_required();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    // Existing owned source-flow fixture exercises metadata handoff without
+    // pretending its host driver qualifies Android lazy host imports.
+    source_group_route|=image_source_owned_test;
+#endif
+    if(source_group_route)source_group_revision=vk_image_split_cpu_sources(list[1],source_group_skip);
+  }
 #endif
   for(unsigned stage=compute?5:0;stage<(compute?6:5);stage++)if(list[stage]) {
     const vk_shader *s=list[stage];
@@ -246,6 +258,15 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
         // hand the same logical value to native admission after publication.
         image_source_entry *entry=&source_plan->entries[source_plan->count++];
         entry->reg=b->reg;source_part->count++;
+        if(stage==1 && source_group_revision && (source_group_skip[k/64]&(UINT64_C(1)<<(k%64)))) {
+          // Preserve logical cache positions, but never publish a source plan
+          // with entries this operation deliberately did not resolve.
+          source_complete=0;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+          source_group_skipped++;
+#endif
+          continue;
+        }
         const tex_t *t=image_source_resolve(entry,state,stage);
         if(t && (!packaged_only || (t->has_layout && t->mem && t->L.size)))vk_texture_cpu_preflight(t);
         continue;
@@ -262,9 +283,29 @@ void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int co
     vk_texture_cpu_preflight(state->targets.depth);
   }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(source_group_revision && !vk_image_split_cpu_sources_valid(list[1],source_group_revision)) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    source_group_fallbacks++;
+#endif
+    // Publication/registry/restore may revoke the no-source classification.
+    // No physical borrower exists yet. One ordinary complete walk compensates
+    // omissions; disable this optimization on that walk to bound the retry.
+    shader_cpu_sources(list,state,compute,0);return;
+  }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(source_group_revision)source_group_confirmed++;
+#endif
+  if(source_group_revision && !source_complete) {
+    static int logged;
+    if(!logged) {logged=1;LOG("[vulkan] ordinary source read group first confirmed operation");}
+  }
   image_sources_finish(source_plan,source_complete);
   image_partition_build(source_plan,partition_epoch,partition_version);
 #endif
+}
+
+void vk_shader_cpu_sources(vk_shader *const list[6],const vk_state *state,int compute) {
+  shader_cpu_sources(list,state,compute,1);
 }
 
 // Optional host UI replay must never start a CPU demand after an outer draw

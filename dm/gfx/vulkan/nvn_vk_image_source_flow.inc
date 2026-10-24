@@ -17,6 +17,7 @@ typedef struct {
   int valid;
 } image_source_partition;
 static int source_partition_enabled=-1;
+static int source_group_enabled;
 static uint64_t source_partition_version=1;
 typedef struct {
   image_source_partition *partition;
@@ -44,6 +45,10 @@ void vk_shader_image_sources_invalidate(void) {
 
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 static int image_source_owned_test;
+static uint64_t source_group_skipped,source_group_confirmed,source_group_fallbacks;
+void vk_test_source_group_stats(uint64_t out[3]) {
+  out[0]=source_group_skipped;out[1]=source_group_confirmed;out[2]=source_group_fallbacks;
+}
 static uint64_t image_source_test_generation;
 void vk_test_image_source_flow(int active) {image_source_owned_test=!!active;}
 #endif
@@ -60,6 +65,10 @@ int vk_shader_image_sources_begin(void) {
     if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_SOURCE_PARTITION expects 0 or 1");
     source_partition_enabled=v && !strcmp(v,"1");
     LOG("[vulkan] image source partition enabled=%d",source_partition_enabled);
+    const char *group=getenv("DM_VULKAN_SOURCE_READ_GROUP");
+    if(group && strcmp(group,"0") && strcmp(group,"1"))die("DM_VULKAN_SOURCE_READ_GROUP expects 0 or 1");
+    source_group_enabled=group && !strcmp(group,"1");
+    LOG("[vulkan] ordinary source read group enabled=%d",source_group_enabled);
   }
   if(image_source_depth)vk_shader_image_sources_invalidate();
   if(!image_sources_enabled() && !image_source_depth)return 0;

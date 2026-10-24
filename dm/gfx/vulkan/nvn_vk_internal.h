@@ -171,6 +171,7 @@ typedef int (*vk_pool_operation_collect)(void *context,vk_pool_requirement_sink 
 int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context);
 // Draw only: complete live consumers can import on demand in the opt-in mode.
 int vk_pool_draw_operation_begin(vk_pool_operation_collect collect,void *context);
+int vk_pool_draw_source_handoff_required(void);
 int vk_pool_operation_begin_ranges(const vk_pool_requirement *ranges,size_t count);
 void vk_pool_operation_end(int token);
 int vk_pool_operation_active(void);
@@ -508,6 +509,8 @@ void vk_image_split_admit(const void *shader,int eligible);
 void vk_image_split_break(void);
 void vk_image_split_handles(uint32_t op,unsigned stage,unsigned first,unsigned count,const uint64_t *values);
 int vk_image_split_prepare(const void *shader,uint64_t skip[2]);
+uint64_t vk_image_split_cpu_sources(const void *shader,uint64_t skip[2]);
+int vk_image_split_cpu_sources_valid(const void *shader,uint64_t revision);
 // Optional caller-owned complete stage payload. It must live until the group
 // is invalidated; any replacement fill must enter this API before overwriting
 // it. Nested operations must use independent storage. NULL keeps the old owner.

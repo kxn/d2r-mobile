@@ -105,6 +105,25 @@ static int split_ready(const void *shader) {
     split_group.descriptors==atomic_load(&descriptor_epoch) &&
     split_group.samplers==atomic_load(&sampler_registry_epoch);
 }
+// Read-only metadata proof, before final GPU consumer admission. Every member
+// was captured without an NVN CPU layout. This does not borrow GPU requests,
+// establish visibility, or permit skipping a packaged/native publication.
+static int split_cpu_source_ready(const void *shader) {
+  return split_on() && split_depth==1 && shader && split_group.shader==shader &&
+      split_group.valid && !V.options.pool_defer_publication &&
+      split_group.serial==vk_recording_serial() && split_group.pass==V.passes &&
+      vk_render_active() && !vk_mip_clear_pending() &&
+      split_group.lifetime==image_recipe_generation &&
+      split_group.descriptors==atomic_load(&descriptor_epoch) &&
+      split_group.samplers==atomic_load(&sampler_registry_epoch);
+}
+uint64_t vk_image_split_cpu_sources(const void *shader,uint64_t skip[2]) {
+  if(!split_cpu_source_ready(shader))return 0;
+  skip[0]=split_group.mask[0];skip[1]=split_group.mask[1];return split_group.revision;
+}
+int vk_image_split_cpu_sources_valid(const void *shader,uint64_t revision) {
+  return revision && revision==split_group.revision && split_cpu_source_ready(shader);
+}
 int vk_image_split_prepare(const void *shader,uint64_t skip[2]) {
   if(!split_ready(shader))return 0;
   skip[0]=split_group.mask[0];skip[1]=split_group.mask[1];return 1;

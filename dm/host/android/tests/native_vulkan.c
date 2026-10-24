@@ -514,6 +514,7 @@ static void pending_fixture_region(void *opaque) {
 #include "native_vulkan_vertex_require.inc"
 #include "native_vulkan_logical_preflight.inc"
 #include "native_vulkan_image_source_flow.inc"
+#include "native_vulkan_source_group.inc"
 #include "native_vulkan_deferred_mip_clear.inc"
 #include "native_vulkan_pending_read.inc"
 #include "native_vulkan_prewarm.inc"
@@ -839,7 +840,7 @@ int dm_vulkan_test_main(void) {
   }
 #endif
 #ifdef DM_VULKAN_SHARED_POOLS
-  if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE") || getenv("DM_SOURCE_PARTITION_FIXTURE"))vk_legacy_astc_copy_startup(1);
+  if(getenv("DM_LEGACY_ASTC_COPY_FIXTURE") || getenv("DM_SOURCE_PARTITION_FIXTURE") || getenv("DM_SOURCE_GROUP_FIXTURE"))vk_legacy_astc_copy_startup(1);
 #endif
   if(getenv("DM_IDLE_CACHE_TRIM_FIXTURE")) {
     extern void nvn_test_idle_trim_cold_poll(void);
@@ -912,6 +913,9 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_SOURCE_GROUP_FIXTURE"))return source_group_gpu_test();
+#endif
 #ifndef DM_ANDROID_APP
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(getenv("DM_RECORD_OWNER_FIXTURE")) {retained_record_owner_test();return 0;}

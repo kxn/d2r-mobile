@@ -329,6 +329,13 @@ static int pool_operation_begin(vk_pool_operation_collect collect,void *context,
 int vk_pool_operation_begin(vk_pool_operation_collect collect,void *context) {
   return pool_operation_begin(collect,context,0);
 }
+int vk_pool_draw_source_handoff_required(void) {
+#ifdef DM_VULKAN_SHARED_POOLS
+  return !shared_lazy_active;
+#else
+  return 1;
+#endif
+}
 int vk_pool_draw_operation_begin(vk_pool_operation_collect collect,void *context) {
   return pool_operation_begin(collect,context,1);
 }
