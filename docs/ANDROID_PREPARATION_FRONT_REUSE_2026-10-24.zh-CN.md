@@ -48,7 +48,7 @@ Host 使用 coherent imported RGBA / 软件 Vulkan，不能代替手机 ASTC 游
 
 官方 `cpu-clock:u` / FP 开关各三窗已经完成，使用本候选精确 ELF 重新解析所有实际 PC。六窗无采样丢失；现成统计显示明确的反向工作量变化：
 
-| 原统计，按同进程宽端点的游戏 tick 归一 | OFF | ON |
+| 原统计，按同进程宽端点的原始 guest submission 归一 | OFF | ON |
 | --- | --- | --- |
 | group builds | 1767 | 1922 |
 | group hits | 597 | 442 |
@@ -67,9 +67,20 @@ Host 使用 coherent imported RGBA / 软件 Vulkan，不能代替手机 ASTC 游
 
 View residual 1.903→2.178 ms，group 冷构建 0.086→0.186 ms，热准入 0.114→0.115 ms，展开失效 0.014→0.057 ms。细项只有个位到百余样本，存在频率和采样噪声，不能把它们当精确因果金额；OFF 第三窗亦保留工作形状小变。主判断依据是总消费次数反增，而非约 0.039 ms 的呈现差。
 
-计数宽端点的游戏 tick 与 Perfetto 内窗完整 Surface 不同，以上调用量不是每显示帧，也没有合格的完整 DRAW 分母。views 单项是 cache-hit，必须加 misses；prepares 也不是总消费次数。已有 ordinary/native 混合统计不能冒充新增 native 覆盖率。
+计数分母是宽端点 `buffer_sync.guest_submits` 的差值，既不是游戏 tick 差，也不是 Perfetto 内窗完整 Surface；以上调用量不是每显示帧，也没有合格的完整 DRAW 分母。views 单项是 cache-hit，必须加 misses；prepares 也不是总消费次数。已有 ordinary/native 混合统计不能冒充新增 native 覆盖率。
 
-完整六窗审查：`.local/logs/native-read-group-front-callchains-v1/six-window-review/`。独立 PMU 四臂正在采用新 namespace 测量，不能与旧 A 的窗口拼成对照。
+完整六窗审查：`.local/logs/native-read-group-front-callchains-v1/six-window-review/`。独立 PMU 四臂亦已完成，不能与旧 A 的窗口拼成对照：
+
+| 臂 | 指令 M / 完整 Surface | 周期 M / 完整 Surface | Running ms / Surface | Surface 间隔 ms |
+| --- | --- | --- | --- | --- |
+| A1 OFF | 58.681–59.106 | 33.656–33.920 | 26.518 | 32.975 |
+| B1 ON | 60.843–61.446 | 36.317–36.729 | 30.608 | 46.812 |
+| B2 ON | 60.838–61.437 | 33.376–33.750 | 31.776 | 46.800 |
+| A2 OFF | 58.049–58.598 | 37.034–37.529 | 31.899 | 47.043 |
+
+四臂 full=observable、100% PMU 覆盖、无丢样。两个配对的 ON 指令区间分别高约 2.94–4.71%、3.82–5.84%，再次确认额外工作。周期方向不同；采样驻核/频率不同，B2 variants 为 30，其余 32，不宣称完全同工作形状。原 OFF 末臂亦出现约 47 ms 呈现间隔，不能把整个 FPS 下降归因于 B。宽端点组复用损失在两对重复，不能用频率差把明确的消费次数增加解释掉。
+
+这四臂统一通过 Mesa 官方 file logger 核验本次 PID 的实际 `TU_DEBUG=0x1`，只在启动前设置并在结束后 CAS 恢复日志属性；没有改驱动或新增采样器。原 logcat 失败保留，未改成有效窗口。报告 `.local/logs/mesa-startup-file-qualified-v1/four-arm-review/report.md`。
 
 后继最小修复是分开 ordinary / native 两个同 shader、同 pass/serial 子组，让 native 成员变化仅打断 native 子组。保留原所有全局同步边界，不做多 shader 大缓存，不在热路径重新扫描整组资源。旧 B 源码与结果冻结；修复在新分支实现并补稳定 ordinary + 变化 native 的真实 draw 负例，再重新对照。
 
