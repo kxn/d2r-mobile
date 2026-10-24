@@ -310,6 +310,14 @@ void main(){result=handles[4095];}
 '''
 generated_markers=set()
 for marker, stage, suffix, code, bindings in (
+    (67,1,'frag','''#version 450
+layout(set=1,binding=1) uniform texture2D stable_image;
+layout(set=1,binding=2) uniform texture2D changing_image;
+layout(set=1,binding=3) uniform sampler filtering;
+layout(location=0) out vec4 value;
+void main(){value=vec4(texelFetch(sampler2D(stable_image,filtering),ivec2(0),0).g,
+texelFetch(sampler2D(changing_image,filtering),ivec2(0),0).r,0,1);}
+''',[[6,1,0,-1,0,1,2,3],[6,2,1,-1,0,1,2,3],[5,3,0,-1,0,1,2,0]]),
     (59,5,'comp',driver_sparse_compute,[[1,1,0,0,0,1,0,0],[1,2,2,0,0,1,0,0],[2,3,15,0,1,1,0,0]]),
     (60,5,'comp',driver_sparse_other,[[1,1,0,0,0,1,0,0],[1,2,2,0,0,1,0,0],[2,3,15,0,1,1,0,0]]),
     (61,5,'comp',driver_sparse_dynamic,[[1,1,0,0,0,1,0,0],[1,2,2,0,0,1,0,0],[2,3,15,0,1,1,0,0]]),
