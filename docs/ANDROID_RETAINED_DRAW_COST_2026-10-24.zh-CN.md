@@ -163,3 +163,13 @@ A1 缺 CPU0 的 0.251094ms 计数边界，覆盖99.995945%；A2 缺 CPU1 的0.24
 独立结构报告 `.local/logs/descriptor-buffer-completed-mutation-six-api-v1/independent-structure-review/report.md`。分析时一次派生输出路径错误暂时写入旧派生目录，原始捕获和官方 JSON 未改；旧输出已用原脚本/原输入恢复到原 SHA，旧22项封存全部再次核对，事故与恢复记录单列 `output-path-incident-recovery.json`，未修改旧 manifest 接受漂移。
 
 下一步按新的精确 ELF 重新采集 ON/OFF 官方完整调用栈，分开核算省掉的录制和新增管理。对于 API/采样工具看不到的私有首个拒绝条件，单独编译默认OFF的 `DM_VULKAN_RETAINED_REASONS`：只累计现有分支原因，每60次原 guest 提交发布一次，不另写计时器或采样器，不将该诊断包用于性能结论。源码 `e426d2b`、主机 ON14/OFF2项和 canonical 构建已归档，实际手机原因尚待采集。生产默认行为及 retained/descriptor-buffer/source 实验默认OFF均未改变。
+
+### 后继完整六窗与私有原因：区分录制收益和仍在执行的资源准备
+
+7dc 精确 ELF 的 ON/OFF 各三份官方30秒完整调用栈现已结束，原进程各 fresh save=2 后停止。六窗PSO/variants端点稳定、lost/truncated=0；新linked调用点与LLVM inline重新核对，未复用旧a46 PC归属。原工具重复数据、官方HTML、逐窗频率/驻核及未知父栈封存在 `.local/logs/descriptor-buffer-completed-mutation-callchains-v1/six-window-review/`，根逐项核验336文件。
+
+各自完整Surface重叠窗的统计估计：实际录制/重录 OFF3.009→ON1.575ms，普通descriptor物化1.032→0.045ms；两者共少约2.42ms。DB+参数新增1.649ms，packet+retained管理0.072→1.025ms，共多约2.60ms；互斥关联交付合计4.112→4.293ms，差+0.181ms小于描述性噪声尺度0.350ms（不是置信区间），不足判净正/负。Running26.113→26.196ms、Surface约33.004→34.398ms，没有涨帧证据。原资源准备/consumer约8.425→8.155ms；该路径没有被此改动跳过，其波动不认领为准备复用。与旧版本历史差额改善也不能当跨版本的干净因果收益。
+
+随后单独安装 `e426d2b` 诊断包，确认无GPU层/采样工具。预热后guest serial1560→1680的120次原提交，4200次prefix chunk比较的互斥首因：1235次相同（29.405%）、1688次RenderPass句柄不同（40.190%）、1277次vertex Buffer或offset不同（30.405%）；其它首因均0。published capture2965、replay1235，本窗口未观察到任何forget/cleared/discard事件。此窗口没有支持“整池epoch重置导致主要重录”的证据，不应据此删除epoch保护。
+
+这是首失败分布：pass失败后其它字段尚未比较，不能说这些chunk仅有pass差异；vertex也尚未细分Buffer和offset。分母是受限prefix chunk比较，不能当全游戏draw命中率或CPU时间占比，更不能据40%直接计算可省毫秒。下一步先核对Vulkan继承所需的真正RenderPass兼容性、以及已观察顶点绑定变化的来源，避免只是增加一层每draw判断。实际记录 `.local/logs/retained-private-reasons-device-v1/actual/`，严格差分 `private-reason-deltas.json`；原PID30675 fresh save=2后停止，33项资产与设置/属性不变。诊断后已恢复无诊断7dc APK并核对SHA，游戏保持停止，未把诊断运行作为FPS/热量测试。
