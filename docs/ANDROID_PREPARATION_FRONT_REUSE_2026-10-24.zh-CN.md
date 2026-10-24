@@ -82,7 +82,50 @@ View residual 1.903→2.178 ms，group 冷构建 0.086→0.186 ms，热准入 0.
 
 这四臂统一通过 Mesa 官方 file logger 核验本次 PID 的实际 `TU_DEBUG=0x1`，只在启动前设置并在结束后 CAS 恢复日志属性；没有改驱动或新增采样器。原 logcat 失败保留，未改成有效窗口。报告 `.local/logs/mesa-startup-file-qualified-v1/four-arm-review/report.md`。
 
-后继最小修复是分开 ordinary / native 两个同 shader、同 pass/serial 子组，让 native 成员变化仅打断 native 子组。保留原所有全局同步边界，不做多 shader 大缓存，不在热路径重新扫描整组资源。旧 B 源码与结果冻结；修复在新分支实现并补稳定 ordinary + 变化 native 的真实 draw 负例，再重新对照。
+B 的问题对应的最小修复是分开 ordinary / native 两个同 shader、同 pass/serial 子组，让 native 成员变化仅打断 native 子组。保留原所有全局同步边界，不做多 shader 大缓存，不在热路径重新扫描整组资源。旧 B 源码与结果冻结，修复与重新对照见下节 C。
+
+## C：独立子组修复与实测
+
+修复已实现并冻结为 `1123f17` / `codex/native-read-group-partition-v2`，基于 B。普通/native 子组借用位、失效、retry 分开，共享现有 payload 的不相交 descriptor ordinal；native writer 不再打断普通组。两组交错回调时保留仍有效组，失败组只补原先跳过的消费。空组使用现有 FS c2 source version 作资格备忘，变化时重试；空命中不持有请求、不借用 Pool、不计实际节省。
+
+最终同 host binary 的 13 项资格及 16 项 launcher 测试通过。新增真实绘制覆盖：稳定普通纹理 + 连续变化 native 纹理、pending primary 的无关 Buffer fill 引发真正 writer hook、consumer/dependency 两阶段回调、借用升级、空组变为有 native 成员、原 UBO payload 复用。原生产断言未放宽；一轮夹具对 dependency 阶段的额外 View 消费期待错误，失败保留，按实际原阶段分开断言后才最终验收。仍不能将软件 Vulkan RGBA 当 Android ASTC 证明。
+
+新 APK 使用同一 NDK/ARM64 配置、同源码入口构建，1034 项实际输入与六库均核验。初次缺 Android toolchain 预配置时，原禁止 x86 native-host 的 guard 正确拒绝；仅补标准 NDK 配置并保留失败，没有修改 guard 或引入 CPU 模拟。C 真机实际 native 命中、营地画面、原存档 commits=2 与停止通过。
+
+独立四臂结果（完整首对）：
+
+| 指标 | C OFF | C ON |
+| --- | --- | --- |
+| 指令 M / 完整 Surface | 58.170–58.596 | 60.255–60.681 |
+| 周期 M / 完整 Surface | 33.929–34.213 | 34.558–34.819 |
+| Running ms / Surface | 26.776 | 26.650 |
+| Surface 间隔 ms | 33.123 | 33.166 |
+| 按原 guest submission 的 View 消费 | 4861 | 4640 |
+| 按原 guest submission 的 skipped_items | 6476 | 6678 |
+
+首对 PMU 完整且 PSO325/variants32 稳定。View 少约 4.55%，但指令高约 2.83–4.32%、周期高约 1.01–2.62%；Running 小降同时伴频率升约 1.18%，不能认作净节省。第二对仍重复了消费条目减少，但 B2 有短驻留 CPU1 的计数缺口、A2 full 缺 CPU7 左边界；保留 full/observable 机械裁剪，不伪造完整第二对效果。没有为了结果改窗口或重采凑数。
+
+C 的事件统计按两个 subgroup 计数，不能把 ON 的总 builds/hits 与旧 B 整组计数当同一总体。实际条目消费/跳过量的单位保持，故能确认修复恢复复用，但尚不能说明新管理值得。当前 C 仍默认关闭并保留源码，原因是已有净工作量退化证据，而非仅因没有即时涨帧。
+
+当前三窗 ON 的官方职责细分又排除一个小方向：cold owner helper inclusive 10/5459 个样本，约 0.183%，同窗估计约 0.061 ms/Surface；唯一被 LLVM 标成 pins helper 的点实际是扫描前初始化，pins 循环没有直接样本。不能把整个 capture 父桶当成这个锁/扫描的成本，更不能拿它解释约 23 ms。
+
+冷建（排除 owner/retain）约 0.286 ms，handle watcher 约 0.204 ms，ready 混合约 0.020 ms，原必须保留的实际 retain 约 0.204 ms，均含原 ordinary 工作且细项样本少。不可把这些 ON 单项全称新增或与异窗 PMU相乘。原 retain 返回 owner 证书的方案已只读设计，但没有因看见一个锁就立刻扩五个文件；先用关闭侧同口径比较确定优先级。
+
+证据：`.local/logs/native-read-group-partition-v2/ready.json`、`native-read-group-partition-v2-independent-review/final-review.md`、`native-read-group-partition-pmu-v2/four-arm-review/report.md`、`native-read-group-partition-pmu-v2/pmu-boundary-evidence/report.md`、`native-read-group-partition-callchains-v2/ON/group-duty/`。
+
+### C 的最终六窗比较
+
+开关各三窗均已完成官方导出、HTML 与原生命周期收尾；精确新 ELF、PSO325/variants32 稳定，无采样丢失或 TraceProcessor 健康错误。343 项最终审查引用匹配。OFF/ON 各有 494 个完整 Surface，用户态估计 28.463→28.994 ms，Running 30.918→31.338 ms，呈现间隔 47.016→46.973 ms。这批窗口频率/驻核与 PMU 首对不同，不能把约 47 ms 和前述约 33 ms 拼成候选效果。
+
+明确的工作收益仍在：按原 guest submission，View 总消费约 4895→4626–4630、跳过条目约 6442→6692。管理包络排除必须保留的 retain 后，全窗份额 2.163%→3.297%；同窗 0.654→0.981 ms（约增 0.327 ms，计数噪声尺度约 0.183 ms，非统计置信区间）。其中冷 capture/build（排除 owner/retain）22→53 样本、handle watcher30→38、record/lifecycle23→38、expand/break7→15、ready7→10，包含原普通组，不能把整个 ON 包络都当新增。
+
+View 子项同窗 2.086→1.943 ms，但只有 102→95 个样本，差值噪声尺度约 0.287 ms；全窗份额反而 6.92%→7.25%。history/readproof 0.716→0.736 ms。消费次数减少是确证，净省时仍未确证；原 PMU 完整首对指令上升亦须保留。没有把未改路径的时间波动包装成收益。
+
+去除 group 管理父路径后的宏观互斥估计包含 Draw 装配/录制约 6.1–6.3 ms、driver 约 3.6–3.7 ms、资源职责约 9.1–10.0 ms，以及 replay、planning、提交等。这些是继续调查的范围，不是可删除预算；目前没有证明另一个可整段删掉的大循环。尤其不能从约 0.061 ms 的 owner 叶子扩出能解释整线程的收益。
+
+最终报告与官方 HTML 索引：`.local/logs/native-read-group-partition-callchains-v2/six-window-review/report.md`。A、B、C 源码均保留并推送 fork 独立分支；本轮没有向生产主线默认启用这些候选，也没有删除已减少实际工作的机制来掩盖问题。B/C 的依据是已观察到净指令/管理退化，不是只因 FPS 没涨。约二十多毫秒的整线程问题尚未解决。
+
+所有本轮设备采集已结束，最后一次 C OFF 的原进程保存 commits=2 并停止。根代理另核 `pidof` 无进程、两项 Mesa 调试属性均恢复空值；没有让游戏空跑，也未触碰已暂停借出的 Mali 或 6GB 平板。
 
 ## 证据位置与构建边界
 
