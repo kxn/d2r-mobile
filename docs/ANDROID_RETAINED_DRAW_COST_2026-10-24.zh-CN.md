@@ -95,6 +95,8 @@ ON 编码含重录合计 1.463/1.424/1.951ms；新增 UAB 资格、参数、更�
 
 独立ON三份官方完整栈中，CPU source仍5.27–6.68%，image prepare/View8.52–9.72%，Buffer准备8.49–8.81%，绑定组装10.58–11.47%。新static body在多数样本中不再保留旧public父帧，已用实际符号和LLVM inline共同归类，不能靠旧名消失认领收益。新组资格可见0/3/5样本；循环和entry metadata仍在。OFF三份原采集已正式完成并原save2/stop，六窗对照继续离线收口；报告不以ON单边或重命名宣称整段准备已复用。目录 `.local/logs/ordinary-source-forward-callchains-v1/`。
 
+六窗现已完成并由根逐项核对361项哈希，报告为该目录 `six-window-review/report.md`。全部正式窗PSO321/variants32稳定、lost/truncated0，OFF同样执行新static body。整30s source resolve+preflight份额3.554%→2.954%，控制residual1.890%→2.288%，显式组资格0→0.121%；总source6.139%→5.984%，不能将小差称稳定净收益。各自Surface重叠窗合并的source统计估计反而1.412→1.533ms，只有99/107个样本，抽样/时间窗边界均保留。View父桶8.740%→9.165%，但显式native消费/保活32→28样本，View内descriptor lookup10→7；没有支持新增native补解析的证据。原skip机制和正确性实验保留，不删除省工；同时承认循环/资格成本抵消大部分收益，不围绕小差再新增一套缓存或认领数毫秒。
+
 ### 标准 descriptor buffer 后继：查询和主机功能资格
 
 对UAB剩余参数/更新管理，独立原型使用标准 `VK_EXT_descriptor_buffer`，不是私有descriptor字节或改写shader地址。主机原GPU图形/compute与跨提交secondary重放、两份值版本/ordinal、混合image/sampler/texel/UBO/SSBO、pending覆盖拒绝和原回退等3组通过；这不代表Android游戏功能或性能已通过。源码冻结 `ab172d69ce992db0f166add3409b6965a10044ca`，证据 `.local/logs/descriptor-buffer-host-contract-v1/`。

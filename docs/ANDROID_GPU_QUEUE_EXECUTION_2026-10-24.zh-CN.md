@@ -88,6 +88,16 @@ A1测量及save2均成功，空字符串恢复属性被ADB shell丢参导致coll
 
 本次约30→36FPS再次复现；每个完整间隔的总读取下降约6.5%、写入增加约5.6%，两者合计下降约2.7%，而每秒读写量随吞吐增加。纹理读取已包含在总读取中，不能再相加。两个窗口GPU时钟均约500MHz，Shaders Busy分别约66.5%/73.9%；这些全局计数包含合成器，不是游戏独占GPU时间，也不能据此断定带宽饱和。CPU频率和驻核仍有变化，本轮没有PMU指令/周期，不将Running下降写成删除了相同时间的CPU准备。
 
+## 现成的按 Pass 自动选择：测试入口与证据边界
+
+SYSMEM依然由GPU渲染，指绕过GMEM分块、直接访问系统内存中的附件；不是CPU软件绘制，也不是本项目的CPU/GPU共享Pool导入。GMEM通过片上附件存储减少外存往返，同时有分箱、分块重放、装入/写回等成本。少draw短Pass往往更适合SYSMEM，大量混合/多重采样等可能更适合GMEM，不能仅按draw数量或单个draw时间判定。[Mesa官方架构与Autotune](https://docs.mesa3d.org/drivers/freedreno.html#autotune)明确支持按Pass在两种模式间自动选择，不需要我们另写分类器，也不应为中途强切而人为拆Pass。
+
+当前实际f830源码已核对原entire-source-ledger：`tu_autotune.cc`默认BANDWIDTH按估算带宽选择；PROFILED使用实际Pass时间历史选择，PROFILED_IMM只用于少数实例即定案的另一策略。该估算并非完整的执行时间模型，因此全局SYSMEM更快仍可能来自原模型的选择偏差，不能因此认定原渲染在CPU执行。主/secondary原flags没有SIMULTANEOUS_USE，该标记会使驱动禁用复杂调优，核查未发现这条阻断。特殊反馈/FDM/MSRTSS及小Pass等驱动强制/高置信规则仍保留。
+
+另开现成`bandwidth/profiled`对照：同f460 APK、原f830/950/6217资源、.60、source/retained均OFF，分别冷启设置标准`debug.mesa.tu.autotune.algo`（原`os_get_option`Android映射）；原Simpleperf/Perfetto采集和数学不变，仅增加本PID官方启动日志证明及独立CAS恢复。源、delta、配置和原始结果位于 `.local/logs/current-f830-autotune-abba-v1/`。启动声明只证明算法选择，不冒称已逐Pass观察到混合决策。
+
+第一对全核计数覆盖100%，bandwidth/profiled的Running26.650/24.439ms，Surface均值33.118/30.257ms，但中位仍约33.2ms；指令分别58.851–59.277/59.535–59.922M、周期33.917–34.198/32.774–33.018M/Surface。即profiled指令更多0.44–1.82%，周期较低2.65–4.16%，不属于删除了相同CPU操作。频率1434/1511MHz、variants32/30不同，PSO均321；这些差异保留，单对不能声称稳定净收益。报告 `.local/logs/current-f830-autotune-abba-v1/first-pair-review/`。第二个profiled首试在测量前缺本PID启动位日志而拒绝，没有性能窗，原失败单列；后继参考/qualified对照必须独立目录，不覆盖或放松原门。各已完成进程均原save2/stop、33资产与属性恢复。
+
 这不支持“SYSMEM必然以巨量额外每帧流量换帧率”的简单判断，也不支持已经降低长期温度或功耗。短窗顺序、真实绘制形状和其他场景仍有限制，不能据此永久全局强制SYSMEM；应继续定位哪些pass从模式选择获益，并保留默认驱动与完整依赖语义。
 
 两次正式GPU采集和原save2/stop均完成。SYSMEM collector原终态1另存：关闭GUI后，pluginPerfetto PID27901在身份读取期间退出，唯一收尾错误没有覆盖。独立root收条确认13个原collector、两个host工具和游戏均退出，APK、33资产、层设置及空Mesa属性均恢复；仅用该精确收条补证分析。原分析manifest还曾在sealer写末尾控制台输出前记录该日志；原清单和失败保留，最终封装仅允许这两条日志的精确哈希变化，不重采或改原数据。独立最终清单的124项文件已逐项复核，SHA为`8f04e68ef2d3ef1f860a41ffab026d480b67e31faf292a38123a2fba7b4672f3`。捕获、收条和离线结果分别见`.local/logs/current-f830-sysmem-sdp-game-v1/`、`.local/logs/current-f830-sysmem-sdp-game-v1-analysis/finalized/`。
