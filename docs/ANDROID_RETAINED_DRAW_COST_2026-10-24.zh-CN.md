@@ -102,3 +102,29 @@ ON 编码含重录合计 1.463/1.424/1.951ms；新增 UAB 资格、参数、更�
 对UAB剩余参数/更新管理，独立原型使用标准 `VK_EXT_descriptor_buffer`，不是私有descriptor字节或改写shader地址。主机原GPU图形/compute与跨提交secondary重放、两份值版本/ordinal、混合image/sampler/texel/UBO/SSBO、pending覆盖拒绝和原回退等3组通过；这不代表Android游戏功能或性能已通过。源码冻结 `ab172d69ce992db0f166add3409b6965a10044ca`，证据 `.local/logs/descriptor-buffer-host-contract-v1/`。
 
 Q735独立cap-only v3在实际f830下完成标准能力查询：SHA、实际映射文件dev/inode及driver UUID均核对；descriptorBuffer/BDA=true，single-array=true，offset alignment64，UBO descriptor64、SSBO128、combined image sampler128字节。未创建VkDevice、Buffer或GPU工作，不能据此称手机GPU验证或认领收益。此前loader trampoline误判、v2目录准备错误及Java拒绝结果覆盖/退出顺序问题均保留原失败，修复后用独立v3 namespace，未覆盖旧结果。实际记录 `.local/logs/descriptor-buffer-capability-v3/device-query/`。后继仍需完整pipeline/layout、BDA分配/导入、texel原consumer地址交付和完成后arena覆盖合同，原资源准备不因此自动消失。
+
+### 标准 descriptor buffer 已实际运行游戏，但仍有净额外工作
+
+完整后继冻结在实验分支`a46e105`，标准descriptor buffer与retained仍默认OFF。canonical APK SHA `87d31114fa2d963a0f2158cc1d46ab452862507270c8e41ffac06bf86bbe958e`，ELF SHA `810d8ea115fbf9a30d5e3e2b4c5f82698d0d0d393b921df807c886aadb2b9504`，BuildID `062d925695cab7df7684f364fdcc49f1bee84630`。原入口1046项输入、六库与原UI冻结于 `.local/build/retained-descriptor-buffer-v1-final/`。原资源准备、CPU发布、hazard与保活未跳过；已完成context的独立descriptor arena替代UAB set更新，不修改在途字节。主机14项真实GPU与17项launcher检查通过，包含texel实际地址/格式、跨帧值改变、pending拒绝及整段失败回退。
+
+真机在f830/950/6217/.60下进入实际ARM64游戏，营地角色、场景和原UI检查未见该画面的明显黑块/几何缺失；不代表战斗或全场景资格。无采样截图的HUD瞬时数不计稳态收益。独立PMU完整计数对照：ordinary A1指令58.681–59.106M、周期34.156–34.463M/Surface；稳定DB+retained B2指令63.628–64.071M、周期34.568–34.853M，分别多7.65–9.19%与0.305–2.040%。Running26.793→26.137ms但Surface33.126→34.441ms，驻核和频率改变，不能因Running小差就称净省工。B1的PSO/variants漂移保留；C1-UAB两次在正式测量前因配置/启动日志资格拒绝，没有有效UAB性能窗。原始在 `.local/logs/retained-descriptor-buffer-device-v1/`。
+
+同一精确新ELF的ON/OFF各三份官方30s完整调用栈已完成：PSO/variants各自稳定、lost/truncated0，原save2后停止，全部正式工具结束。各自完整Surface重叠窗的互斥职责合并如下（统计估计，不是逐调用精确计时或随机配对因果差值）：
+
+|交付职责|ordinary OFF ms/Surface|DB+retained ON ms/Surface|
+|---|---:|---:|
+|实际录制编码，含新路径首录/重录|2.561|1.383|
+|普通descriptor物化|0.944|0.149|
+|descriptor buffer及参数管理|0|2.142|
+|pending和retained管理|0.043|1.071|
+|以上互斥职责合计|3.548|4.746|
+
+这解释了为什么录制减少却没降低整线程：可观察的编码与普通物化共少约1.97ms，新增管理超过它，交付合包反而多约1.20ms的采样估计。全线程其它桶、频率与驻核也变化，不能要求总Running等幅增加。原资源准备/绑定消费仍约8–9ms/Surface，不能把它们在未修改路径中的波动认领为准备复用收益。新路径中标准descriptor编码约2.12–2.20%、schema/layout约1.70–1.81%、校验/比较/typed交付约2.00–2.34%；不把这些全叫驱动锁。完整六窗与分类勘误保留于 `.local/logs/retained-descriptor-buffer-callchains-v1/six-window-review/`。独立证据审核逐项验证六窗及A1/B2共634项哈希与分母：差额描述性噪声尺度约0.348ms，不是置信区间；第一窗差额仅0.560ms，保留逐窗差异。复核记录 `.local/logs/retained-descriptor-buffer-evidence-audit-v1/review.md`。
+
+其中确认一处可删除的工作：DB块不产生UAB更新，提交末尾却仍遍历所有schema/block执行UAB seal检查。独立修复`f90784b`仅将该遍历限制到UAB，保留公共serial、active与pending保护；12项实际主机GPU用例通过，Android性能尚未验证。新图该末尾职责约0.643%用户态采样、同窗约0.149ms估计，不冒称整个begin/end或数毫秒都可删除。
+
+### 用现成API工具数真实复用覆盖：尚未取得新有效捕获
+
+既有官方GFXReconstruct连续六帧已用于验证按command buffer分配寿命、recording generation、pool/reset/free和实际Execute/Submit展开的结构计数；不以首次replay日志当覆盖率。当前a46的新捕获在进入游戏前被共享导入资格门拒绝，未产生有效六帧：descriptor buffer启用后，现成抓取层会为BDA/descriptor replay增强对象flags，而本次f830外部host-import路径拒绝非零BufferCreate flags。已核对实际安装layer机器码与驱动源码；失败调用的完整实际参数未捕获，因此不把推断写成参数跟踪结论。
+
+此次是抓取层与共享导入的工具兼容阻塞，不是无层游戏DB路径崩溃。原失败、进程退出与资产/层/属性恢复保留在 `.local/logs/retained-descriptor-buffer-six-api-v1/actual/`。正在独立修正现成GFXReconstruct工具的可选结构捕获模式，保留应用明确请求和官方编码/转换，不修改日常驱动或游戏，也不以工具中FPS认领性能。修复后的工具本身、资源replay资格与实际复用覆盖仍需分别验证。

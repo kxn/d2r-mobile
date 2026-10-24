@@ -100,6 +100,14 @@ SYSMEM依然由GPU渲染，指绕过GMEM分块、直接访问系统内存中的�
 
 这不支持“SYSMEM必然以巨量额外每帧流量换帧率”的简单判断，也不支持已经降低长期温度或功耗。短窗顺序、真实绘制形状和其他场景仍有限制，不能据此永久全局强制SYSMEM；应继续定位哪些pass从模式选择获益，并保留默认驱动与完整依赖语义。
 
+### 标准自动选择第二次重复已完成
+
+实际顺序是A1 bandwidth、B1 profiled、B2预测量拒绝、A2 bandwidth、B2-qualified profiled，不称完整ABBA。第二对两边variants32、PSO321稳定：Surface均值33.118→30.340ms，Running26.077→23.078ms；中位33.211→33.215ms。第一对的均值改善因此得到同方向重复，但不是固定帧率改善或60FPS。
+
+A2 CPU0有2.903386ms Running缺计数边界，覆盖99.952823%；其已覆盖周期下界33.7806M仍高于B2完整上界31.5461M，因缺失计数非负，可给至少6.615%较少用户周期的单侧证据，不能补造A2完整上界。两臂加权频率1465/1530MHz、CPU7驻留4.67%/24.89%不同；不把Running差等同删掉CPU工作，也不按频率归一。原采集与四臂报告、537项封装见 `.local/logs/current-f830-autotune-abba-v1/four-successful-review/`。
+
+Turnip能够在一帧不同Render Pass间混用模式，但通用Vulkan没有指定某个draw使用SYSMEM/GMEM的标准开关。应保留Mesa现成按Pass选择机制，不为切换模式额外拆Pass；目前只验证冷启动选择`profiled`的候选，未改应用默认、未增加HUD选项，也尚未用本轮数据证明各Pass实际选中比例或长期功耗。
+
 两次正式GPU采集和原save2/stop均完成。SYSMEM collector原终态1另存：关闭GUI后，pluginPerfetto PID27901在身份读取期间退出，唯一收尾错误没有覆盖。独立root收条确认13个原collector、两个host工具和游戏均退出，APK、33资产、层设置及空Mesa属性均恢复；仅用该精确收条补证分析。原分析manifest还曾在sealer写末尾控制台输出前记录该日志；原清单和失败保留，最终封装仅允许这两条日志的精确哈希变化，不重采或改原数据。独立最终清单的124项文件已逐项复核，SHA为`8f04e68ef2d3ef1f860a41ffab026d480b67e31faf292a38123a2fba7b4672f3`。捕获、收条和离线结果分别见`.local/logs/current-f830-sysmem-sdp-game-v1/`、`.local/logs/current-f830-sysmem-sdp-game-v1-analysis/finalized/`。
 
 原始采集及实际恢复：`.local/logs/current-game-renderstages-v1/`；官方SQL与队列分析：`.local/logs/current-game-renderstages-v1-analysis/`；生产及严格封装：`.local/logs/perfetto-native-rebake-v1/`、`.local/logs/perfetto-native-pack-89e-v1/`；CPU批处理审查：`.local/logs/adjacent-draw-batching-audit-v1/`。工具配置可用`capture-android-scheduler.py --mesa-renderstages`请求现成数据源；请求成功仍必须核实实际GPU记录。
