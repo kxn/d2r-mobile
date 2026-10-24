@@ -1343,6 +1343,10 @@ int dm_vulkan_test_main(void) {
         if(draw==97)CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
         CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
       }
+      // Non-commutative original tail: if moved before the cached chunks,
+      // their additive output would corrupt this final blue column.
+      CALL(nvnCommandBufferSetScissor,&cmd,0,0,1,16);
+      CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){0,0,1,1},15);
       CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
       CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)report);
       submit(end());CHECK(report[0]==0);
@@ -1350,7 +1354,8 @@ int dm_vulkan_test_main(void) {
       for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
         unsigned value=(x==(frame&1)&&y==(frame&1))?208:207;
         const uint8_t *pixel=pixels+(y*16+x)*4;
-        CHECK(pixel[0]==value && pixel[1]==((frame&1)?value:0) && pixel[2]==0 && pixel[3]==value);
+        if(x==0)CHECK(pixel[0]==0 && pixel[1]==0 && pixel[2]==255 && pixel[3]==255);
+        else CHECK(pixel[0]==value && pixel[1]==((frame&1)?value:0) && pixel[2]==0 && pixel[3]==value);
       }
       vk_test_retained_prefix_stats(&after_c,&after_r);
       if(after_c>before_c && after_r>before_r)mixed++;
