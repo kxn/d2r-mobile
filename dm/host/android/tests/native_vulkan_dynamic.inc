@@ -24,6 +24,10 @@ static void dynamic_uniform_variant_test(const void *vertex,unsigned marker) {
   vk_uniform_specialization_stats(ignored,ignored+1,ignored+2,ignored+3,&enabled);
   vk_uniform_specialization_enabled(0);
   float left=.25f,right=.75f;memcpy(storage,&left,4);memcpy(storage+65536,&right,4);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  extern void vk_test_draw_parameter_stats(uint64_t out[5]);
+  uint64_t uab_before[5],uab_after[5];vk_test_draw_parameter_stats(uab_before);
+#endif
   uint64_t hits0,misses0;vk_descriptor_content_stats(&hits0,&misses0);
   uint64_t history_hits0,history_misses0,history_bytes;int history_reference;
   vk_descriptor_history_stats(&history_hits0,&history_misses0,&history_bytes,&history_reference);
@@ -68,10 +72,23 @@ static void dynamic_uniform_variant_test(const void *vertex,unsigned marker) {
       CHECK(vk_program_dynamic_uniforms(resolved)==(!(iteration&1)?0:(iteration&32)?2:1));
     }
   }
-  uint64_t hits,misses;vk_descriptor_content_stats(&hits,&misses);CHECK(hits>hits0);
+  int actual_uab=0;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  vk_test_draw_parameter_stats(uab_after);
+  actual_uab=V.retained_draws && uab_after[0]>uab_before[0];
+#endif
+  // UAB consumes the same resolved values without consulting the ordinary
+  // descriptor cache. Require observed work in this exact fixture interval;
+  // an enabled option alone cannot excuse missing cache-path coverage.
+  uint64_t hits,misses;vk_descriptor_content_stats(&hits,&misses);CHECK(hits>hits0 || actual_uab);
   uint64_t history_hits,history_misses;
   vk_descriptor_history_stats(&history_hits,&history_misses,&history_bytes,&history_reference);
-  CHECK(history_hits>history_hits0);CHECK(history_misses>history_misses0);
+  CHECK(history_hits>history_hits0 || actual_uab);CHECK(history_misses>history_misses0 || actual_uab);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  LOG("[dynamic Uniform delivery coverage] marker=%u ordinary_hits=%llu history_hits=%llu history_misses=%llu UAB_actual=%llu",
+      marker,(unsigned long long)(hits-hits0),(unsigned long long)(history_hits-history_hits0),
+      (unsigned long long)(history_misses-history_misses0),(unsigned long long)(uab_after[0]-uab_before[0]));
+#endif
   uint64_t lookup_hits,lookup_ranges,lookup_slow;
   vk_pool_lookup_stats(&lookup_hits,&lookup_ranges,&lookup_slow,&lookup_reference);
   CHECK(lookup_hits>lookup_hits0);CHECK(lookup_slow>lookup_slow0);
