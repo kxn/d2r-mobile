@@ -45,6 +45,11 @@ void crash_thread_init(void) {
 #include "native_layout.inc"
 #endif
 int main(void) {
+  if(getenv("DM_DESCRIPTOR_COMPLETED_MUTATION_FIXTURE")){
+    extern unsigned vk_test_descriptor_completed_mutation(void);
+    crash_thread_init();mtl_init();unsigned n=vk_test_descriptor_completed_mutation();
+    printf("{\"test\":\"descriptor-completed-mutation\",\"checks\":%u,\"game_modules_executed\":false,\"result\":\"passed\"}\n",n);return 0;
+  }
   if(getenv("DM_UAB_PARAMETERS_FIXTURE")){crash_thread_init();mtl_init();return uab_parameters_test();}
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   const char *table=getenv("DM_NATIVE_LAYOUT_METADATA_FIXTURE");

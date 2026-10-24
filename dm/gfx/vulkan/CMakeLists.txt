@@ -44,6 +44,15 @@ add_custom_command(OUTPUT "${DM_UAB_TEST_HEADER}"
     --glslang "${DM_VK_GLSLANG}" --validator "${DM_VK_SPIRV_VAL}"
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/build_builtin.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/uab-parameters.comp" VERBATIM)
 add_custom_target(dm_vulkan_uab_test_shader DEPENDS "${DM_UAB_TEST_HEADER}")
+set(DM_DB_MUTATION_TEST_HEADER "${CMAKE_CURRENT_BINARY_DIR}/nvn_vk_test_db_mutation_spv.h")
+add_custom_command(OUTPUT "${DM_DB_MUTATION_TEST_HEADER}"
+  COMMAND "${DM_VK_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/build_builtin.py"
+    --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/descriptor-mutation.comp"
+    --output "${DM_DB_MUTATION_TEST_HEADER}" --symbol dm_test_db_mutation_spv
+    --glslang "${DM_VK_GLSLANG}" --validator "${DM_VK_SPIRV_VAL}"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/build_builtin.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/descriptor-mutation.comp" VERBATIM)
+add_custom_target(dm_vulkan_db_mutation_test_shader DEPENDS "${DM_DB_MUTATION_TEST_HEADER}")
+
 file(STRINGS "${GFX}/nvn/names.txt" names)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nvn_test_names.inc" "")
 foreach(name ${names})
@@ -63,7 +72,7 @@ dm_native_thinlto(vulkan_host_test)
 target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_VERTEX_REQUIRE_WRAP=1)
 target_link_options(vulkan_host_test PRIVATE "-Wl,--wrap=vk_buffer_vertex_require")
 add_dependencies(vulkan_host_test dm_vulkan_builtins)
-add_dependencies(vulkan_host_test dm_vulkan_subpass_test_shader dm_vulkan_uab_test_shader)
+add_dependencies(vulkan_host_test dm_vulkan_subpass_test_shader dm_vulkan_uab_test_shader dm_vulkan_db_mutation_test_shader)
 
 option(DM_VULKAN_SHARED_POOLS "Build fixed lazy whole shared-pool experiment" OFF)
 if(DM_VULKAN_SHARED_POOLS)

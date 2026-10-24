@@ -35,13 +35,14 @@ static int draw_descriptor_block_write(draw_parameter_block *b,unsigned slot,con
   int initialized=b->db_initialized&(UINT32_C(1)<<slot);
   VkDescriptorAddressInfoEXT addresses[128];
   // Validate the complete prepared product before changing any descriptor.
-  // Mutable Buffer values can change only in the completed context version;
-  // image/sampler/texel identity changes force original whole-draw fallback.
+  // All descriptor types are memory contents, not recorded set objects. The
+  // caller owns this completed context and allocates each current draw a unique
+  // slot. Keep the schema/epoch/pins contract; changed image/sampler/texel bytes
+  // do not invalidate a CB which records only this arena address and offset.
   for(unsigned n=0;n<v->count;n++) {
     VkDescriptorType t=q->schema.bindings[n].descriptorType;
     const vk_split_descriptor_value *x=&v->values[n];
     int buffer=t==VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER || t==VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    if(initialized && !buffer && memcmp(old+n,x,sizeof *x))return 0;
     if(buffer) {
       if(!x->object || !x->range || x->range==VK_WHOLE_SIZE || x->offset>UINT64_MAX-x->range)return 0;
       uint64_t alignment=t==VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER?V.props.limits.minUniformBufferOffsetAlignment:V.props.limits.minStorageBufferOffsetAlignment;

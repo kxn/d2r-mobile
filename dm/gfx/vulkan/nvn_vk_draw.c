@@ -2232,3 +2232,7 @@ void vk_defer_pass(VkRenderPass pass, VkFramebuffer framebuffer) {
   j->next = graphics_state->jobs;
   graphics_state->jobs = j;
 }
+
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+#include "tests/descriptor_completed_mutation.inc"
+#endif

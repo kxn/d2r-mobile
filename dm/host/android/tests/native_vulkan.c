@@ -1357,7 +1357,8 @@ int dm_vulkan_test_main(void) {
       // Three complete64-draw chunks plus16 original tail draws. Only one
       // draw in the middle chunk changes fixed state. Additive integer steps
       // make duplicate/omitted cached or tail draws visible in GPU pixels.
-      for(unsigned draw=0;draw<208;draw++) {
+      unsigned draws=getenv("DM_DESCRIPTOR_MUTATION_SHORT_FIXTURE") && frame%4==2?144:208;
+      for(unsigned draw=0;draw<draws;draw++) {
         if(draw==96)CALL(nvnCommandBufferSetScissor,&cmd,frame&1,frame&1,1,1);
         if(draw==97)CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
         CALL(nvnCommandBufferDrawArrays,&cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
@@ -1371,7 +1372,7 @@ int dm_vulkan_test_main(void) {
       submit(end());CHECK(report[0]==0);
       CALL(nvnTextureReadTexels,&tex,NULL,&region,pixels);
       for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
-        unsigned value=(x==(frame&1)&&y==(frame&1))?208:207;
+        unsigned value=(x==(frame&1)&&y==(frame&1))?draws:draws-1;
         const uint8_t *pixel=pixels+(y*16+x)*4;
         if(x==0)CHECK(pixel[0]==0 && pixel[1]==0 && pixel[2]==255 && pixel[3]==255);
         else CHECK(pixel[0]==value && pixel[1]==((frame&1)?value:0) && pixel[2]==0 && pixel[3]==value);
@@ -1416,8 +1417,8 @@ int dm_vulkan_test_main(void) {
       CHECK(vk_test_retained_chunk_rollbacks()==1);
     }
     CHECK(vk_validation_error_count()==0);
-    printf("{\"test\":\"retained-segments-changing-interior\",\"captures\":%llu,\"replays\":%llu,\"mixed_frames\":%u,\"draws_per_frame\":208,\"checks\":%u,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
-      (unsigned long long)(captures1-captures0),(unsigned long long)(replays1-replays0),mixed,checks);
+    printf("{\"test\":\"retained-segments-changing-interior\",\"captures\":%llu,\"replays\":%llu,\"mixed_frames\":%u,\"draws_per_frame_max\":208,\"draws_per_frame_min\":%u,\"checks\":%u,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
+      (unsigned long long)(captures1-captures0),(unsigned long long)(replays1-replays0),mixed,getenv("DM_DESCRIPTOR_MUTATION_SHORT_FIXTURE")?144:208,checks);
     return 0;
   }
   if(getenv("DM_RETAINED_PREFIX_FIXTURE")) {
