@@ -391,6 +391,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSourcePa
   source_partition_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
+static int native_read_group_front_startup=0;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeReadGroupFront(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"native_read_group_front is fixed before native startup");
+    return;
+  }
+  native_read_group_front_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int attachment_job_reuse_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeAttachmentJobReuse(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -775,6 +788,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   pthread_mutex_unlock(&operation_mode_mutex);
   if(setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT",native_read_group_front_startup?"1":"0",1) ||
       setenv("DM_VULKAN_ATTACHMENT_JOB_REUSE",attachment_job_reuse_startup?"1":"0",1) ||
       setenv("DM_VULKAN_ATTACHMENT_RASTER_RUN",attachment_raster_run_startup?"1":"0",1) ||
       setenv("DM_VULKAN_BUFFER_CONSUMPTION_PLAN",buffer_consumption_plan_startup?"1":"0",1) ||

@@ -980,6 +980,14 @@ int dm_vulkan_test_main(void) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(getenv("DM_NATIVE_RETIREMENT_FIXTURE")) {native_retirement_gpu_test();return 0;}
   if(getenv("DM_NATIVE_ACQUIRE_SCOPE_FIXTURE")) {native_acquire_scope_gpu_test();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(getenv("DM_NATIVE_READ_GROUP_RECREATE_FIXTURE")) {
+      // The prior ReadTexels owns a legitimate broad Buffer history. Isolate
+      // the next complete lifecycle using the original ordering boundary.
+      mtl_sub_begin();vk_barrier();vk_internal_wait(vk_internal_commit());
+      native_acquire_scope_gpu_test();
+    }
+#endif
 #ifndef DM_ANDROID_APP
     if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE"))image_source_flow_check();
 #endif

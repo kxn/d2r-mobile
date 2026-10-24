@@ -61,6 +61,7 @@ parser.add_argument('--dedicated-present-worker',action='store_true',help='start
 parser.add_argument('--present-worker-shared-queue',action='store_true',help='isolate presentation worker scheduling while preserving the original Vulkan queue; requires --dedicated-present-worker')
 parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction,default=None,help='startup-only stable GPU-produced FS image reuse (default on; --no-image-buffer-split for reference)')
 parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental shared UBO preparation reuse (default off); verify effective backend mode')
+parser.add_argument('--native-read-group-front',action=argparse.BooleanOptionalAction,default=None,help='startup-only same-pass resident coherent native sampled FS group (default off); verify effective backend mode')
 parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job attachment representation reuse (default off); verify effective backend mode')
 parser.add_argument('--attachment-raster-run',action=argparse.BooleanOptionalAction,default=None,help='startup-only fulfilled ordinary attachment access runs (default on; --no-attachment-raster-run for reference); verify actual history reuse')
 parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental validated pure-state replay segments (default off); verify effective backend mode')
@@ -154,6 +155,8 @@ if args.attach and args.source_partition is not None:
     parser.error('--source-partition is startup-only')
 if args.attach and args.state_segments is not None:
     parser.error('--state-segments/--no-state-segments are startup-only and cannot be used with --attach')
+if args.attach and args.native_read_group_front is not None:
+    parser.error('--native-read-group-front/--no-native-read-group-front are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_job_reuse is not None:
     parser.error('--attachment-job-reuse/--no-attachment-job-reuse are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_raster_run is not None:
@@ -253,6 +256,8 @@ if not args.attach:
         launch += ['--ez','source_partition',str(args.source_partition).lower()]
     if args.state_segments is not None:
         launch += ['--ez','state_segments',str(args.state_segments).lower()]
+    if args.native_read_group_front is not None:
+        launch += ['--ez','native_read_group_front',str(args.native_read_group_front).lower()]
     if args.attachment_job_reuse is not None:
         launch += ['--ez','attachment_job_reuse',str(args.attachment_job_reuse).lower()]
     if args.attachment_raster_run is not None:
@@ -424,6 +429,12 @@ while time.monotonic() < deadline:
                         raise SystemExit('state segments enabled but no actual segment consumption was recorded')
                     if args.state_segments is False and actual_state_segment_operations is not None:
                         raise SystemExit('state segments explicitly disabled but actual consumption was recorded')
+                    native_group_modes=re.findall(r'\[vulkan native read group front\] enabled=([01])\b',log)
+                    actual_native_read_group_front=bool(int(native_group_modes[-1])) if native_group_modes else None
+                    if args.native_read_group_front is not None and actual_native_read_group_front != args.native_read_group_front:
+                        raise SystemExit('native read group front backend startup mode did not match explicit request')
+                    native_group_hit=re.findall(r'\[vulkan native read group front\] actual-hit native=(\d+) unique-Pools=(\d+)',log)
+                    native_group_first_hit={'native_descriptors':int(native_group_hit[0][0]),'unique_Pools':int(native_group_hit[0][1])} if native_group_hit else None
                     attachment_reuse_modes=re.findall(r'\[vulkan attachment reuse\] enabled=([01])\b',log)
                     actual_attachment_reuse=bool(int(attachment_reuse_modes[-1])) if attachment_reuse_modes else None
                     if args.attachment_job_reuse is not None and actual_attachment_reuse != args.attachment_job_reuse:
@@ -477,6 +488,9 @@ while time.monotonic() < deadline:
                               'requested_attachment_raster_run':args.attachment_raster_run,
                               'actual_attachment_raster_run':actual_raster_run,
                               'attachment_raster_first_hit':raster_hit,
+                              'requested_native_read_group_front':args.native_read_group_front,
+                              'actual_native_read_group_front':actual_native_read_group_front,
+                              'native_read_group_front_first_hit':native_group_first_hit,
                               'requested_attachment_job_reuse':args.attachment_job_reuse,
                               'actual_attachment_job_reuse':actual_attachment_reuse,
                               'requested_source_partition':args.source_partition,

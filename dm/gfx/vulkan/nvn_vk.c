@@ -2837,7 +2837,11 @@ int vk_pool_native_acquire_independent(uint64_t address,uint64_t size) {
 // An actual writer-generation is only a negative-test key: no new data or CPU
 // publication is inferred. Saturation disables reuse permanently.
 static uint64_t native_writer_generation=1;
-static void native_writer_changed(void) {if(native_writer_generation && !++native_writer_generation)native_writer_generation=0;}
+uint64_t vk_buffer_native_writer_generation(void) {return native_writer_generation;}
+static void native_writer_changed(void) {
+  vk_image_split_native_writer_changed();
+  if(native_writer_generation && !++native_writer_generation)native_writer_generation=0;
+}
 #ifdef DM_VULKAN_TEST_EMBED
 VkPipelineStageFlags vk_test_native_writer_stages(uint64_t address,uint64_t size) {
   if(!size || size>UINT64_MAX-address || vertex_buffer_write_overflow)return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;

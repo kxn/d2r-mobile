@@ -1,7 +1,8 @@
 // Same-pass ordinary FS subset. This object is recording-thread owned.
 // A live batch borrows one immutable member vector. Every mutation which can
 // invalidate that vector first restores ordinary requests, before callbacks.
-static int split_enabled=-1;
+static int split_enabled=-1,native_front_enabled;
+static int native_front_logged;
 static unsigned split_depth;
 static const void *split_admitted;
 static struct {
@@ -9,7 +10,9 @@ static struct {
   uint64_t revision,serial,pass,lifetime,descriptors,samplers;
   uint64_t mask[2],textures[2],sampler_slots[2];
   image_request requests[128];
-  unsigned count,nb;
+  unsigned count,nb,native_count,pool_count;
+  uint64_t native_writers;
+  void *pool_tokens[128],*pool_owners[128];
   int valid,building,failed,hot,consumed,capture,capture_slot,capture_sampler;
   vk_split_descriptor_value values[128];
   vk_split_descriptor_value *payload;
@@ -18,6 +21,8 @@ static _Atomic uint64_t split_published[6];
 static _Atomic int split_published_enabled;
 static uint64_t split_counts[6]; // builds, hits, skipped items, expansions, expanded items, invalidations
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t native_front_test_counts[4]; // captured descriptors, hot descriptors, Pool borrows, writer breaks
+void vk_test_native_read_group_counts(uint64_t out[4]) {memcpy(out,native_front_test_counts,sizeof native_front_test_counts);}
 static void (*split_test_callback)(void *);
 static void *split_test_context;
 static int split_test_dependency_phase;
@@ -62,6 +67,17 @@ static void split_expand(void) {
   }
   image_binding_active=active;
 }
+void vk_image_split_native_writer_changed(void) {
+  // Called before the Buffer writer ledger changes. Expanding only appends
+  // image requests; no Buffer handles, locks, or producer arrays are touched.
+  // Native dependency callers reload their batch after callback-capable work.
+  if(native_front_enabled && split_group.native_count) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(split_group.valid || split_group.building)native_front_test_counts[3]++;
+#endif
+    vk_image_split_break();
+  }
+}
 void vk_image_split_break(void) {
   if(!split_on())return;
   split_expand();
@@ -78,6 +94,12 @@ void vk_image_split_draw_begin(void) {
     const char *v=getenv("DM_VULKAN_IMAGE_BUFFER_SPLIT");
     if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_IMAGE_BUFFER_SPLIT expects 0 or 1");
     split_enabled=!v || !strcmp(v,"1");split_group.capture=-1;
+    const char *native=getenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT");
+    if(native && strcmp(native,"0") && strcmp(native,"1"))die("DM_VULKAN_NATIVE_READ_GROUP_FRONT expects 0 or 1");
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+    native_front_enabled=split_enabled && native && !strcmp(native,"1");
+#endif
+    LOG("[vulkan native read group front] enabled=%d same-pass/serial resident coherent FS only",native_front_enabled);
     atomic_store_explicit(&split_published_enabled,split_enabled,memory_order_relaxed);
   }
   if(!split_on())return;
@@ -99,12 +121,30 @@ void vk_image_split_admit(const void *shader,int eligible) {
 static int split_ready(const void *shader) {
   return split_on() && split_depth==1 && split_admitted==shader && shader &&
     split_group.shader==shader && split_group.valid &&
+    (!split_group.native_count || (split_group.native_writers &&
+      split_group.native_writers==vk_buffer_native_writer_generation())) &&
     split_group.serial==vk_recording_serial() && split_group.pass==V.passes &&
     vk_render_active() && !vk_mip_clear_pending() &&
     split_group.lifetime==image_recipe_generation &&
     split_group.descriptors==atomic_load(&descriptor_epoch) &&
     split_group.samplers==atomic_load(&sampler_registry_epoch);
 }
+static void split_native_retain(void) {
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  for(unsigned k=0;k<split_group.pool_count;k++)
+    vk_pool_native_image_operation_retain(split_group.pool_tokens[k]);
+#endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  native_front_test_counts[2]+=split_group.pool_count;
+#endif
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+unsigned vk_test_native_read_group_retain(void) {
+  if(!split_group.native_count || !split_group.valid ||
+      split_group.serial!=vk_recording_serial())return 0;
+  split_native_retain();return split_group.pool_count;
+}
+#endif
 int vk_image_split_prepare(const void *shader,uint64_t skip[2]) {
   if(!split_ready(shader))return 0;
   skip[0]=split_group.mask[0];skip[1]=split_group.mask[1];return 1;
@@ -117,7 +157,8 @@ static void split_build(const void *shader,unsigned nb,vk_split_descriptor_value
   split_group.mask[0]=split_group.mask[1]=0;
   split_group.textures[0]=split_group.textures[1]=0;
   split_group.sampler_slots[0]=split_group.sampler_slots[1]=0;
-  split_group.count=0;split_group.valid=0;split_group.building=1;
+  split_group.count=0;split_group.native_count=split_group.pool_count=0;
+  split_group.native_writers=0;split_group.valid=0;split_group.building=1;
   split_group.failed=0;split_group.hot=0;split_group.capture=-1;
   split_group.serial=vk_recording_serial();split_group.pass=V.passes;
   split_group.lifetime=image_recipe_generation;
@@ -140,6 +181,9 @@ vk_split_descriptor_value *vk_image_split_values(const void *shader,unsigned nb,
   // members. Materialize live request borrowers before replacing the group.
   if(split_ready(shader) && split_group.payload==payload) {
     skip[0]=split_group.mask[0];skip[1]=split_group.mask[1];
+    // Each operation gets a NEW borrow even when this chunk already recorded
+    // every member. Only unique Pools are visited, never every descriptor.
+    split_native_retain();
     split_group.hot=1;split_group.consumed=1;
     image_batch_current.split_read_group=1;
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
@@ -176,13 +220,26 @@ static void image_split_capture(image *i,VkImageSubresourceRange r,VkPipelineSta
   unsigned n=split_group.capture,slot=split_group.capture_slot;
   int sampler=split_group.capture_sampler;
   split_group.capture=-1;
-  if(slot>=128 || i->tex.has_layout || i->external_access || storage ||
+  if(slot>=128 || i->external_access || storage ||
       stages!=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT ||
       (view && view->set_format && view->format!=i->tex.d.format) ||
       sampled_target_alias(&i->tex,view))return;
 #ifdef DM_VULKAN_NATIVE_RESOURCES
-  if(i->native_entry)return;
+  if(i->native_entry) {
+    if(!native_front_enabled || i->native_acquired!=2 || i->layout!=VK_IMAGE_LAYOUT_GENERAL ||
+        !vk_pool_native_image_queue_resident(i->native_pool))return;
+    void *owner=vk_pool_native_image_operation_owner(i->native_pool);
+    unsigned k=0;while(k<split_group.pool_count && split_group.pool_owners[k]!=owner)k++;
+    if(k==split_group.pool_count) {
+      split_group.pool_owners[k]=owner;split_group.pool_tokens[k]=i->native_pool;split_group.pool_count++;
+    }
+    split_group.native_count++;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    native_front_test_counts[0]++;
 #endif
+  } else
+#endif
+  if(i->tex.has_layout)return;
   // shared_alias_linked is a logical NVN export/conflict registration, not a
   // physical VkImage import. It is intentionally NOT an exclusion here.
   if(split_group.count==128)die("Image split group capacity");
@@ -198,9 +255,17 @@ static void image_split_record_done(void) {
   // callbacks. Selection followed by fallback is not a saved-work hit.
   if(split_group.consumed && image_batch_current.split_read_group && split_ready(split_group.shader)) {
     split_counts[1]++;split_counts[2]+=split_group.count;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    native_front_test_counts[1]+=split_group.native_count;
+#endif
+    if(split_group.native_count && !native_front_logged) {
+      native_front_logged=1;
+      LOG("[vulkan native read group front] actual-hit native=%u unique-Pools=%u",split_group.native_count,split_group.pool_count);
+    }
   }
   if(!split_group.building)return;
   split_group.building=0;
+  split_group.native_writers=vk_buffer_native_writer_generation();
   // Publish only after actual draw access recording. The first read stamps
   // use_clock/mip clocks after this physical pass's begin cutoff; repeated
   // reads in this same pass preserve every >begin classification. Pass/serial

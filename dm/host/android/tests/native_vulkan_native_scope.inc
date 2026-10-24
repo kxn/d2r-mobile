@@ -1,3 +1,29 @@
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+extern void vk_test_native_read_group_counts(uint64_t [4]);
+typedef struct {unsigned mode,calls;uint64_t address,source,bytes;} native_group_callback_context;
+static int native_group_empty_collect(void *unused,vk_pool_requirement_sink sink,void *out) {(void)unused;(void)sink;(void)out;return 1;}
+static void native_group_callback(void *opaque) {
+  native_group_callback_context *c=opaque;c->calls++;
+  if(c->mode==0) {vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);return;}
+
+  // A real VkBuffer transfer restores the saved opaque native payload. The
+  // destination is the SAME imported bytes; no image permutation is guessed.
+  vk_render_end();
+  vk_pool_requirement needs[]={
+    {c->source,c->bytes,0,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0},
+    {c->address,c->bytes,0,VK_PIPELINE_STAGE_TRANSFER_BIT,1,0}};
+  int op=vk_pool_operation_begin_ranges(needs,2);void *src,*dst;uint64_t so,doff;
+  CHECK(vk_pool_address_stage(c->source,c->bytes,&src,&so,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  CHECK(vk_pool_address_stage(c->address,c->bytes,&dst,&doff,VK_PIPELINE_STAGE_TRANSFER_BIT));
+  vk_buffer_use uses[]={{c->source,c->bytes,0},{c->address,c->bytes,1}};
+  vk_transfer_buffer_dependencies(uses,2);
+  VkBufferCopy copy={.srcOffset=so,.dstOffset=doff,.size=c->bytes};
+  vkCmdCopyBuffer(V.cmd,((vk_buffer *)src)->handle,((vk_buffer *)dst)->handle,1,&copy);
+  vk_buffer_transfer_written_range(c->address,c->bytes);
+  vk_buffer_writeback_stage(c->address,c->bytes,VK_PIPELINE_STAGE_TRANSFER_BIT);
+  vk_pool_operation_end(op);
+}
+#endif
 // Real multi-mip imported RGBA dependency oracle, using the original NVN FS/CS
 // shaders. Production ASTC table validation is not relaxed for this host test.
 static void native_acquire_scope_gpu_test(void) {
@@ -195,8 +221,21 @@ static void native_acquire_scope_gpu_test(void) {
     // below still check the actual imported image after both commands.
     extern uint64_t vk_test_native_sampled_preflight_noops(void);
     uint64_t noops=vk_test_native_sampled_preflight_noops();
+    extern void vk_test_native_read_group_counts(uint64_t [4]);
+    uint64_t group_before[4],group_after[4];vk_test_native_read_group_counts(group_before);
     vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
-    CHECK(vk_test_native_sampled_preflight_noops()>noops);
+    vk_test_native_read_group_counts(group_after);
+    CHECK(vk_test_native_sampled_preflight_noops()>noops || group_after[1]>group_before[1]);
+    if(resident && getenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT") &&
+        !strcmp(getenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT"),"1")) {
+      // Third draw ensures a cold first sample after a pass/registry boundary
+      // has actually published its proof before the hot consumer is measured.
+      vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+      vk_test_native_read_group_counts(group_after);
+      CHECK(group_after[1]>group_before[1]);
+      CHECK(group_after[2]>group_before[2]);
+
+    }
 #endif
     if(!order || order>=3) {
       extern VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t,unsigned);
@@ -222,6 +261,61 @@ static void native_acquire_scope_gpu_test(void) {
     uint8_t rendered[1024];NVNcopyRegion region={0,0,0,16,16,1};CALL(nvnTextureReadTexels,&output,NULL,&region,rendered);
     for(unsigned n=0;n<sizeof rendered;n+=4)CHECK(rendered[n]==255 && !rendered[n+1] && !rendered[n+2] && rendered[n+3]==255);
   }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(resident && getenv("DM_NATIVE_READ_GROUP_CALLBACK_FIXTURE")) {
+        mtl_sub_begin();NVNtextureView callback_view=nr_view(0);
+        mtl_reg_tex(71,(const tex_t *)&source,(const view_t *)&callback_view);
+        S=graphics_state;vk_pipeline_state_changed();
+        extern void vk_test_image_split_callback(void (*)(void *),void *);
+        uint8_t *saved=bytes+(3u<<20)+327680;
+        memcpy(saved,original_payload,needs.size);
+        for(unsigned mode=0;mode<3;mode+=2) {
+          // Every callback starts with a genuinely hot group in this pass.
+          for(unsigned n=0;n<3;n++)vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+          uint64_t before[6],after[6],native_before[4],native_after[4];
+          extern void vk_test_image_split_stats(uint64_t [6]);
+          vk_test_image_split_stats(before);vk_test_native_read_group_counts(native_before);
+          native_group_callback_context context={mode,0,address,(uintptr_t)saved,needs.size};
+          uint64_t serial=vk_recording_serial(),draws=V.draws,writer=vk_buffer_native_writer_generation();
+          vk_test_image_split_callback(native_group_callback,&context);
+          vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+          vk_test_image_split_stats(after);vk_test_native_read_group_counts(native_after);
+          CHECK(context.calls==1 && after[3]>before[3]);
+          CHECK(V.draws==draws+(mode==0?2:1));
+          CHECK(vk_recording_serial()==serial);
+          if(mode==2) {
+            CHECK(vk_buffer_native_writer_generation()!=writer);
+            // The real end-pass barrier materialized this borrower BEFORE
+            // the writer event, so an extra writer invalidation is unnecessary.
+            CHECK(native_after[1]==native_before[1]);
+          }
+          printf("{\"test\":\"native-read-group-callback\",\"mode\":%u,\"materialized\":true,\"result\":\"passed\"}\n",mode);
+        }
+        // Original shader_end forbids commit inside a shader operation. Test
+        // before it begins: a lazy operation borrows unique group Pools, then
+        // original before_commit upgrades them across the internal wait/reopen.
+        for(unsigned n=0;n<3;n++)vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+        extern unsigned vk_test_native_read_group_retain(void);
+        int operation=vk_pool_draw_operation_begin(native_group_empty_collect,NULL);
+        CHECK(vk_test_native_read_group_retain()==1);
+        extern void vk_test_pool_operation_pin_counts(size_t *,size_t *);
+        int lazy_active;uint64_t unused;
+        vk_pool_lazy_window_stats(&lazy_active,&unused,&unused,&unused,&unused);CHECK(lazy_active);
+        size_t owned,borrowed;vk_test_pool_operation_pin_counts(&owned,&borrowed);
+        CHECK(!owned && borrowed==1);
+        uint64_t serial=vk_recording_serial();vk_internal_wait(vk_internal_commit());
+        vk_test_pool_operation_pin_counts(&owned,&borrowed);CHECK(owned==1 && !borrowed);
+        mtl_sub_begin();
+        CHECK(vk_recording_serial()!=serial && !vk_test_native_read_group_retain());
+        vk_pool_operation_end(operation);
+        vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
+        printf("{\"test\":\"native-read-group-internal-submit\",\"legal_pre_shader_operation\":true,\"unique_Pool_promoted\":true,\"old_serial_rejected\":true,\"result\":\"passed\"}\n");
+        vk_internal_wait(vk_internal_commit());
+        uint8_t pixels[1024];NVNcopyRegion check_region={0,0,0,16,16,1};
+        CALL(nvnTextureReadTexels,&output,NULL,&check_region,pixels);
+        for(unsigned n=0;n<sizeof pixels;n+=4)CHECK(pixels[n]==255 && !pixels[n+1] && !pixels[n+2] && pixels[n+3]==255);
+  }
+#endif
   if(resident) {
     vk_pool_span_info before_late;
     int late_unbacked=window_fixture && !previous_writer;
@@ -311,6 +405,12 @@ static void native_acquire_scope_gpu_test(void) {
     }
     printf("{\"test\":\"native-resident-owner-host-oracle\",\"result\":\"passed\",\"actual_imported_coherent_RGBA\":true,\"provider_override_test_only\":true,\"ASTC_executed\":false,\"CPU_restore_rounds\":4,\"explicit_and_noFlush\":true,\"same_value_flush\":true,\"Buffer_GPU_readback\":true,\"three_chunks_without_explicit_host_wait\":true,\"first_Buffer_materialized_late\":%s,\"previous_writers\":%s,\"Image_writer_to_Buffer_CS_full_payload\":%s}\n",late_unbacked?"true":"false",previous_writer?"true":"false",previous_writer?"true":"false");
   }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint64_t final_group[4];vk_test_native_read_group_counts(final_group);
+  printf("{\"test\":\"native-read-group-actual-work\",\"captured_descriptors\":%llu,\"hot_descriptors\":%llu,\"unique_Pool_borrows\":%llu,\"writer_invalidations\":%llu}\n",
+    (unsigned long long)final_group[0],(unsigned long long)final_group[1],
+    (unsigned long long)final_group[2],(unsigned long long)final_group[3]);
+#endif
   free(original_payload);
   CALL(nvnTextureFinalize,&source);CALL(nvnTextureFinalize,&output);
   CALL(nvnProgramFinalize,&graphics);CALL(nvnProgramFinalize,&compute);CALL(nvnProgramFinalize,&primer);
