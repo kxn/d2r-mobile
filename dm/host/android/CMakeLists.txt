@@ -272,3 +272,9 @@ if(DM_VULKAN_COLD_PHASE_REFERENCE)
     target_compile_definitions(${phase_target} PRIVATE DM_VULKAN_COLD_PHASE_REFERENCE=1)
   endforeach()
 endif()
+
+# Explicit diagnostic build only; no runtime opt-in or production hot path.
+option(DM_VULKAN_RETAINED_REASONS "Count retained private first-failure reasons (not performance)" OFF)
+if(DM_VULKAN_RETAINED_REASONS)
+  target_compile_definitions(dmhost_android PRIVATE DM_VULKAN_RETAINED_REASONS=1)
+endif()

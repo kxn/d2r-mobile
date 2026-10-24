@@ -60,6 +60,12 @@ static unsigned draw_parameter_schema_bucket(const vk_shader *shader) {
 static uint64_t db_test_stats[9]; // alloc/free/reset/write/forced-write/pending-reject/emit/texel/buffer
 void vk_test_draw_descriptor_buffer_stats(uint64_t out[9]) {memcpy(out,db_test_stats,sizeof db_test_stats);}
 #endif
+// First transition only: subsequent failed consumers do not inflate cause counts.
+#ifdef DM_VULKAN_RETAINED_REASONS
+#define PARAMETER_DISCARD(p,why) do {if(!(p)->discard)RR_INC(discard_##why);(p)->discard=1;}while(0)
+#else
+#define PARAMETER_DISCARD(p,why) ((p)->discard=1)
+#endif
 static int draw_parameters_reset_completed(vk_graphics_submission *);
 #include "nvn_vk_draw_descriptor_buffer.inc"
 static void draw_parameters_flush(draw_parameters *p) {if(p)vk_uab_batch_flush(p->batch);}
@@ -80,7 +86,7 @@ static void draw_parameters_begin(draw_parameters *p) {
 // An equal raw handle cannot revive a descriptor whose old object was retired.
 static int draw_parameters_valid(draw_parameters *p) {
   if(!p || p->object_epoch==vk_record_object_epoch())return 1;
-  p->discard=1;return 0;
+  PARAMETER_DISCARD(p,epoch);return 0;
 }
 static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_shader_prepared_values *values,vk_descriptor_buffer_binding *db_binding) {
   *db_binding=(vk_descriptor_buffer_binding){0};
@@ -147,7 +153,7 @@ static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_sh
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
     static int db_rejected;
     if(!db_rejected && shader->stage==1 && getenv("DM_DRAW_UAB_WRITE_FAIL_ONCE")) {
-      db_rejected=1;p->discard=1;return VK_NULL_HANDLE;
+      db_rejected=1;PARAMETER_DISCARD(p,test);return VK_NULL_HANDLE;
     }
     static int db_invalid_test;
     if(!db_invalid_test && getenv("DM_DESCRIPTOR_ARENA_INVALID_FIXTURE")) {
@@ -162,7 +168,7 @@ static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_sh
       }
     }
 #endif
-    if(!draw_descriptor_block_write(b,slot,values,db_binding))p->discard=1;
+    if(!draw_descriptor_block_write(b,slot,values,db_binding))PARAMETER_DISCARD(p,db_product);
     return VK_NULL_HANDLE;
   }
   if(b->version<0) {
@@ -173,14 +179,14 @@ static VkDescriptorSet draw_parameters_write(draw_parameters **owner,const vk_sh
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   static int rejected;
   if(!rejected && shader->stage==1 && getenv("DM_DRAW_UAB_WRITE_FAIL_ONCE")) {
-    rejected=1;p->discard=1;return VK_NULL_HANDLE;
+    rejected=1;PARAMETER_DISCARD(p,test);return VK_NULL_HANDLE;
   }
 #endif
   if(!vk_uab_packet_write_batch(b->packet,b->version,slot,values->values,p->batch)) {
     // Immutable image/texel identity changed at this ordinal. Do not mutate a
     // recorded non-UAB binding, retire its pool, or re-consume owner resources.
     // Root may discard only after forgetting every retained CB using this pool.
-    p->discard=1;return VK_NULL_HANDLE;
+    PARAMETER_DISCARD(p,uab_product);return VK_NULL_HANDLE;
   }
   return vk_uab_packet_set_deferred(b->packet,b->version,slot);
 }

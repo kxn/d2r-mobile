@@ -84,6 +84,7 @@ static vk_graphics_submission *graphics_state;
 // Keep consecutive draws to the same targets in one pass; end it for transfers,
 // query resets or target changes.
 static render_job *active_job;
+#include "nvn_vk_retained_reasons.inc"
 #include "nvn_vk_draw_parameters.inc"
 static int pl_render_end(render_job *job);
 static int pl_target_clear(const p_set_rt*,const p_scissor*,int,VkImageAspectFlags,const VkClearValue*);
@@ -825,7 +826,7 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   // Other completed owners may retire physical objects after this context's
   // recycle. Check once at begin before accepting any persistent parameter.
   if(vk_graphics_parameters_discard_requested(state)) {
-    retained_submission_forget(state);
+    retained_submission_forget(state,0);
     if(!draw_parameters_reset_completed(state))die("Vulkan parameter begin before completion");
   }
   draw_parameters_begin(state->parameters);
@@ -887,14 +888,14 @@ void vk_graphics_recycle(vk_graphics_submission *state) {
   // objects. Forget cached CBs before invalidating their immutable descriptor
   // contents. Keep completed pools/sets; explicit idle trim still destroys them.
   if(vk_graphics_parameters_discard_requested(state)) {
-    retained_submission_forget(state);
+    retained_submission_forget(state,0);
     if(!draw_parameters_reset_completed(state))die("Vulkan completed parameter reset ownership");
   }
 }
 void vk_graphics_trim_idle(vk_graphics_submission *state) {
   if(!state)return;
   if(graphics_state==state || state->jobs)die("Vulkan retained trim outside completed idle owner");
-  retained_submission_forget(state);
+  retained_submission_forget(state,1);
   if(!vk_graphics_parameters_discard(state))die("Vulkan idle parameter discard before completion");
   if(state->retained) {
     vk_record_owner_destroy(state->retained->owner);free(state->retained);state->retained=NULL;

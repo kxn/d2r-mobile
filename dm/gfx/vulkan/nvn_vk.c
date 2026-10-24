@@ -4732,6 +4732,9 @@ static uint64_t commit(int guest_submit, VkSemaphore wait, VkPipelineStageFlags 
   V.cmd = VK_NULL_HANDLE;
   V.effects = NULL;
   V.effect_tail = NULL;
+#ifdef DM_VULKAN_RETAINED_REASONS
+  if(guest_submit)vk_retained_diagnostic_publish(serial);
+#endif
   return serial;
 }
 uint64_t mtl_sub_commit(void) { return commit(1, VK_NULL_HANDLE, 0, VK_NULL_HANDLE); }

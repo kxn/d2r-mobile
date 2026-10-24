@@ -44,7 +44,14 @@ void crash_thread_init(void) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
 #include "native_layout.inc"
 #endif
+#ifdef DM_VULKAN_RETAINED_REASONS
+extern void vk_retained_diagnostic_publish(uint64_t);
+static void diagnostic_final(void) { vk_retained_diagnostic_publish(0); }
+#endif
 int main(void) {
+#ifdef DM_VULKAN_RETAINED_REASONS
+  atexit(diagnostic_final); // guest=0 is host fixture final snapshot only
+#endif
   if(getenv("DM_DESCRIPTOR_COMPLETED_MUTATION_FIXTURE")){
     extern unsigned vk_test_descriptor_completed_mutation(void);
     crash_thread_init();mtl_init();unsigned n=vk_test_descriptor_completed_mutation();

@@ -524,3 +524,7 @@ void vk_image_split_capture_begin(unsigned binding,unsigned slot,int sampler_slo
 void vk_image_split_capture_end(void);
 void vk_image_split_stats(uint64_t out[6]);
 int vk_image_split_enabled(void);
+
+#ifdef DM_VULKAN_RETAINED_REASONS
+void vk_retained_diagnostic_publish(uint64_t guest_serial);
+#endif

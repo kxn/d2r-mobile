@@ -21,6 +21,7 @@ parser.add_argument('--native-jobs',type=int,choices=range(1,65),default=4,help=
 parser.add_argument('--tlsdesc', action='store_true', help='Native dynamic TLS, without wrap.sh; requires elfdesc game rewrites')
 parser.add_argument('--opt-level', choices=['1', '2', '3'], default='3', help='native host optimization; preserves debug symbols and frame pointers')
 parser.add_argument('--renderdoc-api', action='store_true', help='optional official application-API capture, not custom timing')
+parser.add_argument('--retained-reasons',action='store_true',help='diagnostic only: bounded retained private reason counts, not performance')
 args = parser.parse_args()
 if args.shared_import_windows and not args.shared_pools:
     parser.error("--shared-import-windows requires --shared-pools")
@@ -44,6 +45,7 @@ def run(*args):
 
 run('cmake', '-S', ROOT / 'dm/host/android', '-B', ROOT / '.local/build/android-native',
     '-DDM_ANDROID_TLS_DESC=' + ('ON' if args.tlsdesc else 'OFF'),
+    '-DDM_VULKAN_RETAINED_REASONS=' + ('ON' if args.retained_reasons else 'OFF'),
     '-DDM_NATIVE_THINLTO=' + ('ON' if args.thinlto else 'OFF'),
     '-DDM_VULKAN_SHARED_IMPORT_WINDOWS=' + ('ON' if args.shared_import_windows else 'OFF'),
     '-DDM_VULKAN_SHARED_POOLS=' + ('ON' if args.shared_pools else 'OFF'),
@@ -161,7 +163,8 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'native_jobs':args.native_jobs,
           'host_thinlto':args.thinlto,
           'host_thinlto_backend_jobs':2 if args.thinlto else None,
-          'host_extra_compile_options':['-flto=thin'] if args.thinlto else [],
+          'retained_reasons_diagnostic':args.retained_reasons,
+          'host_extra_compile_options':(['-flto=thin'] if args.thinlto else [])+(['-DDM_VULKAN_RETAINED_REASONS=1'] if args.retained_reasons else []),
           'host_extra_link_options':['-flto=thin','-O'+args.opt_level,'-fuse-ld=lld','-Wl,--thinlto-jobs=2'] if args.thinlto else [],
           'cmake_cache_sha256':sha(native_build/'CMakeCache.txt'),
           'opus_dependency':opus_provenance,

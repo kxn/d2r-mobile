@@ -29,6 +29,35 @@ void vk_test_retained_prefix_stats(uint64_t *captures,uint64_t *replays) {
 // Compare only consumed values. Unused slots, padding and the transient
 // command-buffer handle are not part of the fixed GPU encoding.
 static int retained_draw_equal(const vk_draw_emission *a,const vk_draw_emission *b) {
+#ifdef DM_VULKAN_RETAINED_REASONS
+  if(a->pipeline!=b->pipeline)RR_FAIL(pipeline);
+  if(a->layout!=b->layout)RR_FAIL(layout);
+  if(a->vertex_mask!=b->vertex_mask)RR_FAIL(vertex_mask);
+  if(a->index_bound!=b->index_bound)RR_FAIL(index_bound);
+  if(a->stage_present_mask!=b->stage_present_mask)RR_FAIL(stage_mask);
+  if(a->descriptor_buffer_mode!=b->descriptor_buffer_mode)RR_FAIL(descriptor_mode);
+  if(a->bias_enabled!=b->bias_enabled)RR_FAIL(bias_enabled);
+  if(a->indexed!=b->indexed)RR_FAIL(drawargs);
+  if(a->state_reference!=b->state_reference)RR_FAIL(state_reference);
+  if(a->count!=b->count || a->instances!=b->instances || a->first!=b->first ||
+     a->first_instance!=b->first_instance || a->vertex_offset!=b->vertex_offset)RR_FAIL(drawargs);
+  if(memcmp(&a->viewport,&b->viewport,sizeof a->viewport))RR_FAIL(viewport);
+  if(memcmp(&a->scissor,&b->scissor,sizeof a->scissor))RR_FAIL(scissor);
+  if(memcmp(a->depth_bias,b->depth_bias,sizeof a->depth_bias))RR_FAIL(depth_bias);
+  for(unsigned i=0;i<16;i++)if(a->vertex_mask&(1u<<i))
+    if(a->vertices[i].buffer!=b->vertices[i].buffer || a->vertices[i].offset!=b->vertices[i].offset)RR_FAIL(vertex);
+  if(a->index_bound && (a->index_buffer!=b->index_buffer ||
+      a->index_offset!=b->index_offset || a->index_type!=b->index_type))RR_FAIL(index);
+  for(unsigned i=0;i<5;i++)if(a->stage_present_mask&(1u<<i)) {
+    if(a->stage_set[i]!=b->stage_set[i])RR_FAIL(stage_set);
+    if(a->descriptor_buffer_mode) {
+      if(a->descriptor_buffers[i].address!=b->descriptor_buffers[i].address)RR_FAIL(db_base);
+      if(a->descriptor_buffers[i].offset!=b->descriptor_buffers[i].offset)RR_FAIL(db_offset);
+    } else if(a->stage_sets[i]!=b->stage_sets[i])RR_FAIL(descriptor_set);
+    if(a->uniform_offsets[a->stage_set[i]].count || b->uniform_offsets[b->stage_set[i]].count)RR_FAIL(dynamic_offsets);
+  }
+  if(a->bias_enabled && memcmp(a->bias_words,b->bias_words,sizeof a->bias_words))RR_FAIL(bias);
+#else
   if(a->pipeline!=b->pipeline || a->layout!=b->layout ||
      a->vertex_mask!=b->vertex_mask || a->index_bound!=b->index_bound ||
      a->stage_present_mask!=b->stage_present_mask || a->descriptor_buffer_mode!=b->descriptor_buffer_mode ||
@@ -50,6 +79,7 @@ static int retained_draw_equal(const vk_draw_emission *a,const vk_draw_emission 
     if(a->uniform_offsets[a->stage_set[i]].count || b->uniform_offsets[b->stage_set[i]].count)return 0;
   }
   if(a->bias_enabled && memcmp(a->bias_words,b->bias_words,sizeof a->bias_words))return 0;
+#endif
   return 1;
 }
 static void retained_job_begin(render_job *j) {
@@ -64,11 +94,22 @@ static VkCommandBuffer retained_chunk_prepare(render_job *j,retained_recordings 
   const unsigned count=RETAINED_CHUNK_DRAWS;
   retained_prefix *entry=&r->slots[index];
   VkCommandBuffer cached=vk_record_owner_cached(r->owner,index);
+#ifdef DM_VULKAN_RETAINED_REASONS
+  RR_INC(attempts);
+  int same=0;
+  if(!cached)RR_INC(owner_unavailable);
+  else if(entry->count!=count)RR_INC(count);
+  else if(entry->pass!=j->pass)RR_INC(pass);
+  else if(entry->framebuffer!=j->framebuffer)RR_INC(framebuffer);
+  else if(memcmp(&entry->area,&j->area,sizeof j->area))RR_INC(area);
+  else same=1;
+#else
   int same=cached && entry->count==count && entry->pass==j->pass &&
       entry->framebuffer==j->framebuffer && !memcmp(&entry->area,&j->area,sizeof j->area);
+#endif
   if(same)for(unsigned i=0;i<count;i++)if(!retained_draw_equal(&entry->keys[i],&draws[i])) {same=0;break;}
   if(same) {
-    (*replayed)++;return cached;
+    RR_INC(equal);(*replayed)++;return cached;
   }
   if(entry->capacity<count) {
     size_t extra=(size_t)(count-entry->capacity)*sizeof *entry->keys;
@@ -100,7 +141,7 @@ static VkCommandBuffer retained_chunk_prepare(render_job *j,retained_recordings 
   if(!vk_record_owner_end(r->owner,index)) {entry->count=0;return 0;}
   memcpy(entry->keys,draws,(size_t)count*sizeof *draws);
   entry->count=count;entry->pass=j->pass;entry->framebuffer=j->framebuffer;entry->area=j->area;
-  (*captured)++;return command;
+  RR_INC(private_captures);(*captured)++;return command;
 }
 static unsigned retained_prefix_try(render_job *j,const vk_draw_emission *draws,unsigned count) {
   if(!V.retained_draws || !graphics_state || !j->retained_slot_valid ||
@@ -145,6 +186,10 @@ static unsigned retained_prefix_try(render_job *j,const vk_draw_emission *draws,
   if(epoch!=vk_record_object_epoch())return 0;
   memcpy(j->retained_secondaries,commands,chunks*sizeof *commands);
   j->retained_count=chunks;r->used=1;
+#ifdef DM_VULKAN_RETAINED_REASONS
+  retained_reasons.published_captures+=captured;
+  retained_reasons.published_replays+=replayed;
+#endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   retained_test_captures+=captured;retained_test_replays+=replayed;
 #endif
@@ -166,10 +211,23 @@ static void retained_submission_recycle(vk_graphics_submission *state) {
     vk_record_owner_reclaim(r->owner,r->pending_serial);r->pending_serial=0;
   }
 }
-static void retained_submission_forget(vk_graphics_submission *state) {
+static void retained_submission_forget(vk_graphics_submission *state,int explicit_trim) {
   retained_recordings *r=state->retained;if(!r)return;
+#ifdef DM_VULKAN_RETAINED_REASONS
+  draw_parameters *p=state->parameters;
+  unsigned why=explicit_trim?3:(p && p->discard?1:0);
+  if(!explicit_trim && p && p->object_epoch!=vk_record_object_epoch())why=p->discard?2:0;
+  uint64_t *events[]={&retained_reasons.forget_epoch,&retained_reasons.forget_parameter,&retained_reasons.forget_both,&retained_reasons.forget_trim};
+  uint64_t *cleared[]={&retained_reasons.cleared_epoch,&retained_reasons.cleared_parameter,&retained_reasons.cleared_both,&retained_reasons.cleared_trim};
+  (*events[why])++;
+#else
+  (void)explicit_trim;
+#endif
   if(!vk_record_owner_forget(r->owner))die("Vulkan retained context discarded before completion");
   for(unsigned i=0;i<VK_RECORD_OWNER_MAX_SLOTS;i++) {
+#ifdef DM_VULKAN_RETAINED_REASONS
+    if(r->slots[i].count)(*cleared[why])++;
+#endif
     free(r->slots[i].keys);r->slots[i].keys=NULL;r->slots[i].count=r->slots[i].capacity=0;
   }
   r->key_bytes=0;r->used=0;

@@ -121,3 +121,9 @@ option(DM_VULKAN_POOL_PIN_REFERENCE "Acquire independent operation pins even for
 if(DM_VULKAN_POOL_PIN_REFERENCE)
   target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_POOL_PIN_REFERENCE=1)
 endif()
+
+# Explicit diagnostic build only; no runtime opt-in or production hot path.
+option(DM_VULKAN_RETAINED_REASONS "Count retained private first-failure reasons (not performance)" OFF)
+if(DM_VULKAN_RETAINED_REASONS)
+  target_compile_definitions(vulkan_host_test PRIVATE DM_VULKAN_RETAINED_REASONS=1)
+endif()
