@@ -138,3 +138,28 @@ Q735独立cap-only v3在实际f830下完成标准能力查询：SHA、实际映�
 原已校验的generation适配器处理这份官方JSON，按分配寿命、reset/free、recording generation与真正Submit展开，原遍历交叉核对通过、unknown为空。六帧各2391个实际执行draw，其中每帧1个primary；secondary共14340次draw执行，12868对应窗口内新录制、1280来自trim seed的首次观察执行、192是本窗已观察generation再次执行。即约89.735%仍对应窗内新录制；其余10.265%没有对应窗内新录制，其中seed原录制时间未知，不能将1472全部叫本窗已证明的重复执行，更不能把比例叫CPU节省率。尾部不完整帧单列不加入分母。结果在 `.local/logs/retained-descriptor-buffer-six-api-structure-v2/generation-analysis-queryable/`。
 
 这把后继优先级进一步收窄：需要解释实际重录输入差异和准入/兼容合同，不能因首次出现replay日志就认领大多数绘制已复用。现有工具看得到实际编码、framebuffer/继承及descriptor绑定等变化，看不到运行时私有key/epoch的拒绝原因；在未证明变化可忽略前，不删除同步、生命周期或兼容性条件。
+
+### 已完成 context 的 typed descriptor 更新：覆盖改善，尚无整线程净收益
+
+独立后继 `7dc9a610` 包含前述 UAB 空 seal 遍历修复，并删除标准 descriptor-buffer 路径中沿袭 UAB 的一个过严条件：已初始化槽的非 Buffer 描述符只要内容改变就拒绝复用。标准 descriptor buffer 不要求已完成提交的独占槽永远保持旧 image/sampler/texel 内容；原 pending、当前 ordinal、schema/类型、arena 地址、完整参数校验、资源 consume/hazard/pins 与 object epoch 保护仍保留。UAB 路径未放宽，不能修改在途 descriptor 字节。原理依据是标准 host descriptor 更新在后继提交前完成的合同，而不是预测材质或场景不变。
+
+主机实际 GPU 用例用一次 secondary 录制执行八次，固定两个 descriptor 地址，改变 image、sampler、texel 格式/范围与 UBO 值，结果正确；pending 覆盖和错误尾项拒绝用例通过。初始十四项与最终 fixture 输出调整后的三项复测分别归档，不混作同一 binary。冻结证据 `.local/logs/descriptor-buffer-completed-mutation-v1/`，独立合同审查 `.local/logs/descriptor-buffer-completed-mutation-review-v1/`。canonical APK SHA `19d1b0795bf08a110b8000f507c00251122ab1e855ec0b1ee80ff8c82f15ccbb`，ELF SHA `2036c254251b75c983a135a58c94596473559ef777e67e358eb14c11140e75e2`，BuildID `085cf1f53eac752c446754f2d767b0825fe341d9`；原入口 1046 项源码、六库和原 UI 记录在 `.local/build/descriptor-buffer-completed-mutation-v1-final/`。真实游戏无抓帧营地画面检查通过该场景资格，原进程 fresh save=2 后退出；启动截图 HUD 数字不计稳态收益。
+
+同一新 APK 的 ordinary OFF / DB+retained ON / ON / OFF 四臂已完成，f830/950/6217/.60、source OFF 不变。每臂原存档两次后停止，资产和工具设置恢复。完整 Surface 重叠窗结果如下：
+
+|臂|用户指令 M/Surface|用户周期 M/Surface|Running ms/Surface|Surface 均值 ms|
+|---|---:|---:|---:|---:|
+|A1 OFF|59.198–59.620，covered-only|35.419–35.718，covered-only|26.126|33.052|
+|B1 ON|62.775–63.216|35.037–35.369|25.818|34.366|
+|B2 ON|61.867–62.311|34.896–35.265|24.802|34.617|
+|A2 OFF|59.873–60.297，covered-only|35.032–35.319，covered-only|26.415|33.003|
+
+A1 缺 CPU0 的 0.251094ms 计数边界，覆盖99.995945%；A2 缺 CPU1 的0.243230ms，覆盖99.996098%。因此不能把 covered-only 算术差称为完整线程的严格上下界。B1/B2 为100%覆盖；频率和驻核不同，不能把 Running 降低直接解释成删掉 CPU 工作。A1/B1/B2 variants32，A2 variants30，各自稳定但第二对工作形状并不完全一致。ON 两臂 Surface 都更慢，目前未证明整线程净省工或涨帧；与历史 a46 的约64M指令比较也不是同包因果对照。独立报告 `.local/logs/descriptor-buffer-completed-mutation-device-v1/four-arm-independent-review/report.md`。
+
+相同结构工具的后继六帧实际捕获成功，原PID23493 save=2/stop、资产/设置恢复。raw SHA `bdeb906a754b727d178f1d0aca76e15bf80ae9591228baea4d1a8aa779f76df2`，官方 JSON SHA `e7d8f164ff33b047f207c5934799bc64742b02ff106b44c9acb527741c031973`。相同 generation 展开资格通过，unknown为空；两版本均执行14346个 draw、其中14340个 secondary draw，pass300、dispatch90、barrier1050、submit48相同，但部分绑定序列和预热 PSO 不同，不能宣称逐调用工作完全一致。
+
+新版本 secondary 中9604次对应窗内新录制、1664次是seed首次观察、3072次是本窗已观察generation再次执行。无对应窗内新录制覆盖由10.265%升到33.026%；真实 Draw API 录制数从12874降到9610，`vkGetDescriptorEXT` 从143163降到68460，BDA查询从92415降到72387。它们是工具证实的工作量变化，不是 CPU 时间或帧率收益。仍有约三分之二执行对应窗口内新录制，原资源准备也没有因 secondary 复用而自动跳过。
+
+独立结构报告 `.local/logs/descriptor-buffer-completed-mutation-six-api-v1/independent-structure-review/report.md`。分析时一次派生输出路径错误暂时写入旧派生目录，原始捕获和官方 JSON 未改；旧输出已用原脚本/原输入恢复到原 SHA，旧22项封存全部再次核对，事故与恢复记录单列 `output-path-incident-recovery.json`，未修改旧 manifest 接受漂移。
+
+下一步按新的精确 ELF 重新采集 ON/OFF 官方完整调用栈，分开核算省掉的录制和新增管理。对于 API/采样工具看不到的私有首个拒绝条件，单独编译默认OFF的 `DM_VULKAN_RETAINED_REASONS`：只累计现有分支原因，每60次原 guest 提交发布一次，不另写计时器或采样器，不将该诊断包用于性能结论。源码 `e426d2b`、主机 ON14/OFF2项和 canonical 构建已归档，实际手机原因尚待采集。生产默认行为及 retained/descriptor-buffer/source 实验默认OFF均未改变。
