@@ -195,8 +195,15 @@ static void native_acquire_scope_gpu_test(void) {
     // below still check the actual imported image after both commands.
     extern uint64_t vk_test_native_sampled_preflight_noops(void);
     uint64_t noops=vk_test_native_sampled_preflight_noops();
+    extern uint64_t vk_test_early_native_consumer_hits(void);
+    uint64_t consumer_hits=vk_test_early_native_consumer_hits();
     vk_draw(&(p_draw){.prim=NVN_DRAW_PRIMITIVE_TRIANGLES,.count=3},NULL);
     CHECK(vk_test_native_sampled_preflight_noops()>noops);
+    int consumer_enabled=getenv("DM_VULKAN_EARLY_NATIVE_CONSUMER") &&
+        !strcmp(getenv("DM_VULKAN_EARLY_NATIVE_CONSUMER"),"1");
+    CHECK((vk_test_early_native_consumer_hits()>consumer_hits)==(resident && consumer_enabled));
+    printf("[early native consumer GPU oracle] resident=%d enabled=%d order=%u hits=%llu\n",
+        resident,consumer_enabled,order,(unsigned long long)(vk_test_early_native_consumer_hits()-consumer_hits));
 #endif
     if(!order || order>=3) {
       extern VkPipelineStageFlags vk_test_native_unused_mip_source(uint64_t,unsigned);

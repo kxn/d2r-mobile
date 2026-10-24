@@ -981,6 +981,18 @@ int dm_vulkan_test_main(void) {
   if(getenv("DM_NATIVE_RETIREMENT_FIXTURE")) {native_retirement_gpu_test();return 0;}
   if(getenv("DM_NATIVE_ACQUIRE_SCOPE_FIXTURE")) {native_acquire_scope_gpu_test();
 #ifndef DM_ANDROID_APP
+    // Repeat after original Texture/Pool finalization: same descriptor ids and
+    // guest addresses now name new owners. Real import/sample/writer/pixel
+    // assertions run again, so a stale cached physical view cannot pass.
+    if(getenv("DM_EARLY_NATIVE_CONSUMER_RECREATE_FIXTURE")) {
+      // The first oracle's unbounded ReadTexels leaves conservative Buffer
+      // history. Start the new lifetime after a real original barrier/fence;
+      // do not reinterpret its unrelated unknown writer as a first-use proof.
+      mtl_sub_begin();vk_barrier();vk_internal_wait(vk_internal_commit());
+      native_acquire_scope_gpu_test();
+    }
+#endif
+#ifndef DM_ANDROID_APP
     if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE"))image_source_flow_check();
 #endif
     return 0;}

@@ -2326,6 +2326,21 @@ struct vk_texture_submission {
   texture_binding_recipe bindings[256];
 };
 static vk_texture_submission *texture_state;
+// Cold experiment only. The existing physical recipe is the product; there is
+// no second lookup table, per-draw resource scan, or cached visibility proof.
+static int early_native_consumer=-1;
+static void early_native_consumer_init(void) {
+  if(early_native_consumer>=0)return;
+  const char *v=getenv("DM_VULKAN_EARLY_NATIVE_CONSUMER");
+  if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_EARLY_NATIVE_CONSUMER expects 0 or 1");
+  early_native_consumer=v && !strcmp(v,"1");
+  LOG("[vulkan early native consumer] enabled=%d",early_native_consumer);
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t early_native_consumer_hits;
+uint64_t vk_test_early_native_consumer_hits(void) {return early_native_consumer_hits;}
+#endif
+
 static atomic_int texture_binding_requested,texture_binding_active;
 static int texture_binding_reference;
 static uint64_t texture_binding_hits,texture_prepare_hits,texture_binding_misses;
@@ -2541,6 +2556,7 @@ static int texel_view_reference(void) {
   return reference;
 }
 vk_texture_submission *vk_texture_begin(vk_texture_submission *state) {
+  early_native_consumer_init();
   sampled_array_layout_reference=atomic_load(&sampled_array_layout_requested);
   atomic_store(&sampled_array_layout_active,sampled_array_layout_reference);
   texture_binding_reference=atomic_load(&texture_binding_requested);
@@ -3194,12 +3210,41 @@ static VkImageView texture_view_binding_impl(int id, int storage,VkShaderStageFl
     i=image_get(&desc.texture);
   }
 #ifdef DM_VULKAN_NATIVE_RESOURCES
+  // The lookup/epoch/physical guards and any mip/barrier callback above remain
+  // original. Only an already-acquired resident recipe may bypass the generic
+  // view-policy tail; first acquire can end/re-enter a pass and stays original.
+  int native_ready=early_native_consumer && cached && handle && layout &&
+      !storage && stage==VK_SHADER_STAGE_FRAGMENT_BIT && !quad_plain2d &&
+      image_binding_active && i->native_entry && i->native_acquired==2 &&
+      i->layout==VK_IMAGE_LAYOUT_GENERAL && !i->external_access &&
+      !vk_trace_frame_active();
   if(i->native_entry && !storage && stage==VK_SHADER_STAGE_FRAGMENT_BIT)
     native_image_use_consumer(i,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT);
   else
 #endif
   image_upload(i);
   const view_t *v=has_view?&view:NULL;
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+  if(native_ready) {
+    // Native images cannot enter the optimal-layout policy. A concrete
+    // GENERAL whole-image layout makes the old normalized layout operation
+    // an exact no-op, including its raster observer. Preserve its accounting.
+    // The cached view's decode policy is immutable under the recipe generation:
+    // ASTC proof changes bump that generation; startup decode mode is fixed.
+    // Actual dependencies/alias writes and post-draw histories still consume
+    // this very same request. Operation retain above is never skipped.
+    image_layout_recorded.fallback++;
+    *layout=VK_IMAGE_LAYOUT_GENERAL;
+    image_request_add_normalized(i,access_range,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT);
+    // Preserve the capture cursor side effect; native remains ineligible for
+    // the ordinary FS image group, even when that group is being constructed.
+    image_split_capture(i,access_range,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,v);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    early_native_consumer_hits++;
+#endif
+    return handle;
+  }
+#endif
   if (vk_trace_frame_active() && V.trace_directory) {
     char trace_label[32];
     snprintf(trace_label, sizeof trace_label, "sampled-%d", id);

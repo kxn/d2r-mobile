@@ -44,6 +44,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeDriverSpanReference(boolean reference);
     private static native void nativeImageBufferSplit(boolean enabled);
     private static native void nativeBufferConsumptionPlan(boolean enabled);
+    private static native void nativeEarlyNativeConsumer(boolean enabled);
     private static native void nativeAttachmentJobReuse(boolean enabled);
     private static native void nativeAttachmentRasterRun(boolean enabled);
     private static native void nativeStateSegments(boolean enabled);
@@ -271,6 +272,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeDriverSpanReference(getIntent().getBooleanExtra("driver_span_reference", false));
             nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", true));
             nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", true));
+            nativeEarlyNativeConsumer(getIntent().getBooleanExtra("early_native_consumer", false));
             nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", true));
             nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
@@ -510,6 +512,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("state_segments")) {
             android.util.Log.w("D2RDriver", "state_segments is startup-only; cold restart required");
             intent.removeExtra("state_segments");
+        }
+        if (intent.hasExtra("early_native_consumer")) {
+            android.util.Log.w("D2RDriver", "early_native_consumer is startup-only; cold restart required");
+            intent.removeExtra("early_native_consumer");
         }
         if (intent.hasExtra("attachment_job_reuse")) {
             android.util.Log.w("D2RDriver", "attachment_job_reuse is startup-only; cold restart required");
