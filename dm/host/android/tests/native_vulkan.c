@@ -1363,6 +1363,10 @@ int dm_vulkan_test_main(void) {
     vk_test_retained_prefix_stats(&captures1,&replays1);
     CHECK(!V.retained_draws || (captures1>captures0 && replays1>replays0 && mixed>0));
     CHECK(V.retained_draws || (captures1==captures0 && replays1==replays0));
+    if(getenv("DM_RETAINED_CHUNK_FAIL_ONCE")) {
+      extern uint64_t vk_test_retained_chunk_rollbacks(void);
+      CHECK(vk_test_retained_chunk_rollbacks()==1);
+    }
     CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"retained-segments-changing-interior\",\"captures\":%llu,\"replays\":%llu,\"mixed_frames\":%u,\"draws_per_frame\":208,\"checks\":%u,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
       (unsigned long long)(captures1-captures0),(unsigned long long)(replays1-replays0),mixed,checks);

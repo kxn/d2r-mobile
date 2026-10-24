@@ -3,7 +3,7 @@
 #pragma once
 #include "nvn_vk_internal.h"
 typedef struct vk_record_owner vk_record_owner;
-enum { VK_RECORD_OWNER_MAX_SLOTS=64 };
+enum { VK_RECORD_OWNER_MAX_SLOTS=2048 };
 vk_record_owner *vk_record_owner_create(unsigned slots);
 void vk_record_owner_destroy(vk_record_owner *owner);
 int vk_record_owner_available(const vk_record_owner *owner);

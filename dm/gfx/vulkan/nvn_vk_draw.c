@@ -14,6 +14,7 @@
 #include <math.h>
 #include <stdatomic.h>
 #include "nvn_vk_render_objects.inc"
+enum { RETAINED_CHUNK_DRAWS=64,RETAINED_MAX_CHUNKS=32,RETAINED_MAX_JOBS=64 };
 typedef struct pl_job pl_job;
 typedef struct draw_parameters draw_parameters;
 typedef struct render_job {
@@ -66,7 +67,8 @@ typedef struct render_job {
   uint32_t pending_count,pending_capacity;
   uint8_t parameters_seen,parameters_all;
   uint8_t pending_uncacheable; // whole-job retention abandoned; future delivery is immediate
-  VkCommandBuffer retained_secondary;
+  VkCommandBuffer retained_secondaries[RETAINED_MAX_CHUNKS];
+  unsigned retained_count;
   unsigned retained_slot;
   uint8_t retained_slot_valid,retained_preceded;
 } render_job;
@@ -162,7 +164,7 @@ static void render_bind_index(render_job *j,VkBuffer buffer,VkDeviceSize offset,
     j->bound_index_valid=1;
   }
 }
-static int retained_prefix_try(render_job *,const vk_draw_emission *,unsigned);
+static unsigned retained_prefix_try(render_job *,const vk_draw_emission *,unsigned);
 #include "nvn_vk_draw_emission.inc"
 #include "nvn_vk_retained_prefix.inc"
 static atomic_uint_fast64_t pixel_local_plans,pixel_local_draws,pixel_local_aborts;
@@ -665,11 +667,14 @@ void vk_render_end_at(const char *file, unsigned line) {
       .renderPass=j->final_pass?j->final_pass:j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
       .clearValueCount=j->attachment_count,.pClearValues=j->clears};
     vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-    if(j->retained_secondary) {
-      // The cached prefix precedes every command retained in the original
-      // transient tail (possibly empty). Never execute either prefix twice.
-      VkCommandBuffer commands[]={j->retained_secondary,j->secondary};
-      vk_command_execute(2,commands);
+    if(j->retained_count) {
+      // Ordered retained chunks precede the original transient tail. Every
+      // secondary starts with complete graphics state; no inheritance between
+      // chunks, no duplication of a changed chunk or the final short tail.
+      VkCommandBuffer commands[RETAINED_MAX_CHUNKS+1];
+      memcpy(commands,j->retained_secondaries,j->retained_count*sizeof *commands);
+      commands[j->retained_count]=j->secondary;
+      vk_command_execute(j->retained_count+1,commands);
     } else vk_command_execute(1,&j->secondary);
     vkCmdEndRenderPass(V.cmd);
     // Read-only depth testing/sampling may share the pass. Its physical store

@@ -110,9 +110,13 @@ void vk_draw_flush_pending(void) {
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   draw_pending_flushes++;
 #endif
-  if(retained_prefix_try(j,j->pending_draws,count))return;
+  unsigned retained=retained_prefix_try(j,j->pending_draws,count);
+  if(retained>count)die("Vulkan retained prefix exceeds prepared draws");
+  // This is the first and only retention opportunity in this physical job.
+  // A later prefix must never move ahead of the already emitted tail.
+  j->retained_preceded=1;
   draw_parameters_flush(graphics_state?graphics_state->parameters:NULL);
-  for(unsigned i=0;i<count;i++)draw_emission_immediate(j,&j->pending_draws[i],(vk_sample_query){0});
+  for(unsigned i=retained;i<count;i++)draw_emission_immediate(j,&j->pending_draws[i],(vk_sample_query){0});
 }
 static void draw_emission_deliver(render_job *j,const vk_draw_emission *p,vk_sample_query query) {
   if(!V.retained_draws) {draw_emission_immediate(j,p,query);return;}

@@ -21,7 +21,7 @@ typedef struct {
 struct vk_record_owner {
   VkCommandPool pool;
   uint64_t pending_serial,reclaimed_serial;
-  unsigned count;
+  unsigned count,open_slot; // 0 none, otherwise the sole recording slot + 1
   record_slot slots[];
 };
 vk_record_owner *vk_record_owner_create(unsigned slots) {
@@ -40,7 +40,7 @@ static record_slot *slot_at(vk_record_owner *owner,unsigned slot) {
 int vk_record_owner_available(const vk_record_owner *owner) {return owner && !owner->pending_serial;}
 int vk_record_owner_forget(vk_record_owner *owner) {
   if(!vk_record_owner_available(owner))return 0;
-  for(unsigned i=0;i<owner->count;i++)if(owner->slots[i].recording)return 0;
+  if(owner->open_slot)return 0;
   VK_CHECK(vkResetCommandPool(V.device,owner->pool,0));
   for(unsigned i=0;i<owner->count;i++) {
     owner->slots[i].epoch=0;owner->slots[i].executable=0;
@@ -56,8 +56,7 @@ VkCommandBuffer vk_record_owner_begin(vk_record_owner *owner,unsigned slot,
       inherit->pNext || !inherit->renderPass || inherit->subpass ||
       inherit->occlusionQueryEnable || inherit->queryFlags || inherit->pipelineStatistics)
     return VK_NULL_HANDLE;
-  for(unsigned i=0;i<owner->count;i++)
-    if(owner->slots[i].recording)die("Vulkan nested retained recording");
+  if(owner->open_slot)die("Vulkan nested retained recording");
   if(!s->command) {
     VkCommandBufferAllocateInfo ai={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
       .commandPool=owner->pool,.level=VK_COMMAND_BUFFER_LEVEL_SECONDARY,.commandBufferCount=1};
@@ -65,13 +64,13 @@ VkCommandBuffer vk_record_owner_begin(vk_record_owner *owner,unsigned slot,
   } else VK_CHECK(vkResetCommandBuffer(s->command,0));
   VkCommandBufferBeginInfo bi={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     .flags=VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,.pInheritanceInfo=inherit};
-  s->executable=0;s->recording=1;s->epoch=vk_record_object_epoch();
+  s->executable=0;s->recording=1;s->epoch=vk_record_object_epoch();owner->open_slot=slot+1;
   VK_CHECK(vkBeginCommandBuffer(s->command,&bi));return s->command;
 }
 int vk_record_owner_end(vk_record_owner *owner,unsigned slot) {
   record_slot *s=slot_at(owner,slot);
-  if(!s->recording || owner->pending_serial)die("Vulkan retained recording end ownership");
-  VK_CHECK(vkEndCommandBuffer(s->command));s->recording=0;
+  if(!s->recording || owner->pending_serial || owner->open_slot!=slot+1)die("Vulkan retained recording end ownership");
+  VK_CHECK(vkEndCommandBuffer(s->command));s->recording=0;owner->open_slot=0;
   s->executable=s->epoch==vk_record_object_epoch();return s->executable;
 }
 VkCommandBuffer vk_record_owner_cached(vk_record_owner *owner,unsigned slot) {
@@ -82,8 +81,7 @@ VkCommandBuffer vk_record_owner_cached(vk_record_owner *owner,unsigned slot) {
 void vk_record_owner_pending(vk_record_owner *owner,uint64_t queue_serial) {
   if(!owner || owner->pending_serial || !queue_serial || queue_serial<=owner->reclaimed_serial)
     die("Vulkan retained recording pending serial ownership");
-  for(unsigned i=0;i<owner->count;i++)
-    if(owner->slots[i].recording)die("Vulkan retained recording submitted while open");
+  if(owner->open_slot)die("Vulkan retained recording submitted while open");
   owner->pending_serial=queue_serial;
 }
 void vk_record_owner_reclaim(vk_record_owner *owner,uint64_t queue_serial) {
@@ -94,7 +92,6 @@ void vk_record_owner_reclaim(vk_record_owner *owner,uint64_t queue_serial) {
 void vk_record_owner_destroy(vk_record_owner *owner) {
   if(!owner)return;
   if(owner->pending_serial)die("Vulkan retained recording destroy while pending");
-  for(unsigned i=0;i<owner->count;i++)
-    if(owner->slots[i].recording)die("Vulkan retained recording destroy while recording");
+  if(owner->open_slot)die("Vulkan retained recording destroy while recording");
   vkDestroyCommandPool(V.device,owner->pool,NULL);free(owner);
 }
