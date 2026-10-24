@@ -128,3 +128,13 @@ Q735独立cap-only v3在实际f830下完成标准能力查询：SHA、实际映�
 既有官方GFXReconstruct连续六帧已用于验证按command buffer分配寿命、recording generation、pool/reset/free和实际Execute/Submit展开的结构计数；不以首次replay日志当覆盖率。当前a46的新捕获在进入游戏前被共享导入资格门拒绝，未产生有效六帧：descriptor buffer启用后，现成抓取层会为BDA/descriptor replay增强对象flags，而本次f830外部host-import路径拒绝非零BufferCreate flags。已核对实际安装layer机器码与驱动源码；失败调用的完整实际参数未捕获，因此不把推断写成参数跟踪结论。
 
 此次是抓取层与共享导入的工具兼容阻塞，不是无层游戏DB路径崩溃。原失败、进程退出与资产/层/属性恢复保留在 `.local/logs/retained-descriptor-buffer-six-api-v1/actual/`。正在独立修正现成GFXReconstruct工具的可选结构捕获模式，保留应用明确请求和官方编码/转换，不修改日常驱动或游戏，也不以工具中FPS认领性能。修复后的工具本身、资源replay资格与实际复用覆盖仍需分别验证。
+
+### 连续六帧结构捕获已成功：大多数draw仍在新录制
+
+独立官方280a工具后继`ee010f5`保留原编码/转换，只增加默认OFF的结构捕获选项，不自动增强BDA/descriptor capture-replay features与object flags。实际APK/ELF、源码和依赖指纹在 `.local/logs/gfxr-api-structure-layer-v1/ready.json`。第一次新工具启动因Android包可见性而`vkCreateInstance=-6`，未进入游戏，失败保留；相同工具APK用标准安装选项`--force-queryable`后可见，未修改a46游戏APK。原FrameAdvisor未被覆盖。
+
+新独立事务 `.local/logs/retained-descriptor-buffer-six-api-structure-v2/actual-queryable/`已终态成功：实际工具模式WARNING与assisted选择均核实，原a46/f830/.60/950/6217、retained及DB ON、source OFF。预热到tick1004、PSO488/variants32稳定后触发连续六帧。原PID4308 fresh save commits=2后退出，再拉取524941006字节捕获；33资产、层和属性均恢复，手机私有及临时trace副本在哈希核对后删除。raw SHA `c052550f2b7f55fe47814af19ee72eb1fde451ac6090013fe0049b77913eb06d`，原官方converter的JSON SHA `79ef394eb1ccae9ac8dbc7b798ab50a69e570283130ec3df8104319d22e3b86e`。资源payload replay未验证，抓取中帧率不作性能证据。
+
+原已校验的generation适配器处理这份官方JSON，按分配寿命、reset/free、recording generation与真正Submit展开，原遍历交叉核对通过、unknown为空。六帧各2391个实际执行draw，其中每帧1个primary；secondary共14340次draw执行，12868对应窗口内新录制、1280来自trim seed的首次观察执行、192是本窗已观察generation再次执行。即约89.735%仍对应窗内新录制；其余10.265%没有对应窗内新录制，其中seed原录制时间未知，不能将1472全部叫本窗已证明的重复执行，更不能把比例叫CPU节省率。尾部不完整帧单列不加入分母。结果在 `.local/logs/retained-descriptor-buffer-six-api-structure-v2/generation-analysis-queryable/`。
+
+这把后继优先级进一步收窄：需要解释实际重录输入差异和准入/兼容合同，不能因首次出现replay日志就认领大多数绘制已复用。现有工具看得到实际编码、framebuffer/继承及descriptor绑定等变化，看不到运行时私有key/epoch的拒绝原因；在未证明变化可忽略前，不删除同步、生命周期或兼容性条件。
