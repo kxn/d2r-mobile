@@ -173,3 +173,7 @@ A1 缺 CPU0 的 0.251094ms 计数边界，覆盖99.995945%；A2 缺 CPU1 的0.24
 随后单独安装 `e426d2b` 诊断包，确认无GPU层/采样工具。预热后guest serial1560→1680的120次原提交，4200次prefix chunk比较的互斥首因：1235次相同（29.405%）、1688次RenderPass句柄不同（40.190%）、1277次vertex Buffer或offset不同（30.405%）；其它首因均0。published capture2965、replay1235，本窗口未观察到任何forget/cleared/discard事件。此窗口没有支持“整池epoch重置导致主要重录”的证据，不应据此删除epoch保护。
 
 这是首失败分布：pass失败后其它字段尚未比较，不能说这些chunk仅有pass差异；vertex也尚未细分Buffer和offset。分母是受限prefix chunk比较，不能当全游戏draw命中率或CPU时间占比，更不能据40%直接计算可省毫秒。下一步先核对Vulkan继承所需的真正RenderPass兼容性、以及已观察顶点绑定变化的来源，避免只是增加一层每draw判断。实际记录 `.local/logs/retained-private-reasons-device-v1/actual/`，严格差分 `private-reason-deltas.json`；原PID30675 fresh save=2后停止，33项资产与设置/属性不变。诊断后已恢复无诊断7dc APK并核对SHA，游戏保持停止，未把诊断运行作为FPS/热量测试。
+
+独立合同复核现已完成，报告 `.local/logs/retained-private-reasons-actual-review-v1/report.md`，根逐项核验31个封存引用。另一六帧窗口中，同一CB寿命的136对重录有74对pass变化，实际为D16深度与RGBA8颜色切换，或HDR颜色+深度模板与纯深度模板切换，并非仅load/store变体；FB也不同。另62对同继承信息的重录全部为2750×1260、四顶点、stride20的绘制，真实VBO/offset改变；全部至少一个偏移差不能被20整除，不能直接改成firstVertex或忽略绑定。两窗口分母不同，不把这些比例套到4200次诊断决策。当前同pool更早完整命令序列也没有可直接替换的精确匹配，单换slot目录不能认领命中。
+
+因此本轮没有可安全实施的“放宽pass/vertex比较”补丁。可研究的结构是稳定的pass角色与参数槽共同对应，或在完成context内把合格小几何内容交付到稳定地址；后者必须先证明实际源字节范围、CPU/GPU写入与同步合同，计入新增copy成本。它们都只可能提高编码复用，不自动消除仍约8ms的资源准备。当前没有已证数毫秒可删的新预算，不能把首因次数写成承诺收益；应把准备、编码、管理与GPU路径分别立账。
