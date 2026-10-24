@@ -53,6 +53,41 @@ static int uab_parameters_test(void) {
   vk_uab_packet *reordered=vk_uab_packet_create(&reversed,1,1);CHECK(reordered);
   CHECK(vk_uab_packet_layout(reordered)==vk_uab_packet_layout(packet));CHECK(vk_uab_packet_destroy(reordered));
   VkDescriptorSetLayout saved=vk_shader_uab_layout(&reflected_shader);
+  // Immutable ABI qualification is performed once, not once per draw. These
+  // counters observe real helper entries; the existing compute pixels below
+  // still use the resulting Vulkan layout and ordinary UBO/SSBO descriptors.
+  extern void vk_test_uab_qualification_stats(uint64_t *,uint64_t *);
+  uint64_t qs0,qp0,qs1,qp1;vk_test_uab_qualification_stats(&qs0,&qp0);
+  for(unsigned repeat=0;repeat<256;repeat++)CHECK(vk_program_uab_layout(program)==pipeline_layout);
+  vk_test_uab_qualification_stats(&qs1,&qp1);CHECK(qs1==qs0 && qp1==qp0);
+  // An alternative copied from an already qualified shader must not inherit
+  // the old schema/layout, even before the production final-schema reset.
+  vk_binding alternative_binding={.binding=199,.kind=1,.count=1};
+  vk_shader alternative=reflected_shader;alternative.nb=1;alternative.bindings=&alternative_binding;
+  VkDescriptorSetLayout alt_layout=vk_shader_uab_layout(&alternative);CHECK(alt_layout && alt_layout!=saved);
+  vk_test_uab_qualification_stats(&qs1,&qp1);CHECK(qs1==qs0+1 && qp1==qp0);
+  CHECK(vk_shader_uab_layout(&reflected_shader)==saved);
+  // Inject limits only for isolated, never-used shader identities, then restore
+  // the device properties. Production properties are immutable for the device.
+  VkPhysicalDeviceDescriptorIndexingProperties limits_saved=V.uab_properties;
+  vk_binding rejected_binding={.binding=200,.kind=1,.count=1};
+  vk_shader rejected={.nb=1,.stage=5,.set=3,.bindings=&rejected_binding};
+  V.uab_properties.maxPerStageUpdateAfterBindResources=0;
+  vk_test_uab_qualification_stats(&qs0,&qp0);
+  for(unsigned repeat=0;repeat<256;repeat++)CHECK(!vk_shader_uab_layout(&rejected));
+  vk_test_uab_qualification_stats(&qs1,&qp1);CHECK(qs1==qs0+1 && qp1==qp0);
+  V.uab_properties=limits_saved;
+  vk_binding aggregate_bindings[2]={{.binding=201,.kind=1,.count=1},{.binding=202,.kind=1,.count=1}};
+  vk_shader aggregate_shaders[2]={{.nb=1,.stage=0,.set=0,.bindings=&aggregate_bindings[0]},
+    {.nb=1,.stage=1,.set=1,.bindings=&aggregate_bindings[1]}};
+  vk_shader *aggregate_program[6]={&aggregate_shaders[0],&aggregate_shaders[1]};
+  V.uab_properties.maxDescriptorSetUpdateAfterBindUniformBuffers=1;
+  vk_test_uab_qualification_stats(&qs0,&qp0);
+  for(unsigned repeat=0;repeat<256;repeat++)CHECK(!vk_program_uab_layout(aggregate_program));
+  vk_test_uab_qualification_stats(&qs1,&qp1);CHECK(qs1==qs0+2 && qp1==qp0+1);
+  V.uab_properties=limits_saved;
+  LOG("[UAB immutable qualification fixture] warm256 no rebuild; alternate isolated; shader caps-negative once; aggregate caps-negative once");
+
   // Same numeric fields, no UAB creation/binding flags: a distinct compatible-type layout.
   extern VkDescriptorSetLayout vk_test_uab_plain_layout(const vk_uab_schema *);
   reflected_shader.descriptors=vk_test_uab_plain_layout(&schema);VkPipelineLayout ordinary=vk_program_layout_mode(program,0);CHECK(ordinary!=pipeline_layout);

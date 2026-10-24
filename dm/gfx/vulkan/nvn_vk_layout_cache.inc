@@ -11,7 +11,7 @@ typedef struct descriptor_layout_entry {
 typedef struct pipeline_layout_entry {
   struct pipeline_layout_entry *next;
   VkDescriptorSetLayout sets[6];
-  uint32_t count,biased;
+  uint32_t count,biased,uab_qualification; // 0 unchecked, 1 valid, 2 rejected
   VkPipelineLayout layout;
 } pipeline_layout_entry;
 static descriptor_layout_entry *descriptor_layout_cache[256];
@@ -64,17 +64,25 @@ static VkDescriptorSetLayout descriptor_layout_get(const VkDescriptorSetLayoutBi
   VkDescriptorSetLayout layout=descriptor_layout_get_flags(bindings,count,0,NULL);
   if(!layout)die("Vulkan descriptor layout creation failed");return layout;
 }
-static VkPipelineLayout pipeline_layout_get(const VkDescriptorSetLayout sets[6],uint32_t count,int biased) {
+// This same intern also owns optional aggregate UAB qualification. The key
+// includes complete immutable descriptor layouts and push-range selection.
+static pipeline_layout_entry *pipeline_layout_entry_get(const VkDescriptorSetLayout sets[6],uint32_t count,int biased) {
   uint32_t bucket=(layout_hash(sets,count*sizeof *sets)^count^!!biased)%256;
   for(pipeline_layout_entry *e=pipeline_layout_cache[bucket];e;e=e->next)
-    if(e->count==count && e->biased==!!biased && !memcmp(e->sets,sets,count*sizeof *sets))return e->layout;
+    if(e->count==count && e->biased==!!biased && !memcmp(e->sets,sets,count*sizeof *sets))return e;
   pipeline_layout_entry *e=calloc(1,sizeof *e);if(!e)die("Vulkan pipeline layout cache allocation");
+  e->count=count;e->biased=!!biased;memcpy(e->sets,sets,count*sizeof *sets);
+  e->next=pipeline_layout_cache[bucket];pipeline_layout_cache[bucket]=e;return e;
+}
+static VkPipelineLayout pipeline_layout_materialize(pipeline_layout_entry *e) {
+  if(e->layout)return e->layout;
   VkPushConstantRange push={.stageFlags=VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT|VK_SHADER_STAGE_COMPUTE_BIT,.offset=0,.size=128};
   VkPipelineLayoutCreateInfo ci={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-    .setLayoutCount=count,.pSetLayouts=sets,.pushConstantRangeCount=biased?1:0,.pPushConstantRanges=biased?&push:NULL};
-  VK_CHECK(vkCreatePipelineLayout(V.device,&ci,NULL,&e->layout));
-  e->count=count;e->biased=!!biased;memcpy(e->sets,sets,count*sizeof *sets);
-  e->next=pipeline_layout_cache[bucket];pipeline_layout_cache[bucket]=e;return e->layout;
+    .setLayoutCount=e->count,.pSetLayouts=e->sets,.pushConstantRangeCount=e->biased?1:0,.pPushConstantRanges=e->biased?&push:NULL};
+  VK_CHECK(vkCreatePipelineLayout(V.device,&ci,NULL,&e->layout));return e->layout;
+}
+static VkPipelineLayout pipeline_layout_get(const VkDescriptorSetLayout sets[6],uint32_t count,int biased) {
+  return pipeline_layout_materialize(pipeline_layout_entry_get(sets,count,biased));
 }
 static atomic_int dynamic_uniform_reference;
 static atomic_int dynamic_uniform_narrow_reference;

@@ -295,31 +295,68 @@ int vk_uab_pipeline_layout_create(vk_uab_packet *const sets[6],
   return result==VK_SUCCESS;
 }
 
+typedef struct vk_uab_shader_qualification {
+  const vk_shader *owner;
+  vk_uab_schema schema;
+  VkDescriptorSetLayout layout; // NULL is a cached rejection, not unchecked.
+} vk_uab_shader_qualification;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static uint64_t uab_shader_qualifications,uab_program_qualifications;
+void vk_test_uab_qualification_stats(uint64_t *shader,uint64_t *program) {
+  *shader=uab_shader_qualifications;*program=uab_program_qualifications;
+}
+#endif
+static const vk_uab_shader_qualification *uab_shader_qualify(vk_shader *shader) {
+  if(!shader || !V.retained_draws)return NULL;
+  vk_uab_shader_qualification *q=shader->uab_qualification;
+  if(q && q->owner==shader)return q;
+  // Final reflection is immutable. Alternative shaders reset this field in
+  // shader_descriptor_layouts; owner equality additionally rejects struct-copy
+  // inheritance. Allocation failure is not cached as a device capability.
+  q=calloc(1,sizeof *q);if(!q)return NULL;q->owner=shader;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uab_shader_qualifications++;
+#endif
+  uint32_t count;
+  if(vk_uab_schema_from_shader(shader,0,&q->schema)) {
+    if(!q->schema.count)q->layout=descriptor_layout_get(NULL,0);
+    else if(uab_schema_limits(&q->schema,&count)) {
+      VkDescriptorBindingFlags flags[VK_UAB_MAX_BINDINGS];
+      for(unsigned n=0;n<q->schema.count;n++)flags[n]=uab_buffer_type(q->schema.bindings[n].descriptorType)?VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT:0;
+      q->layout=descriptor_layout_get_flags(q->schema.bindings,q->schema.count,
+          VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,flags);
+      // Unsupported driver layout or temporary allocation failure is not a
+      // new immutable reflection/caps fact; preserve the original cold retry.
+      if(!q->layout){free(q);return NULL;}
+    }
+  }
+  shader->uab_qualification=q;shader->uab_descriptors=q->layout;return q;
+}
 VkDescriptorSetLayout vk_shader_uab_layout(vk_shader *shader) {
-  if(!shader || !V.retained_draws)return VK_NULL_HANDLE;
-  if(shader->uab_descriptors)return shader->uab_descriptors;
-  if(!shader->nb)return shader->uab_descriptors=descriptor_layout_get(NULL,0);
-  vk_uab_schema schema;uint32_t count;
-  if(!vk_uab_schema_from_shader(shader,0,&schema) || !uab_schema_limits(&schema,&count))return VK_NULL_HANDLE;
-  VkDescriptorBindingFlags flags[VK_UAB_MAX_BINDINGS];
-  for(unsigned n=0;n<schema.count;n++)flags[n]=uab_buffer_type(schema.bindings[n].descriptorType)?VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT:0;
-  return shader->uab_descriptors=descriptor_layout_get_flags(schema.bindings,schema.count,
-      VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,flags);
+  const vk_uab_shader_qualification *q=uab_shader_qualify(shader);return q?q->layout:VK_NULL_HANDLE;
 }
 VkPipelineLayout vk_program_uab_layout(vk_shader *const shaders[6]) {
   if(!shaders || !V.retained_draws)return VK_NULL_HANDLE;
-  vk_uab_schema schemas[6];const vk_uab_schema *by_set[6]={0};VkDescriptorSetLayout layouts[6];unsigned count=0;int biased=0;
+  const vk_uab_schema *by_set[6]={0};VkDescriptorSetLayout layouts[6];unsigned count=0;int biased=0;
   if(!empty_layout)empty_layout=descriptor_layout_get(NULL,0);
   for(unsigned i=0;i<6;i++)layouts[i]=empty_layout;
   for(unsigned i=0;i<6;i++)if(shaders[i]) {
     vk_shader *s=shaders[i];
-    if(s->set>=6 || by_set[s->set] || !vk_uab_schema_from_shader(s,0,&schemas[i]))return VK_NULL_HANDLE;
-    by_set[s->set]=&schemas[i];layouts[s->set]=vk_shader_uab_layout(s);
-    if(!layouts[s->set])return VK_NULL_HANDLE;
+    if(s->set>=6 || by_set[s->set])return VK_NULL_HANDLE;
+    const vk_uab_shader_qualification *q=uab_shader_qualify(s);
+    if(!q || !q->layout)return VK_NULL_HANDLE;
+    by_set[s->set]=&q->schema;layouts[s->set]=q->layout;
     if(count<=s->set)count=s->set+1;biased|=!!s->storage_bias_mask;
   }
-  if(!uab_program_limits(by_set))return VK_NULL_HANDLE;
-  return pipeline_layout_get(layouts,count,biased);
+  if(!count)return VK_NULL_HANDLE;
+  pipeline_layout_entry *entry=pipeline_layout_entry_get(layouts,count,biased);
+  if(!entry->uab_qualification) {
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    uab_program_qualifications++;
+#endif
+    entry->uab_qualification=uab_program_limits(by_set)?1:2;
+  }
+  return entry->uab_qualification==1?pipeline_layout_materialize(entry):VK_NULL_HANDLE;
 }
 
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)

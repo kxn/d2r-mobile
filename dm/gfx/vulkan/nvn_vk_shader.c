@@ -688,6 +688,7 @@ unsigned vk_test_binding_consumer_edges(void) {
 #endif
 static void shader_descriptor_layouts(vk_shader *s) {
   s->uab_descriptors=VK_NULL_HANDLE; // Alternatives cannot inherit another schema's variant.
+  s->uab_qualification=NULL;
   // Base active-binding compaction and every texel/pixel alternative conversion
   // finish before this shared constructor. Never inherit a different schema's
   // index mask through the alternatives' struct copies.

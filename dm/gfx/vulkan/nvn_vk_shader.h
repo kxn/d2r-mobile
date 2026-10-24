@@ -58,6 +58,7 @@ typedef struct vk_shader {
   uint32_t driver_span[2]; // optional all-module read bound; zero keeps 64 KiB
   VkShaderModule driver_span_module; // new, unproved module alternatives cannot inherit a bound
   VkDescriptorSetLayout descriptors,dynamic_descriptors[2],uab_descriptors;
+  struct vk_uab_shader_qualification *uab_qualification; // immutable final-schema/device lifetime
   VkDescriptorUpdateTemplate descriptor_templates[3];
   uint8_t dynamic_uniform_ordinals[2][128]; // narrow/extended, one-based binding order
   uint32_t dynamic_uniform_count[2];
