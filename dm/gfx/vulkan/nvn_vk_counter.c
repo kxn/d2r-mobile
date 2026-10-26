@@ -308,6 +308,9 @@ void mtl_sub_counter(uint64_t address, uint32_t type) {
   r->timestamp = timestamp_block;
   r->timestamp_index = timestamp_block->used++;
   atomic_fetch_add(&timestamp_block->refs, 1);
+  // A timestamp is an observable command between clears and later draws.
+  // Do not move retained primary clears past it, even with a reused pool.
+  vk_render_materialize_pending();
   vkCmdWriteTimestamp(V.cmd,
                       type == NVN_COUNTER_TYPE_TIMESTAMP_TOP
                           ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT

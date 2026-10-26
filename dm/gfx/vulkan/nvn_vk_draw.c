@@ -20,6 +20,10 @@ typedef struct render_job {
   VkRenderPass final_pass;
   VkCommandBuffer primary, secondary;
   int direct; // The experimental primary path aliases secondary to its actual primary recording context.
+  int primary_begun;
+  unsigned pending_clear_count;
+  VkClearAttachment pending_clears[8];
+  VkClearRect pending_rectangles[8];
   VkAttachmentDescription attachments[9];
   VkAttachmentReference colors[8], depth;
   VkClearValue clears[9];
@@ -167,6 +171,20 @@ uint64_t vk_render_depth_omissions(void) { return atomic_load(&depth_omissions);
 uint64_t vk_render_store_omissions(void) { return atomic_load(&store_omissions); }
 uint64_t vk_render_load_omissions(void) { return atomic_load(&load_omissions); }
 uint64_t vk_render_readonly_store_omissions(void) { return atomic_load(&readonly_store_omissions); }
+static void render_primary_begin(render_job *j) {
+  if(!j->direct || j->primary_begun)return;
+  VkRenderPassBeginInfo begin={.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+    .renderPass=j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
+    .clearValueCount=j->attachment_count,.pClearValues=j->clears};
+  vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_INLINE);
+  j->primary_begun=1;
+  for(unsigned n=0;n<j->pending_clear_count;n++)
+    vkCmdClearAttachments(V.cmd,1,&j->pending_clears[n],1,&j->pending_rectangles[n]);
+  j->pending_clear_count=0;
+}
+void vk_render_materialize_pending(void) {
+  if(active_job)render_primary_begin(active_job);
+}
 static void render_record_begin(render_job *j,const VkAttachmentDescription *attachments,
                                 unsigned count,const VkAttachmentReference *colors,
                                 unsigned color_count,const VkAttachmentReference *depth,
@@ -192,10 +210,10 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
   j->direct=V.options.render_record_mode==2;
   if(j->direct) {
     j->secondary=j->primary;
-    VkRenderPassBeginInfo begin={.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-      .renderPass=j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
-      .clearValueCount=j->attachment_count,.pClearValues=j->clears};
-    vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_INLINE);
+    // Clear-only jobs remain logical until their first consuming command.
+    // Existing pre-pass dependency proofs can still place earlier producers'
+    // barriers before them. A dependency on these clears ends/materializes
+    // the job normally; their access clocks are already recorded below.
     render_binding_reset(j);return;
   }
   j->secondary = vk_command_buffer(VK_COMMAND_BUFFER_LEVEL_SECONDARY);
@@ -423,7 +441,13 @@ int vk_render_target_clear(const p_set_rt *rt, const p_scissor *sc, int index,
                                .colorAttachment = index < 0 ? 0 : index,
                                .clearValue = *value};
     VkClearRect rectangle = {.rect = area, .layerCount = 1};
-    vkCmdClearAttachments(V.cmd, 1, &clear, 1, &rectangle);
+    if(job->direct && !job->primary_begun && job->pending_clear_count<8) {
+      unsigned n=job->pending_clear_count++;
+      job->pending_clears[n]=clear;job->pending_rectangles[n]=rectangle;
+    } else {
+      render_primary_begin(job);
+      vkCmdClearAttachments(V.cmd, 1, &clear, 1, &rectangle);
+    }
   } else {
     // SET_RT need not end an old pass. Reconsider sibling isolation only at
     // the point where this clear already cannot reuse it, never by splitting
@@ -595,6 +619,7 @@ void vk_render_end_at(const char *file, unsigned line) {
         end_sites[i].count++;
     }
     render_job *j=active_job;
+    render_primary_begin(j);
     vk_counter_pass_end();
     if(!j->direct)VK_CHECK(vkEndCommandBuffer(j->secondary));
     V.cmd=j->primary;
@@ -684,10 +709,11 @@ void vk_render_end_preserve(void) {
   vk_render_end();
 }
 int vk_render_active(void) { return active_job!=NULL; }
-// The primary does not begin the render pass until the secondary is finished.
-// A dependency on producers preceding this pass can still be recorded there.
+// A secondary leaves its primary pass unstarted until recording ends. The
+// experimental primary also delays clear-only jobs until their first consumer.
+// Proven dependencies on earlier producers may still precede either pending pass.
 VkCommandBuffer vk_render_pending_primary(void) {
-  return active_job && !active_job->direct?active_job->primary:VK_NULL_HANDLE;
+  return active_job && (!active_job->direct || !active_job->primary_begun)?active_job->primary:VK_NULL_HANDLE;
 }
 void vk_render_end_stats(int print) {
   for (unsigned i = 0; i < end_site_count; i++) {
@@ -2005,6 +2031,7 @@ uniform_vertex_remaining:
     render_bind_index(j,b->handle,off,
                       idx->itype==1?VK_INDEX_TYPE_UINT16:VK_INDEX_TYPE_UINT32,state_reference);
   }
+  render_primary_begin(j);
   vk_counter_draw_begin(occlusion);
   if(state_reference || j->bound_pipeline!=j->pipeline) {
     vkCmdBindPipeline(V.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, j->pipeline);

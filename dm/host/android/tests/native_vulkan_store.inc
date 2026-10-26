@@ -127,7 +127,27 @@ static void store_overwrite_test(const void *vertex,const void *sample_fragment,
   // Fixed attachment modes deliberately have no store index. Their complete
   // rendered results above are checked; index-vs-scan metadata tests below
   // remain on the ordinary renderer where those decisions actually exist.
-  if(V.options.render_record_mode)goto cleanup;
+  if(V.options.render_record_mode) {
+    // More clears than the bounded primary queue, including an overlapping
+    // partial clear. Read back without a draw: ending the logical pass must
+    // materialize every retained clear in order, including the overflow.
+    CALL(nvnCommandBufferBeginRecording,&cmd);
+    CALL(nvnCommandBufferSetRenderTargets,&cmd,1,(const NVNtexture *[]){&textures[0]},NULL,NULL,NULL);
+    CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
+    uint64_t *times=(void *)(storage+0x90000);
+    CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_TIMESTAMP,(uintptr_t)times);
+    for(unsigned n=0;n<12;n++)CALL(nvnCommandBufferClearColor,&cmd,0,n&1?blue:red,15);
+    CALL(nvnCommandBufferSetScissor,&cmd,0,0,8,16);
+    CALL(nvnCommandBufferClearColor,&cmd,0,red,15);
+    CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_TIMESTAMP,(uintptr_t)(times+2));
+    submit(end());CHECK(times[0]>0 && times[2]>=times[0]);
+    CALL(nvnTextureReadTexels,&textures[0],NULL,&region,pixels);
+    for(unsigned y=0;y<16;y++)for(unsigned x=0;x<16;x++) {
+      uint8_t expected[]={x<8?255:0,0,x<8?0:255,255};
+      CHECK(!memcmp(pixels+(y*16+x)*4,expected,4));
+    }
+    goto cleanup;
+  }
   // 仅数据流检查：共享存储的不同快照、无关拷贝、未知池边界及描述符变更。
   // Metadata-only checks: distinct snapshots sharing storage, unrelated copies,
   // pool boundaries and descriptor mutation. These streams are not GPU draws.
