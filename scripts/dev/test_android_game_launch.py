@@ -59,6 +59,17 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_native_buffer_geometry_is_explicit_and_cold_only(self):
+        self.assertNotIn('native_buffer_geometry',self.launch_command([]))
+        for option,value in [('--native-buffer-geometry','true'),('--no-native-buffer-geometry','false')]:
+            command=self.launch_command([option]);index=command.index('native_buffer_geometry')
+            self.assertEqual(command[index-1:index+2],['--ez','native_buffer_geometry',value])
+            with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
     def test_guest_worker_qos_is_explicit_and_cold_only(self):
         self.assertNotIn('guest_worker_qos',self.launch_command([]))
         for option,value in [('--guest-worker-qos','true'),('--no-guest-worker-qos','false')]:

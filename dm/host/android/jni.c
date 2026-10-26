@@ -368,11 +368,24 @@ static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int inline_translation_startup;
 static int guest_worker_qos_startup;
+static int native_buffer_geometry_startup;
 static int submission_plan_reference_startup;
 static int keep_attachment_stores_startup;
 static int render_record_mode_startup;
 static unsigned translation_cpu_mask_startup;
 static char turnip_autotune_startup[32];
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeBufferGeometry(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"native_buffer_geometry is fixed before native startup");
+    return;
+  }
+  native_buffer_geometry_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeGuestWorkerQos(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -892,6 +905,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   char translation_cpu_mask[16];snprintf(translation_cpu_mask,sizeof translation_cpu_mask,"%x",translation_cpu_mask_startup);
   char render_record_mode[2]={(char)('0'+render_record_mode_startup),0};
   if(setenv("DM_NVN_CPU_MASK",translation_cpu_mask,1) ||
+      setenv("DM_VULKAN_NATIVE_BUFFER_GEOMETRY",native_buffer_geometry_startup?"1":"0",1) ||
       setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_KEEP_ALL",keep_attachment_stores_startup?"1":"0",1) ||

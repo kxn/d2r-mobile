@@ -95,6 +95,20 @@ static VkSwapchainKHR swapchain;
 static VkImage *swap_images;
 static uint32_t swap_count;
 static VkExtent2D extent;
+// Fixed at process startup. Buffer geometry is local to this Surface; the
+// Android display mode and the game's render targets are never changed.
+static int native_geometry_policy=-1,native_geometry_failed;
+static VkExtent2D native_geometry_requested,view_extent;
+static int native_geometry_enabled(void) {
+  if(native_geometry_policy<0) {
+    const char *v=getenv("DM_VULKAN_NATIVE_BUFFER_GEOMETRY");
+    if(v && strcmp(v,"0") && strcmp(v,"1"))
+      die("DM_VULKAN_NATIVE_BUFFER_GEOMETRY expects 0 or 1");
+    native_geometry_policy=v && !strcmp(v,"1");
+    LOG("[vulkan present] native buffer geometry enabled=%d (fixed for this process)",native_geometry_policy);
+  }
+  return native_geometry_policy;
+}
 static VkFormat swap_format;
 static VkImageUsageFlags swap_usage;
 static int shader_present_reserved=-1;
@@ -311,9 +325,16 @@ void vk_android_window(void *window, float refresh) {
       vkDestroySurfaceKHR(V.instance, V.surface, NULL);
     V.surface = VK_NULL_HANDLE;
   }
-  if (native_window)
+  if (native_window) {
+    // Release the experimental override only after old GPU/WSI work drained.
+    // Surface recreation must start from the View's default dimensions.
+    if(native_geometry_requested.width)
+      ANativeWindow_setBuffersGeometry(native_window,0,0,0);
     ANativeWindow_release(native_window);
+  }
   native_window = window;
+  native_geometry_requested=(VkExtent2D){0};native_geometry_failed=0;
+  view_extent=window?(VkExtent2D){ANativeWindow_getWidth(window),ANativeWindow_getHeight(window)}:(VkExtent2D){0};
   refresh_rate = refresh > 0 ? refresh : 60;
   if (V.instance && native_window)
     vk_window_surface_create();
@@ -506,7 +527,27 @@ static VkResult acquire_image_immediate(uint32_t *index, VkSemaphore semaphore) 
 uint64_t vk_window_present(const void *texture, const int crop[4], uint64_t sequence) {
   if (vk_window_discarding()) { vk_renderdoc_present(V.instance, 1); vk_window_drop_present(sequence); return 0; }
   const tex_t *t = texture;
-  if (!swapchain)
+  int x = crop ? crop[0] : 0, y = crop ? crop[1] : 0,
+      w = crop && crop[2] > 0 ? crop[2] : t->d.width,
+      h = crop && crop[3] > 0 ? crop[3] : t->d.height;
+  if (x < 0 || y < 0 || w <= 0 || h <= 0 || (uint64_t)x + w > t->d.width ||
+      (uint64_t)y + h > t->d.height)
+    die("Android present crop invalid");
+  int geometry_changed=0;
+  if(native_geometry_enabled() && !native_geometry_failed &&
+      (native_geometry_requested.width!=(uint32_t)w || native_geometry_requested.height!=(uint32_t)h)) {
+    int result=ANativeWindow_setBuffersGeometry(native_window,w,h,0);
+    if(result) {
+      // A platform rejection keeps the ordinary View buffer path. Do not
+      // retry the same rejected operation on every present.
+      native_geometry_failed=1;
+      if(ANativeWindow_setBuffersGeometry(native_window,0,0,0))
+        die("Android native buffer geometry default restoration failed");
+    } else native_geometry_requested=(VkExtent2D){w,h};
+    LOG("[vulkan present] native buffer geometry request=%dx%d result=%d view=%ux%u",w,h,result,view_extent.width,view_extent.height);
+    geometry_changed=1;
+  }
+  if (!swapchain || geometry_changed)
     swapchain_create();
   int overlap = vk_async_submissions();
   unsigned slot = overlap ? acquire_slot() : 0;
@@ -536,15 +577,23 @@ uint64_t vk_window_present(const void *texture, const int crop[4], uint64_t sequ
   VkImageLayout source_layout=VK_IMAGE_LAYOUT_UNDEFINED;
   VkImage source=VK_NULL_HANDLE;
   VkImage dst = swap_images[index];
-  int x = crop ? crop[0] : 0, y = crop ? crop[1] : 0,
-      w = crop && crop[2] > 0 ? crop[2] : t->d.width,
-      h = crop && crop[3] > 0 ? crop[3] : t->d.height;
-  if (x < 0 || y < 0 || w <= 0 || h <= 0 || (uint64_t)x + w > t->d.width ||
-      (uint64_t)y + h > t->d.height)
-    die("Android present crop invalid");
   double scale = fmin((double)extent.width / w, (double)extent.height / h);
   int dw = lround(w * scale), dh = lround(h * scale),
       dx = ((int)extent.width - dw) / 2, dy = ((int)extent.height - dh) / 2;
+  if(native_geometry_requested.width && !native_geometry_failed && view_extent.width && view_extent.height) {
+    // Composition scales the whole buffer to the View. Keep the original
+    // View-space letterbox and normalized touch mapping, even if game and
+    // View aspect ratios differ. This changes buffer pixels, not layout.
+    double visual=fmin((double)view_extent.width/w,(double)view_extent.height/h);
+    int vw=lround(w*visual),vh=lround(h*visual);
+    int vx=((int)view_extent.width-vw)/2,vy=((int)view_extent.height-vh)/2;
+    dx=lround((double)vx*extent.width/view_extent.width);
+    dy=lround((double)vy*extent.height/view_extent.height);
+    dw=lround((double)vw*extent.width/view_extent.width);
+    dh=lround((double)vh*extent.height/view_extent.height);
+    if(dx+dw>(int)extent.width)dw=extent.width-dx;
+    if(dy+dh>(int)extent.height)dh=extent.height-dy;
+  }
   int full=!x && !y && w==t->d.width && h==t->d.height &&
       !dx && !dy && dw==w && dh==h && (uint32_t)w==extent.width && (uint32_t)h==extent.height;
   vk_present_sample sampled;

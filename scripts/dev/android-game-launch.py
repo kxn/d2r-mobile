@@ -44,6 +44,7 @@ opus_mode.add_argument('--native-opus', action=argparse.BooleanOptionalAction, d
 parser.add_argument('--performance-hints',action='store_true',help='experimental public Android render-thread workload hints')
 parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
 parser.add_argument('--guest-worker-qos',action=argparse.BooleanOptionalAction,default=None,help='cold Android upstream QoS parity: request nice -10 for newly created guest workers only')
+parser.add_argument('--native-buffer-geometry',action=argparse.BooleanOptionalAction,default=None,help='cold application-local presentation buffer sizing to the game output; keeps system display and game render sizes unchanged')
 parser.add_argument('--submission-plan-reference',action='store_true',help='cold comparison: conservative replay without whole-submission planning; retains guest commands, synchronization and GPU completion')
 parser.add_argument('--keep-attachment-stores',action='store_true',help='cold cost comparison: retain attachment stores and skip their index only; preserve query/depth/state planning (default off)')
 parser.add_argument('--fixed-render-recording',choices=['secondary','primary'],help='cold controlled comparison of command buffer recording, with identical fixed LOAD/STORE; requires --keep-attachment-stores --no-pixel-local and no deferred mip clears')
@@ -180,6 +181,8 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.submission_plan_reference:
     parser.error('--submission-plan-reference is startup-only and cannot be used with --attach')
+if args.attach and args.native_buffer_geometry is not None:
+    parser.error('--native-buffer-geometry is startup-only and cannot be used with --attach')
 if args.attach and args.keep_attachment_stores:
     parser.error('--keep-attachment-stores is startup-only and cannot be used with --attach')
 if args.attach and args.guest_worker_qos is not None:
@@ -386,6 +389,8 @@ if not args.attach:
     launch += ['--ez','texel_storage',str(args.texel_storage).lower()]
     if args.shader_present is not None:
         launch += ['--ez','shader_present',str(args.shader_present).lower()]
+    if args.native_buffer_geometry is not None:
+        launch += ['--ez','native_buffer_geometry',str(args.native_buffer_geometry).lower()]
     launch += ['--ez','uniform_specialization',str(args.uniform_specialization).lower()]
     launch += ['--ez','uniform_predicate',str(args.uniform_predicate).lower()]
     launch += ['--ez','deferred_mip_clears',str(args.deferred_mip_clears).lower()]
@@ -460,6 +465,10 @@ while time.monotonic() < deadline:
                     if len(set(worker_qos_modes))>1:
                         raise SystemExit('conflicting actual guest worker QoS policies')
                     actual_worker_qos=bool(int(worker_qos_modes[-1])) if worker_qos_modes else None
+                    buffer_geometry_modes=re.findall(r'\[vulkan present\] native buffer geometry enabled=([01])\b',log)
+                    actual_buffer_geometry=bool(int(buffer_geometry_modes[-1])) if buffer_geometry_modes else None
+                    if args.native_buffer_geometry is not None and actual_buffer_geometry!=args.native_buffer_geometry:
+                        raise SystemExit('native buffer geometry startup selection not proven by running backend')
                     if args.guest_worker_qos is not None and actual_worker_qos != args.guest_worker_qos:
                         raise SystemExit('guest worker QoS startup selection did not apply')
                     recording_modes=re.findall(r'\[vulkan render recording\] mode=([012])\b',log)
@@ -612,6 +621,8 @@ while time.monotonic() < deadline:
                               'requested_keep_attachment_stores':args.keep_attachment_stores,
                               'actual_keep_attachment_stores':actual_keep_stores,
                               'requested_guest_worker_qos':args.guest_worker_qos,
+                              'requested_native_buffer_geometry':args.native_buffer_geometry,
+                              'actual_native_buffer_geometry':actual_buffer_geometry,
                               'actual_guest_worker_qos':actual_worker_qos,
                               'requested_fixed_render_recording':args.fixed_render_recording,
                               'actual_render_record_mode':actual_recording_mode,
