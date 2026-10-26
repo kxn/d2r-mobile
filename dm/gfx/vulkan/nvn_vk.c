@@ -4684,13 +4684,18 @@ uint64_t vk_internal_commit_semaphores(VkSemaphore wait, VkPipelineStageFlags st
                                        VkSemaphore signal) {
   return commit(0, wait, stage, signal);
 }
-void vk_internal_wait(uint64_t serial) {
+void vk_internal_wait_from(uint64_t serial,const char *caller) {
   pthread_mutex_lock(&completion_mu);
   int wait_trace=queue_completed<serial?vk_system_trace_begin("Vulkan CPU waits queue completion"):0;
+  int caller_trace=wait_trace?vk_system_trace_begin(caller):0;
   while (queue_completed < serial)
     pthread_cond_wait(&completion_cv, &completion_mu);
   pthread_mutex_unlock(&completion_mu);
+  vk_system_trace_end(caller_trace);
   vk_system_trace_end(wait_trace);
+}
+void (vk_internal_wait)(uint64_t serial) {
+  vk_internal_wait_from(serial,"vk_internal_wait");
 }
 void vk_present_ticket_wait(uint64_t serial) {
   // x_present_ticket already waited for the translation/presentation job.

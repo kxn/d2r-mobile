@@ -377,6 +377,10 @@ void vk_counter_reset(uint32_t type);
 
 uint64_t vk_internal_commit(void);
 void vk_internal_wait(uint64_t serial);
+// Keep the existing Perfetto wait scope and annotate its actual source only
+// while that scope is enabled. No clock, sampling or normal-path allocation.
+void vk_internal_wait_from(uint64_t serial,const char *caller);
+#define vk_internal_wait(serial) vk_internal_wait_from((serial),__func__)
 void vk_present_ticket_wait(uint64_t serial);
 // WSI 的取图/完成依赖留在 GPU；返回内部队列序号，不能当作 guest fence。
 // Keep WSI acquire/finish dependencies on the GPU; return an internal serial,
