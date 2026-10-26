@@ -26,6 +26,7 @@
 #include <time.h>
 #ifdef __ANDROID__
 #include <sys/resource.h>
+#include <unistd.h>
 // Upstream's Android pthread/qos.h maps USER_INTERACTIVE to nice -10.
 // Select once before creating any guest threads; leave the adopted main
 // thread and unrelated Android/driver/completion threads alone.
