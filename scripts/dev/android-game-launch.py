@@ -453,7 +453,12 @@ while time.monotonic() < deadline:
                     if args.stream_submits and state.get('stream_submits',{}).get('reference',True):
                         raise SystemExit('stream submission policy is not active')
                     keep_store_modes=re.findall(r'\[vulkan attachment stores\] keep_all=([01])\b',log)
-                    worker_qos_modes=re.findall(r'\[android guest worker policy\] enabled=([01])\b',log)
+                    # nativeStart precedes native.log initialization. Actual
+                    # worker entries are written later and prove execution,
+                    # rather than merely echoing the requested startup value.
+                    worker_qos_modes=re.findall(r'\[android guest worker qos\] tid=\d+ handle=0x[0-9a-f]+ enabled=([01])\b',log)
+                    if len(set(worker_qos_modes))>1:
+                        raise SystemExit('conflicting actual guest worker QoS policies')
                     actual_worker_qos=bool(int(worker_qos_modes[-1])) if worker_qos_modes else None
                     if args.guest_worker_qos is not None and actual_worker_qos != args.guest_worker_qos:
                         raise SystemExit('guest worker QoS startup selection did not apply')
