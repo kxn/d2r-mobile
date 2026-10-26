@@ -164,6 +164,20 @@ static void submission_index_build(const uint64_t *handles,int n) {
   index_valid=0;
   reference_mode=V.options.store_reference;
   check_mode=V.options.store_check;
+  // Cold comparison of the complete planning cost. The existing invalid-plan
+  // paths retain depth/stencil, STORE and live queries; no dependency, GPU
+  // fence or guest command is omitted. State spans and optional lookahead
+  // consumers fall back to their ordinary replay paths as well.
+  static int planning_reference=-1;
+  if(planning_reference<0) {
+    const char *v=getenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE");
+    if(v && strcmp(v,"0") && strcmp(v,"1"))
+      die("DM_VULKAN_SUBMISSION_PLAN_REFERENCE expects 0 or 1");
+    planning_reference=v && !strcmp(v,"1");
+    LOG("[vulkan] submission planning: %s (fixed for this process)",
+        planning_reference?"conservative replay without prepass":"enabled");
+  }
+  if(planning_reference) {valid=store_valid=0;return;}
   if(!vk_tbdr_enabled() || n<0 || (n&&!handles)) { valid=0;return; }
   store_build_context context;
   int build_store=store_valid && (!reference_mode||check_mode);

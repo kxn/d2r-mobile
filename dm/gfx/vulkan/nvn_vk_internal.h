@@ -377,6 +377,10 @@ void vk_counter_reset(uint32_t type);
 
 uint64_t vk_internal_commit(void);
 void vk_internal_wait(uint64_t serial);
+// Keep the existing Perfetto wait scope and annotate its actual source only
+// while that scope is enabled. No clock, sampling or normal-path allocation.
+void vk_internal_wait_from(uint64_t serial,const char *caller);
+#define vk_internal_wait(serial) vk_internal_wait_from((serial),__func__)
 void vk_present_ticket_wait(uint64_t serial);
 // WSI 的取图/完成依赖留在 GPU；返回内部队列序号，不能当作 guest fence。
 // Keep WSI acquire/finish dependencies on the GPU; return an internal serial,
@@ -499,6 +503,13 @@ void vk_image_split_draw_begin(void);
 void vk_image_split_draw_end(void);
 void vk_image_split_admit(const void *shader,int eligible);
 void vk_image_split_break(void);
+void vk_image_split_native_writer_changed(void);
+#ifdef DM_VULKAN_NATIVE_RESOURCES
+uint64_t vk_buffer_native_writer_generation(void);
+void *vk_pool_native_image_operation_owner(void *token);
+#else
+static inline uint64_t vk_buffer_native_writer_generation(void) {return 0;}
+#endif
 void vk_image_split_handles(uint32_t op,unsigned stage,unsigned first,unsigned count,const uint64_t *values);
 int vk_image_split_prepare(const void *shader,uint64_t skip[2]);
 // Optional caller-owned complete stage payload. It must live until the group

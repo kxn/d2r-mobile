@@ -789,6 +789,15 @@ static void fixed_shared_buffer_test(void) {
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && defined(DM_VULKAN_SHARED_POOLS)
+  if(getenv("DM_INLINE_TRANSLATION_FIFO_FIXTURE")) {
+    extern unsigned nvn_test_inline_serialization(void);
+    unsigned jobs=nvn_test_inline_serialization();
+    CHECK(!V.device);
+    printf("{\"test\":\"inline-translation-FIFO\",\"caller_jobs\":%u,\"concurrent_producers\":4,\"ordered_exclusive\":true,\"game_modules_executed\":false,\"result\":\"passed\"}\n",jobs);
+    return 0;
+  }
+#endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   const char *span_reference=getenv("DM_DRIVER_SPAN_REFERENCE");
   if(span_reference) {
@@ -872,6 +881,15 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_CONSERVATIVE_PLAN_FIXTURE")) {
+    const char *reference=getenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE");
+    CHECK(reference && !strcmp(reference,"1"));
+    uint8_t controls[2][0x880];memset(controls[0],0,sizeof controls[0]);memset(controls[1],1,sizeof controls[1]);
+    pass_depth_test_mode(controls[0],controls[1],NVN_FORMAT_DEPTH32F_STENCIL8,1);
+    pass_depth_test_mode(controls[0],controls[1],NVN_FORMAT_DEPTH24_STENCIL8,1);
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"conservative-no-prepass-depth-stencil\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
   persistent_texel_owner_test();
   if(getenv("DM_TEXEL_OWNER_FIXTURE")) {
     printf("{\"test\":\"persistent-texel-owner\",\"result\":\"passed\",\"game_modules_executed\":false}\n");return 0;
@@ -886,7 +904,7 @@ int dm_vulkan_test_main(void) {
     descriptor_pool_block_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"descriptor-pool-blocks\",\"checks\":%u,\"physical_sets\":512,\"retention_budget\":2048,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
-#ifdef DM_VULKAN_NATIVE_RESOURCES
+#if defined(DM_VULKAN_NATIVE_RESOURCES) && defined(DM_VULKAN_IMAGE_SOURCE_WRAP)
   if(getenv("DM_SOURCE_PARTITION_FORCE"))vk_test_image_source_flow(1);
   if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){vk_test_image_source_flow(1);source_flow_observe=1;}
   if(getenv("DM_SOURCE_PARTITION_FIXTURE")) {
@@ -980,8 +998,18 @@ int dm_vulkan_test_main(void) {
 #ifdef DM_VULKAN_NATIVE_RESOURCES
   if(getenv("DM_NATIVE_RETIREMENT_FIXTURE")) {native_retirement_gpu_test();return 0;}
   if(getenv("DM_NATIVE_ACQUIRE_SCOPE_FIXTURE")) {native_acquire_scope_gpu_test();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(getenv("DM_NATIVE_READ_GROUP_RECREATE_FIXTURE")) {
+      // The prior ReadTexels owns a legitimate broad Buffer history. Isolate
+      // the next complete lifecycle using the original ordering boundary.
+      mtl_sub_begin();vk_barrier();vk_internal_wait(vk_internal_commit());
+      native_acquire_scope_gpu_test();
+    }
+#endif
 #ifndef DM_ANDROID_APP
+#ifdef DM_VULKAN_IMAGE_SOURCE_WRAP
     if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE"))image_source_flow_check();
+#endif
 #endif
     return 0;}
   if(getenv("DM_NATIVE_LANE_WINDOW_FIXTURE")) {native_lane_gpu_test();return 0;}

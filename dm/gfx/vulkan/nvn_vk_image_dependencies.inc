@@ -18,7 +18,7 @@ typedef struct {
   // it. Promotions change owners, never request access flags or ordinals.
   size_t writer_begin;
   int writer_suffix;
-  int split_read_group; // one borrowed immutable FS group, no per-draw members
+  int split_read_group; // borrowed immutable FS subset bits: ordinary=1, native=2
   void *raster_group; // job-owned prospective attachment vector
 } image_batch;
 _Static_assert(sizeof(image_batch)==48,"Image batch adds one job-owned raster vector reference");

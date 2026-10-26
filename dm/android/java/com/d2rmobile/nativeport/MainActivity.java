@@ -44,10 +44,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeDriverSpanReference(boolean reference);
     private static native void nativeImageBufferSplit(boolean enabled);
     private static native void nativeBufferConsumptionPlan(boolean enabled);
+    private static native void nativeReadGroupFront(boolean enabled);
     private static native void nativeAttachmentJobReuse(boolean enabled);
     private static native void nativeAttachmentRasterRun(boolean enabled);
     private static native void nativeStateSegments(boolean enabled);
     private static native void nativeSourcePartition(boolean enabled);
+    private static native void nativeInlineTranslation(boolean enabled);
+    private static native void nativeSubmissionPlanReference(boolean reference);
+    private static native void nativeTranslationCpuMask(int mask);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
     private static native void nativePoolSyncReference(boolean reference);
@@ -271,13 +275,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeDriverSpanReference(getIntent().getBooleanExtra("driver_span_reference", false));
             nativeImageBufferSplit(getIntent().getBooleanExtra("image_buffer_split", true));
             nativeBufferConsumptionPlan(getIntent().getBooleanExtra("buffer_consumption_plan", true));
+            nativeReadGroupFront(getIntent().getBooleanExtra("native_read_group_front", false));
             nativeAttachmentJobReuse(getIntent().getBooleanExtra("attachment_job_reuse", true));
             nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
+            nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
+            nativeSubmissionPlanReference(getIntent().getBooleanExtra("submission_plan_reference", false));
+            nativeTranslationCpuMask(getIntent().getIntExtra("translation_cpu_mask", 0));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
-            nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));
+            nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", true));
             nativeLegacyAstcCopy(getIntent().getBooleanExtra("legacy_astc_copy", false),
                     getIntent().getBooleanExtra("run_vulkan_tests", false) &&
                     getIntent().getBooleanExtra("legacy_astc_copy_test", false));
@@ -510,6 +518,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("state_segments")) {
             android.util.Log.w("D2RDriver", "state_segments is startup-only; cold restart required");
             intent.removeExtra("state_segments");
+        }
+        if (intent.hasExtra("native_read_group_front")) {
+            android.util.Log.w("D2RDriver", "native_read_group_front is startup-only; cold restart required");
+            intent.removeExtra("native_read_group_front");
         }
         if (intent.hasExtra("attachment_job_reuse")) {
             android.util.Log.w("D2RDriver", "attachment_job_reuse is startup-only; cold restart required");

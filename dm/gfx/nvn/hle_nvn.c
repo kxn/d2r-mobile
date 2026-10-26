@@ -46,6 +46,9 @@ static void x_shared_cache(uint64_t,size_t,int);
 #include <TargetConditionals.h>
 #endif
 #include <unistd.h>
+#if defined(__ANDROID__) || defined(__linux__)
+#include <sched.h>
+#endif
 #if TARGET_OS_OSX
 #define DM_MEM_CAP_DEFAULT_GB 24
 #else
@@ -1062,7 +1065,8 @@ typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int 
 static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done;   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
-static int g_x_sync; static pthread_t g_x_thr;
+static int g_x_sync, g_x_inline_shared; static pthread_t g_x_thr;
+static unsigned g_x_cpu_mask;
 static _Atomic int g_x_started;
 #ifdef DM_VULKAN_TEST_EMBED
 // Owned functional observer, installed/reset only while no readback job is in
@@ -1071,10 +1075,13 @@ static void (*g_readback_test_observer)(int);
 void nvn_test_readback_observer(void (*observer)(int)) {g_readback_test_observer=observer;}
 int nvn_test_idle_trim_started(void) {return atomic_load_explicit(&g_x_started,memory_order_acquire);}
 int nvn_test_idle_trim_supported(void) {
-    return atomic_load_explicit(&g_x_started,memory_order_acquire) && !g_x_sync;
+    return atomic_load_explicit(&g_x_started,memory_order_acquire) && (!g_x_sync || g_x_inline_shared);
 }
 #endif
 static _Thread_local int g_x_owner;
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static void (*g_inline_test_observer)(uint64_t);
+#endif
 #ifdef __ANDROID__
 // Optional platform policy, mirroring the original Apple deadline declaration.
 // The renderer still executes the same original NVN stream and synchronization.
@@ -1107,14 +1114,32 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
 }
 static void x_run(const xjob *j, uint64_t job) {
     int prior_owner=g_x_owner;g_x_owner=1;
-    // Legacy inline reference can run on different guest threads (including
-    // tail FRAME outside the suspend API gate). Never trim on that path.
+#if defined(__ANDROID__) || defined(__linux__)
+    // Separate cold scheduling control for either translation topology. Only
+    // the real presenting caller/worker is affected, never GPU completion or
+    // unrelated game workers. The zero-mask default leaves Android in charge.
+    if(g_x_cpu_mask && j->kind==XJ_PRESENT) {
+        static _Thread_local unsigned applied,presents;
+        if(!(presents++%128)) {
+            cpu_set_t cores;CPU_ZERO(&cores);
+            for(unsigned c=0;c<32;c++)if(g_x_cpu_mask&(1u<<c))CPU_SET(c,&cores);
+            int r=sched_setaffinity(0,sizeof cores,&cores);
+            if(applied!=g_x_cpu_mask)LOG("[nvn] translation CPU mask=%x tid=%ld result=%d",g_x_cpu_mask,(long)gettid(),r);
+            if(!r)applied=g_x_cpu_mask;
+        }
+    }
+#endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    if(g_inline_test_observer)g_inline_test_observer(job);
+#endif
+    // The experimental inline path grants one FIFO execution lease at a time,
+    // including tail FRAME and lifecycle jobs. Legacy inline remains unguarded.
     // This existing lifecycle-only job is queued AFTER original CPU effects,
     // GPU fences and command-pool reset drain, before original idle trim.
-    if(j->kind==XJ_IDLE_TRIM && !g_x_sync &&
+    if(j->kind==XJ_IDLE_TRIM && (!g_x_sync || g_x_inline_shared) &&
        atomic_exchange_explicit(&g_vma_dump_requested,0,memory_order_acq_rel))
         mtl_memory_dump();
-    if(!g_x_sync)x_trim_idle_requested();
+    if(!g_x_sync || g_x_inline_shared)x_trim_idle_requested();
     if(j->kind==XJ_IDLE_TRIM) {g_x_owner=prior_owner;return;}
 #ifdef DM_VULKAN_SHARED_POOLS
     if(j->kind==XJ_SHARED_CLOSE) {mtl_pool_del(j->h);g_x_owner=prior_owner;return;}
@@ -1124,7 +1149,7 @@ static void x_run(const xjob *j, uint64_t job) {
         const x_texels *r=j->read_texels;
 #ifdef DM_VULKAN_TEST_EMBED
         if(g_readback_test_observer)
-            g_readback_test_observer(!g_x_sync && pthread_equal(pthread_self(),g_x_thr));
+            g_readback_test_observer(g_x_inline_shared || (!g_x_sync && pthread_equal(pthread_self(),g_x_thr)));
 #endif
         mtl_read_texels(&r->texture,r->level,r->layer,&r->region,r->dest,r->row,r->image);
         g_x_owner=prior_owner;return;
@@ -1176,6 +1201,14 @@ static pthread_once_t g_shared_start_once=PTHREAD_ONCE_INIT;
 #endif
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
+    const char *mask=getenv("DM_NVN_CPU_MASK");
+    if(mask) {char *end=NULL;unsigned long n=strtoul(mask,&end,16);
+        if(!*mask || !end || *end || n>UINT32_MAX)die("DM_NVN_CPU_MASK expects a 32-bit hex mask");
+        g_x_cpu_mask=(unsigned)n;}
+    const char *in=getenv("DM_NVN_INLINE_SHARED");
+    if(in && strcmp(in,"0") && strcmp(in,"1"))die("DM_NVN_INLINE_SHARED expects 0 or 1");
+    g_x_inline_shared=in && !strcmp(in,"1");
+    if(g_x_inline_shared) {g_x_sync=1;LOG("[nvn] inline translation: serialized caller execution, shared pools retained, GPU completion remains asynchronous");}
     if (g_x_sync) { mtl_pool_defer_publication_disable(); LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); atomic_store_explicit(&g_x_started,1,memory_order_release);return; }
     pthread_attr_t at; pthread_attr_init(&at);
 #ifdef __APPLE__
@@ -1187,7 +1220,7 @@ static void x_start(void) {
     atomic_store_explicit(&g_x_started,1,memory_order_release);
 }
 #ifdef DM_VULKAN_SHARED_POOLS
-int dm_gfx_shared_owner_ready(void) {pthread_once(&g_shared_start_once,x_start);return !g_x_sync;}
+int dm_gfx_shared_owner_ready(void) {pthread_once(&g_shared_start_once,x_start);return !g_x_sync || g_x_inline_shared;}
 #endif
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -1200,6 +1233,11 @@ static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
     if (j->kind == XJ_SUBMIT) j->sub = atomic_fetch_add(&g_x_subs, 1) + 1;
     uint64_t job = ++g_xq_in;
     if (g_x_sync) {   // 当场执行：单线程提交时与旧路径同序 | Run in place: with single-thread submission the order is the same as the old path
+        // Reserve in the existing FIFO before waiting. The predecessor retains
+        // the sole execution lease until x_run and its CPU effects finish.
+        // Concurrent submit/cache/close/readback/FRAME callers cannot overtake
+        // it or enter the non-thread-safe recording state simultaneously.
+        if(g_x_inline_shared)while(g_xq_done+1!=job)pthread_cond_wait(&g_xcv,&g_xmu);
         pthread_mutex_unlock(&g_xmu); x_run(j, job); pthread_mutex_lock(&g_xmu);
         g_xq_done = job; pthread_cond_broadcast(&g_xcv);
     } else { g_xq[job % XQ] = *j; pthread_cond_broadcast(&g_xcv); }
@@ -1221,10 +1259,10 @@ static void x_wait(uint64_t job) {
 static void x_drain(void) { pthread_mutex_lock(&g_xmu); uint64_t job = g_xq_in; pthread_mutex_unlock(&g_xmu); x_wait(job); }
 static void x_trim_after_suspend(void) {
     // No trim-created queue/GPU initialization. Inline-reference fallback
-    // has no dedicated owner; leave the request pending without changing its
-    // legacy scheduling. Async tail FRAME jobs share this same worker queue.
+    // has no serialized owner; leave the request pending without changing its
+    // legacy scheduling. The guarded inline path uses the same FIFO ordering.
     dm_gfx_trim_memory_request();
-    if(!atomic_load_explicit(&g_x_started,memory_order_acquire) || g_x_sync) {
+    if(!atomic_load_explicit(&g_x_started,memory_order_acquire) || (g_x_sync && !g_x_inline_shared)) {
         if(atomic_exchange_explicit(&g_vma_dump_requested,0,memory_order_acq_rel))
             LOG("[vulkan VMA dump] failed: dedicated translation owner unavailable; request consumed");
         return;
@@ -1279,6 +1317,38 @@ static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后�
     if (lost) { static int red; if (!red++) LOG("【红】翻译队列：出图任务 %llu 的票号已被覆盖（票号表 %d 项不够），这次取图不等出图线程", (unsigned long long)job, XTK); }
     return tk;
 }
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && defined(DM_VULKAN_SHARED_POOLS)
+// Exercise the real FIFO with competing callers, without GPU timing or a mock
+// queue. The observer is absent from the APK, including profiling builds.
+static _Atomic unsigned inline_test_active,inline_test_seen,inline_test_errors;
+static uint64_t inline_test_last;
+static _Thread_local int inline_test_caller;
+static void inline_test_visit(uint64_t job) {
+    if(atomic_fetch_add(&inline_test_active,1) || !g_x_owner || !inline_test_caller)
+        atomic_fetch_add(&inline_test_errors,1);
+    if(job!=inline_test_last+1)atomic_fetch_add(&inline_test_errors,1);
+    inline_test_last=job;
+    for(unsigned i=0;i<16;i++)sched_yield();
+    atomic_fetch_add(&inline_test_seen,1);atomic_fetch_sub(&inline_test_active,1);
+}
+static void *inline_test_producer(void *unused) {
+    (void)unused;inline_test_caller=1;
+    for(unsigned i=0;i<128;i++) {xjob j={.kind=XJ_IDLE_TRIM};x_wait(x_push(&j));}
+    return NULL;
+}
+unsigned nvn_test_inline_serialization(void) {
+    if(!dm_gfx_shared_owner_ready() || !g_x_inline_shared)die("Inline FIFO test requires guarded caller mode");
+    inline_test_last=g_xq_done;g_inline_test_observer=inline_test_visit;
+    pthread_t producers[4];
+    for(unsigned i=0;i<4;i++)if(pthread_create(producers+i,NULL,inline_test_producer,NULL))die("Inline FIFO test producer");
+    for(unsigned i=0;i<4;i++)if(pthread_join(producers[i],NULL))die("Inline FIFO test join");
+    g_inline_test_observer=NULL;
+    unsigned seen=atomic_load(&inline_test_seen);
+    if(seen!=512 || atomic_load(&inline_test_errors) || atomic_load(&inline_test_active) || g_xq_in!=g_xq_done)
+        die("Inline FIFO execution order/exclusion/caller identity");
+    return seen;
+}
+#endif
 NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h) {
     gfx_enter();
     ((queue_t *)q)->submits++;

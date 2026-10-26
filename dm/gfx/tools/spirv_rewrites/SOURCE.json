@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/jhaizhou-ops/d2r-mobile",
+  "revision": "195ae11dc70f1ba7735c6063e1ed81102e1dbf52",
+  "directory": "dm/gfx/vulkan/engine",
+  "purpose": "Unmodified upstream SPIR-V optimization passes; offline tool only",
+  "files": {
+    "xbg_spirv_quad.cpp": "34b6a32364b86b6ecd432b8b8541e2aa5f5907b51da53c616ac38c666907ec6d",
+    "xbg_spirv_quad.h": "1b009c202910d2d97080bd66fc637c1fb593c3583223c77cc66e685e98ca0b9f",
+    "xbg_spirv_ldc.cpp": "df937a6b5b9b24874bdf7febbc6a8d7479c67c0e849b75ab24536646474695f2",
+    "xbg_spirv_ldc.h": "e7641f52dc9ff4cff6dbfa31fa159e1b3a5cda4948f45067b29ce260ec7df817",
+    "xbg_spirv_temps.cpp": "cdabed15f6e63008c81ce9babd14a79354f90ba030b85c571889f94b7d6937ff",
+    "xbg_spirv_temps.h": "ce8908eccef1b380719ba338724e9dd0695fa429c7c8d0582dd1e9f823d6bbc2"
+  }
+}

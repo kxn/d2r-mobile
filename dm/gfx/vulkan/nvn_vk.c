@@ -1429,8 +1429,8 @@ static void init_options(void) {
   const char *raw_image=getenv("DM_VK_SHARED_IMAGE_RAW_OBSERVE");
   if(raw_image && strcmp(raw_image,"0") && strcmp(raw_image,"1"))
     die("DM_VK_SHARED_IMAGE_RAW_OBSERVE expects0or1");
-  o->shared_image_raw_observe=raw_image && !strcmp(raw_image,"1");
-  LOG("[vulkan] shared image raw publication observation experimental=%d",o->shared_image_raw_observe);
+  o->shared_image_raw_observe=!raw_image || !strcmp(raw_image,"1");
+  LOG("[vulkan] shared image GPU byte scope=%d; CPU effects retain page scope",o->shared_image_raw_observe);
   int defer_requested=atomic_load_explicit(&pool_defer_publication_requested,memory_order_acquire);
   o->pool_defer_publication=defer_requested>=0?defer_requested:option_one("DM_VULKAN_DEFER_POOL_PUBLICATION");
   const char *sync_nvn=getenv("DM_NVN_SYNC");
@@ -2837,7 +2837,11 @@ int vk_pool_native_acquire_independent(uint64_t address,uint64_t size) {
 // An actual writer-generation is only a negative-test key: no new data or CPU
 // publication is inferred. Saturation disables reuse permanently.
 static uint64_t native_writer_generation=1;
-static void native_writer_changed(void) {if(native_writer_generation && !++native_writer_generation)native_writer_generation=0;}
+uint64_t vk_buffer_native_writer_generation(void) {return native_writer_generation;}
+static void native_writer_changed(void) {
+  vk_image_split_native_writer_changed();
+  if(native_writer_generation && !++native_writer_generation)native_writer_generation=0;
+}
 #ifdef DM_VULKAN_TEST_EMBED
 VkPipelineStageFlags vk_test_native_writer_stages(uint64_t address,uint64_t size) {
   if(!size || size>UINT64_MAX-address || vertex_buffer_write_overflow)return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -4680,13 +4684,18 @@ uint64_t vk_internal_commit_semaphores(VkSemaphore wait, VkPipelineStageFlags st
                                        VkSemaphore signal) {
   return commit(0, wait, stage, signal);
 }
-void vk_internal_wait(uint64_t serial) {
+void vk_internal_wait_from(uint64_t serial,const char *caller) {
   pthread_mutex_lock(&completion_mu);
   int wait_trace=queue_completed<serial?vk_system_trace_begin("Vulkan CPU waits queue completion"):0;
+  int caller_trace=wait_trace?vk_system_trace_begin(caller):0;
   while (queue_completed < serial)
     pthread_cond_wait(&completion_cv, &completion_mu);
   pthread_mutex_unlock(&completion_mu);
+  vk_system_trace_end(caller_trace);
   vk_system_trace_end(wait_trace);
+}
+void (vk_internal_wait)(uint64_t serial) {
+  vk_internal_wait_from(serial,"vk_internal_wait");
 }
 void vk_present_ticket_wait(uint64_t serial) {
   // x_present_ticket already waited for the translation/presentation job.

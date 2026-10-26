@@ -20,6 +20,9 @@ opus_mode=parser.add_mutually_exclusive_group()
 opus_mode.add_argument('--opus-shadow', action='store_true', help='bounded native Opus correctness mirror; original SDK remains sole audio output (default off)')
 opus_mode.add_argument('--native-opus', action=argparse.BooleanOptionalAction, default=None, help='native core math for adapted decoders, retaining original SDK packet validation/output queue (default on; --no-native-opus for SDK comparison)')
 parser.add_argument('--performance-hints',action='store_true',help='experimental public Android render-thread workload hints')
+parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
+parser.add_argument('--submission-plan-reference',action='store_true',help='cold comparison: conservative replay without whole-submission planning; retains guest commands, synchronization and GPU completion')
+parser.add_argument('--translation-cpu-mask',type=lambda s:int(s,0),default=0,help='cold translation-owner affinity bitmask; default0 retains Android scheduling')
 parser.add_argument('--storage-usage-reference',action='store_true',help='startup-only comparison: reserve Storage usage from the NVN IMAGE hint instead of first actual binding')
 parser.add_argument('--attachment-usage-reference',action='store_true',help='startup-only comparison: reserve Color Attachment usage for every supporting format')
 parser.add_argument('--texel-storage',action='store_true',help='experimental paired RGBA32F buffer storage path; requires matching alternative shader sidecars')
@@ -30,7 +33,7 @@ parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
 parser.add_argument('--shared-lazy-windows',action='store_true',help='cold experimental coherent userptr lazy windows; exact qualified provider only, default off')
-parser.add_argument('--shared-image-raw-observe',action='store_true',help='cold default-OFF coherent image observation experiment; GPU byte conflicts, CPU page conflicts retained')
+parser.add_argument('--shared-image-raw-observe',action=argparse.BooleanOptionalAction,default=None,help='cold coherent image GPU byte scope (default on when qualified); --no-shared-image-raw-observe retains the page-scope reference; CPU effects always retain page scope')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
 parser.add_argument('--native-resource-table',help='cold experimental authenticated DMNTBL table; requires explicit shared heap and matching app-local Turnip')
 parser.add_argument('--native-resource-pack-sha256',help='complete native pack content SHA256; all native-resource options are required together')
@@ -61,6 +64,7 @@ parser.add_argument('--dedicated-present-worker',action='store_true',help='start
 parser.add_argument('--present-worker-shared-queue',action='store_true',help='isolate presentation worker scheduling while preserving the original Vulkan queue; requires --dedicated-present-worker')
 parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction,default=None,help='startup-only stable GPU-produced FS image reuse (default on; --no-image-buffer-split for reference)')
 parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental shared UBO preparation reuse (default off); verify effective backend mode')
+parser.add_argument('--native-read-group-front',action=argparse.BooleanOptionalAction,default=None,help='startup-only same-pass resident coherent native sampled FS group (default off); verify effective backend mode')
 parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job attachment representation reuse (default off); verify effective backend mode')
 parser.add_argument('--attachment-raster-run',action=argparse.BooleanOptionalAction,default=None,help='startup-only fulfilled ordinary attachment access runs (default on; --no-attachment-raster-run for reference); verify actual history reuse')
 parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental validated pure-state replay segments (default off); verify effective backend mode')
@@ -148,12 +152,16 @@ if args.attach and args.legacy_astc_copy is not None:
     parser.error('--legacy-astc-copy/--no-legacy-astc-copy are startup-only and cannot be used with --attach')
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
+if args.attach and args.submission_plan_reference:
+    parser.error('--submission-plan-reference is startup-only and cannot be used with --attach')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
 if args.attach and args.source_partition is not None:
     parser.error('--source-partition is startup-only')
 if args.attach and args.state_segments is not None:
     parser.error('--state-segments/--no-state-segments are startup-only and cannot be used with --attach')
+if args.attach and args.native_read_group_front is not None:
+    parser.error('--native-read-group-front/--no-native-read-group-front are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_job_reuse is not None:
     parser.error('--attachment-job-reuse/--no-attachment-job-reuse are startup-only and cannot be used with --attach')
 if args.attach and args.attachment_raster_run is not None:
@@ -187,7 +195,7 @@ if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
     parser.error('--pool-window-bytes must be 0 or a power of two >= 4096, within signed 64-bit range')
 if args.shared_lazy_windows and (args.attach or args.shared_guest_heap is not True or not args.expect_shared_import_windows or not args.pool_window_bytes):
     parser.error('--shared-lazy-windows requires cold --shared-guest-heap --expect-shared-import-windows and nonzero --pool-window-bytes')
-if args.shared_image_raw_observe and (args.attach or args.shared_guest_heap is not True):
+if args.shared_image_raw_observe is not None and (args.attach or args.shared_guest_heap is not True):
     parser.error('--shared-image-raw-observe requires cold --shared-guest-heap')
 if args.expect_shared_import_windows and (args.attach or args.shared_guest_heap is not True or not args.pool_window_bytes):
     parser.error('--expect-shared-import-windows requires cold --shared-guest-heap and nonzero --pool-window-bytes')
@@ -242,6 +250,8 @@ if not args.attach:
               '--ez', 'opus_shadow', str(args.opus_shadow).lower(),
               '--ez', 'native_opus', str(args.native_opus).lower(),
               '--ez', 'external_profile', str(args.external_profile).lower(),
+              '--ez', 'inline_translation', str(args.inline_translation).lower(),
+              '--ei', 'translation_cpu_mask', str(args.translation_cpu_mask),
               '--ez', 'async_submit', str(args.async_submit).lower(),
               '--ez', 'cpu_copy_reference', str(not args.cpu_known_copies).lower(),
               '--ez', 'driver_constant_reference', str(not args.cache_driver_constants).lower(),
@@ -253,6 +263,8 @@ if not args.attach:
         launch += ['--ez','source_partition',str(args.source_partition).lower()]
     if args.state_segments is not None:
         launch += ['--ez','state_segments',str(args.state_segments).lower()]
+    if args.native_read_group_front is not None:
+        launch += ['--ez','native_read_group_front',str(args.native_read_group_front).lower()]
     if args.attachment_job_reuse is not None:
         launch += ['--ez','attachment_job_reuse',str(args.attachment_job_reuse).lower()]
     if args.attachment_raster_run is not None:
@@ -275,8 +287,8 @@ if not args.attach:
                    '--es','native_resource_producer_sha256',args.native_resource_producer_sha256]
     if args.shared_lazy_windows:
         launch += ['--ez','shared_lazy_windows','true']
-    if args.shared_image_raw_observe:
-        launch += ['--ez','shared_image_raw_observe','true']
+    if args.shared_image_raw_observe is not None:
+        launch += ['--ez','shared_image_raw_observe',str(args.shared_image_raw_observe).lower()]
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     if args.pixel_local is not None:
@@ -301,6 +313,7 @@ if not args.attach:
     launch += ['--ez', 'storage_bias_reference', str(not args.storage_offset_bias).lower()]
     launch += ['--ez', 'pool_sync_reference', str(not args.lazy_pool_sync).lower()]
     launch += ['--ez', 'performance_hint_reference', str(not args.performance_hints).lower()]
+    launch += ['--ez', 'submission_plan_reference', str(args.submission_plan_reference).lower()]
     launch += ['--ez', 'image_layout_reference', str(not args.optimal_image_layouts).lower()]
     launch += ['--ez', 'sampled_array_layout_reference', str(args.general_sampled_array_layouts_reference).lower()]
     launch += ['--ez', 'buffer_memory_reference', str(args.global_buffer_memory_reference).lower()]
@@ -424,6 +437,12 @@ while time.monotonic() < deadline:
                         raise SystemExit('state segments enabled but no actual segment consumption was recorded')
                     if args.state_segments is False and actual_state_segment_operations is not None:
                         raise SystemExit('state segments explicitly disabled but actual consumption was recorded')
+                    native_group_modes=re.findall(r'\[vulkan native read group front\] enabled=([01])\b',log)
+                    actual_native_read_group_front=bool(int(native_group_modes[-1])) if native_group_modes else None
+                    if args.native_read_group_front is not None and actual_native_read_group_front != args.native_read_group_front:
+                        raise SystemExit('native read group front backend startup mode did not match explicit request')
+                    native_group_hit=re.findall(r'\[vulkan native read group front\] actual-hit native=(\d+) unique-Pools=(\d+)',log)
+                    native_group_first_hit={'native_descriptors':int(native_group_hit[0][0]),'unique_Pools':int(native_group_hit[0][1])} if native_group_hit else None
                     attachment_reuse_modes=re.findall(r'\[vulkan attachment reuse\] enabled=([01])\b',log)
                     actual_attachment_reuse=bool(int(attachment_reuse_modes[-1])) if attachment_reuse_modes else None
                     if args.attachment_job_reuse is not None and actual_attachment_reuse != args.attachment_job_reuse:
@@ -477,6 +496,9 @@ while time.monotonic() < deadline:
                               'requested_attachment_raster_run':args.attachment_raster_run,
                               'actual_attachment_raster_run':actual_raster_run,
                               'attachment_raster_first_hit':raster_hit,
+                              'requested_native_read_group_front':args.native_read_group_front,
+                              'actual_native_read_group_front':actual_native_read_group_front,
+                              'native_read_group_front_first_hit':native_group_first_hit,
                               'requested_attachment_job_reuse':args.attachment_job_reuse,
                               'actual_attachment_job_reuse':actual_attachment_reuse,
                               'requested_source_partition':args.source_partition,

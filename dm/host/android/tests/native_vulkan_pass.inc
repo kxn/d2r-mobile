@@ -2,7 +2,7 @@
 // Pass lookahead must follow call returns/remaining handles and preserve unused
 // depth/stencil contents. GPU color and both aspects are independently read back.
 #include "../../../gfx/vulkan/nvn_vk_plan.h"
-static void pass_depth_test(const void *vertex,const void *fragment,int format) {
+static void pass_depth_test_mode(const void *vertex,const void *fragment,int format,int conservative) {
   uint8_t *storage;CHECK(!posix_memalign((void **)&storage,65536,1<<20));memset(storage,0,1<<20);
   NVNmemoryPoolBuilder mb={0};NVNmemoryPool pool;
   CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
@@ -90,7 +90,7 @@ static void pass_depth_test(const void *vertex,const void *fragment,int format) 
     } else if(test==6) {
       commands[0]=first;commands[1]=CALL(nvnCommandBufferEndRecording,&cmd);CALL(nvnQueueSubmitCommands,&queue,2,commands);CALL(nvnQueueFinish,&queue);
     } else submit(CALL(nvnCommandBufferEndRecording,&cmd));
-    int enabled=vk_tbdr_enabled();
+    int enabled=vk_tbdr_enabled() && !conservative;
     CHECK((vk_render_depth_omissions()>before)==(enabled && (test==0 || test==1 || test==7)));
     vk_readonly_depth_stats(&readonly_after,&readonly_reference);
     if(enabled && !readonly_reference && test>=10)
@@ -123,6 +123,9 @@ static void pass_depth_test(const void *vertex,const void *fragment,int format) 
 
 // Isolating a clear must preserve both untouched color/depth attachments and
 // pixels outside a partial clear. Exercise the ordinary and narrowed paths.
+static void pass_depth_test(const void *vertex,const void *fragment,int format) {
+  pass_depth_test_mode(vertex,fragment,format,0);
+}
 static void clear_sibling_preservation_test(void) {
   vk_state saved=S;
   uint8_t *storage;CHECK(!posix_memalign((void **)&storage,65536,1<<20));memset(storage,0,1<<20);

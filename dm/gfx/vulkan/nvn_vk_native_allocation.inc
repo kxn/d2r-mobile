@@ -219,6 +219,17 @@ static int native_allocation_write_range_locked(pool *p,void *token,uint64_t add
 // The per-chunk native stage ledger may skip a repeated GPU-use record, but
 // a NEW operation still needs its own Pool borrow across reentrant submits.
 // This is only lifetime metadata: do not move stage/page visibility forward.
+// Cold group construction only. The actual consumer retained this operation
+// before capture; post-draw publication will have acquired its recording ref.
+void *vk_pool_native_image_operation_owner(void *token) {
+  native_image_allocation *a=token;
+  pthread_mutex_lock(&V.resources);
+  pool *p=a?a->owner:NULL;
+  if(!a || atomic_load(&a->released) || !p || a->identity!=p->identity ||
+      p->shared_closing || (shared_lazy_active && !pool_operation_retains_locked(p)))
+    die("Native read group cold owner lacks operation lifetime");
+  pthread_mutex_unlock(&V.resources);return p;
+}
 void vk_pool_native_image_operation_retain(void *token) {
   if(!shared_lazy_active || !pool_operation_depth)return;
   native_image_allocation *a=token;

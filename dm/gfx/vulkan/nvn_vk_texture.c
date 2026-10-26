@@ -2333,6 +2333,7 @@ static uint64_t texture_binding_hits,texture_prepare_hits,texture_binding_misses
 // Owned functional branch coverage only; absent from the Android application.
 static uint64_t native_sampled_preflight_noops;
 uint64_t vk_test_native_sampled_preflight_noops(void) {return native_sampled_preflight_noops;}
+uint64_t vk_test_texture_binding_consumers(void) {return texture_binding_hits+texture_binding_misses;}
 #endif
 static atomic_uint_fast64_t published_binding_hits,published_prepare_hits,published_binding_misses;
 void vk_texture_binding_reference(int reference) { atomic_store(&texture_binding_requested,!!reference); }
