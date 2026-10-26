@@ -221,9 +221,17 @@ LLDB 取得的一个实际例子为：CPU 源 13,312 字节，按页扩大后 16
 
 官方六帧 API 结构对照没有新增显式 STORE，唯一的 Store 规则差异是未写深度面 `DONT_CARE` 变为独立规则支持的 `NONE`；真实硬件 DRAM 变化仍未测，不能用逻辑字节估计替代。该对照保留为默认关闭的实验，不据一个营地推断所有场景都应关闭 Store 分析。实现、136,400 项 GPU 语义检查、22 项启动工具检查、交错数据与 PMU/工具限制详见 [Store 成本报告](ANDROID_STORE_INDEX_COST_2026-10-27.zh-CN.md)。
 
+## 十、修复后的新原厂 GPU 数据与出图边界
+
+重开官方 Snapdragon Profiler 九项计数器，结合原官方 Perfetto 严格裁剪完整 Surface 间隔。最初样本发生特化 30→32，未作为正式无编译窗口；追加稳定 32→32 的样本后，当前约 **40.43 FPS**，新上游控制约 **43.36 FPS**，GPU clocks 均约 500 MHz。当前全 GPU 读/写约 114.65/65.77 MB 每游戏出图间隔，上游约 106.65/45.86 MB；全局含合成/Android UI，不能直接归成 NVN Shader 或 DRAM 饱和。
+
+实际 API 与上游源码另确认了出图差异：相同 1968×900 游戏输出，上游交换链也为 1968×900，当前为 2358×1080。无需改 APK 的临时 Android 缓冲尺寸对照使写入降到约 51.33 MB/间隔、FPS 约 40.96；说明呈现/合成有可减少的访存，但约 0.5 FPS 不能解释全部差距。系统尺寸已恢复，未把临时全系统 override 当作产品修复。
+
+更值得隔离的是 secondary 结构：前次实际每帧约 49 次二级执行，上游直接 primary 录制；已核对当前 f830 实际编译源码，执行边界存在 pending clean 与保守 invalidate/状态重置。GPU 成本还未单独测出，不直接改驱动删除保护。详细数据、限制与后续控制条件见 [原厂 GPU、呈现与 secondary 报告](ANDROID_GPU_PRESENT_AND_SECONDARY_2026-10-27.zh-CN.md)。
+
 ## 下一步与证据位置
 
-每周期一次额外提交/等待已经定位并以同 PID 对照证实；匹配的新修复、Turnip 策略与普通桌面发布也已完成。额外 Store 索引的工作量与边际时间已单独核实，继续删小检查尚无证据能解决剩余 FPS 差异。下一步以修复后实际驱动策略下的 GPU 数据和完整提交时间线验证关键路径。上游同机约 43.4 FPS 与当前约 40.3 FPS 的剩余差距尚未严格全部归因。不能再笼统说“GPU/CPU 互等已经全部清完”，也不能继续把正常窗口的全部主线程 Running 当作纯翻译。
+每周期一次额外提交/等待已经定位并以同 PID 对照证实；匹配的新修复、Turnip 策略与普通桌面发布也已完成。额外 Store 索引的工作量与边际时间、新原厂 GPU 计数器及呈现缓冲的访存成本均已核实，继续删小检查尚无证据能解决剩余 FPS 差异。下一步优先隔离 secondary/primary 结构与驱动缓存边界，并独立验证应用内游戏尺寸出图；不把显示尺寸对照等同原生窗口实现。上游约 43.4 FPS 与当前约 40.4 FPS 的剩余差距尚未严格全部归因。不能再笼统说“GPU/CPU 互等已经全部清完”，也不能继续把正常窗口的全部主线程 Running 当作纯翻译。
 
 当前全部原始数据位于 `.local/logs/inline-upstream-rootcause-v1/`：`owner-budget.json`、`planning-results.json`、`scope-cpu.sql/csv`、`WAIT1/`、`UPSTREAM-SCHED1/`、`fixed-mode-result.json`、`HINT1/`、`gpu-tools/comparison.json`、两臂原 `.sdp`/数据库/轨迹/SQL、`api-tools/`、`MODE-*/` 与 `mode-tools/`。性能窗口与后继调试失败分开保存；各已结束游戏均原生命周期确认存档后停止，驱动模式属性恢复原值。以上是实验结果与可排除项，不是“根因已经全部找完”的结论。
 
