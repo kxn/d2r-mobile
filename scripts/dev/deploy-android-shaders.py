@@ -4,6 +4,7 @@ Verify the original shader chain and all artifacts, then publish only after
 full on-device hash verification. Game modules and saves are never modified.
 """
 import argparse
+import concurrent.futures
 import ast
 import hashlib
 import json
@@ -190,6 +191,7 @@ def main():
     parser.add_argument('--serial', default='JNJF49UGBQ4XSCZT')
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--deploy', action='store_true', help='game must already be saved and stopped')
+    parser.add_argument('--verify-workers',type=int,choices=range(1,9),default=4,help='independent proof/tool verification workers; all checks retained')
     args = parser.parse_args()
     cache = args.cache.resolve()
     translator = Path(os.environ.get('XLATE', str(ROOT/'.local/build/dotnet/bin/dmsh_xlate/release/dmsh_xlate')))
@@ -259,90 +261,102 @@ def main():
     pixel_local_verification = {'empty_fallback':0, 'regenerated':0, 'disabled':0}
     artifacts = {p.name: {'sha256':sha(p), 'bytes':p.stat().st_size} for p in sorted(cache.iterdir()) if p.is_file()}
     with tempfile.TemporaryDirectory(prefix='d2r-shader-verify-') as temporary:
-        output = Path(temporary)
-        builtins = dmsh_vulkan.build_builtins(output)
+        builtin_output = Path(temporary)
+        builtins = dmsh_vulkan.build_builtins(builtin_output)
         require({r['key'] for r in builtins} == builtin_keys, 'builtin source mismatch')
-        for key in sorted(keys):
-            meta = (cache/(key+'.meta')).read_bytes()
-            require(len(meta)>=48, 'short shader metadata: '+key)
-            h = struct.unpack('<12I', meta[:48])
-            header_bytes=64 if h[0]==0x334b5644 else 48
-            require(h[0] in (0x324b5644,0x334b5644) and h[1]<6 and h[2]<6 and h[3]<=128 and
-                    len(meta)==header_bytes+h[3]*32+h[4] and h[8] in [0xffffffff,*range(16)] and
-                    not (h[9]&~31) and h[10]<=255 and h[11]==1, 'invalid raster metadata: '+key)
-            if header_bytes==64:
-                mask,offset,slots,version=struct.unpack_from('<4I',meta,48)
-                require(h[1] in (0,1,5) and mask and (h[1]==5 or mask<65536) and
-                        offset==(64 if h[1]==1 else 0) and slots==(32 if h[1]==5 else 16) and version==1,
-                        'invalid storage bias ABI: '+key)
-            if key in builtin_keys:
-                require(all(sha(output/(key+s)) == artifacts[key+s]['sha256'] for s in ['.spv','.meta']),
-                        'builtin regeneration mismatch: '+key)
-            else:
-                reflection = json.loads((cache/(key+'.json')).read_text())
-                require(reflection['chain']==chain and reflection['key']==key and
-                        reflection.get('compiler_options')==dmsh_vulkan.compiler_options() and
-                        reflection['spirv_sha256']==artifacts[key+'.spv']['sha256'] and
-                        reflection['metadata_sha256']==artifacts[key+'.meta']['sha256'], 'reflection hash mismatch: '+key)
-                verify_quad_traits(h[9],h[1],reflection,dmsh_vulkan.compiler_options(),key)
-                verify_fragment_profile_module((cache/(key+'.spv')).read_bytes(),h[1],dmsh_vulkan.compiler_options(),key)
-                # Recompute the complete proof from the actual shipped modules,
-                # not just its self-reported hash. Optional runtime failures keep
-                # full keys, but declared deployment artifacts must be exact.
-                verify_driver_artifacts(cache,key,reflection)
-                if key in specialization_keys:
-                    proof=reflection['uniform_specialization'];recipe=(cache/(key+'.spec')).read_bytes()
-                    require(sha(cache/(key+'.spec'))==proof['specialization_sha256'] and
-                            proof['base_sha256']==artifacts[key+'.spv']['sha256'] and len(recipe)>=80,
-                            'specialization artifact hash mismatch: '+key)
-                    sh=struct.unpack_from('<7I',recipe)
-                    require(sh==((0x32505344 if 'integer_only'in proof else 0x31505344),1|(256 if proof.get('integer_only')else 0),proof['binding'],proof['reg'],proof['offset'],proof['spec_id'],(len(recipe)-60)//4) and
-                            3<=sh[3]<19 and sh[4]<=65532 and sh[4]%4==0 and
-                            recipe[28:60]==bytes.fromhex(proof['base_sha256']), 'specialization recipe invalid: '+key)
-                    verify=output/'verify-spec.spv';verify.write_bytes(recipe[60:])
-                    subprocess.run(['spirv-val','--target-env','vulkan1.1',str(verify)],check=True,capture_output=True)
-                if key in predicate_keys:
-                    from dmsh_uniform_predicates import unpack as unpack_predicates
-                    require(key in specialization_keys and h[1]==1 and dmsh_vulkan.compiler_options().get('uniform_predicates'),
-                            'unexpected predicate sidecar: '+key)
-                    module,predicates=unpack_predicates((cache/(key+'.pred')).read_bytes(),(cache/(key+'.spv')).read_bytes(),
-                        (cache/(key+'.spec')).read_bytes(),reflection['uniform_predicates'])
-                    verify=output/'verify-pred.spv';verify.write_bytes(module)
-                    subprocess.run(['spirv-val','--target-env','vulkan1.1',str(verify)],check=True,capture_output=True)
-                if key in texel_alternative_keys:
-                    from dmsh_texel_ssbo import unpack_pair
-                    alt,spec_alt,bindings=unpack_pair((cache/(key+'.tssbo')).read_bytes(),(cache/(key+'.spv')).read_bytes(),
-                        (cache/(key+'.spec')).read_bytes()if key in specialization_keys else None,reflection['texel_storage_alternative'])
-                    require(h[1]==1 and dmsh_vulkan.compiler_options()['texel_storage_alternatives'],'unexpected texel alternative: '+key)
-                    require(reflection['texel_storage_alternative'].get('load_model','identity')==
-                            dmsh_vulkan.compiler_options().get('texel_storage_load_model','identity'),
-                            'texel alternative load-model mismatch: '+key)
-                    for n,payload in enumerate([alt,spec_alt]):
-                        if not payload:continue
-                        verify=output/('verify-texel-'+str(n)+'.spv');verify.write_bytes(payload)
+        def verify_one(key):
+            facts = {'vertex':0, 'position_proven':0, 'fragment':0, 'raster_errors':0}
+            pixel_local_verification = {'empty_fallback':0, 'regenerated':0, 'disabled':0}
+            # Proof generators use fixed scratch names: give each worker a
+            # private directory instead of sharing files or relaxing checks.
+            with tempfile.TemporaryDirectory(prefix='d2r-shader-entry-') as entry:
+                output=Path(entry)
+                meta = (cache/(key+'.meta')).read_bytes()
+                require(len(meta)>=48, 'short shader metadata: '+key)
+                h = struct.unpack('<12I', meta[:48])
+                header_bytes=64 if h[0]==0x334b5644 else 48
+                require(h[0] in (0x324b5644,0x334b5644) and h[1]<6 and h[2]<6 and h[3]<=128 and
+                        len(meta)==header_bytes+h[3]*32+h[4] and h[8] in [0xffffffff,*range(16)] and
+                        not (h[9]&~31) and h[10]<=255 and h[11]==1, 'invalid raster metadata: '+key)
+                if header_bytes==64:
+                    mask,offset,slots,version=struct.unpack_from('<4I',meta,48)
+                    require(h[1] in (0,1,5) and mask and (h[1]==5 or mask<65536) and
+                            offset==(64 if h[1]==1 else 0) and slots==(32 if h[1]==5 else 16) and version==1,
+                            'invalid storage bias ABI: '+key)
+                if key in builtin_keys:
+                    require(all(sha(builtin_output/(key+s)) == artifacts[key+s]['sha256'] for s in ['.spv','.meta']),
+                            'builtin regeneration mismatch: '+key)
+                else:
+                    reflection = json.loads((cache/(key+'.json')).read_text())
+                    require(reflection['chain']==chain and reflection['key']==key and
+                            reflection.get('compiler_options')==dmsh_vulkan.compiler_options() and
+                            reflection['spirv_sha256']==artifacts[key+'.spv']['sha256'] and
+                            reflection['metadata_sha256']==artifacts[key+'.meta']['sha256'], 'reflection hash mismatch: '+key)
+                    verify_quad_traits(h[9],h[1],reflection,dmsh_vulkan.compiler_options(),key)
+                    verify_fragment_profile_module((cache/(key+'.spv')).read_bytes(),h[1],dmsh_vulkan.compiler_options(),key)
+                    # Recompute the complete proof from the actual shipped modules,
+                    # not just its self-reported hash. Optional runtime failures keep
+                    # full keys, but declared deployment artifacts must be exact.
+                    verify_driver_artifacts(cache,key,reflection)
+                    if key in specialization_keys:
+                        proof=reflection['uniform_specialization'];recipe=(cache/(key+'.spec')).read_bytes()
+                        require(sha(cache/(key+'.spec'))==proof['specialization_sha256'] and
+                                proof['base_sha256']==artifacts[key+'.spv']['sha256'] and len(recipe)>=80,
+                                'specialization artifact hash mismatch: '+key)
+                        sh=struct.unpack_from('<7I',recipe)
+                        require(sh==((0x32505344 if 'integer_only'in proof else 0x31505344),1|(256 if proof.get('integer_only')else 0),proof['binding'],proof['reg'],proof['offset'],proof['spec_id'],(len(recipe)-60)//4) and
+                                3<=sh[3]<19 and sh[4]<=65532 and sh[4]%4==0 and
+                                recipe[28:60]==bytes.fromhex(proof['base_sha256']), 'specialization recipe invalid: '+key)
+                        verify=output/'verify-spec.spv';verify.write_bytes(recipe[60:])
                         subprocess.run(['spirv-val','--target-env','vulkan1.1',str(verify)],check=True,capture_output=True)
-                # Verify every actual module closure. Rebuild all authorizing
-                # records; an empty fallback grants no replacement capability.
-                verification = verify_pixel_local(cache, output, key, reflection, h[1], h[2],
-                                                  dmsh_vulkan.compiler_options())
-                pixel_local_verification[verification] += 1
-                dmsh_vulkan.write_metadata(output/'verify.meta', reflection)
-                require((output/'verify.meta').read_bytes()==meta, 'metadata regeneration mismatch: '+key)
-                raster = reflection.get('raster', {})
-                facts['vertex'] += reflection['stage']=='vs'
-                facts['fragment'] += reflection['stage']=='ps'
-                facts['position_proven'] += reflection['stage']=='vs' and raster.get('pos_attr',-1)>=0
-                facts['raster_errors'] += 'raster_error' in reflection
-            if args.baseline:
-                require(sha(args.baseline/(key+'.spv'))==artifacts[key+'.spv']['sha256'], 'SPIR-V changed: '+key)
-                if dmsh_vulkan.compiler_options()['texel_storage_alternatives'] or dmsh_vulkan.compiler_options().get('uniform_predicates'):
-                    require(sha(args.baseline/(key+'.meta'))==artifacts[key+'.meta']['sha256'],
-                            'paired shader metadata changed: '+key)
-                    reference_spec=args.baseline/(key+'.spec')
-                    current_spec=cache/(key+'.spec')
-                    require(reference_spec.exists()==current_spec.exists() and
-                            (not current_spec.exists() or sha(reference_spec)==sha(current_spec)),
-                            'paired shader specialization changed: '+key)
+                    if key in predicate_keys:
+                        from dmsh_uniform_predicates import unpack as unpack_predicates
+                        require(key in specialization_keys and h[1]==1 and dmsh_vulkan.compiler_options().get('uniform_predicates'),
+                                'unexpected predicate sidecar: '+key)
+                        module,predicates=unpack_predicates((cache/(key+'.pred')).read_bytes(),(cache/(key+'.spv')).read_bytes(),
+                            (cache/(key+'.spec')).read_bytes(),reflection['uniform_predicates'])
+                        verify=output/'verify-pred.spv';verify.write_bytes(module)
+                        subprocess.run(['spirv-val','--target-env','vulkan1.1',str(verify)],check=True,capture_output=True)
+                    if key in texel_alternative_keys:
+                        from dmsh_texel_ssbo import unpack_pair
+                        alt,spec_alt,bindings=unpack_pair((cache/(key+'.tssbo')).read_bytes(),(cache/(key+'.spv')).read_bytes(),
+                            (cache/(key+'.spec')).read_bytes()if key in specialization_keys else None,reflection['texel_storage_alternative'])
+                        require(h[1]==1 and dmsh_vulkan.compiler_options()['texel_storage_alternatives'],'unexpected texel alternative: '+key)
+                        require(reflection['texel_storage_alternative'].get('load_model','identity')==
+                                dmsh_vulkan.compiler_options().get('texel_storage_load_model','identity'),
+                                'texel alternative load-model mismatch: '+key)
+                        for n,payload in enumerate([alt,spec_alt]):
+                            if not payload:continue
+                            verify=output/('verify-texel-'+str(n)+'.spv');verify.write_bytes(payload)
+                            subprocess.run(['spirv-val','--target-env','vulkan1.1',str(verify)],check=True,capture_output=True)
+                    # Verify every actual module closure. Rebuild all authorizing
+                    # records; an empty fallback grants no replacement capability.
+                    verification = verify_pixel_local(cache, output, key, reflection, h[1], h[2],
+                                                      dmsh_vulkan.compiler_options())
+                    pixel_local_verification[verification] += 1
+                    dmsh_vulkan.write_metadata(output/'verify.meta', reflection)
+                    require((output/'verify.meta').read_bytes()==meta, 'metadata regeneration mismatch: '+key)
+                    raster = reflection.get('raster', {})
+                    facts['vertex'] += reflection['stage']=='vs'
+                    facts['fragment'] += reflection['stage']=='ps'
+                    facts['position_proven'] += reflection['stage']=='vs' and raster.get('pos_attr',-1)>=0
+                    facts['raster_errors'] += 'raster_error' in reflection
+                if args.baseline:
+                    require(sha(args.baseline/(key+'.spv'))==artifacts[key+'.spv']['sha256'], 'SPIR-V changed: '+key)
+                    if dmsh_vulkan.compiler_options()['texel_storage_alternatives'] or dmsh_vulkan.compiler_options().get('uniform_predicates'):
+                        require(sha(args.baseline/(key+'.meta'))==artifacts[key+'.meta']['sha256'],
+                                'paired shader metadata changed: '+key)
+                        reference_spec=args.baseline/(key+'.spec')
+                        current_spec=cache/(key+'.spec')
+                        require(reference_spec.exists()==current_spec.exists() and
+                                (not current_spec.exists() or sha(reference_spec)==sha(current_spec)),
+                                'paired shader specialization changed: '+key)
+            return facts,pixel_local_verification
+        with concurrent.futures.ThreadPoolExecutor(args.verify_workers) as pool:
+            for index,(entry_facts,entry_pixel) in enumerate(pool.map(verify_one,sorted(keys)),1):
+                for name,value in entry_facts.items():facts[name]+=value
+                for name,value in entry_pixel.items():pixel_local_verification[name]+=value
+                if index%1000==0 or index==len(keys):print(f'Verified {index}/{len(keys)} shader closures',flush=True)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     report = {'chain':chain, 'cache':str(cache), 'upstream':upstream, 'validated_game_and_builtin_shaders':len(keys),
               'raster':facts, 'original_proofs_unchanged':True,'specialization_recipes':len(specialization_keys),'texel_alternative_pairs':len(texel_alternative_keys),'predicate_sidecars':len(predicate_keys), 'baseline_spirv_identical':bool(args.baseline),
