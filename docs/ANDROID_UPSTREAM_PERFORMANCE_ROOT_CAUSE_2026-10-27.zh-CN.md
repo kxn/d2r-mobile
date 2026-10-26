@@ -2,7 +2,7 @@
 
 状态：**调查进行中，尚未证明全部差距的根因，不代表优化目标完成。** 这次以真实执行路径、调度轨迹和原厂 GPU 计数作比较，不再从个别叶函数频率推断全部成本。
 
-当前手机安装的是实验分支 `codex/inline-shared-translation-v1` 的 `480ce73` 构建（APK SHA `1d194bea3976975faa8dfb92db811111647c5e43d96b870ffe5fdd042c49dce7`），原游戏 CPU 模块未改变；着色器链 `29e56b51bce5`。后继 `9ed3304` 补充启动参数检查，`42b24aa` 补充 GPU 功能夹具，不冒充已经进入该 APK。代码已备份至 fork。
+第一至六节主要使用实验分支 `codex/inline-shared-translation-v1` 的 `480ce73` 构建（APK SHA `1d194bea3976975faa8dfb92db811111647c5e43d96b870ffe5fdd042c49dce7`），着色器链 `29e56b51bce5`。`9ed3304` 补充启动参数检查，`42b24aa` 补充 GPU 功能夹具，不冒充进入了该 APK。第七节追加了 `5652204` 的调用来源注释取证和 `a31af09` 的正式冷启动修复验证；原游戏 CPU 模块、native 资源和 shader 链未改变。各版本与成绩分别记录，不将实验脚本启动等同桌面版发布。
 
 ## 一、已分清：回放 CPU 工作与阻塞等待
 
@@ -137,8 +137,59 @@ MB 是十进制。纹理读取属于总读取，不能相加。**两端 GPU 频�
 
 有界追加的六次冷启动探测均未再命中慢状态，各次均确认存档、停止并恢复属性。仅使用原有 game-state 作为是否继续抓工具数据的触发条件，没有将这些短探测当作六个新的官方 FPS 成绩，也没有借此声称异常已消失。当前已经定位到额外提交/队列完成等待这一类路径，尚未拿到慢状态调用栈，不能指认具体调用者，更不能擅自删掉等待。
 
+## 七、已证实的残留假依赖：CPU 图像读取被扩大到邻居 GPU 写入
+
+前述“尚未取得慢状态调用栈”是当时状态。后继使用 `5652204` 给**已有官方 Perfetto 等待区间**增加调用者名称；只有原等待区间真的启用时才加入嵌套名称，没有新计时器、采样器或自定义 GPU 时间。原因是本机 Simpleperf 离 CPU 栈确实不可用、原 Perfetto 只有等待时长；原 LLDB 仍用于资源/范围检查。原 GPU 完成/资源重置夹具通过 529,514 项，未改变等待/发布语义。
+
+新的慢窗口中，327 次长等待全部来自 `vk_pool_shared_cpu_observe_prepare`。正式 LLDB 调用栈进一步定位到：`vk_draw_record_impl → vk_shader_cpu_sources → texture_cpu_preflight → vk_pool_cpu_observe_prepare → vk_pool_shared_cpu_observe_prepare`，是绘制前的 CPU 图像源准备，不是 NVN guest fence、WSI 取图或资源重置锁。
+
+LLDB 取得的一个实际例子为：CPU 源 13,312 字节，按页扩大后 16,384 字节；同一 pending submission 中的 GPU publication 长 65,536 字节，结束于 CPU 源之前 **48 字节**。二者真实字节范围完全不相交，仅与扩大的页范围相交。见 `.local/logs/queue-wait-origin-v1/false-page-hazard.json`。该快照的 CLI Pool 属性表达式因上下文选择失败而没有取得，未将其伪称为属性证明。
+
+随后另一个慢进程取得了独立的完整证明：CPU 源 5,120 字节、页范围 8,192 字节；GPU publication 5,120 字节，起点在 CPU 源结束后 **208 字节**。该 Pool 实测内存属性为 `0xf`，具备 HOST_COHERENT；整个页包络位于同一存活 Pool，存在真实导入。相交项全为 shared GPU publication，实际 CPU 源与所有这些写入均不相交，没有相交的 CPU completion effect。
+
+根因在于原保守检查把两类依赖混到同一个页包络：CPU 写回/保护确实涉及整页，而缓存一致的 GPU 写入只应与 CPU 真正要读的字节比较。即使没有一字节重叠，原路径仍将当前 recording 中途提交，并等待它全部 GPU 工作完成，破坏异步流水线。`readback_ranges/cpu_reads/upload_waits=0` 未覆盖这条路径，不能据此证明没有等待。
+
+### 同 PID、同地址布局的因果对照
+
+为了排除 ASLR/重启差异，使用官方 LLDB 在上述 Pool 和完整 pending 范围证明后，仅将宿主可写数据 `V.options.shared_image_raw_observe` 从 0 改为 1 一次。没有改游戏代码、NSO、材质、资源、世界状态、分辨率或任何驱动属性。它是一次明确标记的调试实验，**不是绕过冷启动设置交付产品**；待调试器明确 detach 后重新预热、用原官方 Perfetto 取得后窗口，最后原生命周期确认存档并停止。
+
+| 同一 PID 5675 | 页范围 GPU 依赖 | 精确字节 GPU 依赖 |
+|---|---:|---:|
+| 实际 FPS | **16.20** | **40.35** |
+| 上屏平均间隔 ms | 61.729 | 24.781 |
+| 主线程 Running ms/帧，含原游戏执行 | 27.271 | 19.970 |
+| 主线程运行加权 MHz | 1104.11 | 1566.10 |
+| replay 墙钟 ms/次 | 48.458 | 12.792 |
+| replay Running ms/次 | 16.645 | 12.787 |
+| replay 非 Running ms/次 | **31.814** | **0.005** |
+| Present 非 Running ms/次 | 0.001 | 2.429 |
+| 内部提交/guest，端点统计 | 2 | 1 |
+| PSO / 特化变体，两个窗口前后均相同 | 256 / 30 | 256 / 30 |
+
+两边都是同一 APK `4b0b41574ab701ca4af1f0f83eeb89bcc6b4d0d8c207ae3e9d950fd0a7cb2beb`、同一 ELF `b0e6a35c9699a0b92fac040870a3cd3488c40cb874c83114c05e634fb68d8d03`、同一 f830/SYSMEM、1968×900 输出及固定 0.85。完整数据与工具/字段修改边界在 `same-PID-causal-results.json` 和 `mode-tools/LIVE-SYSMEM-PROBE14-LLDB-lldb/`。范围和条件来自调试器；时间来自调试器之外的官方 Perfetto，不混用。
+
+**这证明每帧约 32 ms 的停等是兼容层的假 GPU 字节依赖，可以去掉。** CPU 频率随吞吐变化，因此 Running 减少不能称退休指令减少了同等比例；Present 恢复约 2.4 ms 非 Running 也不代表仍有原来的错误依赖。修复后约 20 ms 的内联主线程包含原游戏执行，回放本身约 12.79 ms，其中 planning 约 1.46 ms，不能再将整个主线程时间称作纯翻译开销。
+
+此前一次同 PID 调试在切换后立刻读取了尚未更新的原 game-state 行，控制器因断言退出，虽然后继状态已为 true，**没有取得正式后窗口，不计收益**。另一次原 LLDB 脚本对已自动删除的 one-shot breakpoint 再删除，导致收尾失败；原记录保留。后继用 `finally: Detach()` 的官方 LLDB 控制正确完成 detach、原存档和停止，上表仅使用这一组完整对照。
+
+### 冷启动实现与验收
+
+现有字节范围分离路径已有严格准入，本次将其从长期关闭的候选改为默认策略：必须同一存活 shared Pool、真实导入、HOST_COHERENT、页包络完全在 Pool 内，GPU publication 才用实际 CPU 源字节；CPU callbacks/writeback 仍用页包络。不满足准入的资源仍保留原保护/缓存维护依赖，真实字节重叠仍等待。没有删除真实同步、CPU 观察租约或写回，也没有新增每 draw 扫描。
+
+`a31af09` 同时更新后端、JNI/Java 的冷启动默认，CLI 增加 `--no-shared-image-raw-observe` 作为显式页范围参考；缓存结果只在启动时设置，启动后 setter 仍拒绝修改。旧持久 profile 的显式 false 仍会覆盖默认值，必须在发布时重新资格化并更新，不能伪称所有已有安装已自动启用。
+
+当前源码重跑默认/0/1、邻居/真实重叠/CPU effect/缓存维护四类 **12 个实际 GPU 夹具，共 947 项通过**；保留未导入、非一致性属性、跨 Pool 页等拒绝检查。它们验证机制，不是 Android 全场景或实际 NC 硬件认证。启动工具 17 项通过。新 canonical APK `2766b520e96ee40016d19512e96bc6fcadf9c216e9640e2b128b4dc0b6ee5244`，ELF `1b221934b358d5f3b0d5ea6f477ccda343a30d5674670941c1f8ea78419caaf4`，构建指纹/产物在 `.local/build/coherent-image-byte-scope-v1/`。
+
+新 APK 已通过原脚本进行两次真正冷启动，**没有调试器或运行期内存修改**，实际 byte policy=true、shared/lazy/native=true，原游戏模块运行到营地。两次 SYSMEM 得到 40.24 / 40.26 FPS，内部提交/guest 均为 1；各次原保存 commits=2 后停止。其特化变体都有 30→32 增长，因此只作为冷启动功能/运行证据，不替代上面 30→30 的严格因果窗口。默认自动渲染模式仍约 33.56 FPS，说明页范围假依赖与前节驱动通道选择是**两个不同问题，收益不能相加**。
+
+另补实际 `BYTE-SYSMEM3-WARM`：工具采集前等待 tick≥1000 且八次 distinct 管线/特化状态稳定，实际窗口 PSO 256→256、特化 32→32，得到 **40.19 FPS**，内部/guest=828/828。新默认在冷启动且正式窗口无特化增长时也成立；这不是调试器写配置的运行结果。
+
+截图未见明显黑块或缺几何；没有据营地和截图宣称战斗、全场景、长期温度或 60 FPS 已通过。当前桌面持久配置仍锚定旧 APK/shader 且显式关闭该策略，新 APK 目前只有实验脚本启动经过验收；后续须完成匹配 profile 的正式发布，不能让桌面校验拒绝后静默回到旧配置。
+
 ## 下一步与证据位置
 
-优先定位这次新增的“每周期一次内部提交并等待”调用来源及其必要的依赖；随后再优化正常状态下驱动通道选择与 CPU 准备。不能继续用所有正常窗口 15 ms 执行的结论掩盖慢状态约 31 ms 的真实等待，也不能把 CPU Running 降低直接写成已删除相同运算量。
+每周期一次额外提交/等待已经定位并以同 PID 对照证实。接下来先完成新修复与普通桌面启动配置的匹配发布，再研究正常状态的 Turnip 通道选择和 CPU 准备。上游同机约 43.4 FPS 与当前正常 SYSMEM 约 40.3 FPS 的剩余差距尚未严格全部归因；当前约 1.46 ms planning 是明确的额外 CPU 工作，但之前整段关闭会损失消费者收益，仍须区分净成本。不能再笼统说“GPU/CPU 互等已经全部清完”，也不能继续把正常窗口的全部主线程 Running 当作纯翻译。
 
 当前全部原始数据位于 `.local/logs/inline-upstream-rootcause-v1/`：`owner-budget.json`、`planning-results.json`、`scope-cpu.sql/csv`、`WAIT1/`、`UPSTREAM-SCHED1/`、`fixed-mode-result.json`、`HINT1/`、`gpu-tools/comparison.json`、两臂原 `.sdp`/数据库/轨迹/SQL、`api-tools/`、`MODE-*/` 与 `mode-tools/`。性能窗口与后继调试失败分开保存；各已结束游戏均原生命周期确认存档后停止，驱动模式属性恢复原值。以上是实验结果与可排除项，不是“根因已经全部找完”的结论。
+
+新增实证位于 `.local/logs/queue-wait-origin-v1/`（含保留的失败、LLDB 原栈和有限范围快照、同 PID 前后官方窗口、529,514 项 readback/reset 夹具和 947 项最终字节依赖夹具）以及 `.local/logs/coherent-image-byte-scope-v1/`（新 APK 冷启动资格）。有一次调试失败后目标已退出，没有为保存而重新启动；成功对照和冷启动的存档收条独立记录，不将所有历史失败写成成功收尾。
