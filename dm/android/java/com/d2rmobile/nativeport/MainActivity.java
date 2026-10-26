@@ -49,6 +49,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeAttachmentRasterRun(boolean enabled);
     private static native void nativeStateSegments(boolean enabled);
     private static native void nativeSourcePartition(boolean enabled);
+    private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
     private static native void nativePoolSyncReference(boolean reference);
@@ -277,6 +278,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
+            nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
             nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));

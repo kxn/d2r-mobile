@@ -789,6 +789,15 @@ static void fixed_shared_buffer_test(void) {
 #endif
 int dm_vulkan_test_main(void) {
   crash_thread_init();
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && defined(DM_VULKAN_SHARED_POOLS)
+  if(getenv("DM_INLINE_TRANSLATION_FIFO_FIXTURE")) {
+    extern unsigned nvn_test_inline_serialization(void);
+    unsigned jobs=nvn_test_inline_serialization();
+    CHECK(!V.device);
+    printf("{\"test\":\"inline-translation-FIFO\",\"caller_jobs\":%u,\"concurrent_producers\":4,\"ordered_exclusive\":true,\"game_modules_executed\":false,\"result\":\"passed\"}\n",jobs);
+    return 0;
+  }
+#endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   const char *span_reference=getenv("DM_DRIVER_SPAN_REFERENCE");
   if(span_reference) {
@@ -886,7 +895,7 @@ int dm_vulkan_test_main(void) {
     descriptor_pool_block_test();CHECK(vk_validation_error_count()==0);
     printf("{\"test\":\"descriptor-pool-blocks\",\"checks\":%u,\"physical_sets\":512,\"retention_budget\":2048,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
   }
-#ifdef DM_VULKAN_NATIVE_RESOURCES
+#if defined(DM_VULKAN_NATIVE_RESOURCES) && defined(DM_VULKAN_IMAGE_SOURCE_WRAP)
   if(getenv("DM_SOURCE_PARTITION_FORCE"))vk_test_image_source_flow(1);
   if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE")){vk_test_image_source_flow(1);source_flow_observe=1;}
   if(getenv("DM_SOURCE_PARTITION_FIXTURE")) {
@@ -989,7 +998,9 @@ int dm_vulkan_test_main(void) {
     }
 #endif
 #ifndef DM_ANDROID_APP
+#ifdef DM_VULKAN_IMAGE_SOURCE_WRAP
     if(getenv("DM_IMAGE_SOURCE_FLOW_FORCE"))image_source_flow_check();
+#endif
 #endif
     return 0;}
   if(getenv("DM_NATIVE_LANE_WINDOW_FIXTURE")) {native_lane_gpu_test();return 0;}
