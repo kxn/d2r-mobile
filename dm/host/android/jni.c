@@ -367,6 +367,19 @@ static int shared_image_raw_observe_startup;
 static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int inline_translation_startup;
+static unsigned translation_cpu_mask_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTranslationCpuMask(
+    JNIEnv *env,jclass klass,jint mask) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed || mask<0) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,"translation_cpu_mask is a nonnegative cold setting");
+    return;
+  }
+  translation_cpu_mask_startup=(unsigned)mask;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeInlineTranslation(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -799,7 +812,9 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   vk_driver_span_reference_startup(driver_span_reference_startup);
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
-  if(setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||
+  char translation_cpu_mask[16];snprintf(translation_cpu_mask,sizeof translation_cpu_mask,"%x",translation_cpu_mask_startup);
+  if(setenv("DM_NVN_CPU_MASK",translation_cpu_mask,1) ||
+      setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT",native_read_group_front_startup?"1":"0",1) ||

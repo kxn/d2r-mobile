@@ -46,6 +46,9 @@ static void x_shared_cache(uint64_t,size_t,int);
 #include <TargetConditionals.h>
 #endif
 #include <unistd.h>
+#if defined(__ANDROID__) || defined(__linux__)
+#include <sched.h>
+#endif
 #if TARGET_OS_OSX
 #define DM_MEM_CAP_DEFAULT_GB 24
 #else
@@ -1063,6 +1066,7 @@ static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done;   // 入队任务数 /
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
 static int g_x_sync, g_x_inline_shared; static pthread_t g_x_thr;
+static unsigned g_x_cpu_mask;
 static _Atomic int g_x_started;
 #ifdef DM_VULKAN_TEST_EMBED
 // Owned functional observer, installed/reset only while no readback job is in
@@ -1110,6 +1114,21 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
 }
 static void x_run(const xjob *j, uint64_t job) {
     int prior_owner=g_x_owner;g_x_owner=1;
+#if defined(__ANDROID__) || defined(__linux__)
+    // Separate cold scheduling control for either translation topology. Only
+    // the real presenting caller/worker is affected, never GPU completion or
+    // unrelated game workers. The zero-mask default leaves Android in charge.
+    if(g_x_cpu_mask && j->kind==XJ_PRESENT) {
+        static _Thread_local unsigned applied,presents;
+        if(!(presents++%128)) {
+            cpu_set_t cores;CPU_ZERO(&cores);
+            for(unsigned c=0;c<32;c++)if(g_x_cpu_mask&(1u<<c))CPU_SET(c,&cores);
+            int r=sched_setaffinity(0,sizeof cores,&cores);
+            if(applied!=g_x_cpu_mask)LOG("[nvn] translation CPU mask=%x tid=%ld result=%d",g_x_cpu_mask,(long)gettid(),r);
+            if(!r)applied=g_x_cpu_mask;
+        }
+    }
+#endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
     if(g_inline_test_observer)g_inline_test_observer(job);
 #endif
@@ -1182,6 +1201,10 @@ static pthread_once_t g_shared_start_once=PTHREAD_ONCE_INIT;
 #endif
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
+    const char *mask=getenv("DM_NVN_CPU_MASK");
+    if(mask) {char *end=NULL;unsigned long n=strtoul(mask,&end,16);
+        if(!*mask || !end || *end || n>UINT32_MAX)die("DM_NVN_CPU_MASK expects a 32-bit hex mask");
+        g_x_cpu_mask=(unsigned)n;}
     const char *in=getenv("DM_NVN_INLINE_SHARED");
     if(in && strcmp(in,"0") && strcmp(in,"1"))die("DM_NVN_INLINE_SHARED expects 0 or 1");
     g_x_inline_shared=in && !strcmp(in,"1");

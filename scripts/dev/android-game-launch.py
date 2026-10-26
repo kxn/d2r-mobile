@@ -21,6 +21,7 @@ opus_mode.add_argument('--opus-shadow', action='store_true', help='bounded nativ
 opus_mode.add_argument('--native-opus', action=argparse.BooleanOptionalAction, default=None, help='native core math for adapted decoders, retaining original SDK packet validation/output queue (default on; --no-native-opus for SDK comparison)')
 parser.add_argument('--performance-hints',action='store_true',help='experimental public Android render-thread workload hints')
 parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
+parser.add_argument('--translation-cpu-mask',type=lambda s:int(s,0),default=0,help='cold translation-owner affinity bitmask; default0 retains Android scheduling')
 parser.add_argument('--storage-usage-reference',action='store_true',help='startup-only comparison: reserve Storage usage from the NVN IMAGE hint instead of first actual binding')
 parser.add_argument('--attachment-usage-reference',action='store_true',help='startup-only comparison: reserve Color Attachment usage for every supporting format')
 parser.add_argument('--texel-storage',action='store_true',help='experimental paired RGBA32F buffer storage path; requires matching alternative shader sidecars')
@@ -247,6 +248,7 @@ if not args.attach:
               '--ez', 'native_opus', str(args.native_opus).lower(),
               '--ez', 'external_profile', str(args.external_profile).lower(),
               '--ez', 'inline_translation', str(args.inline_translation).lower(),
+              '--ei', 'translation_cpu_mask', str(args.translation_cpu_mask),
               '--ez', 'async_submit', str(args.async_submit).lower(),
               '--ez', 'cpu_copy_reference', str(not args.cpu_known_copies).lower(),
               '--ez', 'driver_constant_reference', str(not args.cache_driver_constants).lower(),
