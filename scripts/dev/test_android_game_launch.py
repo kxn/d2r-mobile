@@ -59,6 +59,17 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_guest_worker_qos_is_explicit_and_cold_only(self):
+        self.assertNotIn('guest_worker_qos',self.launch_command([]))
+        for option,value in [('--guest-worker-qos','true'),('--no-guest-worker-qos','false')]:
+            command=self.launch_command([option]);index=command.index('guest_worker_qos')
+            self.assertEqual(command[index-1:index+2],['--ez','guest_worker_qos',value])
+            with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
     def test_fixed_recording_arms_have_explicit_matched_prerequisites(self):
         self.assertNotIn('render_record_mode',self.launch_command([]))
         for mode,value in [('secondary','1'),('primary','2')]:

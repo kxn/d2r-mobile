@@ -367,11 +367,24 @@ static int shared_image_raw_observe_startup=1;
 static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int inline_translation_startup;
+static int guest_worker_qos_startup;
 static int submission_plan_reference_startup;
 static int keep_attachment_stores_startup;
 static int render_record_mode_startup;
 static unsigned translation_cpu_mask_startup;
 static char turnip_autotune_startup[32];
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeGuestWorkerQos(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"guest_worker_qos is fixed before native startup");
+    return;
+  }
+  guest_worker_qos_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTurnipAutotune(
     JNIEnv *env,jclass klass,jstring selection) {
   (void)klass;
@@ -869,6 +882,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   vk_driver_span_reference_startup(driver_span_reference_startup);
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
+  extern void dm_android_guest_worker_qos_startup(int);
+  dm_android_guest_worker_qos_startup(guest_worker_qos_startup);
   // This driver policy is app-private and frozen before Vulkan initialization.
   // Leaving it default preserves external profiler/property configuration.
   if(turnip_autotune_startup[0] && strcmp(turnip_autotune_startup,"default") &&

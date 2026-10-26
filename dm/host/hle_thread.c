@@ -24,6 +24,17 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
+#ifdef __ANDROID__
+#include <sys/resource.h>
+// Upstream's Android pthread/qos.h maps USER_INTERACTIVE to nice -10.
+// Select once before creating any guest threads; leave the adopted main
+// thread and unrelated Android/driver/completion threads alone.
+static int android_guest_worker_qos;
+void dm_android_guest_worker_qos_startup(int enabled) {
+    android_guest_worker_qos=!!enabled;
+    LOG("[android guest worker policy] enabled=%d",android_guest_worker_qos);
+}
+#endif
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <pthread/qos.h>
@@ -231,6 +242,15 @@ static void *thread_main(void *p) {
     qos_class_t qc = QOS_CLASS_UNSPECIFIED; int rp = 0;
     pthread_get_qos_class_np(pthread_self(), &qc, &rp); t->qos = (uint32_t)qc;
     t->mport = pthread_mach_thread_np(pthread_self());
+#elif defined(__ANDROID__)
+    int requested=android_guest_worker_qos?-10:0;
+    errno=0;
+    int policy_result=android_guest_worker_qos?setpriority(PRIO_PROCESS,gettid(),requested):0;
+    int policy_error=errno;
+    errno=0;int actual_nice=getpriority(PRIO_PROCESS,gettid());int read_error=errno;
+    if(android_guest_worker_qos)t->qos=0x21; // Same requested QoS class as upstream.
+    LOG("[android guest worker qos] tid=%d handle=%#x enabled=%d requested_nice=%d actual_nice=%d set_result=%d errno=%d read_errno=%d",
+        gettid(),t->handle,android_guest_worker_qos,requested,actual_nice,policy_result,policy_error,read_error);
 #endif
     crash_thread_init();
     guest_thread_init();

@@ -43,6 +43,7 @@ opus_mode.add_argument('--opus-shadow', action='store_true', help='bounded nativ
 opus_mode.add_argument('--native-opus', action=argparse.BooleanOptionalAction, default=None, help='native core math for adapted decoders, retaining original SDK packet validation/output queue (default on; --no-native-opus for SDK comparison)')
 parser.add_argument('--performance-hints',action='store_true',help='experimental public Android render-thread workload hints')
 parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
+parser.add_argument('--guest-worker-qos',action=argparse.BooleanOptionalAction,default=None,help='cold Android upstream QoS parity: request nice -10 for newly created guest workers only')
 parser.add_argument('--submission-plan-reference',action='store_true',help='cold comparison: conservative replay without whole-submission planning; retains guest commands, synchronization and GPU completion')
 parser.add_argument('--keep-attachment-stores',action='store_true',help='cold cost comparison: retain attachment stores and skip their index only; preserve query/depth/state planning (default off)')
 parser.add_argument('--fixed-render-recording',choices=['secondary','primary'],help='cold controlled comparison of command buffer recording, with identical fixed LOAD/STORE; requires --keep-attachment-stores --no-pixel-local and no deferred mip clears')
@@ -181,6 +182,8 @@ if args.attach and args.submission_plan_reference:
     parser.error('--submission-plan-reference is startup-only and cannot be used with --attach')
 if args.attach and args.keep_attachment_stores:
     parser.error('--keep-attachment-stores is startup-only and cannot be used with --attach')
+if args.attach and args.guest_worker_qos is not None:
+    parser.error('--guest-worker-qos is startup-only and cannot be used with --attach')
 if args.fixed_render_recording is not None and (args.attach or not args.keep_attachment_stores or
         args.pixel_local is not False or args.deferred_mip_clears):
     parser.error('--fixed-render-recording requires cold --keep-attachment-stores --no-pixel-local and no deferred mip clears')
@@ -350,6 +353,8 @@ if not args.attach:
     launch += ['--ez', 'performance_hint_reference', str(not args.performance_hints).lower()]
     launch += ['--ez', 'submission_plan_reference', str(args.submission_plan_reference).lower()]
     launch += ['--ez', 'keep_attachment_stores', str(args.keep_attachment_stores).lower()]
+    if args.guest_worker_qos is not None:
+        launch += ['--ez','guest_worker_qos',str(args.guest_worker_qos).lower()]
     if args.fixed_render_recording is not None:
         launch += ['--ei', 'render_record_mode', str({'secondary':1,'primary':2}[args.fixed_render_recording])]
     launch += ['--ez', 'image_layout_reference', str(not args.optimal_image_layouts).lower()]
@@ -448,6 +453,10 @@ while time.monotonic() < deadline:
                     if args.stream_submits and state.get('stream_submits',{}).get('reference',True):
                         raise SystemExit('stream submission policy is not active')
                     keep_store_modes=re.findall(r'\[vulkan attachment stores\] keep_all=([01])\b',log)
+                    worker_qos_modes=re.findall(r'\[android guest worker policy\] enabled=([01])\b',log)
+                    actual_worker_qos=bool(int(worker_qos_modes[-1])) if worker_qos_modes else None
+                    if args.guest_worker_qos is not None and actual_worker_qos != args.guest_worker_qos:
+                        raise SystemExit('guest worker QoS startup selection did not apply')
                     recording_modes=re.findall(r'\[vulkan render recording\] mode=([012])\b',log)
                     actual_recording_mode=int(recording_modes[-1]) if recording_modes else None
                     expected_recording_mode={'secondary':1,'primary':2}.get(args.fixed_render_recording,0)
@@ -597,6 +606,8 @@ while time.monotonic() < deadline:
                               'stream_submits':not state.get('stream_submits',{}).get('reference',True),
                               'requested_keep_attachment_stores':args.keep_attachment_stores,
                               'actual_keep_attachment_stores':actual_keep_stores,
+                              'requested_guest_worker_qos':args.guest_worker_qos,
+                              'actual_guest_worker_qos':actual_worker_qos,
                               'requested_fixed_render_recording':args.fixed_render_recording,
                               'actual_render_record_mode':actual_recording_mode,
                               'cache_store_descriptors':not state.get('store_descriptors',{}).get('reference',True),
