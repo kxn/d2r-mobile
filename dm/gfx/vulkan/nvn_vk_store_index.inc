@@ -331,6 +331,7 @@ static int store_index_query(const tex_t *target,const view_t *view,VkImageAspec
   return needed;
 }
 int vk_pass_store_needed(const tex_t *target,const view_t *view,VkImageAspectFlagBits plane) {
+  if(V.options.store_keep_all) return 1;
   if(!valid||!store_valid||!replay||!vk_replay_preserves_ops()) return 1;
   if(reference_mode) return store_scan(target,view,plane);
   if(!index_valid || built_epoch!=vk_texture_descriptor_epoch()) {

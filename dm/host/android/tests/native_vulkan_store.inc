@@ -31,8 +31,12 @@ static void store_overwrite_test(const void *vertex,const void *sample_fragment,
   NVNcolorState color;CALL(nvnColorStateSetDefaults,&color);NVNchannelMaskState channels;CALL(nvnChannelMaskStateSetDefaults,&channels);
   const float red[]={1,0,0,1},blue[]={0,0,1,1},viewport[]={0,0,16,16};
   const NVNtexture *dst[]={&textures[1]};NVNcopyRegion region={0,0,0,16,16,1};uint8_t pixels[1024];
-  int saved=vk_tbdr_enabled();
-  for(unsigned baseline=0;baseline<2;baseline++) { vk_tbdr_reference(baseline);
+  int saved=vk_tbdr_enabled(),saved_keep=V.options.store_keep_all;
+  // Third arm keeps the normal query/depth/state plan but removes only the
+  // store index. All existing rendered color/depth/stencil results must agree.
+  for(unsigned baseline=0;baseline<3;baseline++) {
+  V.options.store_keep_all=baseline==2;vk_tbdr_reference(baseline==1);
+  vk_pass_index_stats store_before,store_after;vk_pass_index_snapshot(&store_before);
   for(unsigned test=0;test<15;test++) {
     int depth_case=test>=8&&test<12;
     const NVNtexture *initial[]={test>=12?&textures[3]:&textures[0]};
@@ -110,7 +114,16 @@ static void store_overwrite_test(const void *vertex,const void *sample_fragment,
       CHECK(fabs(z-(changed&&test!=9?.5:.25))<1e-6);
       CHECK(readback->map[1024+i]==(changed&&test!=8?0x77:0xa7));
     }
-  }}
+  }
+  if(baseline==2) {
+    vk_pass_index_snapshot(&store_after);
+    CHECK(store_after.builds==store_before.builds);
+    CHECK(store_after.indexed==store_before.indexed);
+    CHECK(store_after.reference==store_before.reference);
+    CHECK(store_after.fallbacks==store_before.fallbacks);
+  }
+  }
+  V.options.store_keep_all=0;
   // 仅数据流检查：共享存储的不同快照、无关拷贝、未知池边界及描述符变更。
   // Metadata-only checks: distinct snapshots sharing storage, unrelated copies,
   // pool boundaries and descriptor mutation. These streams are not GPU draws.
@@ -309,6 +322,7 @@ static void store_overwrite_test(const void *vertex,const void *sample_fragment,
     LOG("[vulkan store target fixture] repeated/sparse/reordered attachment slots, lazy clear/draw first uses, mip/guest aliases and new-build reset agree with raw command scan");
   }
   vk_tbdr_reference(!saved);
+  V.options.store_keep_all=saved_keep;
   CALL(nvnProgramFinalize,&program);CALL(nvnSamplerFinalize,&sampler);
   for(unsigned i=0;i<4;i++) CALL(nvnTextureFinalize,&textures[i]);
   CALL(nvnMemoryPoolFinalize,&pool);free(storage);

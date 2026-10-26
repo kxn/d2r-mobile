@@ -59,6 +59,18 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_keep_stores_is_explicit_cold_only_and_default_off(self):
+        for options,value in (([], 'false'), (['--keep-attachment-stores'], 'true')):
+            command=self.launch_command(options)
+            index=command.index('keep_attachment_stores')
+            self.assertEqual(command[index-1:index+2],['--ez','keep_attachment_stores',value])
+        with patch('sys.argv',[str(LAUNCHER),'--attach','--keep-attachment-stores']), \
+                patch('subprocess.check_output') as adb, \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            runpy.run_path(str(LAUNCHER),run_name='__main__')
+        self.assertEqual(caught.exception.code,2)
+        adb.assert_not_called()
+
     def test_planning_reference_is_cold_and_explicit(self):
         command=self.launch_command([])
         index=command.index('submission_plan_reference')

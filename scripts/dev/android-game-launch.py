@@ -44,6 +44,7 @@ opus_mode.add_argument('--native-opus', action=argparse.BooleanOptionalAction, d
 parser.add_argument('--performance-hints',action='store_true',help='experimental public Android render-thread workload hints')
 parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
 parser.add_argument('--submission-plan-reference',action='store_true',help='cold comparison: conservative replay without whole-submission planning; retains guest commands, synchronization and GPU completion')
+parser.add_argument('--keep-attachment-stores',action='store_true',help='cold cost comparison: retain attachment stores and skip their index only; preserve query/depth/state planning (default off)')
 parser.add_argument('--translation-cpu-mask',type=lambda s:int(s,0),default=0,help='cold translation-owner affinity bitmask; default0 retains Android scheduling')
 parser.add_argument('--turnip-autotune',choices=['default','bandwidth','profiled','prefer_sysmem'],help='app-private cold Turnip render-pass policy; default preserves external driver configuration')
 parser.add_argument('--storage-usage-reference',action='store_true',help='startup-only comparison: reserve Storage usage from the NVN IMAGE hint instead of first actual binding')
@@ -177,6 +178,8 @@ if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.submission_plan_reference:
     parser.error('--submission-plan-reference is startup-only and cannot be used with --attach')
+if args.attach and args.keep_attachment_stores:
+    parser.error('--keep-attachment-stores is startup-only and cannot be used with --attach')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
 if args.attach and args.source_partition is not None:
@@ -342,6 +345,7 @@ if not args.attach:
     launch += ['--ez', 'pool_sync_reference', str(not args.lazy_pool_sync).lower()]
     launch += ['--ez', 'performance_hint_reference', str(not args.performance_hints).lower()]
     launch += ['--ez', 'submission_plan_reference', str(args.submission_plan_reference).lower()]
+    launch += ['--ez', 'keep_attachment_stores', str(args.keep_attachment_stores).lower()]
     launch += ['--ez', 'image_layout_reference', str(not args.optimal_image_layouts).lower()]
     launch += ['--ez', 'sampled_array_layout_reference', str(args.general_sampled_array_layouts_reference).lower()]
     launch += ['--ez', 'buffer_memory_reference', str(args.global_buffer_memory_reference).lower()]
@@ -437,6 +441,10 @@ while time.monotonic() < deadline:
                         raise SystemExit('optimal image layout policy is not active')
                     if args.stream_submits and state.get('stream_submits',{}).get('reference',True):
                         raise SystemExit('stream submission policy is not active')
+                    keep_store_modes=re.findall(r'\[vulkan attachment stores\] keep_all=([01])\b',log)
+                    actual_keep_stores=bool(int(keep_store_modes[-1])) if keep_store_modes else None
+                    if not args.attach and actual_keep_stores != args.keep_attachment_stores:
+                        raise SystemExit('attachment store startup policy did not apply')
                     if args.cpu_known_copies and state.get('cpu_known_copies',{}).get('reference',True):
                         raise SystemExit('CPU producer copy mode did not apply')
                     if args.cache_driver_constants and state.get('driver_constants',{}).get('reference',True):

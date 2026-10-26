@@ -51,7 +51,7 @@ typedef struct {
   int defer_mip_clears;
   int astc_decode_unorm8;
   int runtime,runtime_forced,runtime_toggle,vertex_divisor_fallback;
-  int store_reference,store_check,ruler,extrap_no_pipeline,extrap_mask;
+  int store_reference,store_check,store_keep_all,ruler,extrap_no_pipeline,extrap_mask;
   int state_segments; // Startup-only experimental validated state-span replay.
   int gpu_profile,trace_frame_set;
   int pool_ownership_reference;
@@ -59,7 +59,7 @@ typedef struct {
   int pool_mirror_reference;
   int pool_copy_accounting;
   int pool_defer_publication;
-  int shared_image_raw_observe; // experimental CPU-image source observation only, startup OFF
+  int shared_image_raw_observe; // Qualified coherent CPU-image GPU byte scope; startup ON.
   uint64_t pool_window_bytes;
   unsigned descriptor_sets;
   uint64_t trace_frame,frame_dump_at;

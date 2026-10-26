@@ -368,6 +368,7 @@ static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int inline_translation_startup;
 static int submission_plan_reference_startup;
+static int keep_attachment_stores_startup;
 static unsigned translation_cpu_mask_startup;
 static char turnip_autotune_startup[32];
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTurnipAutotune(
@@ -397,6 +398,18 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSubmissi
     return;
   }
   submission_plan_reference_startup=reference!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeKeepAttachmentStores(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"keep_attachment_stores is fixed before native startup");
+    return;
+  }
+  keep_attachment_stores_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTranslationCpuMask(
@@ -852,6 +865,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   if(setenv("DM_NVN_CPU_MASK",translation_cpu_mask,1) ||
       setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_STORE_KEEP_ALL",keep_attachment_stores_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT",native_read_group_front_startup?"1":"0",1) ||
