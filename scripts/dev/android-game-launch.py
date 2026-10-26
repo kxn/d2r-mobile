@@ -443,7 +443,11 @@ while time.monotonic() < deadline:
                         raise SystemExit('stream submission policy is not active')
                     keep_store_modes=re.findall(r'\[vulkan attachment stores\] keep_all=([01])\b',log)
                     actual_keep_stores=bool(int(keep_store_modes[-1])) if keep_store_modes else None
-                    if not args.attach and actual_keep_stores != args.keep_attachment_stores:
+                    # Older APKs cannot enable this experiment and publish no
+                    # marker. Require positive proof to opt in; keep their
+                    # existing default launches usable without inventing proof.
+                    if not args.attach and ((args.keep_attachment_stores and actual_keep_stores is not True) or
+                            (actual_keep_stores is not None and actual_keep_stores != args.keep_attachment_stores)):
                         raise SystemExit('attachment store startup policy did not apply')
                     if args.cpu_known_copies and state.get('cpu_known_copies',{}).get('reference',True):
                         raise SystemExit('CPU producer copy mode did not apply')
@@ -579,6 +583,8 @@ while time.monotonic() < deadline:
                               'compute_layout_reference': (True if 'compute sampled layouts: GENERAL reference' in log else
                                                            False if 'compute sampled layouts: read-only optimal' in log else None),
                               'stream_submits':not state.get('stream_submits',{}).get('reference',True),
+                              'requested_keep_attachment_stores':args.keep_attachment_stores,
+                              'actual_keep_attachment_stores':actual_keep_stores,
                               'cache_store_descriptors':not state.get('store_descriptors',{}).get('reference',True),
                               'cpu_known_copies':not state.get('cpu_known_copies',{}).get('reference',True),
                               'cache_driver_constants':not state.get('driver_constants',{}).get('reference',True),
