@@ -212,6 +212,19 @@ def main():
     expected_files = {'.chain','_vk_manifest.json','_vk_build.json'} | {
         key+suffix for key in keys for suffix in ['.spv','.meta']} | {
         key+suffix for key in keys-builtin_keys for suffix in ['.json','.dkey']}
+    options=dmsh_vulkan.compiler_options()
+    if options.get('quad_derivatives') or options.get('component_fold'):
+        expected_files.add('_spirv_rewrites.json')
+        rewrite=json.loads((cache/'_spirv_rewrites.json').read_text())
+        source_root=ROOT/'dm/gfx/tools/spirv_rewrites'
+        source_manifest=json.loads((source_root/'SOURCE.json').read_text())
+        require(rewrite.get('sources')==source_manifest, 'SPIR-V rewrite provenance mismatch')
+        require(all(sha(source_root/name)==digest for name,digest in source_manifest['files'].items()),
+                'SPIR-V rewrite source changed from declared upstream')
+        require(rewrite.get('compiler')==subprocess.check_output(['c++','--version'],text=True),
+                'SPIR-V rewrite host compiler mismatch')
+        require(rewrite.get('tool_sha256')==sha(cache.parent/('_spirv_rewrites-'+cache.name)),
+                'SPIR-V rewrite executable hash mismatch')
     specialization_keys=set();texel_alternative_keys=set();predicate_keys=set()
     for key in keys-builtin_keys:
         reflection=json.loads((cache/(key+'.json')).read_text())
