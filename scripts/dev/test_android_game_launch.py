@@ -17,6 +17,20 @@ class LaunchCaptured(Exception):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_planning_reference_is_cold_and_explicit(self):
+        command=self.launch_command([])
+        index=command.index('submission_plan_reference')
+        self.assertEqual(command[index-1:index+2],['--ez','submission_plan_reference','false'])
+        command=self.launch_command(['--submission-plan-reference'])
+        index=command.index('submission_plan_reference')
+        self.assertEqual(command[index-1:index+2],['--ez','submission_plan_reference','true'])
+        with patch('sys.argv',[str(LAUNCHER),'--attach','--submission-plan-reference']), \
+                patch('subprocess.check_output') as adb, \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            runpy.run_path(str(LAUNCHER),run_name='__main__')
+        self.assertEqual(caught.exception.code,2)
+        adb.assert_not_called()
+
     def launch_command(self, options):
         def adb(command, **kwargs):
             if 'am' in command and 'start' in command:

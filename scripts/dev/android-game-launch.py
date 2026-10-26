@@ -152,6 +152,8 @@ if args.attach and args.legacy_astc_copy is not None:
     parser.error('--legacy-astc-copy/--no-legacy-astc-copy are startup-only and cannot be used with --attach')
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
+if args.attach and args.submission_plan_reference:
+    parser.error('--submission-plan-reference is startup-only and cannot be used with --attach')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
 if args.attach and args.source_partition is not None:
