@@ -65,3 +65,38 @@ Primary 确实省掉所有 52 次 Secondary 调用，且 CPU reset 成本下降�
 Primary 营地截图没有发现明显黑块、缺几何等错误；这不代表全游戏场景已覆盖。实验两边共同禁用部分附件优化，不能把 mode 2 直接作为生产默认值。代码和开关保留，性能未涨不会作为删除已证实局部节省的理由。
 
 原始证据目录：`.local/logs/fixed-primary-recording-v1/`，包括构建 / 安装记录、实际模式日志、四份 Perfetto、调度分析 SQL / CSV、Simpleperf、GPU fixture、截图及每次原生命周期 save=2 后停进程的记录。
+
+
+## 第二版：按真实依赖延后 Primary Pass 开始
+
+源码 `92c827c101188453f59121508805776084d19af4`。只对实验 Primary 增加“逻辑 Pass 尚未开始”的状态：保留最初的 loadOp clear，最多暂存 8 条有序的额外 clear；首个真实 draw 发出前开始物理 Pass，并按原顺序执行。容量满即执行，不无限积累。结束 Pass、真实依赖的读取边界照常执行；NVN timestamp report 即使复用 query pool，也先执行 pending clear，再写时间戳，不允许跨过可观察命令。
+
+所有现有访问历史、写时钟、之前 producer 的证明、布局转换及真实 RAW/WAR/WAW 保留，没有用跨帧预测或删掉同步来避免拆分。逻辑 clear 的写访问照常立刻记入历史，因此不能把对本次 clear 的依赖错误移到它之前。
+
+311,340 项固定模式 GPU fixture 通过（含超出 clear 队列上限、局部重叠、无 draw 直接读回以及复用 timestamp pool 的观察点），普通模式原 fixture 136,400 / 137,005 通过。该版 APK `dc14c0f16c9c6af1637f2213ef719e38420151df7b961c0f25df6da45a0f3b95`，ELF `f053c073636ca7eaf445710c01a9e8ae1af1293c796841c39dbeef3ed48e6a34`。
+
+独立新六帧结构捕获已完成：**Primary 从 64 Pass / 199 Barrier 降为 53 / 174，仍然 0 次 Secondary 执行、2,421 Draw、15 Dispatch、2 Vulkan submit/帧**。修掉额外 12 个 Pass 中的 11 个；基线 Secondary 是 52 / 172。这里复用上一版已有 Secondary API 数据，代码改动在该模式不改变 GPU 命令；第二版的性能对照仍使用同一新版 APK。
+
+剩下唯一 Pass 类型差异是新增一次 1673×765 的 R16G16B16A16 + RGBA8 + D24S8 LOAD/STORE。对应逻辑 LOAD 162.62MB、STORE 226.35MB，均仍比 Secondary 多 20.48MB/帧。这些仍不是 DRAM 实测。说明目前仍未达到完全相同的物理 Pass 结构，不能把后续帧率差异全部归因于 Secondary 调用本身。
+
+第二版原始证据：`.local/logs/fixed-primary-recording-v2/`；第一版四轮数据仍原样保留，不能用后来修正版本的结果覆盖第一次试验。
+
+
+### 第二版正式性能结果与最终判断
+
+同一第二版 APK，按 A/B/A 三次冷启动；中间 B 同 PID 额外重复一段独立 20 秒 Perfetto。不是四次独立冷启动 ABBA。四个窗口 PSO 179、variants 32 均稳定；原分辨率、比例、驱动、资源、CPU mask 与首版相同。
+
+| 组 | FPS | 主线程 Running ms/显示间隔 | NVN replay Running ms/次 | 后台 pool reset Running ms/次 | 主线程 MHz |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| SECONDARY-A1 | 40.093 | 19.808 | 12.590 | 0.320 | 1455 |
+| PRIMARY-B1 | 40.219 | 19.720 | 12.429 | 0.037 | 1421 |
+| PRIMARY-B1-REPEAT | 40.225 | 19.805 | 12.567 | 0.037 | 1404 |
+| SECONDARY-A2 | 40.172 | 19.866 | 12.466 | 0.186 | 1453 |
+
+A 平均 **40.132 FPS**，B 两窗口平均 **40.222 FPS**，差约 **+0.22%**，没有实质涨帧证据。主线程平均 **19.837 → 19.762 ms/显示间隔**；replay **12.528 → 12.498 ms/次**，约 0.03ms 的差不足以认定明显下降。主线程加权频率也不是严格相同。**第一版 replay 少 0.345ms 的窗口差值，不能再写成稳定可兑现的翻译收益。**
+
+减少命令缓冲数量的机制成立，完成线程 reset 的实测范围从 **0.186–0.320 → 0.0365–0.0373ms/次**。这是后台工作，不代表主线程等候减少相同时间。新版还消除了直接 Primary 首版额外的 11 个 Pass / 25 个 Barrier，降低其额外附件逻辑读写需求；不能因此声称实际 DRAM 已下降同样字节数。
+
+这个实验完整经过了“发现没有涨帧 → 找出新增开销 → 修掉 11 个额外 Pass → 重测”，没有因为第一版帧率不变就扔掉方向。最终说明：**当前这种 Primary 替换已验证部分管理工作下降，但仍没有解决整帧瓶颈；12.5ms 左右的实际 NVN replay 还在。** 当前 replay Off-CPU 仅约 0.002–0.007ms/次，没有十几毫秒锁等待藏在这段里。把剩余 CPU 时间归到 Secondary 执行或完成线程锁，缺少证据。
+
+保留两版源码、原始数据、模式开关和有序 pending clear 实现，默认 mode 0 不变。Production Primary 仍需兼容原有附件优化，并处理唯一新增 HDR Pass 的后续资源依赖；未完成前不会默认启用。研究顺序应回到当前 CPU 实际执行的资源/状态准备，以及实际 GPU 主组，不能把这个小实验当成“60FPS 已解决”。
