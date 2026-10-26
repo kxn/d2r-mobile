@@ -80,8 +80,65 @@ MB 是十进制。纹理读取属于总读取，不能相加。**两端 GPU 频�
 
 上游对照的资源闭包重新逐文件校验：release 的原 overlay/module 包，加五个上游 inline-CS 规避 shader；没有混入最新生成 overlay。原参考在自己的包/存档克隆中运行，不覆盖用户原存档。两个游戏、原厂 GUI/Xvfb 与 13 个本次 collector 均已停止。原 close 报过一个 collector 在身份读取期间消失，原错误保留；独立后继收条确认全部本次工具已退出，层设置与采集前相同，没有停止无关系统服务。
 
+## 五、两端六帧实际 API 结构已完成
+
+复用现有 GFXReconstruct API-structure 层、官方 info/convert 以及原提交遍历程序。每端六次真实 Present，仅枚举 trim 恢复边界之后实际提交及递归执行的 secondary；不把定义但未提交的命令计入，不把捕获速度当 FPS，也不声称 imported host payload 已可重放。上游原捕获成功，第一次导出因旧辅助程序包名写死而失败；只对已关闭捕获修正导出包名，没有重新采帧，原失败与后继导出收条分别保留。
+
+| 每帧实际执行 | 当前版本 | 上游 |
+|---|---:|---:|
+| Draw | 2416 | 2419 |
+| QueueSubmit | 2 | 2 |
+| BeginRenderPass | 49 | 54 |
+| PipelineBarrier | 162 | 129 |
+| ExecuteCommands | 49 | 0 |
+| CopyImage | 2 | 3 |
+| BlitImage | 2 | 1 |
+
+当前已经关闭启发式分块提交，所以不能继续用历史的八次提交解释这一组差距。上游有约 113 次/帧 ALL_COMMANDS→ALL_COMMANDS barrier；我们主要使用资源/阶段依赖。因此也不能认定上游更快源于更细的同步。两端主 3D Render Area 都为 1673×765，主要附件格式一致，包含 B10G11R11、RGBA16F、RGBA8 和 D24S8，没有发现我们把主要 HDR 附件意外扩大格式。
+
+我们的两次 CopyImage 是 256×256 深度和 32³ 颜色体积，不能据此编造全屏大复制。两次 Blit 分别为 418×191→836×382 的中间图和最终出图。上游也保留最终出图/黑边处理。当前使用延后确定 Load/Store 的 secondary 录制，上游在 primary 内直接录制；这是执行方式差异，尚不能仅按 49 次 ExecuteCommands 就认定其成本。
+
+按实际 Render Area×格式字节数，对要求 LOAD/STORE 的附件作全区域逻辑估算，当前约 LOAD 122.76 / STORE 166.21 MB，上游约 237.55 / 237.55 MB。这是未计压缩、覆盖、片上复用和驱动优化的逻辑面积估计，**不是总线流量**。其方向与前节全局实测流量不同，说明必须继续核对驱动执行，而不能只数 Store 或只按 API 数量预测 GPU 成本。
+
+两边仍分别是定制 Turnip/native ASTC 与系统 Qualcomm/BC 的产品路径；没有将驱动与资源这个混杂因素称作纯后端代码差异。设备创建记录中两端均开启 robustBufferAccess，也没有据此找到单边额外边界检查的证据。结构结果、直接提取的对象和执行命令见 `api-tools/{own,upstream}-analysis/` 与 `api-tools/structural-comparison.json`。
+
+## 六、当前代码的 Turnip 渲染模式对照与慢状态
+
+保持同一已安装 480ce73 APK、29e56 shader、shared/lazy/native 资源、调用线程翻译/CPU7、输出 1968×900、固定 0.85、关闭 stream split。只在冷启动改变 Mesa 原有模式属性：默认 BANDWIDTH 自动选择与强制 SYSMEM。每次均核实**本次 PID** 的官方 TU_DEBUG 启动位 1 / 9，然后停止 logcat；八次 distinct 稳定管线状态后再用原 20 秒 Perfetto 窗口测量。没有自己写采样器或计时器。
+
+| 顺序 | 模式 | FPS | owner Running ms/帧 | 整应用 Running ms/帧 | owner MHz | 内部提交/guest |
+|---|---|---:|---:|---:|---:|---:|
+| DEFAULT1 | 自动 | 33.57 | 22.50 | 41.87 | 1319.76 | 1 |
+| SYSMEM1R | SYSMEM | 40.19 | 20.13 | 37.96 | 1545.57 | 1 |
+| SYSMEM2 | SYSMEM，慢状态 | 16.27 | 27.82 | 56.99 | 1091.71 | 2 |
+| DEFAULT2 | 自动 | 33.58 | 22.55 | 41.69 | 1329.47 | 1 |
+| SYSMEM3 | SYSMEM | 40.16 | 20.18 | 37.93 | 1563.68 | 1 |
+| SYSMEM4 | SYSMEM | 40.22 | 20.03 | 37.74 | 1535.64 | 1 |
+| SYSMEM5 | SYSMEM | 40.41 | 19.91 | 36.01 | 1563.71 | 1 |
+| SYSMEM6 | SYSMEM | 40.21 | 20.11 | 37.92 | 1553.39 | 1 |
+
+具体频率以 `mode-tools/results.json` 的原 CSV 汇总为准，不能用频率线性归一代替 PMU。各窗口管线数均为 256→256；部分窗口特化变体数为 30→32，其余 30→30 或 32→32，条件差异保留，不能称完全逐 draw 相同。排除两次发生特化增长的窗口后，默认模式仍为 33.58 FPS，SYSMEM 五个窗口均为 40.16–40.41 FPS；慢状态保留为实际异常，不因出现增长就丢弃。内部提交主要含出图，不等于额外 guest 帧；正常每周期共两次，慢状态共三次。
+
+**正常状态下模式切换复现了约 20% 的 FPS 差异，接近本机上游约 43.4 FPS；但不能漏报 16.27 FPS 的重复窗口，更不能把它永久默认启用当作已解决。** 这是现有驱动模式实验的当前配置验证，不冒称新算法；10 月 24 日旧配置也曾出现类似敏感性。SYSMEM 仍由 GPU 绘制，不是 CPU 软件光栅，也不是共享内存开关。当前没有同窗 SYSMEM 原厂带宽/功耗结果，不能宣称已降带宽或温度。
+
+这次最重要的新证据在慢状态。对三个窗口继续使用 Perfetto 既有区间与 sched Running 相交：
+
+| 区间，ms/次 | DEFAULT1 | SYSMEM1R | SYSMEM2 慢状态 |
+|---|---:|---:|---:|
+| replay 墙钟 | 14.815 | 12.939 | 48.111 |
+| replay Running | 14.813 | 12.930 | 17.331 |
+| replay 非 Running | 0.002 | 0.009 | **30.780** |
+| Present 墙钟 | 5.463 | 2.754 | 0.580 |
+| Present 非 Running | 4.975 | 2.283 | 0 |
+
+慢窗口 323 次 `Vulkan CPU waits queue completion` 合计约 9959.89 ms，即约 **30.84 ms/次**，同时每 guest 多一次内部提交。读回、CPU read、upload wait 等旧计数增量仍全为零；**这些计数没有覆盖所有内部等待，不能将“计数为零”当作没有同步的充分证据。** 第一节“不主要阻塞”的结论仅适用于当时正常窗口，不能外推到这次慢状态。不能先将其归因热降频、一个特定锁或 SYSMEM 本身；必须拿到真实等待调用路径。
+
+在性能窗口之后实际尝试官方 debuggerd（要求 root，失败记录保留）与 LLDB。SYSMEM4 正常窗口内没有这个周期性等待，后继 LLDB 等断点时，复用的中断辅助脚本出现 Python debugger 上下文错误；性能采集已经完成，不覆盖其成绩，也不称已取得慢状态栈。后继修复调试脚本的上下文捕获，确认该失败会话已脱离、存档退出、属性恢复，再作有界冷启动慢状态复现；只在慢候选补 Perfetto/LLDB，不重复采集已知正常基线。
+
+有界追加的六次冷启动探测均未再命中慢状态，各次均确认存档、停止并恢复属性。仅使用原有 game-state 作为是否继续抓工具数据的触发条件，没有将这些短探测当作六个新的官方 FPS 成绩，也没有借此声称异常已消失。当前已经定位到额外提交/队列完成等待这一类路径，尚未拿到慢状态调用栈，不能指认具体调用者，更不能擅自删掉等待。
+
 ## 下一步与证据位置
 
-正在用已有 GFXReconstruct API 结构工具取两端实际提交、通道、复制及附件状态；不把捕获扰动后的速度作为 FPS 结论，不计 trim 恢复但未执行的命令，不声称导入 host 数据已可重放。先解释多出的工作和写入来源，再决定修改哪段架构。CPU 方面继续审查扫描的消费者与重复图像来源准备，避免再加一个每 draw 检查层。
+优先定位这次新增的“每周期一次内部提交并等待”调用来源及其必要的依赖；随后再优化正常状态下驱动通道选择与 CPU 准备。不能继续用所有正常窗口 15 ms 执行的结论掩盖慢状态约 31 ms 的真实等待，也不能把 CPU Running 降低直接写成已删除相同运算量。
 
-当前全部原始数据位于 `.local/logs/inline-upstream-rootcause-v1/`：`owner-budget.json`、`planning-results.json`、`scope-cpu.sql/csv`、`WAIT1/`、`UPSTREAM-SCHED1/`、`fixed-mode-result.json`、`HINT1/`、`gpu-tools/comparison.json` 及两臂原 `.sdp`/数据库/轨迹/SQL。以上是进展与可排除项，不是“根因已经全部找完”的结论。
+当前全部原始数据位于 `.local/logs/inline-upstream-rootcause-v1/`：`owner-budget.json`、`planning-results.json`、`scope-cpu.sql/csv`、`WAIT1/`、`UPSTREAM-SCHED1/`、`fixed-mode-result.json`、`HINT1/`、`gpu-tools/comparison.json`、两臂原 `.sdp`/数据库/轨迹/SQL、`api-tools/`、`MODE-*/` 与 `mode-tools/`。性能窗口与后继调试失败分开保存；各已结束游戏均原生命周期确认存档后停止，驱动模式属性恢复原值。以上是实验结果与可排除项，不是“根因已经全部找完”的结论。
