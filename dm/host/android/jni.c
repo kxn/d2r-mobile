@@ -367,7 +367,20 @@ static int shared_image_raw_observe_startup;
 static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int inline_translation_startup;
+static int submission_plan_reference_startup;
 static unsigned translation_cpu_mask_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSubmissionPlanReference(
+    JNIEnv *env,jclass klass,jboolean reference) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"submission_plan_reference is fixed before native startup");
+    return;
+  }
+  submission_plan_reference_startup=reference!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTranslationCpuMask(
     JNIEnv *env,jclass klass,jint mask) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -815,6 +828,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   char translation_cpu_mask[16];snprintf(translation_cpu_mask,sizeof translation_cpu_mask,"%x",translation_cpu_mask_startup);
   if(setenv("DM_NVN_CPU_MASK",translation_cpu_mask,1) ||
       setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT",native_read_group_front_startup?"1":"0",1) ||

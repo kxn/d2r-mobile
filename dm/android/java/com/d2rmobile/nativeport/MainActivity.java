@@ -50,6 +50,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeStateSegments(boolean enabled);
     private static native void nativeSourcePartition(boolean enabled);
     private static native void nativeInlineTranslation(boolean enabled);
+    private static native void nativeSubmissionPlanReference(boolean reference);
     private static native void nativeTranslationCpuMask(int mask);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
@@ -280,6 +281,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
+            nativeSubmissionPlanReference(getIntent().getBooleanExtra("submission_plan_reference", false));
             nativeTranslationCpuMask(getIntent().getIntExtra("translation_cpu_mask", 0));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
