@@ -186,9 +186,34 @@ LLDB 取得的一个实际例子为：CPU 源 13,312 字节，按页扩大后 16
 
 截图未见明显黑块或缺几何；没有据营地和截图宣称战斗、全场景、长期温度或 60 FPS 已通过。当前桌面持久配置仍锚定旧 APK/shader 且显式关闭该策略，新 APK 目前只有实验脚本启动经过验收；后续须完成匹配 profile 的正式发布，不能让桌面校验拒绝后静默回到旧配置。
 
+## 八、Turnip 自带策略对照与普通桌面发布完成
+
+精确 GPU 字节依赖默认启用后，继续使用同机、同 f830 驱动/native 资源、1968×900 输出及固定 0.85，比较 Turnip 原有的通道选择策略。使用已跑通的官方 Perfetto 测量完整 Surface 间隔；只使用 Mesa 启动日志核实当前 PID 的实际策略，没有新写计时器。
+
+| 策略 | FPS | 采集窗口 PSO / 特化变体 |
+|---|---:|---|
+| 原默认 bandwidth | 33.56 | 前节已记录的 BYTE-DEFAULT 窗口 |
+| 强制 SYSMEM，参考 | 40.19 | 256→256 / 32→32 |
+| profiled | 36.99 | 256→256 / 30→30 |
+| prefer_sysmem，第一次 | 40.31 | 256→256 / 30→32，仅作运行证据 |
+| prefer_sysmem，稳定重复 | **40.26** | **256→256 / 32→32** |
+| 应用内冷启动 prefer_sysmem，新 APK | **40.36** | **256→256 / 30→30** |
+
+`prefer_sysmem` 是该版 Mesa 自带的算法 3，允许驱动在有充分理由时选择 GMEM。它与 `TU_DEBUG=sysmem` 强制所有 pass 使用系统内存不同，没有另写场景分类器。上述约 20% 差异来自独立窗口，不是同 PID 的严格因果对照，不能与第七节 16.20→40.35 的结果相加。新窗口尚未测实际总线流量或长期温度，不能将此称为已经证明省带宽/降温。
+
+源码 `5d4b24c` 新增严格 schema 2 桌面配置，在原校验字段基础上增加 `inline_translation`、`translation_cpu_mask`、`stream_submits`、`turnip_autotune` 四个有类型的冷启动选项；旧 schema 1 保持兼容。Turnip 设置仅在 Vulkan 初始化前写入应用自己的环境，原全局算法属性保持为空。没有改游戏代码、加工后的 NSO、shader 链或贴图资源。发布的实际 APK 为 `84853b5875038d1e5eb19888c649fee42700180513ed89d3dc8a74ba9feec4ab`，宿主 ELF 为 `7d6aea62136a8465535a296153726f48db7f17bb22ee8ae95bf81002158670a7`。
+
+发布前通过真机标准 `sha256sum` 核对全部 **52,240 个 shader 产物、3 个按原工具格式重新推导的元数据文件，以及 36 个原模块/规则/清单/native CASC/driver 文件**。没有用“忽略额外文件”放宽检查；第一次缺少已知元数据清单的拒绝记录仍保留。校验记录在 `startup-profile-v2/verify-full-v2/verified-installation.json`，其中 profile/receipt 锚点是发布前的旧值；后继发布收条独立记录新值，不能混为一次原子快照。
+
+沿用原 stopped-file SHA CAS 和原生命周期保存方法，安装新 profile 与 receipt 后，进行了两次**没有任何启动 extras** 的 MAIN/LAUNCHER 冷启动（PID 24134、25175）。两次都从原选角界面进入真实营地，实际共享堆/lazy windows/精确字节策略启用，stream reference=true、inline 原调用者执行、CPU mask=0x80；没有 `nvn-translate` 线程，保留 `dm-gpu-complete`。官方当前 PID 启动日志均为 `TU_AUTOTUNE_ALGO=3 (prefer_sysmem)`；每次原存档 commits=2 后停止，最后全局工具设置与发布前一致。
+
+此前两次发布验收失败来自观察脚本：首次把默认 stream ON 当作已运行进程的要求；第二次在 attach 模式不能传冷启动窗口选项，却仍假定窗口必须为 0。新 attach 校验读取当前 PID 的 immutable startup 日志，并与实际 backing_initialized、合法窗口大小严格对应；未知/冲突日志仍拒绝，冷启动的显式选项约束未放宽。增加四类回归检查后启动工具共 **21 项通过**。保留失败记录，成功最终记录为 `startup-profile-v2/publication-followup-v2/result.json` 的 `committed=true`。
+
+桌面 profile SHA256：`9d85fee4f6be3caf9501e3623c2cf306f84aa2b4c6f8f5be6d84faab03ce5427`；receipt SHA256：`1f7cb3c2b87a3bf5ac651785be3a57a79f646b951b588eaf4ab41f2ee35c4c2f`。桌面配置继续保留用户已有显示/散热设置，实际为 **2358×1080 输出、0.75 3D 比例、60 FPS 目标**，与表中 1968×900/0.85 基准不同。桌面截图约 38.7 FPS 是单次 HUD 读数，不作为正式性能窗口。截图未见明显黑块或缺几何；战斗、长期散热、全场景 60 FPS 尚未通过。
+
 ## 下一步与证据位置
 
-每周期一次额外提交/等待已经定位并以同 PID 对照证实。接下来先完成新修复与普通桌面启动配置的匹配发布，再研究正常状态的 Turnip 通道选择和 CPU 准备。上游同机约 43.4 FPS 与当前正常 SYSMEM 约 40.3 FPS 的剩余差距尚未严格全部归因；当前约 1.46 ms planning 是明确的额外 CPU 工作，但之前整段关闭会损失消费者收益，仍须区分净成本。不能再笼统说“GPU/CPU 互等已经全部清完”，也不能继续把正常窗口的全部主线程 Running 当作纯翻译。
+每周期一次额外提交/等待已经定位并以同 PID 对照证实；匹配的新修复、Turnip 策略与普通桌面发布也已完成。下一步研究正常状态的 CPU 准备和 GPU 净成本。上游同机约 43.4 FPS 与当前约 40.3 FPS 的剩余差距尚未严格全部归因；当前约 1.46 ms planning 是明确的额外 CPU 工作，但之前整段关闭会损失消费者收益，仍须区分净成本。不能再笼统说“GPU/CPU 互等已经全部清完”，也不能继续把正常窗口的全部主线程 Running 当作纯翻译。
 
 当前全部原始数据位于 `.local/logs/inline-upstream-rootcause-v1/`：`owner-budget.json`、`planning-results.json`、`scope-cpu.sql/csv`、`WAIT1/`、`UPSTREAM-SCHED1/`、`fixed-mode-result.json`、`HINT1/`、`gpu-tools/comparison.json`、两臂原 `.sdp`/数据库/轨迹/SQL、`api-tools/`、`MODE-*/` 与 `mode-tools/`。性能窗口与后继调试失败分开保存；各已结束游戏均原生命周期确认存档后停止，驱动模式属性恢复原值。以上是实验结果与可排除项，不是“根因已经全部找完”的结论。
 

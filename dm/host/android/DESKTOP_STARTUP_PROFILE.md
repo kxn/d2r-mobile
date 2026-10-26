@@ -1,4 +1,4 @@
-# Verified desktop startup, schema 1
+# Verified desktop startup, schemas 1 and 2
 
 This corrects a delivery gap: transaction tests restore their original APK and
 assets; that original APK predates shared/native resources. Successful test
@@ -49,6 +49,31 @@ APK, driver, module manifest, shader-chain marker, table and publication receipt
 it does not replace full publication inventory verification or native payload
 authentication. SHA reads use a bounded streaming buffer and retain no snapshots.
 
+Schema 2 retains every schema 1 field and requires exactly four additional
+typed fields (set `schema=2` in the same properties file):
+
+```
+inline_translation=true
+translation_cpu_mask=128
+stream_submits=false
+turnip_autotune=prefer_sysmem
+```
+
+These values describe the locally qualified Q735 combination, not universal
+device defaults. The CPU mask is a canonical nonnegative decimal Java integer;
+128 selects CPU 7 on that device. `turnip_autotune` accepts only `default`,
+`bandwidth`, `profiled`, or `prefer_sysmem`. The selected value is cached before
+Vulkan initialization as an app-private driver environment setting; it does not
+write global Android/Mesa properties. `default` preserves external driver policy.
+`prefer_sysmem` is Turnip's existing adaptive render-pass policy, not a force-all
+SYSMEM mode. The stream field selects the existing heuristic submission policy;
+false retains guest-required submissions and asynchronous GPU completion.
+
+Schema 1 remains backward compatible and does not imply these four selections.
+Neither version overrides user resolution, 3D scale, FPS, or thermal controls.
+Any change to the APK or payload tuple requires verified matching hashes and a
+new receipt before ordinary desktop qualification.
+
 Apply existing cold extras for provider, shared heap, native table/pack/producer,
 window, lazy windows, raw observation, driver span and pixel-local selection.
 Use async game startup without validation/test modes. Dynamic user settings,
@@ -56,9 +81,11 @@ including resolution, scale, FPS and thermal policy, stay under the existing HUD
 
 The publisher is a separate, Q-local transaction based on a new root-reviewed
 delivery receipt. Reuse the accepted installer, inventories, directory CAS,
-APK signer, original NSO provenance and save protocol. Publish the APK, freshly
-rebuilt modules, f830 driver, full2838 native overlay/table and this file as one
-matched set; publish the profile last. Preserve the existing 950 shader bytes.
+APK signer, original NSO provenance and save protocol. The original schema 1
+delivery used freshly rebuilt modules, the f830 driver, full2838 native
+overlay/table and 950 shader bytes. A subsequent qualified tuple must name and
+verify its actual inventory rather than silently inherit these historical
+versions. Publish the matching APK/payload set and receipt before the profile.
 Do not change old `production_default_enable=false`/`deploy_allowed=false`
 records. No global device/default approval follows from this local delivery.
 Success requires two actual ordinary desktop cold starts with the selected

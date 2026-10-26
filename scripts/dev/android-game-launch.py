@@ -11,6 +11,28 @@ import struct
 import subprocess
 import time
 
+
+def validate_shared_heap_backing(state, log, *, attach, expected_window):
+    heap = state.get('guest_heap', {})
+    if not heap.get('shared'):
+        return
+    window = state.get('pool_windows', {}).get('window_bytes')
+    if not attach:
+        if window != expected_window:
+            raise RuntimeError('Actual shared heap requires the fixed whole-pool policy')
+        return
+    # Attach cannot select a cold backing policy. Verify the current process's
+    # immutable startup proof against its actual metadata instead of assuming 0.
+    if heap.get('backing_initialized') is not True:
+        raise RuntimeError('Attached shared heap has no initialized backing proof')
+    if (type(window) is not int or window < 0 or
+            (window != 0 and (window < 4096 or window & (window - 1)))):
+        raise RuntimeError('Attached shared heap has invalid backing window metadata')
+    startup = re.findall(r'\[shared pool\] immutable startup shared; import_window_bytes=(\d+)\b', log)
+    if not startup or any(int(value) != window for value in startup):
+        raise RuntimeError('Attached shared heap startup and actual backing metadata disagree')
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--serial', default='JNJF49UGBQ4XSCZT')
 parser.add_argument('--attach', action='store_true', help='observe an existing process launched by a capture tool; never restart it')
@@ -475,8 +497,8 @@ while time.monotonic() < deadline:
                         raise RuntimeError('Actual shared import window startup proof did not apply')
                     if args.shared_lazy_windows and state.get('shared_lazy_windows',{}).get('active') is not True:
                         raise RuntimeError('Actual coherent lazy-window experiment is unsupported or did not apply')
-                    if state.get('guest_heap',{}).get('shared') and state.get('pool_windows',{}).get('window_bytes') != (args.pool_window_bytes if args.expect_shared_import_windows else 0):
-                        raise RuntimeError('Actual shared heap requires the fixed whole-pool policy')
+                    validate_shared_heap_backing(state, log, attach=args.attach,
+                        expected_window=args.pool_window_bytes if args.expect_shared_import_windows else 0)
                     if (not args.attach and args.pixel_local_shared_ds is not None and
                             state.get('pixel_local',{}).get('shared_readonly_ds') != args.pixel_local_shared_ds):
                         raise SystemExit('pixel-local shared DS startup policy did not apply')

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Check startup-only allocation selection without contacting any device."""
 import contextlib
+import ast
 import io
 from pathlib import Path
 import runpy
+import re
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +16,46 @@ LAUNCHER = Path(__file__).with_name('android-game-launch.py')
 class LaunchCaptured(Exception):
     def __init__(self, command):
         self.command = command
+
+
+class AttachedBackingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Load the real validator without running the device-facing CLI.
+        function = next(node for node in ast.parse(LAUNCHER.read_text()).body
+                        if isinstance(node, ast.FunctionDef) and node.name == 'validate_shared_heap_backing')
+        namespace = {'re': re}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(LAUNCHER), 'exec'), namespace)
+        cls.validate = staticmethod(namespace['validate_shared_heap_backing'])
+
+    def state(self, window):
+        return {'guest_heap': {'shared': True, 'backing_initialized': True},
+                'pool_windows': {'window_bytes': window}}
+
+    def test_attach_accepts_proven_whole_pool_and_window_backings(self):
+        for window in (0, 1048576):
+            self.validate(self.state(window),
+                          '[dm] [shared pool] immutable startup shared; import_window_bytes='+str(window),
+                          attach=True, expected_window=0)
+
+    def test_attach_rejects_missing_or_conflicting_startup_proof(self):
+        for log in ('', '[shared pool] immutable startup shared; import_window_bytes=0'):
+            with self.assertRaisesRegex(RuntimeError, 'disagree'):
+                self.validate(self.state(1048576), log, attach=True, expected_window=0)
+
+    def test_attach_rejects_uninitialized_or_invalid_backing(self):
+        for window in (None, True, -1, 4097):
+            with self.assertRaisesRegex(RuntimeError, 'invalid'):
+                self.validate(self.state(window), '', attach=True, expected_window=0)
+        state = self.state(1048576)
+        state['guest_heap']['backing_initialized'] = False
+        with self.assertRaisesRegex(RuntimeError, 'initialized'):
+            self.validate(state, '', attach=True, expected_window=0)
+
+    def test_cold_launch_still_requires_explicit_nonzero_window(self):
+        with self.assertRaisesRegex(RuntimeError, 'whole-pool'):
+            self.validate(self.state(1048576), '', attach=False, expected_window=0)
+        self.validate(self.state(1048576), '', attach=False, expected_window=1048576)
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
