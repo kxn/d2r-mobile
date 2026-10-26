@@ -59,6 +59,17 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_query_attachment_reference_is_explicit_and_cold_only(self):
+        self.assertNotIn('query_attachment_reference',self.launch_command([]))
+        for option,value in [('--query-attachment-reference','true'),('--no-query-attachment-reference','false')]:
+            command=self.launch_command([option]);index=command.index('query_attachment_reference')
+            self.assertEqual(command[index-1:index+2],['--ez','query_attachment_reference',value])
+            with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
     def test_native_buffer_geometry_is_explicit_and_cold_only(self):
         self.assertNotIn('native_buffer_geometry',self.launch_command([]))
         for option,value in [('--native-buffer-geometry','true'),('--no-native-buffer-geometry','false')]:

@@ -1562,6 +1562,10 @@ int dm_vulkan_test_main(void) {
   vk_counter_query_stats(&queries_before,&ended_queries,&query_spans);
   uint64_t passes_before, draws_before, passes_after, draws_after;
   mtl_stats(&passes_before, &draws_before);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint64_t query_attachment_hits_before,query_attachment_retries_before;
+  vk_test_attachment_reuse_stats(&query_attachment_hits_before,&query_attachment_retries_before);
+#endif
   CALL(nvnCommandBufferResetCounter, &cmd, NVN_COUNTER_TYPE_SAMPLES_PASSED);
   for (unsigned repeat = 0; repeat < repeated_draws; repeat++) {
     CALL(nvnCommandBufferBarrier, &cmd,
@@ -1583,6 +1587,24 @@ int dm_vulkan_test_main(void) {
   CHECK(queries_after == ended_queries);
   CHECK(query_spans ? queries_after-queries_before < 10 :
                      queries_after-queries_before == repeated_draws);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  uint64_t query_attachment_hits_after,query_attachment_retries_after;
+  vk_test_attachment_reuse_stats(&query_attachment_hits_after,&query_attachment_retries_after);
+  const char *query_attachment_reuse=getenv("DM_VULKAN_ATTACHMENT_JOB_REUSE");
+  const char *query_attachment_reference=getenv("DM_VULKAN_QUERY_ATTACHMENT_REFERENCE");
+  if(query_spans && query_attachment_reuse && !strcmp(query_attachment_reuse,"1")) {
+    if(query_attachment_reference && !strcmp(query_attachment_reference,"1")) {
+      CHECK(query_attachment_hits_after==query_attachment_hits_before);
+      CHECK(query_attachment_retries_after-query_attachment_retries_before>=repeated_draws-10);
+    } else {
+      CHECK(query_attachment_hits_after-query_attachment_hits_before>=repeated_draws-10);
+      CHECK(query_attachment_retries_after-query_attachment_retries_before<10);
+    }
+  }
+  LOG("[query attachment reuse fixture] span=%d hits=%llu retries=%llu",query_spans,
+      (unsigned long long)(query_attachment_hits_after-query_attachment_hits_before),
+      (unsigned long long)(query_attachment_retries_after-query_attachment_retries_before));
+#endif
   LOG("[vulkan occlusion span fixture] span=%d draws=%u queries=%llu prefixes=256/65536 total=%llu",
       query_spans,repeated_draws,(unsigned long long)(queries_after-queries_before),
       (unsigned long long)report[0]);

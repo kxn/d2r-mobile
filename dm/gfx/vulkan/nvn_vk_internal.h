@@ -53,6 +53,7 @@ typedef struct {
   int runtime,runtime_forced,runtime_toggle,vertex_divisor_fallback;
   int store_reference,store_check,store_keep_all,ruler,extrap_no_pipeline,extrap_mask;
   int render_record_mode; // 0 ordinary; 1 fixed attachment secondary; 2 identical fixed attachment primary.
+  int query_attachment_reference; // Cold comparison of conservative query retry.
   int state_segments; // Startup-only experimental validated state-span replay.
   int gpu_profile,trace_frame_set;
   int pool_ownership_reference;

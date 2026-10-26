@@ -1464,6 +1464,8 @@ static void init_options(void) {
   o->store_check=option_one("DM_VULKAN_STORE_CHECK")||option_one("DM_VULKAN_VALIDATE");
   o->store_keep_all=option_one("DM_VULKAN_STORE_KEEP_ALL");
   LOG("[vulkan attachment stores] keep_all=%d (fixed for this process)",o->store_keep_all);
+  o->query_attachment_reference=option_one("DM_VULKAN_QUERY_ATTACHMENT_REFERENCE");
+  LOG("[vulkan query attachment] conservative_retry=%d (fixed for this process)",o->query_attachment_reference);
   o->render_record_mode=option_number("DM_VULKAN_RENDER_RECORD_MODE",0);
   if(o->render_record_mode<0 || o->render_record_mode>2)
     die("DM_VULKAN_RENDER_RECORD_MODE expects 0,1,2");

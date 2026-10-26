@@ -52,6 +52,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeGuestWorkerQos(boolean enabled);
     private static native void nativeBufferGeometry(boolean enabled);
+    private static native void nativeQueryAttachmentReference(boolean reference);
     private static native void nativeSubmissionPlanReference(boolean reference);
     private static native void nativeKeepAttachmentStores(boolean enabled);
     private static native void nativeRenderRecordMode(int mode);
@@ -289,6 +290,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeGuestWorkerQos(getIntent().getBooleanExtra("guest_worker_qos", false));
             nativeBufferGeometry(getIntent().getBooleanExtra("native_buffer_geometry", false));
+            nativeQueryAttachmentReference(getIntent().getBooleanExtra("query_attachment_reference", false));
             nativeSubmissionPlanReference(getIntent().getBooleanExtra("submission_plan_reference", false));
             nativeKeepAttachmentStores(getIntent().getBooleanExtra("keep_attachment_stores", false));
             nativeRenderRecordMode(getIntent().getIntExtra("render_record_mode", 0));

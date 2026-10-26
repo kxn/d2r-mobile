@@ -1857,9 +1857,13 @@ uniform_vertex_remaining:
   int pass_before_query=vk_render_active();
   vk_sample_query occlusion = {0};
   int sample_live=vk_pass_samples_live(draw?(const void *)draw:(const void *)idx);
-  // A live query can reset/replace this job. Retry before reserving any slot;
-  // the true branch above has no elision publication or counter side effects.
-  if(attachment_job && sample_live)goto attachment_cold_retry;
+  // A live result does not itself replace the job: prepare is a no-op while
+  // counting is disabled or a span is already open. Only the remaining path
+  // may reset a query pool. Deferred clears can also end the pass, so retain
+  // that fallback independently. Check before reserving any query slot.
+  if(attachment_job && sample_live && (V.options.query_attachment_reference ||
+      vk_mip_clear_pending() || (vk_counter_counting() && !vk_counter_active())))
+    goto attachment_cold_retry;
   if(sample_live) {
     vk_mip_clear_drain();
     occlusion=vk_counter_draw_prepare();
