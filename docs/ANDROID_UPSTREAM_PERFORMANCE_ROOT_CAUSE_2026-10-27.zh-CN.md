@@ -231,7 +231,11 @@ LLDB 取得的一个实际例子为：CPU 源 13,312 字节，按页扩大后 16
 
 ## 下一步与证据位置
 
-每周期一次额外提交/等待已经定位并以同 PID 对照证实；匹配的新修复、Turnip 策略与普通桌面发布也已完成。额外 Store 索引的工作量与边际时间、新原厂 GPU 计数器及呈现缓冲的访存成本均已核实，继续删小检查尚无证据能解决剩余 FPS 差异。下一步优先隔离 secondary/primary 结构与驱动缓存边界，并独立验证应用内游戏尺寸出图；不把显示尺寸对照等同原生窗口实现。上游约 43.4 FPS 与当前约 40.4 FPS 的剩余差距尚未严格全部归因。不能再笼统说“GPU/CPU 互等已经全部清完”，也不能继续把正常窗口的全部主线程 Running 当作纯翻译。
+每周期一次额外提交/等待已经定位并以同 PID 对照证实；匹配的新修复、Turnip 策略与普通桌面发布也已完成。额外 Store 索引的工作量与边际时间、新原厂 GPU 计数器及呈现缓冲的访存成本均已核实。后继 Primary 已实现两版、修掉首版多出的 11 个 Pass 并重新测量，约 40.132→40.222 FPS，没有明显涨帧；后台 pool reset 有明确工作量节省，仍留一个额外 HDR Pass，不能当作无差异替换或默认启用。见 [Primary 完整实验](ANDROID_PRIMARY_SECONDARY_EXPERIMENT_2026-10-27.zh-CN.md)。
+
+后继工作线程 QoS 与采集标记对照均未发现能解释剩余差距的明显收益。官方硬件计数在完整 Surface 窗口显示当前约 72.52–72.58M 用户态指令、上游约 53.22–53.25M，但当前 CPU cycles 反而少约 9%；不能把额外指令比例当作 FPS 或 CPU 时间损失。当前规划 walk/mtl_sub_index 的 SELF 采样合计约 6.09M 指令/出图间隔，值得从整段工作次数入手；不是再把末端检查删一遍。下一步须区分可在不可变命令结束时生成的结果、依赖提交初态的证明以及真实 GPU 主组成本，同时继续独立验证应用内游戏尺寸出图。详细对照、工具边界与源码核实见 [QoS 与整线程指令预算](ANDROID_WORKER_QOS_AND_INSTRUCTION_BUDGET_2026-10-27.zh-CN.md)。
+
+上游约 43.4 FPS 与当前约 40.4 FPS 的剩余差距尚未严格全部归因。不能再笼统说“GPU/CPU 互等已经全部清完”，也不能继续把正常窗口的全部主线程 Running 当作纯翻译。
 
 当前全部原始数据位于 `.local/logs/inline-upstream-rootcause-v1/`：`owner-budget.json`、`planning-results.json`、`scope-cpu.sql/csv`、`WAIT1/`、`UPSTREAM-SCHED1/`、`fixed-mode-result.json`、`HINT1/`、`gpu-tools/comparison.json`、两臂原 `.sdp`/数据库/轨迹/SQL、`api-tools/`、`MODE-*/` 与 `mode-tools/`。性能窗口与后继调试失败分开保存；各已结束游戏均原生命周期确认存档后停止，驱动模式属性恢复原值。以上是实验结果与可排除项，不是“根因已经全部找完”的结论。
 
