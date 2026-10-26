@@ -586,6 +586,14 @@ uint64_t vk_window_present(const void *texture, const int crop[4], uint64_t sequ
     // View aspect ratios differ. This changes buffer pixels, not layout.
     double visual=fmin((double)view_extent.width/w,(double)view_extent.height/h);
     int vw=lround(w*visual),vh=lround(h*visual);
+    // Output dimensions rounded by the guest can leave a one-pixel margin
+    // on each View edge. Allow that negligible aspect correction in the
+    // native-size candidate: otherwise a two-row border clears the ENTIRE
+    // swap image and adds an overlapping transfer barrier every frame.
+    // Larger letterboxes keep the original aspect and input rectangle.
+    if((int)view_extent.width-vw<=2 && (int)view_extent.height-vh<=2) {
+      vw=view_extent.width;vh=view_extent.height;
+    }
     int vx=((int)view_extent.width-vw)/2,vy=((int)view_extent.height-vh)/2;
     dx=lround((double)vx*extent.width/view_extent.width);
     dy=lround((double)vy*extent.height/view_extent.height);
@@ -594,6 +602,8 @@ uint64_t vk_window_present(const void *texture, const int crop[4], uint64_t sequ
     if(dx+dw>(int)extent.width)dw=extent.width-dx;
     if(dy+dh>(int)extent.height)dh=extent.height-dy;
   }
+  if(geometry_changed)
+    LOG("[vulkan present] native buffer applied=%ux%u content=%d,%d %dx%d",extent.width,extent.height,dx,dy,dw,dh);
   int full=!x && !y && w==t->d.width && h==t->d.height &&
       !dx && !dy && dw==w && dh==h && (uint32_t)w==extent.width && (uint32_t)h==extent.height;
   vk_present_sample sampled;
