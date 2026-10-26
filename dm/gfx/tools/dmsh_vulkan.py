@@ -31,6 +31,12 @@ def compiler_options():
     texel_model = os.environ.get('DMSH_VK_TEXEL_LOAD_MODEL', 'identity')
     pixel_local = os.environ.get('DMSH_VK_PIXEL_LOCAL_REFLECTION', '0')
     pixel_runtime = os.environ.get('DMSH_VK_PIXEL_LOCAL_RUNTIME', '0')
+    quad_derivatives = os.environ.get('DMSH_VK_QUAD_DERIVATIVES', '0')
+    component_fold = os.environ.get('DMSH_VK_COMPONENT_FOLD', '0')
+    if quad_derivatives not in ('0','1') or component_fold not in ('0','1'):
+        raise ValueError('SPIR-V rewrite switches must be 0 or 1')
+    if quad_derivatives == '1' and quad_mode != 'native':
+        raise ValueError('quad derivatives require the original native subgroup translator form')
     if size not in (16, 32, 64, 128) or any(v not in ('0','1') for v in (helper,bias,c1,texels,functions,color_half,uniform_spec,uniform_predicates,texel_storage,pixel_local,pixel_runtime)):
         raise ValueError('expected subgroup size 16/32/64/128 and boolean compiler switches 0/1')
     if uniform_predicates == '1' and uniform_spec != '1':
@@ -46,6 +52,8 @@ def compiler_options():
             'relaxed_sampled_results': texels == '1', 'inline_functions': functions == '1',
             'protected_color_half': color_half == '1','uniform_specialization':uniform_spec=='1','texel_storage_alternatives':texel_storage=='1'}
     if quad_mode != 'native': options['fragment_subgroup_mode'] = quad_mode
+    if quad_derivatives == '1': options['quad_derivatives'] = True
+    if component_fold == '1': options['component_fold'] = True
     # Preserve the legacy default dictionary for existing verified phone chains.
     # Non-default models are explicit, fingerprinted compiler inputs.
     if texel_model != IDENTITY_MODEL:
@@ -185,6 +193,10 @@ def version(base, translator):
     """固定源码、翻译器与 SPIR-V 工具指纹。 | Pin source, translator and SPIR-V tool fingerprints."""
     h = hashlib.sha256(base.encode())
     h.update(Path(__file__).read_bytes())
+    if compiler_options().get('quad_derivatives') or compiler_options().get('component_fold'):
+        for path in sorted(Path(__file__).with_name('spirv_rewrites').iterdir()):
+            if path.is_file():h.update(path.name.encode()+b'\0'+path.read_bytes())
+        h.update(subprocess.check_output(['c++','--version']))
     h.update((Path(__file__).resolve().parents[1] / 'vulkan' / 'nvn_vk_metadata.h').read_bytes())
     h.update((Path(__file__).resolve().parents[1] / 'vulkan' / 'nvn_vk_pixel_local.h').read_bytes())
     h.update(Path(__file__).with_name('dmsh_build.py').read_bytes())
@@ -204,6 +216,21 @@ def version(base, translator):
     for command in ('spirv-opt', 'spirv-val', 'spirv-as', 'spirv-dis', 'glslangValidator'):
         h.update(subprocess.check_output([command, '--version']))
     return h.hexdigest()[:12]
+
+
+def build_rewriter(out):
+    """Build only the offline, source-pinned passes; never part of the runtime."""
+    root=Path(__file__).with_name('spirv_rewrites')
+    binary=Path(out).parent/('_spirv_rewrites-'+Path(out).name)
+    subprocess.run(['c++','-O2','-std=c++17','-I',str(root),str(root/'main.cpp'),
+                    *[str(root/('xbg_spirv_'+name+'.cpp')) for name in ('quad','ldc','temps')],
+                    '-o',str(binary)],check=True)
+    (Path(out)/'_spirv_rewrites.json').write_text(json.dumps({
+        'tool_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),
+        'compiler':subprocess.check_output(['c++','--version'],text=True),
+        'sources':json.loads((root/'SOURCE.json').read_text()),
+        'order':'quad (fragment only), component fold, temporary forwarding, original generic inlining and validation'},indent=2))
+    return binary
 
 
 def pixel_local_cache_valid(root, key, cached, enabled):
@@ -294,6 +321,7 @@ def build(g):
     out.mkdir(parents=True, exist_ok=True)
     translator = g['XLATE']
     options = compiler_options()
+    rewriter=build_rewriter(out) if options.get('quad_derivatives') or options.get('component_fold') else None
     source_sha = subprocess.check_output([translator, '--source-sha'], text=True).strip()
     if source_sha != g['dmsh_chain'].xlate_source_sha():
         raise RuntimeError('shader translator source differs; rebuild dmsh_xlate')
@@ -381,6 +409,16 @@ def build(g):
                 code, count = relax_sampled_results(code)
                 reflection['relaxed_sampled_result_count'] = count
             destination.write_bytes(code)
+            if rewriter:
+                # Match the original SHFL helper and single-store temporaries
+                # BEFORE generic inlining; all original reflection/proof output
+                # below is rebuilt from this declared pipeline and new chain.
+                rewritten=Path(temporary)/(key+'.rewritten.spv')
+                result=subprocess.run([str(rewriter),str(destination),str(rewritten),
+                    '1' if stage=='ps' and options.get('quad_derivatives') else '0',
+                    '1' if options.get('component_fold') else '0'],check=True,capture_output=True,text=True)
+                reflection['upstream_spirv_rewrites']=json.loads(result.stdout)
+                destination.write_bytes(rewritten.read_bytes())
             passes=['--eliminate-dead-code-aggressive','--eliminate-dead-const','--trim-capabilities']
             if any(folds.values()):
                 passes=['--ssa-rewrite','--ccp','--simplify-instructions','--eliminate-dead-branches',*passes]
