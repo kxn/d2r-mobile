@@ -881,6 +881,15 @@ int dm_vulkan_test_main(void) {
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
 #ifndef DM_ANDROID_APP
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_CONSERVATIVE_PLAN_FIXTURE")) {
+    const char *reference=getenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE");
+    CHECK(reference && !strcmp(reference,"1"));
+    uint8_t controls[2][0x880];memset(controls[0],0,sizeof controls[0]);memset(controls[1],1,sizeof controls[1]);
+    pass_depth_test_mode(controls[0],controls[1],NVN_FORMAT_DEPTH32F_STENCIL8,1);
+    pass_depth_test_mode(controls[0],controls[1],NVN_FORMAT_DEPTH24_STENCIL8,1);
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"conservative-no-prepass-depth-stencil\",\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks);return 0;
+  }
   persistent_texel_owner_test();
   if(getenv("DM_TEXEL_OWNER_FIXTURE")) {
     printf("{\"test\":\"persistent-texel-owner\",\"result\":\"passed\",\"game_modules_executed\":false}\n");return 0;
