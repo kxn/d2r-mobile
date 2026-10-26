@@ -285,7 +285,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeTranslationCpuMask(getIntent().getIntExtra("translation_cpu_mask", 0));
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
-            nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", false));
+            nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", true));
             nativeLegacyAstcCopy(getIntent().getBooleanExtra("legacy_astc_copy", false),
                     getIntent().getBooleanExtra("run_vulkan_tests", false) &&
                     getIntent().getBooleanExtra("legacy_astc_copy_test", false));

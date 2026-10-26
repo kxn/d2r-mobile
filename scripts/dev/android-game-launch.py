@@ -33,7 +33,7 @@ parser.set_defaults(shader_present=None)
 parser.add_argument('--eager-pool-mirrors-reference',action='store_true',help='startup-only comparison: allocate a Vulkan buffer mirror for every registered NVN pool')
 parser.add_argument('--legacy-astc-copy',action=argparse.BooleanOptionalAction,default=None,help='startup-only default-OFF legacy Vulkan fresh BC3-array ASTC4 physical encoding experiment; actual adoption must be checked in native log')
 parser.add_argument('--shared-lazy-windows',action='store_true',help='cold experimental coherent userptr lazy windows; exact qualified provider only, default off')
-parser.add_argument('--shared-image-raw-observe',action='store_true',help='cold default-OFF coherent image observation experiment; GPU byte conflicts, CPU page conflicts retained')
+parser.add_argument('--shared-image-raw-observe',action=argparse.BooleanOptionalAction,default=None,help='cold coherent image GPU byte scope (default on when qualified); --no-shared-image-raw-observe retains the page-scope reference; CPU effects always retain page scope')
 parser.add_argument('--shared-guest-heap',action=argparse.BooleanOptionalAction,default=None,help='cold experimental shared heap + fixed shared Pools; unsupported capability retains original legacy configuration (default off)')
 parser.add_argument('--native-resource-table',help='cold experimental authenticated DMNTBL table; requires explicit shared heap and matching app-local Turnip')
 parser.add_argument('--native-resource-pack-sha256',help='complete native pack content SHA256; all native-resource options are required together')
@@ -195,7 +195,7 @@ if args.pool_window_bytes is not None and (args.pool_window_bytes < 0 or
     parser.error('--pool-window-bytes must be 0 or a power of two >= 4096, within signed 64-bit range')
 if args.shared_lazy_windows and (args.attach or args.shared_guest_heap is not True or not args.expect_shared_import_windows or not args.pool_window_bytes):
     parser.error('--shared-lazy-windows requires cold --shared-guest-heap --expect-shared-import-windows and nonzero --pool-window-bytes')
-if args.shared_image_raw_observe and (args.attach or args.shared_guest_heap is not True):
+if args.shared_image_raw_observe is not None and (args.attach or args.shared_guest_heap is not True):
     parser.error('--shared-image-raw-observe requires cold --shared-guest-heap')
 if args.expect_shared_import_windows and (args.attach or args.shared_guest_heap is not True or not args.pool_window_bytes):
     parser.error('--expect-shared-import-windows requires cold --shared-guest-heap and nonzero --pool-window-bytes')
@@ -287,8 +287,8 @@ if not args.attach:
                    '--es','native_resource_producer_sha256',args.native_resource_producer_sha256]
     if args.shared_lazy_windows:
         launch += ['--ez','shared_lazy_windows','true']
-    if args.shared_image_raw_observe:
-        launch += ['--ez','shared_image_raw_observe','true']
+    if args.shared_image_raw_observe is not None:
+        launch += ['--ez','shared_image_raw_observe',str(args.shared_image_raw_observe).lower()]
     if args.pool_window_bytes is not None:
         launch += ['--el', 'pool_window_bytes', str(args.pool_window_bytes)]
     if args.pixel_local is not None:

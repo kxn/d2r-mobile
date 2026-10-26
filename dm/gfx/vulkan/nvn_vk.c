@@ -1429,8 +1429,8 @@ static void init_options(void) {
   const char *raw_image=getenv("DM_VK_SHARED_IMAGE_RAW_OBSERVE");
   if(raw_image && strcmp(raw_image,"0") && strcmp(raw_image,"1"))
     die("DM_VK_SHARED_IMAGE_RAW_OBSERVE expects0or1");
-  o->shared_image_raw_observe=raw_image && !strcmp(raw_image,"1");
-  LOG("[vulkan] shared image raw publication observation experimental=%d",o->shared_image_raw_observe);
+  o->shared_image_raw_observe=!raw_image || !strcmp(raw_image,"1");
+  LOG("[vulkan] shared image GPU byte scope=%d; CPU effects retain page scope",o->shared_image_raw_observe);
   int defer_requested=atomic_load_explicit(&pool_defer_publication_requested,memory_order_acquire);
   o->pool_defer_publication=defer_requested>=0?defer_requested:option_one("DM_VULKAN_DEFER_POOL_PUBLICATION");
   const char *sync_nvn=getenv("DM_NVN_SYNC");

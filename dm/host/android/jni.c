@@ -363,7 +363,7 @@ static int operation_mode=1,operation_mode_fixed;
 static int pixel_local_startup,pixel_local_shared_ds_startup;
 static int shared_guest_heap_startup;
 static int shared_lazy_windows_startup;
-static int shared_image_raw_observe_startup;
+static int shared_image_raw_observe_startup=1;
 static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int inline_translation_startup;
