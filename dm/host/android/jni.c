@@ -369,6 +369,24 @@ static int state_segments_startup=1;
 static int inline_translation_startup;
 static int submission_plan_reference_startup;
 static unsigned translation_cpu_mask_startup;
+static char turnip_autotune_startup[32];
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTurnipAutotune(
+    JNIEnv *env,jclass klass,jstring selection) {
+  (void)klass;
+  const char *text=selection?(*env)->GetStringUTFChars(env,selection,NULL):"default";
+  if(!text)return;
+  int valid=!strcmp(text,"default") || !strcmp(text,"bandwidth") ||
+      !strcmp(text,"profiled") || !strcmp(text,"prefer_sysmem");
+  pthread_mutex_lock(&operation_mode_mutex);
+  int frozen=operation_mode_fixed;
+  if(valid && !frozen)strcpy(turnip_autotune_startup,text);
+  pthread_mutex_unlock(&operation_mode_mutex);
+  if(selection)(*env)->ReleaseStringUTFChars(env,selection,text);
+  if(!valid || frozen) {
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,"turnip_autotune requires a valid cold selection");
+  }
+}
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSubmissionPlanReference(
     JNIEnv *env,jclass klass,jboolean reference) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -825,6 +843,11 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   vk_driver_span_reference_startup(driver_span_reference_startup);
   operation_mode_fixed=1;
   pthread_mutex_unlock(&operation_mode_mutex);
+  // This driver policy is app-private and frozen before Vulkan initialization.
+  // Leaving it default preserves external profiler/property configuration.
+  if(turnip_autotune_startup[0] && strcmp(turnip_autotune_startup,"default") &&
+      setenv("TU_AUTOTUNE_ALGO",turnip_autotune_startup,1))
+    die("Android Turnip autotune startup environment");
   char translation_cpu_mask[16];snprintf(translation_cpu_mask,sizeof translation_cpu_mask,"%x",translation_cpu_mask_startup);
   if(setenv("DM_NVN_CPU_MASK",translation_cpu_mask,1) ||
       setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||

@@ -59,6 +59,13 @@ public final class VerifiedStartupProfileTest {
             values.setProperty("pixel_local_shared_ds", "false");
         }
         Path profile() { return runtime.toPath().resolve("launch-profile.properties"); }
+        void useV2() {
+            values.setProperty("schema", "2");
+            values.setProperty("inline_translation", "true");
+            values.setProperty("translation_cpu_mask", "128");
+            values.setProperty("stream_submits", "false");
+            values.setProperty("turnip_autotune", "profiled");
+        }
         void store() throws Exception {
             try (Writer out = Files.newBufferedWriter(profile(), StandardCharsets.UTF_8)) { values.store(out, null); }
         }
@@ -92,6 +99,29 @@ public final class VerifiedStartupProfileTest {
             catch (UnsupportedOperationException expected) { }
             f.values.setProperty("pool_window_bytes", Long.toString(1L << 40)); f.store();
             check(Long.valueOf(1L << 40).equals(f.load().extras.get("pool_window_bytes")));
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV2(); f.store(); Map<String,Object> extras = f.load().extras;
+            check(Boolean.TRUE.equals(extras.get("inline_translation")));
+            check(Integer.valueOf(128).equals(extras.get("translation_cpu_mask")));
+            check(Boolean.TRUE.equals(extras.get("stream_submit_reference")));
+            check("profiled".equals(extras.get("turnip_autotune")));
+            for (String dynamic : Arrays.asList("target_fps", "scale_3d", "game_res", "thermal_cap"))
+                check(!extras.containsKey(dynamic));
+            for (String mode : Arrays.asList("default", "bandwidth", "prefer_sysmem")) {
+                f.values.setProperty("turnip_autotune", mode); f.store();
+                check(mode.equals(f.load().extras.get("turnip_autotune")));
+            }
+        }
+        for (String[] entry : new String[][]{{"translation_cpu_mask","-1"},
+                {"translation_cpu_mask","2147483648"}, {"translation_cpu_mask","+128"},
+                {"turnip_autotune","invalid"}, {"inline_translation","yes"}, {"stream_submits","0"}}) {
+            try (Fixture f = new Fixture()) {
+                f.useV2(); f.values.setProperty(entry[0], entry[1]); f.store(); rejects(f::load);
+            }
+        }
+        for (String key : Arrays.asList("inline_translation", "translation_cpu_mask", "stream_submits", "turnip_autotune")) {
+            try (Fixture f = new Fixture()) { f.useV2(); f.values.remove(key); f.store(); rejects(f::load); }
         }
         try (Fixture f = new Fixture()) {
             f.store(); rejects(() -> VerifiedStartupProfile.load(f.runtime, f.apk, "different/build"));

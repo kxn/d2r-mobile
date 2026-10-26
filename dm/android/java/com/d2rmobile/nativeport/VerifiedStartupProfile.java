@@ -27,6 +27,11 @@ final class VerifiedStartupProfile {
         "pixel_local", "pixel_local_shared_ds"
     };
     private static final Set<String> REQUIRED = new HashSet<>(Arrays.asList(KEYS));
+    private static final Set<String> REQUIRED_V2 = new HashSet<>(REQUIRED);
+    static {
+        REQUIRED_V2.addAll(Arrays.asList("inline_translation", "translation_cpu_mask",
+                "stream_submits", "turnip_autotune"));
+    }
     final String name;
     final Map<String, Object> extras;
 
@@ -67,8 +72,11 @@ final class VerifiedStartupProfile {
         } catch (IllegalArgumentException error) {
             throw invalid("profile properties", error);
         }
-        if (!values.stringPropertyNames().equals(REQUIRED)) throw invalid("profile fields");
-        if (!"1".equals(values.getProperty("schema"))) throw invalid("profile schema");
+        String schema = values.getProperty("schema");
+        boolean version2 = "2".equals(schema);
+        if (!version2 && !"1".equals(schema)) throw invalid("profile schema");
+        if (!values.stringPropertyNames().equals(version2 ? REQUIRED_V2 : REQUIRED))
+            throw invalid("profile fields");
         String name = values.getProperty("name");
         if (name.isEmpty() || name.length() > 64 || name.indexOf('\n') >= 0 || name.indexOf('\r') >= 0)
             throw invalid("profile name");
@@ -114,6 +122,18 @@ final class VerifiedStartupProfile {
         extras.put("driver_span_reference", flag(values, "driver_span_reference"));
         extras.put("pixel_local", pixelLocal);
         extras.put("pixel_local_shared_ds", sharedDepth);
+        if (version2) {
+            extras.put("inline_translation", flag(values, "inline_translation"));
+            String mask = values.getProperty("translation_cpu_mask");
+            if (!mask.matches("0|[1-9][0-9]*")) throw invalid("translation CPU mask");
+            try { extras.put("translation_cpu_mask", Integer.parseInt(mask)); }
+            catch (NumberFormatException error) { throw invalid("translation CPU mask", error); }
+            extras.put("stream_submit_reference", !flag(values, "stream_submits"));
+            String autotune = values.getProperty("turnip_autotune");
+            if (!Arrays.asList("default", "bandwidth", "profiled", "prefer_sysmem").contains(autotune))
+                throw invalid("Turnip autotune");
+            extras.put("turnip_autotune", autotune);
+        }
         return new VerifiedStartupProfile(name, extras);
     }
 

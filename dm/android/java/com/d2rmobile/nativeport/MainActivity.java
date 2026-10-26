@@ -52,6 +52,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeSubmissionPlanReference(boolean reference);
     private static native void nativeTranslationCpuMask(int mask);
+    private static native void nativeTurnipAutotune(String selection);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
     private static native void nativePoolSyncReference(boolean reference);
@@ -185,6 +186,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 for (java.util.Map.Entry<String, Object> row : desktopProfile.extras.entrySet()) {
                     Object value = row.getValue();
                     if (value instanceof Boolean) selected.putExtra(row.getKey(), ((Boolean)value).booleanValue());
+                    else if (value instanceof Integer) selected.putExtra(row.getKey(), ((Integer)value).intValue());
                     else if (value instanceof Long) selected.putExtra(row.getKey(), ((Long)value).longValue());
                     else selected.putExtra(row.getKey(), (String)value);
                 }
@@ -283,6 +285,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeSubmissionPlanReference(getIntent().getBooleanExtra("submission_plan_reference", false));
             nativeTranslationCpuMask(getIntent().getIntExtra("translation_cpu_mask", 0));
+            String autotune = getIntent().getStringExtra("turnip_autotune");
+            if (autotune != null && !"default".equals(autotune) &&
+                    !"adreno".equals(getIntent().getStringExtra("vulkan_provider")) &&
+                    !getIntent().getBooleanExtra("custom_vulkan_driver", false))
+                throw new IllegalArgumentException("Turnip autotune requires the app-local Adreno provider");
+            nativeTurnipAutotune(autotune);
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
             nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", true));

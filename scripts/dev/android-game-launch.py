@@ -23,6 +23,7 @@ parser.add_argument('--performance-hints',action='store_true',help='experimental
 parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
 parser.add_argument('--submission-plan-reference',action='store_true',help='cold comparison: conservative replay without whole-submission planning; retains guest commands, synchronization and GPU completion')
 parser.add_argument('--translation-cpu-mask',type=lambda s:int(s,0),default=0,help='cold translation-owner affinity bitmask; default0 retains Android scheduling')
+parser.add_argument('--turnip-autotune',choices=['default','bandwidth','profiled','prefer_sysmem'],help='app-private cold Turnip render-pass policy; default preserves external driver configuration')
 parser.add_argument('--storage-usage-reference',action='store_true',help='startup-only comparison: reserve Storage usage from the NVN IMAGE hint instead of first actual binding')
 parser.add_argument('--attachment-usage-reference',action='store_true',help='startup-only comparison: reserve Color Attachment usage for every supporting format')
 parser.add_argument('--texel-storage',action='store_true',help='experimental paired RGBA32F buffer storage path; requires matching alternative shader sidecars')
@@ -197,6 +198,9 @@ if args.shared_lazy_windows and (args.attach or args.shared_guest_heap is not Tr
     parser.error('--shared-lazy-windows requires cold --shared-guest-heap --expect-shared-import-windows and nonzero --pool-window-bytes')
 if args.shared_image_raw_observe is not None and (args.attach or args.shared_guest_heap is not True):
     parser.error('--shared-image-raw-observe requires cold --shared-guest-heap')
+if args.turnip_autotune is not None and (args.attach or
+        not (args.vulkan_provider=='adreno' or (args.custom_vulkan_driver and args.vulkan_provider in (None,'adreno')))):
+    parser.error('--turnip-autotune requires a cold app-local Adreno provider')
 if args.expect_shared_import_windows and (args.attach or args.shared_guest_heap is not True or not args.pool_window_bytes):
     parser.error('--expect-shared-import-windows requires cold --shared-guest-heap and nonzero --pool-window-bytes')
 if args.external_profile and (args.gpu_profile or args.validate):
@@ -281,6 +285,8 @@ if not args.attach:
         launch += ['--ez','shared_guest_heap',str(args.shared_guest_heap).lower()]
     if args.vulkan_provider is not None:
         launch += ['--es','vulkan_provider',args.vulkan_provider]
+    if args.turnip_autotune is not None:
+        launch += ['--es','turnip_autotune',args.turnip_autotune]
     if args.native_resource_table is not None:
         launch += ['--es','native_resource_table',args.native_resource_table,
                    '--es','native_resource_pack_sha256',args.native_resource_pack_sha256,
