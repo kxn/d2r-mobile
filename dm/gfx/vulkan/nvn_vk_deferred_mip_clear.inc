@@ -103,6 +103,7 @@ static void mip_clear_before_draw(vk_shader *const list[6]) {
   }
 }
 int vk_mip_clear_try(const p_set_rt *rt,const p_scissor *sc,const p_clear_color *clear) {
+  if(V.options.render_record_mode)return 0;
   if(mip_clear_flushing || !mip_clear_enabled || !vk_tbdr_enabled())return 0;
   if(!vk_mip_clear_pending()) {
     if(!active_job || !active_job->first_draw || !active_job->secondary || V.cmd!=active_job->secondary ||

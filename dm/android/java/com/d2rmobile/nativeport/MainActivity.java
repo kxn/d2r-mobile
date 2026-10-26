@@ -52,6 +52,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeSubmissionPlanReference(boolean reference);
     private static native void nativeKeepAttachmentStores(boolean enabled);
+    private static native void nativeRenderRecordMode(int mode);
     private static native void nativeTranslationCpuMask(int mask);
     private static native void nativeTurnipAutotune(String selection);
     private static native void nativeSampleLivenessReference(boolean reference);
@@ -286,6 +287,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeSubmissionPlanReference(getIntent().getBooleanExtra("submission_plan_reference", false));
             nativeKeepAttachmentStores(getIntent().getBooleanExtra("keep_attachment_stores", false));
+            nativeRenderRecordMode(getIntent().getIntExtra("render_record_mode", 0));
             nativeTranslationCpuMask(getIntent().getIntExtra("translation_cpu_mask", 0));
             String autotune = getIntent().getStringExtra("turnip_autotune");
             if (autotune != null && !"default".equals(autotune) &&

@@ -19,6 +19,7 @@ typedef struct render_job {
   VkRenderPass pass;
   VkRenderPass final_pass;
   VkCommandBuffer primary, secondary;
+  int direct; // The experimental primary path aliases secondary to its actual primary recording context.
   VkAttachmentDescription attachments[9];
   VkAttachmentReference colors[8], depth;
   VkClearValue clears[9];
@@ -187,6 +188,15 @@ static void render_record_begin(render_job *j,const VkAttachmentDescription *att
       if(attachments[n].stencilLoadOp==VK_ATTACHMENT_LOAD_OP_CLEAR)j->ds_written|=VK_IMAGE_ASPECT_STENCIL_BIT;
     } else if(f==VK_FORMAT_S8_UINT && attachments[n].stencilLoadOp==VK_ATTACHMENT_LOAD_OP_CLEAR)
       j->ds_written|=VK_IMAGE_ASPECT_STENCIL_BIT;
+  }
+  j->direct=V.options.render_record_mode==2;
+  if(j->direct) {
+    j->secondary=j->primary;
+    VkRenderPassBeginInfo begin={.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+      .renderPass=j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
+      .clearValueCount=j->attachment_count,.pClearValues=j->clears};
+    vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_INLINE);
+    render_binding_reset(j);return;
   }
   j->secondary = vk_command_buffer(VK_COMMAND_BUFFER_LEVEL_SECONDARY);
   VkCommandBufferInheritanceInfo inherit={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO,
@@ -586,15 +596,19 @@ void vk_render_end_at(const char *file, unsigned line) {
     }
     render_job *j=active_job;
     vk_counter_pass_end();
-    VK_CHECK(vkEndCommandBuffer(j->secondary));V.cmd=j->primary;
+    if(!j->direct)VK_CHECK(vkEndCommandBuffer(j->secondary));
+    V.cmd=j->primary;
     unsigned dead=0;
+    int readonly_none=0;
+    // Both comparison modes retain their identical initial attachment ops.
+    // The primary pass has already begun; never retroactively change them.
+    if(!V.options.render_record_mode) {
     for(unsigned k=0;k<j->color_count;k++) {
       unsigned a=j->colors[k].attachment;if(a==VK_ATTACHMENT_UNUSED) continue;
       if(!j->preserve_stores && !vk_pass_store_needed(active_targets.color[k],active_targets.has_cview[k]?&active_targets.cview[k]:NULL,VK_IMAGE_ASPECT_COLOR_BIT)) {
         j->attachments[a].storeOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;dead++;
       }
     }
-    int readonly_none=0;
     if(j->has_depth) {
       VkAttachmentDescription *a=&j->attachments[j->depth.attachment];
       const view_t *v=active_targets.has_dview?&active_targets.dview:NULL;
@@ -637,11 +651,15 @@ void vk_render_end_at(const char *file, unsigned line) {
       if(dead && (n<=8 || (V.options.stats && n%600<dead)))
         LOG("[vulkan pass] omitted overwritten attachment stores total=%llu",(unsigned long long)n);
     }
+    }
+    if(!j->direct) {
     VkRenderPassBeginInfo begin={.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
       .renderPass=j->final_pass?j->final_pass:j->pass,.framebuffer=j->framebuffer,.renderArea=j->area,
       .clearValueCount=j->attachment_count,.pClearValues=j->clears};
     vkCmdBeginRenderPass(V.cmd,&begin,VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-    vk_command_execute(1,&j->secondary);vkCmdEndRenderPass(V.cmd);
+    vk_command_execute(1,&j->secondary);
+    }
+    vkCmdEndRenderPass(V.cmd);
     // Read-only depth testing/sampling may share the pass. Its physical store
     // is an access at pass end, not an imaginary write by every depth test.
     // Record stores directly even while an outer descriptor batch is pending.
@@ -669,7 +687,7 @@ int vk_render_active(void) { return active_job!=NULL; }
 // The primary does not begin the render pass until the secondary is finished.
 // A dependency on producers preceding this pass can still be recorded there.
 VkCommandBuffer vk_render_pending_primary(void) {
-  return active_job?active_job->primary:VK_NULL_HANDLE;
+  return active_job && !active_job->direct?active_job->primary:VK_NULL_HANDLE;
 }
 void vk_render_end_stats(int print) {
   for (unsigned i = 0; i < end_site_count; i++) {
@@ -935,6 +953,7 @@ static int pipeline_stencil_writes(const VkPipelineDepthStencilStateCreateInfo *
 // pass into the primary yet; only their secondary is currently recording.
 // Retain the job and immutable cache references until ordinary fence recycle.
 static int render_cancel_obsolete_clear(const tex_t *texture,const view_t *view) {
+  if(V.options.render_record_mode)return 0; // Keep the same clear work in both comparison arms.
   render_job *job=active_job;
   if(!job || !job->clear_only || job->first_draw || job->has_depth || job->preserve_stores ||
       !job->secondary || V.cmd!=job->secondary || vk_counter_active() ||

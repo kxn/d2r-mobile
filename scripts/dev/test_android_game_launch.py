@@ -59,6 +59,25 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_fixed_recording_arms_have_explicit_matched_prerequisites(self):
+        self.assertNotIn('render_record_mode',self.launch_command([]))
+        for mode,value in [('secondary','1'),('primary','2')]:
+            command=self.launch_command(['--fixed-render-recording',mode,
+                                         '--keep-attachment-stores','--no-pixel-local'])
+            index=command.index('render_record_mode')
+            self.assertEqual(command[index-1:index+2],['--ei','render_record_mode',value])
+        bad=[['--fixed-render-recording','primary'],
+             ['--fixed-render-recording','primary','--keep-attachment-stores'],
+             ['--fixed-render-recording','primary','--no-pixel-local'],
+             ['--attach','--fixed-render-recording','primary','--keep-attachment-stores','--no-pixel-local'],
+             ['--fixed-render-recording','secondary','--keep-attachment-stores','--no-pixel-local','--deferred-mip-clears']]
+        for options in bad:
+            with self.subTest(options=options),patch('sys.argv',[str(LAUNCHER),*options]), \
+                    patch('subprocess.check_output')as adb,contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit)as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2);adb.assert_not_called()
+
     def test_keep_stores_is_explicit_cold_only_and_default_off(self):
         for options,value in (([], 'false'), (['--keep-attachment-stores'], 'true')):
             command=self.launch_command(options)

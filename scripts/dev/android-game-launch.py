@@ -45,6 +45,7 @@ parser.add_argument('--performance-hints',action='store_true',help='experimental
 parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
 parser.add_argument('--submission-plan-reference',action='store_true',help='cold comparison: conservative replay without whole-submission planning; retains guest commands, synchronization and GPU completion')
 parser.add_argument('--keep-attachment-stores',action='store_true',help='cold cost comparison: retain attachment stores and skip their index only; preserve query/depth/state planning (default off)')
+parser.add_argument('--fixed-render-recording',choices=['secondary','primary'],help='cold controlled comparison of command buffer recording, with identical fixed LOAD/STORE; requires --keep-attachment-stores --no-pixel-local and no deferred mip clears')
 parser.add_argument('--translation-cpu-mask',type=lambda s:int(s,0),default=0,help='cold translation-owner affinity bitmask; default0 retains Android scheduling')
 parser.add_argument('--turnip-autotune',choices=['default','bandwidth','profiled','prefer_sysmem'],help='app-private cold Turnip render-pass policy; default preserves external driver configuration')
 parser.add_argument('--storage-usage-reference',action='store_true',help='startup-only comparison: reserve Storage usage from the NVN IMAGE hint instead of first actual binding')
@@ -180,6 +181,9 @@ if args.attach and args.submission_plan_reference:
     parser.error('--submission-plan-reference is startup-only and cannot be used with --attach')
 if args.attach and args.keep_attachment_stores:
     parser.error('--keep-attachment-stores is startup-only and cannot be used with --attach')
+if args.fixed_render_recording is not None and (args.attach or not args.keep_attachment_stores or
+        args.pixel_local is not False or args.deferred_mip_clears):
+    parser.error('--fixed-render-recording requires cold --keep-attachment-stores --no-pixel-local and no deferred mip clears')
 if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
 if args.attach and args.source_partition is not None:
@@ -346,6 +350,8 @@ if not args.attach:
     launch += ['--ez', 'performance_hint_reference', str(not args.performance_hints).lower()]
     launch += ['--ez', 'submission_plan_reference', str(args.submission_plan_reference).lower()]
     launch += ['--ez', 'keep_attachment_stores', str(args.keep_attachment_stores).lower()]
+    if args.fixed_render_recording is not None:
+        launch += ['--ei', 'render_record_mode', str({'secondary':1,'primary':2}[args.fixed_render_recording])]
     launch += ['--ez', 'image_layout_reference', str(not args.optimal_image_layouts).lower()]
     launch += ['--ez', 'sampled_array_layout_reference', str(args.general_sampled_array_layouts_reference).lower()]
     launch += ['--ez', 'buffer_memory_reference', str(args.global_buffer_memory_reference).lower()]
@@ -442,6 +448,12 @@ while time.monotonic() < deadline:
                     if args.stream_submits and state.get('stream_submits',{}).get('reference',True):
                         raise SystemExit('stream submission policy is not active')
                     keep_store_modes=re.findall(r'\[vulkan attachment stores\] keep_all=([01])\b',log)
+                    recording_modes=re.findall(r'\[vulkan render recording\] mode=([012])\b',log)
+                    actual_recording_mode=int(recording_modes[-1]) if recording_modes else None
+                    expected_recording_mode={'secondary':1,'primary':2}.get(args.fixed_render_recording,0)
+                    if not args.attach and ((expected_recording_mode and actual_recording_mode!=expected_recording_mode) or
+                            (actual_recording_mode is not None and actual_recording_mode!=expected_recording_mode)):
+                        raise SystemExit('fixed attachment recording startup mode did not apply')
                     actual_keep_stores=bool(int(keep_store_modes[-1])) if keep_store_modes else None
                     # Older APKs cannot enable this experiment and publish no
                     # marker. Require positive proof to opt in; keep their
@@ -585,6 +597,8 @@ while time.monotonic() < deadline:
                               'stream_submits':not state.get('stream_submits',{}).get('reference',True),
                               'requested_keep_attachment_stores':args.keep_attachment_stores,
                               'actual_keep_attachment_stores':actual_keep_stores,
+                              'requested_fixed_render_recording':args.fixed_render_recording,
+                              'actual_render_record_mode':actual_recording_mode,
                               'cache_store_descriptors':not state.get('store_descriptors',{}).get('reference',True),
                               'cpu_known_copies':not state.get('cpu_known_copies',{}).get('reference',True),
                               'cache_driver_constants':not state.get('driver_constants',{}).get('reference',True),

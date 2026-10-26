@@ -182,7 +182,7 @@ static void submission_index_build(const uint64_t *handles,int n) {
   store_build_context context;
   // Isolate the store-elision budget without disabling query/depth/state
   // consumers of the flattened plan or falling back to per-target raw scans.
-  int build_store=store_valid && !V.options.store_keep_all && (!reference_mode||check_mode);
+  int build_store=store_valid && !V.options.store_keep_all && !V.options.render_record_mode && (!reference_mode||check_mode);
   if(build_store) store_index_begin(&context);
   for(int i=0;i<n;i++) if(!walk((const void *)(uintptr_t)handles[i],0,build_store?&context:NULL)) {
     valid=index_valid=0;return;

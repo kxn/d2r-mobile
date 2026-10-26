@@ -879,6 +879,24 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_FIXED_RENDER_RECORDING_FIXTURE")) {
+    uint8_t controls[10][0x880];
+    for(unsigned i=0;i<10;i++)memset(controls[i],i,sizeof controls[i]);
+    NVNmemoryPoolBuilder mb;CALL(nvnMemoryPoolBuilderSetDefaults,&mb);
+    CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);CALL(nvnMemoryPoolBuilderSetStorage,&mb,bytes,4<<20);
+    CALL(nvnMemoryPoolBuilderSetFlags,&mb,NVN_MEMORY_POOL_FLAGS_CPU_CACHED|NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    CHECK(CALL(nvnMemoryPoolInitialize,&memory,&mb));
+    CHECK(CALL(nvnCommandBufferInitialize,&cmd,&device));
+    CALL(nvnCommandBufferAddCommandMemory,&cmd,&memory,0,1<<20);
+    mtl_init();
+    CHECK(V.options.render_record_mode==1 || V.options.render_record_mode==2);
+    store_overwrite_test(controls[0],controls[9],NVN_FORMAT_DEPTH32F_STENCIL8);
+    store_overwrite_test(controls[0],controls[9],NVN_FORMAT_DEPTH24_STENCIL8);
+    CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"fixed-render-recording\",\"mode\":%d,\"checks\":%u,\"result\":\"passed\",\"game_modules_executed\":false}\n",V.options.render_record_mode,checks);return 0;
+  }
+#endif
 #ifndef DM_ANDROID_APP
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(getenv("DM_CONSERVATIVE_PLAN_FIXTURE")) {

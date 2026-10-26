@@ -79,7 +79,7 @@ static void store_overwrite_test(const void *vertex,const void *sample_fragment,
       if(test==5) { CALL(nvnCommandBufferBeginRecording,&cmd);CALL(nvnCommandBufferCopyCommands,&cmd,2,commands);submit(end()); }
       else { CALL(nvnQueueSubmitCommands,&queue,2,commands);CALL(nvnQueueFinish,&queue); }
     } else submit(end());
-    uint64_t expected_dead=baseline?0:test==0||test==5||test==6||test==8||test==9||test==13?1:test==10?2:0;
+    uint64_t expected_dead=baseline||V.options.render_record_mode?0:test==0||test==5||test==6||test==8||test==9||test==13?1:test==10?2:0;
     CHECK(vk_render_store_omissions()-before==expected_dead);
     if(test<12) {
     CALL(nvnTextureReadTexels,&textures[0],NULL,&region,pixels);
@@ -124,6 +124,10 @@ static void store_overwrite_test(const void *vertex,const void *sample_fragment,
   }
   }
   V.options.store_keep_all=0;
+  // Fixed attachment modes deliberately have no store index. Their complete
+  // rendered results above are checked; index-vs-scan metadata tests below
+  // remain on the ordinary renderer where those decisions actually exist.
+  if(V.options.render_record_mode)goto cleanup;
   // 仅数据流检查：共享存储的不同快照、无关拷贝、未知池边界及描述符变更。
   // Metadata-only checks: distinct snapshots sharing storage, unrelated copies,
   // pool boundaries and descriptor mutation. These streams are not GPU draws.
@@ -321,6 +325,7 @@ static void store_overwrite_test(const void *vertex,const void *sample_fragment,
     S=saved_state;CALL(nvnTextureFinalize,&alias);
     LOG("[vulkan store target fixture] repeated/sparse/reordered attachment slots, lazy clear/draw first uses, mip/guest aliases and new-build reset agree with raw command scan");
   }
+cleanup:
   vk_tbdr_reference(!saved);
   V.options.store_keep_all=saved_keep;
   CALL(nvnProgramFinalize,&program);CALL(nvnSamplerFinalize,&sampler);

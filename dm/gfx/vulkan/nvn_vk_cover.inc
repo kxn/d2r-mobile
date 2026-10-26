@@ -2,6 +2,7 @@
 // Upstream attr_read/first_draw_covers; reuse original nvn_cover.h geometry proof.
 #include "../nvn/nvn_cover.h"
 static int cover_positions(vk_shader *vs,vk_shader *fs,const p_draw *draw,const p_draw_idx *idx,float p[64][4]) {
+  if(V.options.render_record_mode)return 0;
   if(!vs || !fs || vs->pos_attr<0 || vs->pos_attr>=16 || fs->may_discard || fs->writes_smask ||
      !fs->color_mask || S.ms.a2c || S.poly.mode!=NVN_POLYGON_MODE_FILL || S.color.logic_op!=NVN_LOGIC_OP_COPY) return 0;
   if(!vk_tbdr_enabled()) return 0;
@@ -80,6 +81,7 @@ static void cover_first_draw(render_job *j,vk_shader *list[6],const VkPipelineDe
                              const p_draw *draw,const p_draw_idx *idx,int positions,const float p[64][4],uint64_t bound_epoch) {
   if(j->first_draw) return;
   j->first_draw=1;
+  if(V.options.render_record_mode)return;
   if(!positions || (j->has_depth&&((ds->depthTestEnable&&ds->depthCompareOp!=VK_COMPARE_OP_ALWAYS)||ds->stencilTestEnable))) return;
   int n=draw?draw->count:idx->count,prim=draw?draw->prim:idx->prim;
   int sc[]={S.scissor.x,S.scissor.y,S.scissor.w,S.scissor.h};

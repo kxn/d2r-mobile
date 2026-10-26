@@ -369,6 +369,7 @@ static int state_segments_startup=1;
 static int inline_translation_startup;
 static int submission_plan_reference_startup;
 static int keep_attachment_stores_startup;
+static int render_record_mode_startup;
 static unsigned translation_cpu_mask_startup;
 static char turnip_autotune_startup[32];
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTurnipAutotune(
@@ -410,6 +411,18 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeKeepAtta
     return;
   }
   keep_attachment_stores_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRenderRecordMode(
+    JNIEnv *env,jclass klass,jint mode) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed || mode<0 || mode>2) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,"render_record_mode requires a cold 0,1,2 selection");
+    return;
+  }
+  render_record_mode_startup=mode;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTranslationCpuMask(
@@ -862,10 +875,12 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
       setenv("TU_AUTOTUNE_ALGO",turnip_autotune_startup,1))
     die("Android Turnip autotune startup environment");
   char translation_cpu_mask[16];snprintf(translation_cpu_mask,sizeof translation_cpu_mask,"%x",translation_cpu_mask_startup);
+  char render_record_mode[2]={(char)('0'+render_record_mode_startup),0};
   if(setenv("DM_NVN_CPU_MASK",translation_cpu_mask,1) ||
       setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_KEEP_ALL",keep_attachment_stores_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_RENDER_RECORD_MODE",render_record_mode,1) ||
       setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT",native_read_group_front_startup?"1":"0",1) ||

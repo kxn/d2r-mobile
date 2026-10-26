@@ -11,6 +11,7 @@
 #endif
 #include "nvn_vk_shader.h"
 #include "nvn_vk_plan.h"
+#include "nvn_vk_pixel_local.h"
 #include "nvn_vk_window.h"
 #include "nvn_vk_freeze.h"
 #include "nvn_vk_system_trace.h"
@@ -1463,6 +1464,12 @@ static void init_options(void) {
   o->store_check=option_one("DM_VULKAN_STORE_CHECK")||option_one("DM_VULKAN_VALIDATE");
   o->store_keep_all=option_one("DM_VULKAN_STORE_KEEP_ALL");
   LOG("[vulkan attachment stores] keep_all=%d (fixed for this process)",o->store_keep_all);
+  o->render_record_mode=option_number("DM_VULKAN_RENDER_RECORD_MODE",0);
+  if(o->render_record_mode<0 || o->render_record_mode>2)
+    die("DM_VULKAN_RENDER_RECORD_MODE expects 0,1,2");
+  if(o->render_record_mode && (!o->store_keep_all || vk_pixel_local_enabled() || o->defer_mip_clears))
+    die("Fixed attachment recording requires keep stores, pixel local OFF and deferred mip clears OFF");
+  LOG("[vulkan render recording] mode=%d; fixed attachment comparisons retain LOAD/STORE",o->render_record_mode);
   o->state_segments=option_one("DM_VULKAN_STATE_SEGMENTS");
   LOG("[vulkan state segments] enabled=%d",o->state_segments);
   o->ruler=getenv("DM_NVN_RULER")!=NULL;
