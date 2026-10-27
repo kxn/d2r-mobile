@@ -8,6 +8,8 @@
 
 最大的独立已定位差异是**主线额外的整提交规划6.974M**。另一大项是**每draw仍分阶段处理的资源职责**，单纯把其中一个末端cache改快无法取消整个流程。还发现此前被叫作“游戏/unknown”的差额中，有**SDK原子owner-word锁实现**，不应归入NVN翻译，更不能直接称为锁等待。
 
+**真实动态分支纠正：本窗开启 shared_lazy。draw 的 `pool_operation_begin(...,lazy_draw=1)` 直接清空轻量作用域并返回，跳过 `draw_pool_collect→graphics_pool_ranges` 的完整 admission 枚举。该已跳过流程不是本窗热点，不能再预算一次“删除它”的收益。21.974M仅是后续真实祖先职责的调查包络，其中pool_address来自实际消费。**
+
 没有依据把这23M全部归给copy、driver或互斥锁，也没有证据证明可直接安全删去某个23M大块。
 
 ## 1. 窗口和符号资格
@@ -100,9 +102,9 @@
 
 这些次数说明当前大头是**重复进入资源准备与消费契约**，不是descriptor重新分配、资源首次加载或全池重扫。View/Pool缓存已命中，命中后仍有CPU源资格、shared buffer/image别名、stage/range可见性、image layout、当前recording生命周期保活以及descriptor实际内容等职责。
 
-单draw实际流程仍是：CPU source（publication）→ Pool operation/admission → VBO/IBO/UBO require → attachment准备 → shader image准备 → descriptor/真实View消费 → image/Buffer读写登记与dependency提交 → driver encode。绑定不变并不自动使全部步骤重复无用；“末端set命中”发生在许多步骤之后。
+单draw实际流程仍是：CPU source（publication）→ Pool operation轻量作用域 → VBO/IBO/UBO require与按需求解析Buffer → attachment准备 → shader image准备 → descriptor/真实View消费 → image/Buffer读写登记与dependency提交 → driver encode。**当前shared_lazy draw不执行完整Pool admission预遍历**：`nvn_vk_pool_policy.inc`的 `shared_lazy_active && lazy_draw` 分支直接返回，仅让后续真实消费者按需求保活；它不调用collector，不执行shader/native image范围整批枚举。普通dispatch/transfer及非lazy回退保留原admission。绑定不变并不自动使其余步骤重复无用；“末端set命中”发生在许多步骤之后。
 
-仅用互斥父项和真实draw直接子项圈出的资源工作包：source3.093 + binding12.502 + draw下pool_address1.960 + shader_prepare_images1.773 + texture_shader_record1.627 + dependency_batch0.529 + ubo_admit0.490 = **21.974M**。这是调查覆盖面，包含真实必需工作与已有快路径；不是可删21.974M的预算。当前有source-value handoff、ordinary子组、附件/raster复用，不能再把它们提作未实现的新发现。native_front与source_partition在本窗均实际关闭；旧实验有自己的适用性/管理成本结论，不据此盲开。
+仅用互斥父项和真实draw直接子项圈出的资源工作包：source3.093 + binding12.502 + draw下pool_address1.960 + shader_prepare_images1.773 + texture_shader_record1.627 + dependency_batch0.529 + ubo_admit0.490 = **21.974M**。这是由同窗真实祖先和直接子项圈出的调查覆盖面，包含真实必需工作与已有快路径；其中pool_address来自后续真实资源消费者，不包含已跳过的完整Pool admission。它不是可删21.974M的预算。当前有source-value handoff、ordinary子组、附件/raster复用，不能再把它们提作未实现的新发现。native_front与source_partition在本窗均实际关闭；旧实验有自己的适用性/管理成本结论，不据此盲开。
 
 ## 5. 重要资格纠正：游戏/unknown里有SDK原子锁代码
 
