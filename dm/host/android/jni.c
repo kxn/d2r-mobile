@@ -16,6 +16,7 @@
 #include <jni.h>
 #include <stdatomic.h>
 #include "fixture_output.h"
+#include "stderr_redirect.h"
 #include <sys/stat.h>
 #include <unistd.h>
 #include <math.h>
@@ -919,9 +920,8 @@ static void *game_thread(void *unused) {
   snprintf(path, sizeof path, "%s/temp", runtime_root);
   mkdir(path, 0700);
   snprintf(path, sizeof path, "%s/native.log", runtime_root);
-  if (!freopen(path, "w", stderr))
+  if (dm_android_redirect_stderr(path))
     _exit(90);
-  setvbuf(stderr, NULL, _IONBF, 0);
   LOG("Android native start pid=%d", getpid());
   int actual_mode=dm_opmode();
   if(actual_mode!=operation_mode)die("Android operation mode initialized before startup selection");
