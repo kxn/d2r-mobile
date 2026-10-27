@@ -264,3 +264,9 @@ LLDB 取得的一个实际例子为：CPU 源 13,312 字节，按页扩大后 16
 当前全部原始数据位于 `.local/logs/inline-upstream-rootcause-v1/`：`owner-budget.json`、`planning-results.json`、`scope-cpu.sql/csv`、`WAIT1/`、`UPSTREAM-SCHED1/`、`fixed-mode-result.json`、`HINT1/`、`gpu-tools/comparison.json`、两臂原 `.sdp`/数据库/轨迹/SQL、`api-tools/`、`MODE-*/` 与 `mode-tools/`。性能窗口与后继调试失败分开保存；各已结束游戏均原生命周期确认存档后停止，驱动模式属性恢复原值。以上是实验结果与可排除项，不是“根因已经全部找完”的结论。
 
 新增实证位于 `.local/logs/queue-wait-origin-v1/`（含保留的失败、LLDB 原栈和有限范围快照、同 PID 前后官方窗口、529,514 项 readback/reset 夹具和 947 项最终字节依赖夹具）以及 `.local/logs/coherent-image-byte-scope-v1/`（新 APK 冷启动资格）。有一次调试失败后目标已退出，没有为保存而重新启动；成功对照和冷启动的存档收条独立记录，不将所有历史失败写成成功收尾。
+
+## 13. 实测减少输出写入并发布应用内压缩
+
+原驱动布局确认主 HDR/深度等附件已为 UBWC，四张日常 2358×1080 交换链却为线性。覆盖 Android loader 实际使用的 AHB 用途查询后，系统 allocator/mapper 能分配并导入真实压缩输出；未降 0.75 3D 比例、未改 shader 或游戏逻辑。四轮同 APK 交错对照：平均写入 **61.686→51.061 MB/完整出图间隔，少 17.22%**，读取少 8.49%，FPS **38.695→39.974，约高 3.31%**。均为原厂全局 GPU 计数器，包含合成，不是纯 NVN 带宽；未证明长期降温或全场景 60 FPS。
+
+`6f3b131` 的最终 APK 将选择移入应用自己的冷启动环境，严格 schema 3 绑定新驱动与实际重生成的混合原生资源表。纹理 payload 完全不变，原 runtime 探针保留。两次无 extras 的普通图标冷启动、真实营地与 save2/停止通过，第一轮实际游戏布局确认四张输出均为 UBWC。当前 APK 为 `fbc5ab997074884f786c2016fd0a38878f815da3718c6c1a2c2cf91a2286d04f`，全局压缩调试属性为空。前述 54e724/f830 发布现在是保留的历史版本。完整实现、初次资源输入错误及修正、四轮计数器和发布身份见 [输出压缩报告](ANDROID_SWAPCHAIN_UBWC_2026-10-27.zh-CN.md)。
