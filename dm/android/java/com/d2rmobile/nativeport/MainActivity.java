@@ -108,7 +108,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeDescriptorBatchReference(boolean reference);
     private static native void nativeDescriptorTemplateReference(boolean reference);
     private static native void nativeMailboxPresent(boolean enabled);
-    private static native void nativePresentWorkerReference(boolean reference, boolean sharedQueue);
+    private static native void nativePresentWorkerReference(boolean reference, boolean sharedQueue, boolean internalQueue);
     private static native void nativeBloomQuarterEnabled(boolean enabled);
     private static native void nativeVulkanDriver(String provider, String directory, String hooks);
     private static native void nativeStreamSubmitReference(boolean reference);
@@ -389,7 +389,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         nativeBloomQuarterEnabled(getIntent().getBooleanExtra("bloom_quarter", true));
         nativeMailboxPresent(getIntent().getBooleanExtra("mailbox_present", false));
         nativePresentWorkerReference(getIntent().getBooleanExtra("present_worker_reference", true),
-                getIntent().getBooleanExtra("present_worker_shared_queue", false));
+                getIntent().getBooleanExtra("present_worker_shared_queue", false),
+                getIntent().getBooleanExtra("present_worker_internal_queue", false));
         nativeDescriptorTemplateReference(getIntent().getBooleanExtra("descriptor_template_reference", false));
         nativeDescriptorHistoryReference(getIntent().getBooleanExtra("descriptor_history_reference", false));
         nativeDescriptorReuseReference(getIntent().getBooleanExtra("descriptor_reuse_reference", false));

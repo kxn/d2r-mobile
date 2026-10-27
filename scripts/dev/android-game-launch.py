@@ -92,6 +92,7 @@ parser.add_argument('--display-refresh-hz',type=float,help='optional Android Sur
 parser.add_argument('--mailbox-present',action='store_true',help='startup-only WSI experiment: request advertised MAILBOX; otherwise FIFO remains active')
 parser.add_argument('--dedicated-present-worker',action='store_true',help='startup-only experiment: serialize WSI acquire/present on a worker with a second queue of the same family')
 parser.add_argument('--present-worker-shared-queue',action='store_true',help='isolate presentation worker scheduling while preserving the original Vulkan queue; requires --dedicated-present-worker')
+parser.add_argument('--present-worker-internal-queue',action='store_true',help='cold experiment: negotiate KHR internally synchronized queue for the same-queue WSI worker')
 parser.add_argument('--image-buffer-split',action=argparse.BooleanOptionalAction,default=None,help='startup-only stable GPU-produced FS image reuse (default on; --no-image-buffer-split for reference)')
 parser.add_argument('--buffer-consumption-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental shared UBO preparation reuse (default off); verify effective backend mode')
 parser.add_argument('--native-read-group-front',action=argparse.BooleanOptionalAction,default=None,help='startup-only same-pass resident coherent native sampled FS group (default off); verify effective backend mode')
@@ -265,6 +266,8 @@ if args.stream_submits and not args.async_submit:
     parser.error('--stream-submits requires --async-submit')
 if args.present_worker_shared_queue and not args.dedicated_present_worker:
     parser.error('--present-worker-shared-queue requires --dedicated-present-worker')
+if args.present_worker_internal_queue and (args.attach or not args.present_worker_shared_queue or not args.async_submit):
+    parser.error('--present-worker-internal-queue requires cold --present-worker-shared-queue and --async-submit')
 if args.timeout <= 0:
     parser.error('--timeout must be positive')
 if args.bright_k is not None and not 1 <= args.bright_k <= 4:
@@ -407,6 +410,7 @@ if not args.attach:
     launch += ['--ez','mailbox_present',str(args.mailbox_present).lower()]
     launch += ['--ez','present_worker_reference',str(not args.dedicated_present_worker).lower()]
     launch += ['--ez','present_worker_shared_queue',str(args.present_worker_shared_queue).lower()]
+    launch += ['--ez','present_worker_internal_queue',str(args.present_worker_internal_queue).lower()]
     launch += ['--ez','descriptor_template_reference',str(args.descriptor_template_reference).lower()]
     launch += ['--ez','descriptor_history_reference',str(args.descriptor_history_reference).lower()]
     launch += ['--ez','descriptor_reuse_reference',str(args.descriptor_reuse_reference).lower()]

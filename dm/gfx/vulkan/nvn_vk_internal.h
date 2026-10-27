@@ -11,6 +11,7 @@
 #define VK_USE_PLATFORM_ANDROID_KHR 1
 #endif
 #include "nvn_vk_loader.h"
+#include "nvn_vk_queue_sync.h"
 #include "nvn_vk_memory.h"
 #include "nvn_vk_pool_ranges.h"
 #define VK_CHECK(call)                                                         \
@@ -76,6 +77,7 @@ typedef struct {
   VkQueue queue,present_queue;
   uint32_t queue_count;
   int present_worker;
+  int queue_internal_sync; // Actual enabled KHR feature AND queue creation flag.
   VkPipelineCache pipeline_cache;
   uint32_t queue_family;
   uint32_t timestamp_bits;

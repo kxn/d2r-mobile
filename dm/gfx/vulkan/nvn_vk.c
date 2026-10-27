@@ -1607,7 +1607,7 @@ static void init_device(void) {
         V.timestamp_bits = q[i].timestampValidBits;
         int present_mode=vk_window_present_worker_requested_mode();
         V.queue_count=(present_mode==1 && async_submissions && q[i].queueCount>1)?2:1;
-        V.present_worker=async_submissions && (present_mode==2 || V.queue_count==2);
+        V.present_worker=async_submissions && (present_mode==2 || present_mode==3 || V.queue_count==2);
         break;
       }
     free(q);
@@ -1648,7 +1648,10 @@ static void init_device(void) {
 #endif
   const char *device_extensions[24];
   int have_divisor = 0, have_timeline = 0, have_float16 = 0;
-  int have_driver_properties=0;
+  int have_driver_properties=0,have_internal_queue_sync=0;
+  int internal_queue_requested=vk_window_present_worker_requested_mode()==3;
+  VkPhysicalDeviceInternallySynchronizedQueuesFeaturesKHR internal_queue_sync={
+      .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INTERNALLY_SYNCHRONIZED_QUEUES_FEATURES_KHR};
   VkPhysicalDeviceShaderFloat16Int8FeaturesKHR float16 = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
   VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {
@@ -1665,6 +1668,8 @@ static void init_device(void) {
   VK_CHECK(vkEnumerateDeviceExtensionProperties(
       V.physical, NULL, &extension_count_device, available));
   for (uint32_t i = 0; i < extension_count_device; i++) {
+    if(!strcmp(available[i].extensionName,VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME))
+      have_internal_queue_sync=1;
     if (!strcmp(available[i].extensionName,VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME))
       have_driver_properties=1;
 #ifdef DM_VULKAN_SHARED_POOLS
@@ -1712,6 +1717,21 @@ static void init_device(void) {
 #endif
   free(available);
   vk_loader_check_device(V.physical,have_driver_properties);
+  if(internal_queue_requested) {
+    // Fail a requested experiment explicitly: never silently omit external
+    // synchronization on a queue lacking the public negotiated contract.
+    if(!V.surface || !V.present_worker || V.queue_count!=1 || !have_internal_queue_sync)
+      die("Internally synchronized presentation requires an asynchronous same-queue worker and advertised KHR extension");
+    VkPhysicalDeviceFeatures2 query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+      .pNext=&internal_queue_sync};
+    vkGetPhysicalDeviceFeatures2(V.physical,&query);
+    if(!internal_queue_sync.internallySynchronizedQueues)
+      die("Vulkan internallySynchronizedQueues feature unavailable");
+    internal_queue_sync.pNext=draw_parameters.pNext;draw_parameters.pNext=&internal_queue_sync;
+    q.flags|=VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR;
+    device_extensions[dc.enabledExtensionCount++]=VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME;
+    V.queue_internal_sync=1;
+  }
   if (have_divisor) {
     VkPhysicalDeviceFeatures2 query = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &divisor};
@@ -1724,6 +1744,7 @@ static void init_device(void) {
       vkGetPhysicalDeviceProperties2(V.physical, &props);
       V.max_vertex_divisor = limits.maxVertexAttribDivisor;
       divisor.vertexAttributeInstanceRateZeroDivisor = VK_FALSE;
+      divisor.pNext=draw_parameters.pNext;
       draw_parameters.pNext = &divisor;
     }
   }
@@ -1803,10 +1824,19 @@ static void init_device(void) {
     if (!V.signal_timeline) die("Vulkan timeline semaphore entrypoint unavailable");
   }
   LOG("[vulkan] timeline semaphore: %s", V.timeline_semaphore ? "enabled" : "unavailable");
-  vkGetDeviceQueue(V.device, V.queue_family, 0, &V.queue);
+  if(V.queue_internal_sync) {
+    if(!vkGetDeviceQueue2)die("Vulkan flagged queue requires vkGetDeviceQueue2");
+    const VkDeviceQueueInfo2 info={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+      .flags=q.flags,.queueFamilyIndex=V.queue_family,.queueIndex=0};
+    vkGetDeviceQueue2(V.device,&info,&V.queue);
+    if(!V.queue)die("Vulkan internally synchronized queue handle unavailable");
+  } else vkGetDeviceQueue(V.device, V.queue_family, 0, &V.queue);
   V.present_queue=V.queue;
   if(V.queue_count>1)vkGetDeviceQueue(V.device,V.queue_family,1,&V.present_queue);
   LOG("[vulkan] queue family=%u queues=%u dedicated WSI worker=%s present queue=%s",V.queue_family,V.queue_count,V.present_worker?"enabled":"reference/unavailable",V.present_queue==V.queue?"render":"separate");
+  LOG("[vulkan] queue synchronization: internal_requested=%d extension=%d feature=%u queue_flags=%u actual=%s",
+      internal_queue_requested,have_internal_queue_sync,internal_queue_sync.internallySynchronizedQueues,
+      (unsigned)q.flags,V.queue_internal_sync?"KHR driver internal":"application external");
 #ifdef DM_VULKAN_SHARED_POOLS
   shared_device_probe(); // once, before any NVN registration or worker
   if(shared_active && (V.options.pool_mirror_reference || V.options.pool_defer_publication))

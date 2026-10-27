@@ -59,6 +59,29 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_internal_queue_present_is_an_explicit_cold_contract(self):
+        default=self.launch_command([])
+        index=default.index('present_worker_internal_queue')
+        self.assertEqual(default[index-1:index+2],['--ez','present_worker_internal_queue','false'])
+        options=['--async-submit','--dedicated-present-worker',
+                 '--present-worker-shared-queue','--present-worker-internal-queue']
+        command=self.launch_command(options)
+        for name,value in [('present_worker_reference','false'),
+                           ('present_worker_shared_queue','true'),
+                           ('present_worker_internal_queue','true')]:
+            index=command.index(name)
+            self.assertEqual(command[index-1:index+2],['--ez',name,value])
+        for invalid in (['--present-worker-internal-queue'],
+                        ['--dedicated-present-worker','--present-worker-internal-queue'],
+                        ['--attach',*options],
+                        ['--no-async-submit',*options[1:]]):
+            with self.subTest(invalid=invalid),patch('sys.argv',[str(LAUNCHER),*invalid]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
+
     def test_record_state_cache_is_explicit_default_off_and_cold_only(self):
         self.assertNotIn('record_state_cache',self.launch_command([]))
         for option,value in [('--record-state-cache','true'),('--no-record-state-cache','false')]:

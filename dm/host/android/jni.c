@@ -181,8 +181,10 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeMailboxP
   (void)env;(void)klass;vk_window_mailbox_present(enabled);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativePresentWorkerReference(
-    JNIEnv *env,jclass klass,jboolean reference,jboolean shared_queue) {
-  (void)env;(void)klass;vk_window_present_worker_mode(reference?0:shared_queue?2:1);
+    JNIEnv *env,jclass klass,jboolean reference,jboolean shared_queue,jboolean internal_queue) {
+  (void)env;(void)klass;
+  if(internal_queue && (reference || !shared_queue))die("Internal queue presentation requires the same-queue WSI worker");
+  vk_window_present_worker_mode(reference?0:internal_queue?3:shared_queue?2:1);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeDescriptorTemplateReference(
     JNIEnv *env,jclass klass,jboolean reference) {

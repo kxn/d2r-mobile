@@ -35,8 +35,16 @@ static VkResult window_present_immediate(const window_wsi_request *r,VkQueue que
     .swapchainCount=1,.pTimes=&time};
   if(V.display_timing)present.pNext=&timing;
   pthread_mutex_t *mutex=queue==V.queue?&V.queue_mu:&V.present_queue_mu;
-  int lock_trace=vk_system_trace_begin("Vulkan present queue lock");
-  pthread_mutex_lock(mutex);vk_system_trace_end(lock_trace);
+  // KHR internally synchronized queues permit concurrent queue API calls.
+  // The driver protects its submission prefix, while Android's subsequent
+  // BufferQueue throttle may sleep without blocking the next rendering submit.
+  // Swapchain acquire/present/feedback remain serialized on this WSI worker;
+  // recreation/destruction still drains it. Ordinary queues retain the lock.
+  int external_lock=!V.queue_internal_sync;
+  if(external_lock) {
+    int lock_trace=vk_system_trace_begin("Vulkan present queue lock");
+    pthread_mutex_lock(mutex);vk_system_trace_end(lock_trace);
+  }
   VkSemaphore bridged=VK_NULL_HANDLE;
   if(queue!=V.queue && r->semaphore) {
     // Ordinary Vulkan submission resolves the cross-queue wait before the
@@ -51,7 +59,7 @@ static VkResult window_present_immediate(const window_wsi_request *r,VkQueue que
     int bridge_trace=vk_system_trace_begin("Vulkan presentation semaphore bridge");
     VkResult submitted=vkQueueSubmit(queue,1,&bridge,VK_NULL_HANDLE);
     vk_system_trace_end(bridge_trace);
-    if(submitted!=VK_SUCCESS) { pthread_mutex_unlock(mutex);return submitted; }
+    if(submitted!=VK_SUCCESS) { if(external_lock)pthread_mutex_unlock(mutex);return submitted; }
     present.pWaitSemaphores=&bridged;
   }
   int trace=vk_system_trace_begin("Vulkan present call");
@@ -66,7 +74,7 @@ static VkResult window_present_immediate(const window_wsi_request *r,VkQueue que
     // for an out-of-date Present; the WSI worker cannot recreate it itself.
     result=present_timing_collect();vk_system_trace_end(trace);
   }
-  pthread_mutex_unlock(mutex);return result;
+  if(external_lock)pthread_mutex_unlock(mutex);return result;
 }
 extern void crash_thread_init(void);
 static void *window_wsi_thread(void *unused) {

@@ -27,7 +27,7 @@ void vk_window_shader_present_stats(uint64_t *selected,uint64_t *fallback,int *r
 static _Atomic int present_worker_mode,present_worker_active;
 static _Atomic uint64_t present_worker_queued,present_worker_finished;
 void vk_window_present_worker_mode(int mode) {
-  if(mode<0 || mode>2)die("Vulkan WSI worker mode %d",mode);
+  if(mode<0 || mode>3)die("Vulkan WSI worker mode %d",mode);
   atomic_store(&present_worker_mode,mode);
 }
 int vk_window_present_worker_requested_mode(void) { return atomic_load(&present_worker_mode); }
