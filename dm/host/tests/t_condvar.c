@@ -16,6 +16,7 @@
 #include <unistd.h>
 int svc_thread(int num, uint64_t *regs);
 uint32_t svc_thread_main_init(void);
+int dm_thread_wait_budget_startup(unsigned);
 void (*dm_test_cv_after_release)(void);
 
 static _Atomic uint32_t g_mutex, g_key;            // 互斥锁字、条件键（对应 SDK InternalCriticalSection / InternalConditionVariable 的一个字） | mutex word, condition key (corresponding to one word of the SDK's InternalCriticalSection / InternalConditionVariable)
@@ -57,6 +58,8 @@ static void *waiter(void *a) {
     return NULL;
 }
 int main(void) {
+    const char *budget=getenv("DM_TEST_WAIT_BUDGET_US");
+    if(budget && dm_thread_wait_budget_startup((unsigned)strtoul(budget,NULL,10))) abort();
     pthread_t w, rd; pthread_create(&rd, NULL, reader, NULL); pthread_create(&w, NULL, waiter, NULL);
     struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl); dl.tv_sec += 10;
     pthread_mutex_lock(&g_m); while (!g_wdone) if (pthread_cond_timedwait(&g_c, &g_m, &dl)) break; int done = g_wdone; pthread_mutex_unlock(&g_m);

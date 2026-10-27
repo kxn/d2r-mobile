@@ -30,6 +30,10 @@ add_executable(dmhost_native main.c graphics_boundary.c ${NATIVE_CORE} "${HOST}/
   "${HOST}/../third_party/libdeflate/lib/utils.c"
   "${HOST}/../third_party/libdeflate/lib/arm/cpu_features.c")
 add_executable(native_rule_test tests/native_tests.c tests/native_host_stack.S ${NATIVE_CORE})
+add_executable(native_short_wait_test "${HOST}/tests/t_short_wait.c")
+target_include_directories(native_short_wait_test PRIVATE "${HOST}")
+target_compile_options(native_short_wait_test PRIVATE -O2 -g -Wall -Wno-unused-function -Wno-format)
+target_link_options(native_short_wait_test PRIVATE -Wl,-z,max-page-size=16384)
 add_library(native_tlsdesc_test SHARED tests/native_tests.c tests/native_host_stack.S ${NATIVE_CORE})
 target_compile_definitions(native_tlsdesc_test PRIVATE DM_TLS_DESC=1 main=dm_native_fixture_main)
 target_compile_options(native_tlsdesc_test PRIVATE -fno-emulated-tls)

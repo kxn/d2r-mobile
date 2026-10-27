@@ -44,6 +44,7 @@ opus_mode.add_argument('--native-opus', action=argparse.BooleanOptionalAction, d
 parser.add_argument('--performance-hints',action='store_true',help='experimental public Android render-thread workload hints')
 parser.add_argument('--inline-translation',action='store_true',help='experimental serialized caller-thread NVN translation; retains shared pools and asynchronous GPU completion')
 parser.add_argument('--guest-worker-qos',action=argparse.BooleanOptionalAction,default=None,help='cold Android upstream QoS parity: request nice -10 for newly created guest workers only')
+parser.add_argument('--guest-wait-budget-us',type=int,choices=range(101),metavar='0..100',help='cold upstream primary-thread bounded wait polling budget; 0 retains direct sleep (default)')
 parser.add_argument('--native-buffer-geometry',action=argparse.BooleanOptionalAction,default=None,help='cold application-local presentation buffer sizing to the game output; keeps system display and game render sizes unchanged')
 parser.add_argument('--query-attachment-reference',action=argparse.BooleanOptionalAction,default=None,help='cold comparison: retain conservative attachment retries even while an occlusion span is already open')
 parser.add_argument('--submission-plan-reference',action='store_true',help='cold comparison: conservative replay without whole-submission planning; retains guest commands, synchronization and GPU completion')
@@ -194,6 +195,8 @@ if args.attach and args.keep_attachment_stores:
     parser.error('--keep-attachment-stores is startup-only and cannot be used with --attach')
 if args.attach and args.guest_worker_qos is not None:
     parser.error('--guest-worker-qos is startup-only and cannot be used with --attach')
+if args.attach and args.guest_wait_budget_us is not None:
+    parser.error('--guest-wait-budget-us is startup-only and cannot be used with --attach')
 if args.fixed_render_recording is not None and (args.attach or not args.keep_attachment_stores or
         args.pixel_local is not False or args.deferred_mip_clears):
     parser.error('--fixed-render-recording requires cold --keep-attachment-stores --no-pixel-local and no deferred mip clears')
@@ -367,6 +370,8 @@ if not args.attach:
     launch += ['--ez', 'keep_attachment_stores', str(args.keep_attachment_stores).lower()]
     if args.guest_worker_qos is not None:
         launch += ['--ez','guest_worker_qos',str(args.guest_worker_qos).lower()]
+    if args.guest_wait_budget_us is not None:
+        launch += ['--ei','guest_wait_budget_us',str(args.guest_wait_budget_us)]
     if args.fixed_render_recording is not None:
         launch += ['--ei', 'render_record_mode', str({'secondary':1,'primary':2}[args.fixed_render_recording])]
     launch += ['--ez', 'image_layout_reference', str(not args.optimal_image_layouts).lower()]
@@ -490,6 +495,10 @@ while time.monotonic() < deadline:
                         raise SystemExit('native buffer geometry startup selection not proven by running backend')
                     if args.guest_worker_qos is not None and actual_worker_qos != args.guest_worker_qos:
                         raise SystemExit('guest worker QoS startup selection did not apply')
+                    wait_budgets=re.findall(r'\[HLE short wait\] primary_budget_us=(\d+)\b',log)
+                    actual_wait_budget=int(wait_budgets[-1]) if wait_budgets else None
+                    if args.guest_wait_budget_us is not None and actual_wait_budget!=args.guest_wait_budget_us:
+                        raise SystemExit('guest short-wait startup policy not proven by running HLE')
                     recording_modes=re.findall(r'\[vulkan render recording\] mode=([012])\b',log)
                     actual_recording_mode=int(recording_modes[-1]) if recording_modes else None
                     expected_recording_mode={'secondary':1,'primary':2}.get(args.fixed_render_recording,0)
@@ -640,6 +649,8 @@ while time.monotonic() < deadline:
                               'requested_keep_attachment_stores':args.keep_attachment_stores,
                               'actual_keep_attachment_stores':actual_keep_stores,
                               'requested_guest_worker_qos':args.guest_worker_qos,
+                              'requested_guest_wait_budget_us':args.guest_wait_budget_us,
+                              'actual_guest_wait_budget_us':actual_wait_budget,
                               'requested_native_buffer_geometry':args.native_buffer_geometry,
                               'actual_native_buffer_geometry':actual_buffer_geometry,
                               'requested_query_attachment_reference':args.query_attachment_reference,

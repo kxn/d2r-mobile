@@ -65,6 +65,7 @@ typedef struct thr {
     // 当前等待：kind 0=无 1=锁 2=条件 3=地址 4=同步对象
     // Current wait: kind 0=none 1=lock 2=condition 3=address 4=synchronization object
     int wkind, woke; uint64_t waddr, wkey; uint32_t wtag; int64_t wres;
+    int polling;              // Protected by G; wake may omit the CV signal only in this phase.
     uint64_t wseq;             // 登记等待的先后序号：同优先级先到先醒（与 Horizon 内核 KThread 等待树同序） | Sequence number of wait registration: at equal priority first come, first woken (same order as the Horizon kernel's KThread wait tree)
     struct thr *next;          // 等待链 | Wait chain
     struct thr *all;           // 全部线程链（现场导出用） | All-threads chain (for the state dump)
@@ -92,6 +93,24 @@ static int g_thread_key_ready;
 #endif
 static uint64_t g_next_id = 0x51;
 static thr_t *g_wait;          // 全部在等的线程（锁 / 条件 / 地址 / 同步） | All waiting threads (lock / condition / address / synchronization)
+static uint64_t g_wait_budget_ns;
+// Same bounded primary-thread wait policy as upstream hle_thread.c. Cold
+// selection, no environment lookup, sampling, or per-wait diagnostic counters.
+int dm_thread_wait_budget_startup(unsigned microseconds) {
+    if (microseconds > 100) return -1;
+    pthread_mutex_lock(&G);
+    int result = g_all ? -1 : 0;
+    if (!result) g_wait_budget_ns = (uint64_t)microseconds * 1000;
+    pthread_mutex_unlock(&G);
+    if (!result) LOG("[HLE short wait] primary_budget_us=%u", microseconds);
+    return result;
+}
+#ifdef DM_TEST_HOOKS
+void (*dm_test_short_wait_phase)(int) __attribute__((weak));
+#define SHORT_WAIT_TEST_PHASE(p) do { if (dm_test_short_wait_phase) dm_test_short_wait_phase(p); } while (0)
+#else
+#define SHORT_WAIT_TEST_PHASE(p) ((void)0)
+#endif
 
 static uint32_t h_new(int type, void *obj) {     // 调用方持 G | Caller holds G
     for (int i = 1; i < MAX_H; i++) if (!g_h[i].type) { g_h[i].type = type; g_h[i].obj = obj; return 0x1000 + i; }
@@ -131,7 +150,11 @@ static thr_t *pick(int kind, uint64_t a) {
     }
     return b;
 }
-static void wake(thr_t *t, int64_t res) { wait_unlink(t); t->wkind = 0; t->woke = 1; t->wres = res; pthread_cond_signal(&t->cv); }
+static void wake(thr_t *t, int64_t res) {
+    wait_unlink(t); t->wkind = 0; t->wres = res;
+    __atomic_store_n(&t->woke, 1, __ATOMIC_RELEASE);
+    if (!t->polling) pthread_cond_signal(&t->cv);
+}
 // 挂起直到被唤醒或超时（ns<0 无限、0 立即超时）；返回 wres 或 R_TIMEOUT
 // Suspend until woken or timed out (ns<0 infinite, 0 immediate timeout); returns wres or R_TIMEOUT
 static int64_t block_inner(thr_t *t, int kind, int64_t ns);
@@ -151,6 +174,26 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns) {
     uint64_t guest_deadline = det_wait ? guest_ns() + (uint64_t)ns : 0;
     if (ns > 0 && !det_wait) { clock_gettime(CLOCK_REALTIME, &dl); dl.tv_sec += ns / 1000000000; dl.tv_nsec += ns % 1000000000;
                   if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; } }
+    if (g_wait_budget_ns && t->handle == 0x1001 &&
+        (ns < 0 || (uint64_t)ns > g_wait_budget_ns)) {
+        // Register before unlocking G, retaining the existing priority/FIFO
+        // handoff. A wake publishes its result before woke. Returning to G
+        // closes the spin-to-CV race: clear polling and check woke while the
+        // waker is excluded; cond_wait then atomically releases G and sleeps.
+        t->polling = 1;
+        pthread_mutex_unlock(&G);
+        SHORT_WAIT_TEST_PHASE(0);
+        uint64_t begin = now_ns();
+        while (!__atomic_load_n(&t->woke, __ATOMIC_ACQUIRE) &&
+               now_ns() - begin < g_wait_budget_ns) {
+#if defined(__aarch64__)
+            __asm__ volatile("yield");
+#endif
+        }
+        SHORT_WAIT_TEST_PHASE(1);
+        pthread_mutex_lock(&G);
+        t->polling = 0;
+    }
     while (!t->woke) {
         int rc;
         if (det_wait) {
@@ -310,6 +353,8 @@ uint32_t svc_thread_main_init(void) {
 #endif
     pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
     pthread_setspecific(g_keythr, t);
+    if (t->handle == 0x1001)
+        LOG("[HLE short wait] primary_budget_us=%u", (unsigned)(g_wait_budget_ns / 1000));
 #ifdef __ANDROID__
     thread_host_bounds(t);
 #endif

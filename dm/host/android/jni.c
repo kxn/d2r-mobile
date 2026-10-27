@@ -368,6 +368,7 @@ static int image_buffer_split_startup=1;
 static int state_segments_startup=1;
 static int inline_translation_startup;
 static int guest_worker_qos_startup;
+static unsigned guest_wait_budget_startup;
 static int native_buffer_geometry_startup;
 static int query_attachment_reference_startup;
 static int submission_plan_reference_startup;
@@ -411,6 +412,18 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeGuestWor
     return;
   }
   guest_worker_qos_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeGuestWaitBudget(
+    JNIEnv *env,jclass klass,jint microseconds) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed || microseconds<0 || microseconds>100) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"guest wait budget must be 0..100 us before native startup");
+    return;
+  }
+  guest_wait_budget_startup=(unsigned)microseconds;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTurnipAutotune(
@@ -924,6 +937,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   pthread_mutex_unlock(&operation_mode_mutex);
   extern void dm_android_guest_worker_qos_startup(int);
   dm_android_guest_worker_qos_startup(guest_worker_qos_startup);
+  extern int dm_thread_wait_budget_startup(unsigned);
+  if(dm_thread_wait_budget_startup(guest_wait_budget_startup))die("Guest short-wait startup selection");
   // This driver policy is app-private and frozen before Vulkan initialization.
   // Leaving it default preserves external profiler/property configuration.
   if(turnip_autotune_startup[0] && strcmp(turnip_autotune_startup,"default") &&

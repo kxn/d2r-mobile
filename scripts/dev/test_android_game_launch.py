@@ -59,6 +59,21 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_guest_wait_budget_is_bounded_and_cold(self):
+        self.assertNotIn('guest_wait_budget_us',self.launch_command([]))
+        for value in ('0','30','100'):
+            command=self.launch_command(['--guest-wait-budget-us',value])
+            index=command.index('guest_wait_budget_us')
+            self.assertEqual(command[index-1:index+2],['--ei','guest_wait_budget_us',value])
+        for arguments in (['--guest-wait-budget-us','-1'],['--guest-wait-budget-us','101'],
+                          ['--attach','--guest-wait-budget-us','30']):
+            with patch('sys.argv',[str(LAUNCHER),*arguments]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
+
     def test_swapchain_ubwc_requires_explicit_cold_custom_provider(self):
         self.assertNotIn('turnip_swapchain_ubwc',self.launch_command([]))
         for option,value in [('--turnip-swapchain-ubwc','true'),('--no-turnip-swapchain-ubwc','false')]:
