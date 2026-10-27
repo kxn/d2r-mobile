@@ -38,6 +38,8 @@ tu_GetSwapchainGrallocUsageANDROID(VkDevice device, VkFormat format,
 {
    VkResult result = vk_common_GetSwapchainGrallocUsageANDROID(
       device, format, usage, gralloc_usage);
+   fprintf(stderr, "[Turnip WSI] query gralloc0 selected=%d format=%u usage=%#x result=%d\n",
+           debug_get_option_tu_ubwc_swapchain(), format, usage, result);
    if (result == VK_SUCCESS && request_swapchain_ubwc(device, format, usage)) {
       *gralloc_usage |= qcom_alloc_ubwc;
       fprintf(stderr, "[Turnip WSI] UBWC request gralloc0 format=%u usage=%#x\n",
@@ -54,6 +56,8 @@ tu_GetSwapchainGrallocUsage2ANDROID(
 {
    VkResult result = vk_common_GetSwapchainGrallocUsage2ANDROID(
       device, format, usage, swapchain_usage, consumer_usage, producer_usage);
+   fprintf(stderr, "[Turnip WSI] query gralloc1 selected=%d format=%u usage=%#x swap=%#x result=%d\n",
+           debug_get_option_tu_ubwc_swapchain(), format, usage, swapchain_usage, result);
    /* Shared/front-buffer allocation has a distinct compression contract. */
    if (result == VK_SUCCESS && !swapchain_usage &&
        request_swapchain_ubwc(device, format, usage)) {
