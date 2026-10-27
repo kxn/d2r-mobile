@@ -26,7 +26,6 @@ static unsigned count, capacity, replay,node_count;
 static int valid,done,store_valid;
 static uint64_t generation;
 static int sparse_requested=-1,sparse_mode;
-static const uint8_t *last_raw_end;
 static vk_pass_cursor current_cursor,next_cursor;
 static planned_op sparse_current;
 static int sparse_plan_requested(void) {
@@ -62,24 +61,28 @@ static int plan_reserve(void) {
   if(!grown)return 0;
   plan=grown;capacity=next;return 1;
 }
-static int sparse_setter(unsigned opcode) {
-  switch(opcode) {
-  case OP_BIND_VATTR:case OP_BIND_VSTREAM:case OP_BIND_VBUF:case OP_BIND_UBO:
-  case OP_BIND_SSBO:case OP_BIND_SAMP:case OP_POLY_OFFSET:case OP_VIEWPORTS:
-  case OP_DEPTH_RANGE:case OP_BLEND_COLOR:return 1;
-  default:return 0;
-  }
+enum { PP_PURE=1,PP_STORE=2,PP_DS=4,PP_STENCIL=8,PP_DRAW=16,PP_QUERY=32 };
+// PURE means a zero reverse-transfer function, not permission to skip its
+// forward effects. Program/texture/image setters still update the Store state.
+static const uint8_t plan_properties[OP_COUNT_]={
+  [OP_BIND_PROGRAM]=PP_PURE|PP_STORE,[OP_BIND_STATE]=PP_PURE|PP_DS,
+  [OP_BIND_VATTR]=PP_PURE,[OP_BIND_VSTREAM]=PP_PURE,[OP_BIND_VBUF]=PP_PURE,
+  [OP_BIND_UBO]=PP_PURE,[OP_BIND_SSBO]=PP_PURE,[OP_BIND_SAMP]=PP_PURE,
+  [OP_BIND_TEX]=PP_PURE|PP_STORE,[OP_BIND_IMG]=PP_PURE|PP_STORE,
+  [OP_STENCIL]=PP_PURE|PP_STENCIL,[OP_POLY_OFFSET]=PP_PURE,
+  [OP_VIEWPORTS]=PP_PURE,[OP_DEPTH_RANGE]=PP_PURE,[OP_BLEND_COLOR]=PP_PURE,
+  [OP_DRAW]=PP_DRAW|PP_STORE,[OP_DRAW_IDX]=PP_DRAW|PP_STORE,
+  [OP_REPORT_COUNTER]=PP_QUERY,[OP_RESET_COUNTER]=PP_QUERY,
+  [OP_SET_RT]=PP_STORE,[OP_SCISSOR]=PP_STORE,[OP_DISPATCH]=PP_STORE,
+  [OP_CLEAR_COLOR]=PP_STORE,[OP_CLEAR_DS]=PP_STORE,
+  [OP_COPY_T2T]=PP_STORE,[OP_COPY_T2B]=PP_STORE,[OP_COPY_B2T]=PP_STORE,
+  [OP_CLEAR_TEX]=PP_STORE,[OP_SET_TEX_POOL]=PP_STORE,[OP_SET_SAMP_POOL]=PP_STORE
+};
+static int emit_pure_span(const uint8_t *first,unsigned n) {
+  if(!plan_reserve())return 0;
+  planned_op *out=&plan[node_count++];out->op=first;plan_span_count(out,n);return 1;
 }
-static int sparse_emit(const planned_op *o,unsigned size,int setter) {
-  if(setter && node_count && plan_is_span(&plan[node_count-1]) && last_raw_end==o->op) {
-    planned_op *tail=&plan[node_count-1];plan_span_count(tail,plan_raw_count(tail)+1);
-  } else {
-    if(!plan_reserve())return 0;
-    planned_op *out=&plan[node_count++];
-    if(setter) {out->op=o->op;plan_span_count(out,1);} else *out=*o;
-  }
-  last_raw_end=o->op+size;return 1;
-}
+
 static const planned_op *current_entry(void) { return sparse_mode?&sparse_current:&plan[replay-1]; }
 static vk_pass_cursor cursor_at_current(void) {
   if(sparse_mode)return current_cursor;
@@ -190,67 +193,60 @@ static int planned_stencil_writer(void) {
 // Exactly the original vk_state_op family. Boundaries/observers/effects are
 // deliberately absent, including SCISSOR, CALL, JUMP and END. The plan's
 // existing forward validation owns the immutable command storage until replay.
-static int pure_state_opcode(unsigned op) {
-  switch(op) {
-  case OP_BIND_PROGRAM:case OP_BIND_STATE:case OP_BIND_VATTR:case OP_BIND_VSTREAM:
-  case OP_BIND_VBUF:case OP_BIND_UBO:case OP_BIND_SSBO:case OP_BIND_TEX:
-  case OP_BIND_SAMP:case OP_BIND_IMG:case OP_STENCIL:case OP_POLY_OFFSET:
-  case OP_VIEWPORTS:case OP_DEPTH_RANGE:case OP_BLEND_COLOR:return 1;
-  default:return 0;
-  }
-}
-static int walk(const uint8_t *p, unsigned depth,store_build_context *store) {
-  if (depth>32 || !p) return 0;
-  for (unsigned guard=0;guard<1000000;guard++) {
+static int pure_state_opcode(unsigned op) {return !!(plan_properties[op]&PP_PURE);}
+static int walk(const uint8_t *p,unsigned depth,store_build_context *store) {
+  if(depth>32 || !p)return 0;
+  const uint8_t *pending=NULL;unsigned pending_count=0;
+  for(unsigned guard=0;guard<1000000;guard++) {
     op_hdr h;memcpy(&h,p,sizeof h);
-    if(h.size<8 || (h.size&7) || h.op>=OP_COUNT_ || count==1000000) return 0;
-    const uint8_t *a=p+8;
-    planned_op local,*o;
-    if(sparse_mode) {o=&local;count++;}
-    else {if(!plan_reserve())return 0;o=&plan[node_count++];count++;}
-    // Only forward inputs need initialization here. After a successful walk,
-    // the complete reverse loop overwrites need/sample_live/writes for EVERY
-    // node before any reverse-output/replay consumer. A failed walk invalidates
-    // the plan. Do not initialize those reverse outputs twice.
-    o->op=p;
-    const uint8_t forward[4]={0,0,(uint8_t)h.op,0};
-    memcpy((uint8_t *)o+offsetof(planned_op,draw),forward,sizeof forward);
-    // The flattened snapshot is immutable until replay retires. Retain the
-    // already validated opcode instead of chasing its raw header in each
-    // later planning pass. Invalid/short counters retain the old live tail.
-    if((h.op==OP_REPORT_COUNTER||h.op==OP_RESET_COUNTER)&&h.size>=16) {
-      uint64_t type;memcpy(&type,a,8);
-      o->sample_counter=type==NVN_COUNTER_TYPE_SAMPLES_PASSED;
+    if(h.size<8 || (h.size&7) || h.op>=OP_COUNT_ || count==1000000)return 0;
+    const uint8_t *a=p+8;unsigned properties=plan_properties[h.op];
+    int pure=sparse_mode && (properties&PP_PURE);planned_op *o=NULL;
+    if(pure) {
+      // Accumulate in this walk frame, not in the shared plan cache line.
+      // Every control op is non-pure, so it flushes before CALL/JUMP/END;
+      // a pending span can only contain sequential bytes of this one segment.
+      if(!pending_count)pending=p;
+      pending_count++;count++;
+    } else {
+      if(pending_count) {
+        if(!emit_pure_span(pending,pending_count))return 0;
+        pending_count=0;
+      }
+      if(!plan_reserve())return 0;
+      o=&plan[node_count++];count++;o->op=p;
+      const uint8_t forward[4]={0,0,(uint8_t)h.op,0};
+      memcpy((uint8_t *)o+offsetof(planned_op,draw),forward,sizeof forward);
     }
-    if(h.op==OP_BIND_STATE) {
-      if(h.size<8+sizeof(p_bind_state)) return 0;
+    if((properties&PP_QUERY) && h.size>=16) {
+      uint64_t type;memcpy(&type,a,8);o->sample_counter=type==NVN_COUNTER_TYPE_SAMPLES_PASSED;
+    }
+    if(properties&PP_DS) {
+      if(h.size<8+sizeof(p_bind_state))return 0;
       const p_bind_state *b=(const void *)a;
-      if(b->kind==5) memcpy(&scan_ds,b->bytes,sizeof scan_ds);
+      if(b->kind==5)memcpy(&scan_ds,b->bytes,sizeof scan_ds);
     }
-    if(h.op==OP_STENCIL) {
-      if(h.size<8+sizeof(p_stencil)) return 0;
-      const p_stencil *s=(const void *)a;
-      if(s->which==1) for(unsigned face=0;face<2;face++)
-        if(s->face&(1u<<face)) scan_stencil_mask[face]=s->mask;
+    if(properties&PP_STENCIL) {
+      if(h.size<8+sizeof(p_stencil))return 0;
+      const p_stencil *st=(const void *)a;
+      if(st->which==1)for(unsigned face=0;face<2;face++)
+        if(st->face&(1u<<face))scan_stencil_mask[face]=st->mask;
     }
-    if(h.op==OP_DRAW || h.op==OP_DRAW_IDX) {
+    if(properties&PP_DRAW) {
       o->draw=(scan_ds.dt||scan_ds.dw?1:0)|(scan_ds.st?2:0);
-      // Enabled stencil testing is a reader unless a writable face can
-      // actually change a value. Track masks in real call/jump order too.
       o->drawing_writes=(scan_ds.dw?1:0)|(planned_stencil_writer()?2:0);
     }
-    // State is consumed only after the original walk validation above. The
-    // store interpreter checks its own payload extent before any access;
-    // a short payload or store allocation failure disables only this index.
-    int setter=sparse_mode && sparse_setter(h.op);
-    if(sparse_mode && !sparse_emit(o,h.size,setter))return 0;
-    if(store && index_valid && !setter) store_index_op(store,count-1,h.op,a,h.size);
-    if(h.op==OP_END) return 1;
+    // Metadata grouping does not skip forward resource interpretation. In
+    // particular every Program/TEX/IMG update reaches the original Store code
+    // at its unchanged raw ordinal, even while a pure span is pending.
+    if(store && index_valid && (!sparse_mode || (properties&PP_STORE)))
+      store_index_op(store,count-1,h.op,a,h.size);
+    if(h.op==OP_END)return 1;
     if(h.op==OP_JUMP || h.op==OP_CALL) {
-      if(h.size<16) return 0;
+      if(h.size<16)return 0;
       const uint8_t *target;memcpy(&target,a,8);
-      if(h.op==OP_JUMP) { if(!target) return 0;p=target;continue; }
-      if(!walk(target,depth+1,store)) return 0;
+      if(h.op==OP_JUMP) {if(!target)return 0;p=target;continue;}
+      if(!walk(target,depth+1,store))return 0;
     }
     p+=h.size;
   }
@@ -266,7 +262,7 @@ static void submission_index_build(const uint64_t *handles,int n) {
   atomic_store(&sample_liveness_active,query_reference);sample_elision_used=0;
   if(!++generation) die("Vulkan submission generation overflow");
   sparse_mode=sparse_plan_requested();
-  count=replay=node_count=0;last_raw_end=NULL;scan_ds=S.ds;valid=1;
+  count=replay=node_count=0;scan_ds=S.ds;valid=1;
   memcpy(scan_stencil_mask,S.stencil_mask,sizeof scan_stencil_mask);
   done=0;store_valid=vk_replay_preserves_ops();
   index_valid=0;

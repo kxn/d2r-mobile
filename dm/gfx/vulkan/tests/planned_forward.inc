@@ -46,6 +46,8 @@ unsigned vk_pass_test_forward_reuse(void) {
     if(capacity) memset(plan,0xa5,capacity*sizeof *plan);
     submission_index_build(roots,2);
     FORWARD_CHECK(valid&&count==15&&replay==0&&!index_valid);
+    planned_op observed[15];vk_pass_cursor cursor={.op=plan[0].op,.generation=generation};
+    for(unsigned i=0;i<count;i++,cursor_advance_raw(&cursor))observed[i]=cursor_entry(&cursor,cursor_opcode(&cursor));
     unsigned before_read=(before.dt||before.dw?1:0)|(before.st?2:0);
     unsigned before_write=(before.dw?1:0)|((round==0)?2:0);
     unsigned after_read=(after.dt||after.dw?1:0)|(after.st?2:0);
@@ -56,21 +58,21 @@ unsigned vk_pass_test_forward_reuse(void) {
     unsigned need=0,writes=0;
     for(unsigned i=count;i-->0;) {
       need|=reads[i];writes|=writes_expected[i];
-      FORWARD_CHECK(plan[i].draw==reads[i]);
-      FORWARD_CHECK(plan[i].drawing_writes==writes_expected[i]);
-      FORWARD_CHECK(plan[i].sample_counter==(i==4||i==11));
-      FORWARD_CHECK(plan[i].need==need&&plan[i].writes==writes);
-      FORWARD_CHECK(plan[i].sample_live==(i>4));
+      FORWARD_CHECK(observed[i].draw==reads[i]);
+      FORWARD_CHECK(observed[i].drawing_writes==writes_expected[i]);
+      FORWARD_CHECK(observed[i].sample_counter==(i==4||i==11));
+      FORWARD_CHECK(observed[i].need==need&&observed[i].writes==writes);
+      FORWARD_CHECK(observed[i].sample_live==(i>4));
     }
     // Same child's raw pointer appears twice with different query liveness.
-    FORWARD_CHECK(plan[2].op==plan[9].op&&plan[2].sample_live==0&&plan[9].sample_live==1);
+    FORWARD_CHECK(observed[2].op==observed[9].op&&observed[2].sample_live==0&&observed[9].sample_live==1);
     for(unsigned i=0;i<count;i++) {
-      vk_pass_plan_op(plan[i].op);FORWARD_CHECK(valid&&replay==i+1);
+      vk_pass_plan_op(observed[i].op);FORWARD_CHECK(valid&&replay==i+1);
       if(i==0||i==2||i==9||i==13) {
-        FORWARD_CHECK(vk_pass_depth_need()==plan[i].need);
-        FORWARD_CHECK(vk_pass_depth_writes()==plan[i].writes);
+        FORWARD_CHECK(vk_pass_depth_need()==observed[i].need);
+        FORWARD_CHECK(vk_pass_depth_writes()==observed[i].writes);
       }
-      vk_pass_plan_done(plan[i].op+8);FORWARD_CHECK(done);
+      vk_pass_plan_done(observed[i].op+8);FORWARD_CHECK(done);
     }
     // Failure after a valid prefix must never expose that prefix or stale
     // reverse results to consumers; the following round reuses the storage.
