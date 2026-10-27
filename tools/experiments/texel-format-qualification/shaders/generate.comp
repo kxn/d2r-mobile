@@ -1,0 +1,10 @@
+#version 450
+layout(local_size_x=128) in;
+layout(set=0,binding=0,std430) writeonly buffer Input { uvec4 values[]; };
+layout(push_constant) uniform Params { uint base; uint count; uint width; uint unused; } p;
+void main() {
+  uint i=gl_GlobalInvocationID.x;
+  if(i>=p.count)return;
+  uint x=p.base+i;
+  values[i]=uvec4(x,x^0x80000000u,x^0x7f800000u,((x<<13)|(x>>19))^0xdeadbeefu);
+}

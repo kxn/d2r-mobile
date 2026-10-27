@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "scope": "Owned standalone GLSL from original sfloat probe, no game shader or driver/APK binary included",
+  "original_source_fingerprint": "d7c34b9f1c5ca400b6f0c313f752ee3fa18b26417588974e41f6c8ea037b2d78",
+  "historical_source_manifest": ".local/build/sfloat-exhaustive-probe/out/manifest.json",
+  "historical_source_manifest_sha256": "2a5fdd4054293846cfd55f99fc6513499f4786b75015c3b043243638815fdf4d",
+  "shaders": {
+    "generate.comp": {
+      "source_sha256": "2543c98fc347b1e8d030bf6ce58b702e43ea49381b36e1bd88ea7cf69a22054a",
+      "historical_SPIRV_sha256": "5eef2324a8c7f70254e3d3224b525ce6e00c980a0a9e4b6516f87eb021d34f4c",
+      "compiler": [
+        "glslangValidator",
+        "-V",
+        "--target-env",
+        "vulkan1.1",
+        "-Os"
+      ],
+      "validator": [
+        "spirv-val",
+        "--target-env",
+        "vulkan1.1"
+      ]
+    },
+    "reduce.comp": {
+      "source_sha256": "9497340bece8536b80dfbc6e910f3a179fb10383dda0a9dc95fa3d8221f22cee",
+      "historical_SPIRV_sha256": "9d49f4858710f1e7728b6bd48a806168467d139d20fdf50a191cbe1f4f4963ce",
+      "compiler": [
+        "glslangValidator",
+        "-V",
+        "--target-env",
+        "vulkan1.1",
+        "-Os"
+      ],
+      "validator": [
+        "spirv-val",
+        "--target-env",
+        "vulkan1.1"
+      ]
+    },
+    "compare.frag": {
+      "source_sha256": "d526aca8c9aa75132d2f2b89ed7e6cd4ee881a89d324c63072ff6e26cd55f473",
+      "historical_SPIRV_sha256": "6dd9301b2432130a4abb506bf365286e4b177a022fb2ea6c761b1a8abf7cbd81",
+      "compiler": [
+        "glslangValidator",
+        "-V",
+        "--target-env",
+        "vulkan1.1",
+        "-Os"
+      ],
+      "validator": [
+        "spirv-val",
+        "--target-env",
+        "vulkan1.1"
+      ]
+    },
+    "triangle.vert": {
+      "source_sha256": "f650ebf370fd7fc0111873539e5df4d6ccfcdb48cd6a4b143f9bfb45bf80cc86",
+      "historical_SPIRV_sha256": "39b662d40ac7ba26ed27c071779c86cb0600ab7b723c1ad2955cdca486c4e6de",
+      "compiler": [
+        "glslangValidator",
+        "-V",
+        "--target-env",
+        "vulkan1.1",
+        "-Os"
+      ],
+      "validator": [
+        "spirv-val",
+        "--target-env",
+        "vulkan1.1"
+      ]
+    }
+  },
+  "historical_current_turnip_result": ".local/logs/texel-storage-current-turnip-v1/result-receipt.json",
+  "historical_current_turnip_result_sha256": "0239c80fb8daf471476a774f796d7756018dc6ef5a281f4cec4c878420d8cfc4",
+  "historical_build_ready": ".local/build/texel-storage-current-turnip-v1/ready.json",
+  "historical_build_ready_sha256": "6deca0f31c7b8a6a3fe5f07310bd8efc4b8edc5f3e9fa11ba57d9ee5fa72d91c",
+  "archived_adapter_source_sha256": {
+    "source/probe.cpp": "13299495af1c1d8cb84d7cde82eeffe8b92e561f0878878ad067d0ef456042ee",
+    "source/entry.cpp": "8670e0152d5712f80719522997be224eb22bcab58e49de61cdf0267320fbf87a",
+    "source/ProbeActivity.java": "d47246d4e16a95316e0efa482614d7a54df4a40c1548ec9577fe5d3d08b3274e",
+    "source/AndroidManifest.xml": "d7acc9e0c9ee7bc3db9e1da2cb1e79da804272462ec6b72d53f0099aa5ec0dea"
+  }
+}

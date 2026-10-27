@@ -1,0 +1,21 @@
+#version 450
+layout(local_size_x=128) in;
+layout(r32ui,set=0,binding=2) readonly uniform uimage2D masks;
+layout(set=0,binding=3,std430) buffer Results { uint stats[]; };
+layout(push_constant) uniform Params { uint base; uint count; uint width; uint unused; } p;
+shared uint sum[128][5];
+void main() {
+  uint l=gl_LocalInvocationID.x,i=gl_GlobalInvocationID.x;
+  uint m=i<p.count?imageLoad(masks,ivec2(i%p.width,i/p.width)).x:0u;
+  bool valid=i<p.count && (m&0xffffff00u)==0x10000000u;
+  sum[l][0]=uint(valid);sum[l][1]=uint(valid&&((m&15u)!=0));
+  sum[l][2]=valid?uint(bitCount(m&15u)):0u;
+  sum[l][3]=uint(valid&&((m&240u)!=0));
+  sum[l][4]=uint(i<p.count&&!valid);
+  barrier();
+  for(uint s=64;s!=0;s>>=1) {
+    if(l<s)for(uint c=0;c<5;c++)sum[l][c]+=sum[l+s][c];
+    barrier();
+  }
+  if(l==0)for(uint c=0;c<5;c++)atomicAdd(stats[c],sum[0][c]);
+}
