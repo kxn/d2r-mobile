@@ -1,4 +1,4 @@
-# Verified desktop startup, schemas 1, 2, 3 and 4
+# Verified desktop startup, schemas 1, 2, 3, 4 and 5
 
 This corrects a delivery gap: transaction tests restore their original APK and
 assets; that original APK predates shared/native resources. Successful test
@@ -89,6 +89,28 @@ Schemas 1, 2 and 3 still accept only their original exact field sets. They do no
 emit this extra and retain the runtime's zero-budget default; they reject
 `guest_wait_budget_us` even when its value is `0`. Schema 4 cannot omit it or any
 inherited field. All existing identity, SHA, path and receipt checks apply.
+
+Schema 5 retains every schema 4 field and additionally requires the strict
+boolean `record_state_cache` (set `schema=5` in the same properties file):
+
+```
+record_state_cache=true
+```
+
+Only lowercase `true` or `false` is accepted. The loader emits a `Boolean` cold
+extra for the existing NVN recording-state cache setter. This cache removes
+identical fixed-state recordings on each command buffer; it does not cache game
+tasks or bypass resource synchronization. The publisher must explicitly select
+and qualify the value for its APK/device tuple. Missing or mistyped values are
+rejected, as are missing inherited fields; all APK, payload, device, path and
+receipt verification remains required.
+
+Without an installed profile the cache retains its runtime default of off.
+Schemas 1–4 likewise emit no `record_state_cache` extra and keep that default;
+they reject this additional field even when it is `false`. Explicit CLI or test
+Intents still bypass the desktop profile, including an explicit
+`--no-record-state-cache` launch. A schema 5 publication does not turn on the
+cache globally or alter the existing cold-start-only rule.
 
 These values describe the locally qualified Q735 combination, not universal
 device defaults. The CPU mask is a canonical nonnegative decimal Java integer;

@@ -74,6 +74,10 @@ public final class VerifiedStartupProfileTest {
             useV3(); values.setProperty("schema", "4");
             values.setProperty("guest_wait_budget_us", "30");
         }
+        void useV5() {
+            useV4(); values.setProperty("schema", "5");
+            values.setProperty("record_state_cache", "true");
+        }
         void store() throws Exception {
             try (Writer out = Files.newBufferedWriter(profile(), StandardCharsets.UTF_8)) { values.store(out, null); }
         }
@@ -187,6 +191,67 @@ public final class VerifiedStartupProfileTest {
             f.useV4(); f.store();
             Files.write(f.runtime.toPath().resolve("launch-profile-receipt.json"), new byte[]{9}); rejects(f::load);
         }
+        for (String value : Arrays.asList("true", "false")) {
+            try (Fixture f = new Fixture()) {
+                f.useV5(); f.values.setProperty("record_state_cache", value); f.store();
+                Map<String,Object> extras = f.load().extras;
+                check(extras.get("record_state_cache") instanceof Boolean);
+                check(Boolean.valueOf(value).equals(extras.get("record_state_cache")));
+                check(Integer.valueOf(30).equals(extras.get("guest_wait_budget_us")));
+                check(Boolean.TRUE.equals(extras.get("turnip_swapchain_ubwc")));
+                check(Boolean.TRUE.equals(extras.get("inline_translation")));
+                check(Integer.valueOf(128).equals(extras.get("translation_cpu_mask")));
+                check(Boolean.TRUE.equals(extras.get("stream_submit_reference")));
+                check("profiled".equals(extras.get("turnip_autotune")));
+                for (String dynamic : Arrays.asList("target_fps", "scale_3d", "game_res", "thermal_cap"))
+                    check(!extras.containsKey(dynamic));
+            }
+        }
+        for (String value : Arrays.asList("", "1", "0", "yes", "True", "FALSE", " true", "false ", "null")) {
+            try (Fixture f = new Fixture()) {
+                f.useV5(); f.values.setProperty("record_state_cache", value); f.store(); rejects(f::load);
+            }
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV5();
+            for (String key : f.values.stringPropertyNames().toArray(new String[0])) {
+                String original = (String)f.values.remove(key); f.store(); rejects(f::load);
+                f.values.setProperty(key, original);
+            }
+        }
+        for (String schema : Arrays.asList("1", "2", "3", "4")) {
+            try (Fixture f = new Fixture()) {
+                if (schema.equals("2")) f.useV2();
+                if (schema.equals("3")) f.useV3();
+                if (schema.equals("4")) f.useV4();
+                f.store(); check(!f.load().extras.containsKey("record_state_cache"));
+                f.values.setProperty("record_state_cache", "false"); f.store(); rejects(f::load);
+            }
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV5(); f.store();
+            Files.write(f.profile(), "\nrecord_state_cache=true\n".getBytes(StandardCharsets.UTF_8),
+                    java.nio.file.StandardOpenOption.APPEND);
+            rejects(f::load);
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV5(); f.values.setProperty("unexpected_policy", "true"); f.store(); rejects(f::load);
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV5(); f.values.setProperty("guest_wait_budget_us", "101"); f.store(); rejects(f::load);
+        }
+        for (String changed : Arrays.asList("apk", "fingerprint", "driver", "modules", "shader", "table", "receipt")) {
+            try (Fixture f = new Fixture()) {
+                f.useV5(); f.store();
+                if (changed.equals("fingerprint")) {
+                    rejects(() -> VerifiedStartupProfile.load(f.runtime, f.apk, "different/build"));
+                } else {
+                    int anchor = Arrays.asList("driver", "modules", "shader", "table", "receipt").indexOf(changed);
+                    Path file = anchor < 0 ? f.apk.toPath() : f.runtime.toPath().resolve(f.files[anchor]);
+                    Files.write(file, new byte[]{9}); rejects(f::load);
+                }
+            }
+        }
         for (String key : Arrays.asList("inline_translation", "translation_cpu_mask", "stream_submits", "turnip_autotune")) {
             try (Fixture f = new Fixture()) { f.useV2(); f.values.remove(key); f.store(); rejects(f::load); }
         }
@@ -230,6 +295,6 @@ public final class VerifiedStartupProfileTest {
             Path link = f.runtime.toPath().resolve(f.files[3]); Files.delete(link); Files.createSymbolicLink(link,outside);
             f.store(); rejects(f::load);
         }
-        System.out.println("PASS verified desktop profile schemas 1-4: identities, exact fields, immutable typed cold options, canonical 0..100 us budget, bounded input and failures");
+        System.out.println("PASS verified desktop profile schemas 1-5: identities, exact fields, immutable typed cold options, canonical 0..100 us budget, strict recording-cache boolean, bounded input and failures");
     }
 }

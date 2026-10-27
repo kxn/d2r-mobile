@@ -30,6 +30,7 @@ final class VerifiedStartupProfile {
     private static final Set<String> REQUIRED_V2 = new HashSet<>(REQUIRED);
     private static final Set<String> REQUIRED_V3 = new HashSet<>();
     private static final Set<String> REQUIRED_V4 = new HashSet<>();
+    private static final Set<String> REQUIRED_V5 = new HashSet<>();
     static {
         REQUIRED_V2.addAll(Arrays.asList("inline_translation", "translation_cpu_mask",
                 "stream_submits", "turnip_autotune"));
@@ -37,6 +38,8 @@ final class VerifiedStartupProfile {
         REQUIRED_V3.add("turnip_swapchain_ubwc");
         REQUIRED_V4.addAll(REQUIRED_V3);
         REQUIRED_V4.add("guest_wait_budget_us");
+        REQUIRED_V5.addAll(REQUIRED_V4);
+        REQUIRED_V5.add("record_state_cache");
     }
     final String name;
     final Map<String, Object> extras;
@@ -79,11 +82,12 @@ final class VerifiedStartupProfile {
             throw invalid("profile properties", error);
         }
         String schema = values.getProperty("schema");
-        boolean version4 = "4".equals(schema);
+        boolean version5 = "5".equals(schema);
+        boolean version4 = "4".equals(schema) || version5;
         boolean version3 = "3".equals(schema) || version4;
         boolean version2 = "2".equals(schema) || version3;
         if (!version2 && !"1".equals(schema)) throw invalid("profile schema");
-        if (!values.stringPropertyNames().equals(version4 ? REQUIRED_V4 : version3 ? REQUIRED_V3 : version2 ? REQUIRED_V2 : REQUIRED))
+        if (!values.stringPropertyNames().equals(version5 ? REQUIRED_V5 : version4 ? REQUIRED_V4 : version3 ? REQUIRED_V3 : version2 ? REQUIRED_V2 : REQUIRED))
             throw invalid("profile fields");
         String name = values.getProperty("name");
         if (name.isEmpty() || name.length() > 64 || name.indexOf('\n') >= 0 || name.indexOf('\r') >= 0)
@@ -152,6 +156,7 @@ final class VerifiedStartupProfile {
             if (microseconds > 100) throw invalid("guest wait budget range");
             extras.put("guest_wait_budget_us", microseconds);
         }
+        if (version5) extras.put("record_state_cache", flag(values, "record_state_cache"));
         return new VerifiedStartupProfile(name, extras);
     }
 
