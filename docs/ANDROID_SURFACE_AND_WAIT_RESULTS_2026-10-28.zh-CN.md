@@ -109,7 +109,8 @@ producer均复用，不新写encoder/tiler，不改游戏模块。独立driver�
 格式准入，runtime/packer保留原identity/大小/mip/thumbnail限制。未知
 driver仍保留FOREIGN交接。新driver实际ELF SHA为
 `0e53ffa2bbbff0a4f520eb080039a848f0853276ece59caa8df9a029cf2b4024`；
-尚未加入resident/lazy准入，不替换日常资源、不报告FPS收益。
+已基于完整source差异和下述真实NVN回归加入实验candidate的exact provider
+列表；resident/lazy实际正向验收另行记录，不替换日常资源、不报告FPS收益。
 
 独立普通UID真机验证已通过两阶段：v1保留原ASTC4/6回归并加入BC3
 UNORM/sRGB；v2覆盖BC3 13×9、4级mip，比较同一压缩块的共享导入与普通
@@ -121,8 +122,12 @@ driver布局加工/压缩块回读；v1/v2物理payload SHA相同，producer身�
 
 v1两份实际bake产物通过原packer生成独立BC3表，原NVN公开metadata
 fixture各61项检查通过，覆盖完整Builder的size/alignment/mip offset及
-thumbnail形状回落。这一步只在host执行；原NVN full/native、tail/original
-的GPU绘制/更新/别名回归与真实游戏仍待验证，不能以producer通过替代。
+thumbnail形状回落。这一步只在host执行。之后普通UID原NVN两格式均已
+真实通过完整9mip及逐baseMip绘制、5层原thumbnail CPU排布/B2T、GPU alias
+writer、CPU Flush、T2T及释放回归；两格式315/313检查，都是FOREIGN模式，
+不能冒称resident/lazy已验证。初次fixture在采样前因旧MAP_SHARED backing
+不满足现有RW alias契约失败；修复只接回原真实guest heap/SVC，未放宽
+生产alias准入。该失败及修复前后源码/包均保留。
 
 证据：`.local/logs/native-bc3-gpu-probe-v{1,2}/actual/`与
 `.local/logs/native-bc3-real-pack-v1/`，保留原始日志、query、SHA和清理记录。
@@ -130,9 +135,68 @@ thumbnail形状回落。这一步只在host执行；原NVN full/native、tail/or
 实施入口：`tools/experiments/turnip-native-bc3/`与
 `scripts/dev/experiments/native-bc3/`。全部6217条原始BC3输入现已准备，
 与当前名单及顺序完全相同，共49批；原CASC及原NVN逐mip往返、冻结v2
-producer CPU解析通过。原始BC3有效块401,317,552字节，当前同名单混合
+producer CPU解析通过，随后6217/49批实际driver加工全部通过并清理。
+原packer已完成新表与完整cache合并，物理payload443,588,608字节、表
+6,565,312字节。原CASC工具合成候选overlay并逐项读回全部6218替换，
+TVFS/root/config修改范围证明通过；原UI107个payload中106个SHA保持，
+仅必要config及manifest按原contract重建；合成记录不构成游戏验收。
+原始BC3有效块401,317,552字节，当前同名单混合
 ASTC为318,250,336字节，少20.70%；这只是离线有效块量，不能换算当前帧
-流量。全包真机native布局加工、NVN回归及真实游戏性能对照尚未完成。
+流量。resident/lazy正向验收已在后续同APK两driver测试中完成，真实游戏
+性能对照尚未完成。
 全包记录：`.local/build/native-original-bc3-full6217-v2-inputs/`及
 `.local/logs/native-original-bc3-full6217-v2-host-verify-final/`；同名单有效
 块量核对：`.local/logs/native-bc3-real-pack-v1/offline-format-footprint.json`。
+实际NVN：`.local/logs/native-bc3-nvn-gpu-v2/actual/`；全包加工：
+`.local/logs/native-original-bc3-bulk-v1/actual/`；完整pack与overlay：
+`.local/build/native-original-bc3-linear-{pack-v2,game-overlay-v1}/`。
+
+## 6. 更应优先验证的布局代价
+
+源码与历史记录确认，B3/0e53 native compressed images强制whole-linear，
+不是HOST_ALLOCATION共享所必需。旧AA185本已使用原FDL tiled布局；f830
+是为减少opaque padding选择全线性，历史全ASTC4的同名单payload从约
+696.4MB降到443.6MB，但没有同编码、同driver的线性/平铺GPU净收益对照。
+
+旧官方6帧的实际descriptor绑定与draw归属中，308张native纹理覆盖
+2874/14496个draw，约479个/帧；其中358个/帧在主HDR组。303张按普通FDL
+阈值本可用tiled baseMip，现被线性覆盖。该比例不是GPU时间预算，也不是
+当前帧带宽计数；它提供了比冷资源占用更强的实际使用覆盖依据。
+
+相反，ASTC→混合BC3复制确实把一张128×128/7mip/42层数组扩为RGBA8，
+实际allocation从1,032,192增至4,816,896字节；但两端历史6帧都没有实际
+绑定含该view的descriptor或提交其copy，不能以该扩容解释营地稳态FPS。
+
+已独立构建BC3 tiled候选`3e9376ed…ee50`：仅排除BC3的强制线性分支，
+ASTC策略不动，原FDL tiled/small-mip fallback复用；因布局变化，原UUID
+算法内profile盐版本化。实际query新layout UUID为
+`4504211f903049f5ae3acd7eda74b7bb`，没有重标0e53的旧payload。相同919
+producer重新加工两份256×256/9mip资源，size由94,208变135,168字节。
+新driver NPOT普通image参考及原NVN完整两格式/每baseMip回归均已真机
+通过并清理。13×9本身仍走small-mip linear，不能单独证明tiled正确；
+实际256/9mip NVN回归覆盖了tiled与线性mip尾部。尚无该候选FPS收益。
+
+证据：`.local/logs/{mixed-compressed-copy-audit-v1,native-linear-layout-audit-v1}/`、
+`.local/build/turnip-native-bc3-tiled-v1/build.json`、
+`.local/logs/native-bc3-tiled-{probe-v1,nvn-gpu-v1}/actual/`。
+
+后续3e新driver对全部6217输入独立重新加工，49批全部通过，未复用或
+重标线性payload。两包原始块、source/descriptor、ID/顺序、thumbnail及
+完整31,072条cache SHA相同；仅物理布局及其身份变化。平铺payload实计
+696,385,536字节，线性443,588,608字节；这是整包物理数据量，不等于
+运行时驻留。两套完整overlay均已通过6218项CASC读回及原UI/config证明。
+控制核对：`.local/logs/native-bc3-real-pack-v1/linear-tiled-control.json`。
+
+同一72ad APK/7a37 ELF另完成两driver×两格式的resident+lazy正向真机
+验证：每次全mip采样后断言实际owner==2、现成startup统计lazy active及
+64KiB window；alias GPU写、B2T/T2T、CPU Flush、同物理页/无payload副本、
+最终释放均保留通过。仅跳过与immutable lazy政策不相容的destructive
+union测试，未使用provider override。四case363/361检查，两包清理成功，
+原391/437/profile/table/28模块保持。root直接归约原结果中必需断言：
+`.local/logs/native-bc3-real-pack-v1/resident-lazy-root-verification.json`。
+
+已用原SDK重封包为同签名正常主包carrier992c6f15/7a37；六库、DEX、assets
+125项字节不变，正常game/nativeStart入口未加入fixture EXPECT环境。
+该carrier供三臂共用，避免换runtime ELF混入布局对照；其source ledger
+明确来自本次fixture编译，未伪称原391。当前仅准备完成，游戏/SDP整轮
+净收益仍待实测，不能以这些GPU正确性通过替代FPS结论。

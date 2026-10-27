@@ -34,7 +34,9 @@ v2也重新烘焙两份相同真实BC3输入，两个物理payload SHA与v1逐�
 
 两轮各一次安装、四次独立冷启动，均只使用 `com.d2rmobile.turniprealproducer` 原Java/JNI/6库loader，不加载游戏。已停止/卸载该测试包，清理本次确切临时目录；原391 APK/437 ELF、28项module、shader链29e56、profile4ccef、receipt5b285、native表0c24全部只读核验不变。原系统保护、驱动选择、主包和存档没有改写。没有FPS或游戏可玩性结论，也没有给新driver添加resident/coherent生产白名单。
 
-现阶段仍须原NVN full/native、thumbnail/tail、Buffer GPU writer/alias/publication/retirement GPU fixture验证，之后才考虑6217全量原BC3烘焙和真实游戏候选；不能用host元数据测试代替这些里程碑。
+后续原NVN full/native、thumbnail/tail、Buffer GPU writer/alias/publication/retirement已对BC3两格式真机通过；初次旧fixture在采样前因不满足现有committed RW alias约束失败，修复只接回原guest heap/SVC入口，没有放宽生产准入。再以同一72ad APK对线性0e53与平铺3e937两driver完成resident+lazy正向验证，每次mip采样后检查实际owner==2，并检查现成startup统计lazy active/64KiB。所有GPU/CPU发布与释放检查保留，未使用provider override。原391及其资源/profile/28模块在这些独立测试后仍保持。
+
+两driver均已对完整6217名单重新烘焙并打包，平铺使用新layout UUID和新opaque payload，未重标线性数据。两完整cache/原始压缩块/thumbnail/顺序相同；物理payload分别443,588,608与696,385,536字节，不等于实际游戏驻留。原CASC合成两份完整候选overlay均逐项读回通过。真实游戏及SDP整轮收益仍待验证，不能以这些正确性测试替代。
 
 ## 完整名单的原始 BC3 输入
 
@@ -52,7 +54,7 @@ v2也重新烘焙两份相同真实BC3输入，两个物理payload SHA与v1逐�
   --output /new/private/bc3-input-verification
 ```
 
-实际完整结果为4048份UNORM、2169份sRGB，共49批，位于`.local/build/native-original-bc3-full6217-v2-inputs/`。全部53701个mip的有效原始BC3块401,317,552字节；相同名单当前混合ASTC块318,250,336字节，少20.70%。这是离线整包有效块量，**不是每帧读写、显存驻留或帧率改善**。全部输入已通过原NVN往返和v2 C解析，真机49批native布局加工与游戏使用仍待完成。
+实际完整结果为4048份UNORM、2169份sRGB，共49批，位于`.local/build/native-original-bc3-full6217-v2-inputs/`。全部53701个mip的有效原始BC3块401,317,552字节；相同名单当前混合ASTC块318,250,336字节，少20.70%。这是离线整包有效块量，**不是每帧读写、显存驻留或帧率改善**。全部输入已通过原NVN往返和v2 C解析，两driver真机49批native布局加工已完成；游戏使用与性能仍待验证。
 
 ## 复现入口与产物
 
