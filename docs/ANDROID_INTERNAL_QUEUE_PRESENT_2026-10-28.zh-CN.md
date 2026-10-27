@@ -1,8 +1,9 @@
 # 同队列呈现等待：标准内部同步队列实验
 
-状态：实现和规范APK构建完成，原0e53真机扩展资格被拒，未安装候选游戏包；
-仅开放该标准扩展的独立驱动正在构建，整轮收益尚待验证。保持默认关闭，
-不将源码支持或一次能力查询当作实际创建成功，不将少等CPU等同于涨帧。
+状态：标准feature、flagged queue创建、真实游戏及同APK A/B均已完成。
+43.2978→43.3646 FPS，未见显著涨帧；owner等待转移到WSI acquisition。
+保留默认关闭的实验。原0e53拒绝、新driver资格与各次失败均在下文留档，
+不将源码支持或一次能力查询当作创建成功，不将少等CPU等同于涨帧。
 
 ## 问题与依据
 
@@ -123,7 +124,88 @@ GRAPHICS_PIPELINE、AUTO_CPU、AUTO_GPU均为0。之前普通hint成功不能推
 原始查询：`.local/logs/native-bc3-three-arm-game-v1/public-cold-query/`，
 含sc-ahb.log、actual maps/driver SHA、result.json及清理记录。
 
-目前不能给出净毫秒/FPS收益。即使全部隐藏3.526ms睡眠，当前owner约
+实际A/B之前没有预报净毫秒/FPS收益：即使全部隐藏3.526ms睡眠，owner约
 18ms实际Running仍存在；GPU也可能已连续执行。该实验有明确公开合同与
-可测覆盖，但不是60FPS保证。另一路普通Simpleperf正在细分现owner高层
-职责，独立AHardwareBuffer/ASurfaceControl出图保留为后备功能实验。
+可测覆盖，但不是60FPS保证。后续实际结果如下，独立AHardwareBuffer/
+ASurfaceControl出图保留为后备功能实验。
+
+## 新driver资格与最终同APK A/B
+
+唯一Android whitelist gate候选实际构建完成，driver SHA
+`12b8b54a2514ff1cdf8da422c71db79a683d4517eb9aecfbb20a4125522559f5`。
+18,218项完整源只改`vk_extensions.py`一项，整个生成扩展表除该项之外
+逐字节相同；SDK仍34。独立普通UID真实query为extension=1、feature=1。
+同一919 producer实际NPOT host-copy/import、普通optimal参考及两格式
+256×256/9mip小bake通过，三UUID与0e一致；未用源码意图代替实际query。
+
+完整6217条原0e payload依据相同optimalTilingLayoutUUID的标准缓存兼容
+合同复用。`tools/experiments/native-layout-cache-compat/`核所有原来源、
+recipe、18,749个bake输出和完整12,438文件pack集合。原生成driver仍明确
+记录0e，原pack content SHA保持f7b38170…5a7f16；不假称重新烘焙。
+新消费表只绑定新消费driver SHA并重算表digest，entry/family body原样；
+生产C parser核新身份接受、旧身份拒新表、新身份拒旧表/错UUID/坏digest。
+新表SHA `6890107f0b868819d28d13e7940de004f73b5535124e05eea6814f2a614cecc7`，
+完整兼容receipt位于`.local/build/native-bc3-linear-consumer-12b8-v1/`。
+
+最终正常APK是v3，而非上表尚未上机的v1：
+
+| 产物 | SHA256 |
+|---|---|
+| internal-queue-present-v3/canonical.apk | 28caae83d9b5e05a1b175c4c1989964b995061fbba7aed3537c980016f7acdbc |
+| canonical.apk.build.json | 919bdbc2044ca7745ca56fda83bb7f22757370133d15da373ee821f60272aad0 |
+| libdmhost_android.so | 9ea4f9e72372b0b733d9b6caeb48e893fde9669cf02c0157cf2a536661cf7d63 |
+
+源码e46f9d9，1053项输入及六库哈希核准。v2只登记了resident provider，
+遗漏独立lazy provider登记，故实际启动被原launcher的lazy资格门控拒绝，
+未测工具；已原生命周期save2后停止，未以lazy OFF混入两臂。v3补唯一精确
+12b8 lazy登记，原overlap/coherent/CPU-observation准入均不变。第一轮
+controller误用不存在的负worker选项也在host argparse即拒，均保留原失败。
+没有重复烘焙、改CPU模块或放宽未知driver资格。
+
+A/B同v3、同12b8、同消费表/原payload、场景/位置、game/swap1968×900、
+main1673×765、.85；两窗PSO182/variants32/pending0及图像字节均稳定。
+A普通inline/external queue，B只增加同队列worker/internal queue选项。
+B真实日志为requested1/extension1/feature1/queue_flags4/actual KHR driver
+internal，且单队列render worker有效，进入真实营地；不是只通过冷query。
+
+| 同窗官方工具指标 | A INLINE | B INTERNAL |
+|---|---:|---:|
+| Surface FPS | 43.2978 | 43.3646 |
+| owner Running ms/Surface | 18.1979 | 17.7111 |
+| owner运行期MHz | 1565.23 | 1631.66 |
+| 新present worker Running ms/Surface | 0 | .655423 |
+| 全应用Running ms/Surface | 33.5387 | 34.2139 |
+| owner S睡眠 ms/Surface | 3.89544 | 4.36965 |
+| GPU读 MB/Surface | 105.4527 | 105.1583 |
+| GPU写 MB/Surface | 44.2026 | 44.1945 |
+| 片元指令 G/Surface | 1.87793 | 1.88091 |
+| shader busy % | 74.0713 | 74.0718 |
+| texture fetch stall % | 10.3668 | 10.3132 |
+
+FPS+.154%没有明显收益。owner Running减少.487ms同时运行频率升4.24%，
+另有worker .655ms；两者合计18.3665ms，高于A的18.1979ms约.169ms。
+全应用还有其他线程变化，不能把其+.675ms全部归给worker；没有本窗PMU，
+不把Running差换成已省指令数。
+
+官方gfx/调度交集已证并发机制实际生效：B的342个present均与下一owner
+replay重叠，下一main submit也在present返回前；A为0/339。原队列整程
+互斥确实不再挡住下一submit。但owner转为`Vulkan waits WSI acquisition`
+约3.988ms wall/Surface，其中3.867ms直接与worker当前present重叠。
+这是有界交换链/单WSI owner的背压位置迁移，不能称已消除GPU依赖。
+
+此前标准KGSL时间线经692对本机时间对及官方XO19.2MHz定义校准，主批次
+约22.851ms、present-copy .192ms；可观察硬件区间99.6469%被该context批次
+占据，CPU present睡眠99.7185%与这些区间重叠。该占据包含GPU内部stall，
+不是ALU busy或DRAM饱和，但与本次等待迁移、GPU工作量不变和FPS平坦一致。
+不能继续把平均3.5ms CPU睡眠当作额外GPU空转、或通过再拆一个WSI线程
+宣称能免费扣掉它。后继优先补当前BC3的官方Mesa pass分组预算。
+
+本实验保留实现与可复现产物，默认不启用：机制与适用条件明确，但当前
+GPU连续工作、没有显著吞吐收益，且新增线程/交接CPU与在途工作需要记账。
+不以单一阴性FPS判定标准方案无效，也不据局部owner下降默认发布。
+原用户save/profile/旧资源目录按事务保留，两次capture均fresh save2后停止。
+
+原始数据：`.local/logs/native-bc3-three-arm-game-v1/internal-queue-ab-v2/`，
+含两实际receipt、startup、原SDP/Perfetto、whole-profile/comparison和
+timeline-audit；前置失败保留在internal-queue-ab-v1。正式工具窗包含SDP，
+不当无工具普通运行FPS。
