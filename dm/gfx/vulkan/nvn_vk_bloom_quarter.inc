@@ -229,8 +229,8 @@ static int bq_shadow(vk_state *state,uint32_t op,const void *payload) {
 static int bq_half(unsigned small,unsigned large) { return small && (small==large/2 || small==(large+1)/2); }
 // Keep the large lookahead snapshots in the optional proof's own frame.
 static __attribute__((noinline)) int bq_prove(vk_shader *list[6],const p_draw *draw,const p_draw_idx *idx,bq_chain *out) {
-  const uint8_t *current;int samples_live;bq_failure=1;bq_failure_shader[0]=0;
-  if(!vk_pass_future_op(0,&current,&samples_live) || samples_live || !bq_target(&out->b0) ||
+  const uint8_t *current;int samples_live;vk_pass_cursor cursor;bq_failure=1;bq_failure_shader[0]=0;
+  if(!vk_pass_future_begin(&cursor,&current,&samples_live) || samples_live || !bq_target(&out->b0) ||
       !bq_covers(list,draw,idx,&out->b0,0) || !bq_input(list[1],&out->source_handle,&out->source,NULL) ||
       bq_alias(&out->source,&out->b0) || !bq_half(out->b0.d.width,out->source.d.width) ||
       !bq_half(out->b0.d.height,out->source.d.height) || list[1]->nc1<8)return 0;
@@ -262,7 +262,7 @@ static __attribute__((noinline)) int bq_prove(vk_shader *list[6],const p_draw *d
   // or changed on the GPU between A and the replacement B1.
   for(unsigned offset=1;offset<BQ_SCAN_LIMIT;offset++) {
     const uint8_t *op;int live;
-    if(!vk_pass_future_op(offset,&op,&live))break;
+    if(!vk_pass_future_next(&cursor,&op,&live))break;
     op_hdr header;memcpy(&header,op,sizeof header);const void *payload=op+8;
     bq_failure=100*phase+header.op;
     if(header.op==OP_DRAW || header.op==OP_DRAW_IDX) {

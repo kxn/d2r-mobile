@@ -18,8 +18,11 @@ static void store_index_build_reference(void) {
   for(unsigned st=0;st<6;st++) {
     memcpy(slots[st],S.tex[st],sizeof S.tex[st]);memcpy(slots[st]+128,S.img[st],sizeof S.img[st]);
   }
-  for(unsigned seq=0;seq<count && index_valid;seq++) {
-    unsigned opcode=plan[seq].opcode;const void *a=plan[seq].op+8;
+  // Keep the frozen semantic interpreter, but read every original raw op
+  // through the representation cursor. A sparse node index is never a seq.
+  vk_pass_cursor cursor={.op=count?plan[0].op:NULL,.generation=generation};
+  for(unsigned seq=0;seq<count && index_valid;seq++,cursor_advance_raw(&cursor)) {
+    unsigned opcode=cursor_opcode(&cursor);const void *a=cursor.op+8;
     switch(opcode) {
     case OP_SET_RT:
       rt=*(const p_set_rt *)a;if(rt.n<0||rt.n>8) index_valid=0;

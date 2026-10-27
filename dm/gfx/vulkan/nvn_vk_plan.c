@@ -21,14 +21,123 @@ _Static_assert(offsetof(planned_op,drawing_writes)==offsetof(planned_op,draw)+1 
     offsetof(planned_op,sample_counter)==offsetof(planned_op,draw)+3,
     "Vulkan forward plan bytes must remain contiguous");
 static planned_op *plan;
-static unsigned count, capacity, replay;
+// count/replay are always RAW ordinals; only node_count indexes storage.
+static unsigned count, capacity, replay,node_count;
 static int valid,done,store_valid;
 static uint64_t generation;
+static int sparse_requested=-1,sparse_mode;
+static const uint8_t *last_raw_end;
+static vk_pass_cursor current_cursor,next_cursor;
+static planned_op sparse_current;
+static int sparse_plan_requested(void) {
+  if(sparse_requested>=0)return sparse_requested;
+  const char *v=getenv("DM_VULKAN_SPARSE_PLAN");
+  if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_SPARSE_PLAN expects 0 or 1");
+  sparse_requested=v && !strcmp(v,"1");
+  LOG("[vulkan] sparse submission plan: %s (fixed for this process)",sparse_requested?"enabled":"disabled");
+  return sparse_requested;
+}
+// The high bit of sample_counter is unused by an anchor (its value is 0/1).
+// A span reuses those four forward bytes as a tagged 31-bit raw-op count.
+_Static_assert(offsetof(planned_op,sample_counter)==11,"Vulkan sparse tag position");
+_Static_assert(__BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__,"Vulkan sparse tagged count byte order");
+static int plan_is_span(const planned_op *o) { return !!(o->sample_counter&128); }
+static unsigned plan_raw_count(const planned_op *o) {
+  if(!sparse_mode || !plan_is_span(o))return 1;
+  uint32_t v;memcpy(&v,&o->draw,4);return v&UINT32_C(0x7fffffff);
+}
+static void plan_span_count(planned_op *o,unsigned n) {
+  uint32_t v=UINT32_C(0x80000000)|n;memcpy(&o->draw,&v,4);
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+static int plan_fail_allocation;
+#define PLAN_REALLOC(p,n) (plan_fail_allocation?NULL:realloc((p),(n)))
+#else
+#define PLAN_REALLOC(p,n) realloc((p),(n))
+#endif
+static int plan_reserve(void) {
+  if(node_count<capacity)return 1;
+  unsigned next=capacity?capacity*2:4096;
+  planned_op *grown=PLAN_REALLOC(plan,next*sizeof *plan);
+  if(!grown)return 0;
+  plan=grown;capacity=next;return 1;
+}
+static int sparse_setter(unsigned opcode) {
+  switch(opcode) {
+  case OP_BIND_VATTR:case OP_BIND_VSTREAM:case OP_BIND_VBUF:case OP_BIND_UBO:
+  case OP_BIND_SSBO:case OP_BIND_SAMP:case OP_POLY_OFFSET:case OP_VIEWPORTS:
+  case OP_DEPTH_RANGE:case OP_BLEND_COLOR:return 1;
+  default:return 0;
+  }
+}
+static int sparse_emit(const planned_op *o,unsigned size,int setter) {
+  if(setter && node_count && plan_is_span(&plan[node_count-1]) && last_raw_end==o->op) {
+    planned_op *tail=&plan[node_count-1];plan_span_count(tail,plan_raw_count(tail)+1);
+  } else {
+    if(!plan_reserve())return 0;
+    planned_op *out=&plan[node_count++];
+    if(setter) {out->op=o->op;plan_span_count(out,1);} else *out=*o;
+  }
+  last_raw_end=o->op+size;return 1;
+}
+static const planned_op *current_entry(void) { return sparse_mode?&sparse_current:&plan[replay-1]; }
+static vk_pass_cursor cursor_at_current(void) {
+  if(sparse_mode)return current_cursor;
+  return (vk_pass_cursor){.op=plan[replay-1].op,.node=replay-1,.ordinal=replay-1,.generation=generation};
+}
+static vk_pass_cursor cursor_at_next(void) {
+  if(sparse_mode)return next_cursor;
+  return (vk_pass_cursor){.op=replay<count?plan[replay].op:NULL,.node=replay,.ordinal=replay,.generation=generation};
+}
+static unsigned cursor_opcode(const vk_pass_cursor *cursor) {
+  const planned_op *o=&plan[cursor->node];
+  if(!sparse_mode || !plan_is_span(o))return o->opcode;
+  op_hdr h;memcpy(&h,cursor->op,8);return h.op;
+}
+static planned_op cursor_entry(const vk_pass_cursor *cursor,unsigned opcode) {
+  const planned_op *o=&plan[cursor->node];
+  if(!sparse_mode || !plan_is_span(o))return *o;
+  unsigned run=V.options.state_segments?plan_raw_count(o)-1-cursor->offset+o->state_run:0;
+  return (planned_op){.op=cursor->op,.opcode=opcode,.need=o->need,.writes=o->writes,
+    .sample_live=o->sample_live,.state_run=run>255?255:run};
+}
+static void cursor_advance(vk_pass_cursor *cursor,unsigned size) {
+  const planned_op *o=&plan[cursor->node];cursor->ordinal++;
+  if(sparse_mode && plan_is_span(o) && cursor->offset+1<plan_raw_count(o)) {
+    cursor->offset++;cursor->op+=size;
+  } else {
+    cursor->offset=0;cursor->node++;
+    cursor->op=cursor->ordinal<count?plan[cursor->node].op:NULL;
+  }
+}
+static void cursor_advance_raw(vk_pass_cursor *cursor) {
+  unsigned size=0;
+  if(sparse_mode && plan_is_span(&plan[cursor->node])) {op_hdr h;memcpy(&h,cursor->op,8);size=h.size;}
+  cursor_advance(cursor,size);
+}
 uint64_t vk_pass_generation(void) { return generation; }
 int vk_pass_future_op(unsigned offset,const uint8_t **op,int *samples_live) {
   if(!valid || !store_valid || !replay || !vk_replay_preserves_ops() || offset>=count-(replay-1)) return 0;
-  const planned_op *o=&plan[replay-1+offset];
-  *op=o->op;if(samples_live)*samples_live=o->sample_live;return 1;
+  if(!sparse_mode) {
+    const planned_op *o=&plan[replay-1+offset];
+    *op=o->op;if(samples_live)*samples_live=o->sample_live;return 1;
+  }
+  vk_pass_cursor cursor;
+  if(!vk_pass_future_begin(&cursor,op,samples_live))return 0;
+  while(offset--)if(!vk_pass_future_next(&cursor,op,samples_live))return 0;
+  return 1;
+}
+int vk_pass_future_begin(vk_pass_cursor *cursor,const uint8_t **op,int *samples_live) {
+  if(!valid || !store_valid || !replay || !vk_replay_preserves_ops())return 0;
+  *cursor=cursor_at_current();*op=cursor->op;
+  if(samples_live)*samples_live=plan[cursor->node].sample_live;
+  return 1;
+}
+int vk_pass_future_next(vk_pass_cursor *cursor,const uint8_t **op,int *samples_live) {
+  if(!valid || !store_valid || cursor->generation!=generation || !vk_replay_preserves_ops() || cursor->ordinal+1>=count)return 0;
+  cursor_advance_raw(cursor);*op=cursor->op;
+  if(samples_live)*samples_live=plan[cursor->node].sample_live;
+  return 1;
 }
 static _Atomic uint64_t sample_live_draws,sample_dead_draws;
 static _Atomic uint64_t sample_elided_draws;
@@ -96,13 +205,9 @@ static int walk(const uint8_t *p, unsigned depth,store_build_context *store) {
     op_hdr h;memcpy(&h,p,sizeof h);
     if(h.size<8 || (h.size&7) || h.op>=OP_COUNT_ || count==1000000) return 0;
     const uint8_t *a=p+8;
-    if(count==capacity) {
-      unsigned next=capacity?capacity*2:4096;
-      planned_op *grown=realloc(plan,next*sizeof *plan);
-      if(!grown) return 0;
-      plan=grown;capacity=next;
-    }
-    planned_op *o=&plan[count++];
+    planned_op local,*o;
+    if(sparse_mode) {o=&local;count++;}
+    else {if(!plan_reserve())return 0;o=&plan[node_count++];count++;}
     // Only forward inputs need initialization here. After a successful walk,
     // the complete reverse loop overwrites need/sample_live/writes for EVERY
     // node before any reverse-output/replay consumer. A failed walk invalidates
@@ -137,7 +242,9 @@ static int walk(const uint8_t *p, unsigned depth,store_build_context *store) {
     // State is consumed only after the original walk validation above. The
     // store interpreter checks its own payload extent before any access;
     // a short payload or store allocation failure disables only this index.
-    if(store && index_valid) store_index_op(store,count-1,h.op,a,h.size);
+    int setter=sparse_mode && sparse_setter(h.op);
+    if(sparse_mode && !sparse_emit(o,h.size,setter))return 0;
+    if(store && index_valid && !setter) store_index_op(store,count-1,h.op,a,h.size);
     if(h.op==OP_END) return 1;
     if(h.op==OP_JUMP || h.op==OP_CALL) {
       if(h.size<16) return 0;
@@ -158,7 +265,8 @@ static void submission_index_build(const uint64_t *handles,int n) {
   }
   atomic_store(&sample_liveness_active,query_reference);sample_elision_used=0;
   if(!++generation) die("Vulkan submission generation overflow");
-  count=replay=0;scan_ds=S.ds;valid=1;
+  sparse_mode=sparse_plan_requested();
+  count=replay=node_count=0;last_raw_end=NULL;scan_ds=S.ds;valid=1;
   memcpy(scan_stencil_mask,S.stencil_mask,sizeof scan_stencil_mask);
   done=0;store_valid=vk_replay_preserves_ops();
   index_valid=0;
@@ -187,9 +295,20 @@ static void submission_index_build(const uint64_t *handles,int n) {
   for(int i=0;i<n;i++) if(!walk((const void *)(uintptr_t)handles[i],0,build_store?&context:NULL)) {
     valid=index_valid=0;return;
   }
-  unsigned need=0,writes=0,samples_needed=1;
+  unsigned need=0,writes=0,samples_needed=1,state_run=0;
   uint64_t live_draws=0,dead_draws=0;
-  for(unsigned i=count;i-->0;) {
+  for(unsigned i=node_count;i-->0;) {
+    // Cursor reconstruction must not read a prior submission's run byte when
+    // state-segment replay is disabled in this cold configuration.
+    plan[i].state_run=0;
+    if(sparse_mode && plan_is_span(&plan[i])) {
+      plan[i].sample_live=samples_needed;plan[i].need=need;plan[i].writes=writes;
+      if(V.options.state_segments) {
+        plan[i].state_run=state_run<255?state_run+1:255;
+        unsigned n=plan_raw_count(&plan[i]);state_run=n>=255-state_run?255:state_run+n;
+      }
+      continue;
+    }
     unsigned opcode=plan[i].opcode;
     if(plan[i].sample_counter) samples_needed=opcode==OP_REPORT_COUNTER;
     plan[i].sample_live=samples_needed;
@@ -197,8 +316,8 @@ static void submission_index_build(const uint64_t *handles,int n) {
     // Consecutive pure entries are physically adjacent: any CALL/JUMP/END
     // emitted by walk has state_run=0. Cap runs without growing the plan.
     if(V.options.state_segments) {
-      unsigned tail=i+1<count?plan[i+1].state_run:0;
-      plan[i].state_run=pure_state_opcode(opcode)?(tail<254?tail+1:255):0;
+      state_run=pure_state_opcode(opcode)?(state_run<255?state_run+1:255):0;
+      plan[i].state_run=state_run;
     }
     if(opcode==OP_DRAW||opcode==OP_DRAW_IDX) {
       if(samples_needed) live_draws++;else dead_draws++;
@@ -213,6 +332,13 @@ static void submission_index_build(const uint64_t *handles,int n) {
     }
     plan[i].need=need;
     plan[i].writes=writes;
+  }
+  next_cursor=(vk_pass_cursor){.op=count?plan[0].op:NULL,.generation=generation};
+  static int first_sparse_reduction;
+  if(sparse_mode && node_count<count && !first_sparse_reduction) {
+    first_sparse_reduction=1;
+    LOG("[vulkan sparse plan] first actual reduction raw_ops=%u nodes=%u active_bytes=%zu",
+        count,node_count,(size_t)node_count*sizeof *plan);
   }
   atomic_fetch_add(&sample_live_draws,live_draws);
   atomic_fetch_add(&sample_dead_draws,dead_draws);
@@ -238,11 +364,19 @@ void mtl_exec_rest(const uint64_t *handles,int n) {
   if(!handles && !n) { valid=0;vk_stream_end(); }
 }
 void vk_pass_plan_op(const uint8_t *op) {
+  if(!sparse_mode) {vk_pass_plan_op_header(op,0,0);return;}
+  op_hdr h;memcpy(&h,op,8);vk_pass_plan_op_header(op,h.op,h.size);
+}
+void vk_pass_plan_op_header(const uint8_t *op,unsigned opcode,unsigned size) {
   if(!valid) return;
-  if(replay>=count || plan[replay].op!=op) {
+  if(replay>=count || (sparse_mode?next_cursor.op:plan[replay].op)!=op) {
     if(sample_elision_used) die("Vulkan query liveness proof invalidated by replay mismatch");
     LOG("[vulkan pass] lookahead/replay mismatch; retain depth/stencil");
     valid=0;return;
+  }
+  if(sparse_mode) {
+    current_cursor=next_cursor;sparse_current=cursor_entry(&current_cursor,opcode);
+    cursor_advance(&next_cursor,size);
   }
   replay++;
   done=0;
@@ -257,8 +391,10 @@ unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left) {
   // The first original operation/checkpoint already ran. Do not recover a
   // mismatch here: the ordinary next iteration retains query-elision's fatal
   // mismatch rule and all original diagnostics. No new per-member checks.
-  if(!valid || !done || replay>=count || plan[replay].op!=*next)return 0;
-  unsigned n=plan[replay].state_run;
+  if(!valid || !done || replay>=count || (sparse_mode?next_cursor.op:plan[replay].op)!=*next)return 0;
+  planned_op first;
+  if(sparse_mode)first=cursor_entry(&next_cursor,cursor_opcode(&next_cursor));
+  unsigned n=sparse_mode?first.state_run:plan[replay].state_run;
   if(n>guard_left)n=guard_left;
   if(!n)return 0;
   // Admission is once per nonempty span, never once per state member.
@@ -272,11 +408,38 @@ unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left) {
   // A pure run always has a following boundary (ultimately END). vk_state_op
   // only changes CPU state/version bookkeeping under the caller's no-operation
   // proof; it cannot inspect the plan or enter a GPU callback in this scope.
-  for(unsigned i=0;i<n;i++) {
-    const planned_op *o=&plan[replay+i];
-    vk_state_op(o->opcode,o->op+sizeof(op_hdr));
+  if(sparse_mode) {
+    vk_pass_cursor cursor=next_cursor,last=cursor;unsigned remaining=n,last_opcode=0;
+    while(remaining) {
+      const planned_op *o=&plan[cursor.node];
+      if(plan_is_span(o)) {
+        unsigned raw=plan_raw_count(o),take=raw-cursor.offset;
+        if(take>remaining)take=remaining;
+        const uint8_t *p=cursor.op,*last_op=p;
+        // Only ordinary state application and sequential header stepping per
+        // member. Cursor/proof publication happens once per consumed piece.
+        for(unsigned i=0;i<take;i++) {
+          op_hdr h;memcpy(&h,p,8);last_op=p;last_opcode=h.op;
+          vk_state_op(h.op,p+sizeof(op_hdr));p+=h.size;
+        }
+        last=cursor;last.op=last_op;last.ordinal+=take-1;last.offset+=take-1;
+        cursor.ordinal+=take;cursor.offset+=take;remaining-=take;
+        if(cursor.offset==raw) {
+          cursor.offset=0;cursor.node++;cursor.op=cursor.ordinal<count?plan[cursor.node].op:NULL;
+        } else cursor.op=p;
+      } else {
+        last=cursor;last_opcode=o->opcode;
+        vk_state_op(o->opcode,o->op+sizeof(op_hdr));cursor_advance(&cursor,0);remaining--;
+      }
+    }
+    current_cursor=last;sparse_current=cursor_entry(&last,last_opcode);next_cursor=cursor;
+  } else {
+    for(unsigned i=0;i<n;i++) {
+      const planned_op *o=&plan[replay+i];
+      vk_state_op(o->opcode,o->op+sizeof(op_hdr));
+    }
   }
-  replay+=n;done=1;*next=plan[replay].op;
+  replay+=n;done=1;*next=sparse_mode?next_cursor.op:plan[replay].op;
   // One owner-thread admission marker, after real consumption, so official
   // A/B orchestration can reject an enabled experiment which never executed.
   static int first_consumed;
@@ -290,20 +453,29 @@ unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left) {
   return n;
 }
 void vk_pass_plan_done(const void *payload) {
-  if(valid && replay && plan[replay-1].op+8==payload) done=1;
+  if(valid && replay && current_entry()->op+8==payload) done=1;
 }
 int vk_pass_samples_live(const void *payload) {
   if(atomic_load(&sample_liveness_active)||!valid||!store_valid||!replay||!vk_replay_preserves_ops()) return 1;
-  const planned_op *o=&plan[replay-1];
+  const planned_op *o=current_entry();
   // Reuse the existing reverse RESET/REPORT proof. Tail results remain live
   // across submissions; internal draws and transformed replay retain queries.
   if(o->op+8!=payload||(o->opcode!=OP_DRAW&&o->opcode!=OP_DRAW_IDX)||o->sample_live) return 1;
   sample_elision_used=1;++recorded_sample_elided;return 0;
 }
 #include "nvn_vk_clear_group.inc"
+static int color_clear_group_cursor(vk_pass_cursor cursor,unsigned remaining) {
+  if(!sparse_mode)return color_clear_group_without_depth(&plan[replay].opcode,sizeof *plan,remaining);
+  unsigned limit=remaining<256?remaining:256;
+  for(unsigned k=0;k<limit;k++,cursor_advance_raw(&cursor)) {
+    int step=color_clear_group_step(cursor_opcode(&cursor),k+1==remaining);
+    if(step)return step>0;
+  }
+  return 0;
+}
 unsigned vk_pass_depth_need(void) {
   if(!valid || !replay) return 3;
-  const planned_op *o=&plan[replay-1];
+  const planned_op *o=current_entry();
   // 起始颜色清除本身不用深度；后面的清除仍按原保守规则计入。
   // An initial color clear does not use depth; subsequent clears remain conservative.
   if(o->opcode==OP_CLEAR_COLOR) {
@@ -311,16 +483,16 @@ unsigned vk_pass_depth_need(void) {
     // depth/stencil. The original reverse scan treats later clears as DS
     // consumers; narrow that only after a complete bounded no-draw proof.
     if(store_valid && vk_replay_preserves_ops() && replay<count &&
-        color_clear_group_without_depth(&plan[replay].opcode,sizeof *plan,count-replay))
+        color_clear_group_cursor(cursor_at_next(),count-replay))
       return 0;
-    return replay<count?plan[replay].need:0;
+    return replay<count?plan[sparse_mode?next_cursor.node:replay].need:0;
   }
   return o->opcode==OP_DRAW || o->opcode==OP_DRAW_IDX?o->need:3;
 }
 unsigned vk_pass_depth_writes(void) {
   if(!valid || !store_valid || !replay || !vk_replay_preserves_ops()) return 3;
-  const planned_op *o=&plan[replay-1];
-  if(o->opcode==OP_CLEAR_COLOR) return replay<count?plan[replay].writes:0;
+  const planned_op *o=current_entry();
+  if(o->opcode==OP_CLEAR_COLOR) return replay<count?plan[sparse_mode?next_cursor.node:replay].writes:0;
   return o->opcode==OP_DRAW || o->opcode==OP_DRAW_IDX?o->writes:3;
 }
 // Only isolate a sole clear. Preserve grouping with subsequent clears/draws;
@@ -328,11 +500,12 @@ unsigned vk_pass_depth_writes(void) {
 // clear is independently correct even if a later operation starts a new pass.
 int vk_pass_clear_without_draws(void) {
   if(!valid || !store_valid || !replay || !vk_replay_preserves_ops()) return 0;
-  unsigned current=plan[replay-1].opcode;
+  unsigned current=current_entry()->opcode;
   if(current!=OP_CLEAR_COLOR && current!=OP_CLEAR_DS) return 0;
   unsigned limit=count-replay>256?replay+256:count;
-  for(unsigned k=replay;k<limit;k++) {
-    switch(plan[k].opcode) {
+  vk_pass_cursor cursor=cursor_at_next();
+  for(unsigned k=replay;k<limit;k++,cursor_advance_raw(&cursor)) {
+    switch(cursor_opcode(&cursor)) {
     case OP_DRAW:case OP_DRAW_IDX:case OP_CLEAR_COLOR:case OP_CLEAR_DS:return 0;
     case OP_SET_RT:case OP_COPY_B2B:case OP_UPDATE_UB:case OP_COPY_B2T:
     case OP_COPY_T2B:case OP_COPY_T2T:case OP_CLEAR_TEX:case OP_DISPATCH:return 1;
@@ -370,9 +543,11 @@ static int store_scan(const tex_t *target,const view_t *view,VkImageAspectFlagBi
     memcpy(slots[st],S.tex[st],sizeof S.tex[st]);
     memcpy(slots[st]+128,S.img[st],sizeof S.img[st]);
   }
-  for(unsigned n=replay-1+done;n<count;n++) {
+  vk_pass_cursor cursor=cursor_at_current();
+  if(done)cursor_advance_raw(&cursor);
+  for(;cursor.ordinal<count;cursor_advance_raw(&cursor)) {
     ++recorded_reference_ops;
-    op_hdr h;memcpy(&h,plan[n].op,sizeof h);const void *a=plan[n].op+8;
+    op_hdr h;memcpy(&h,cursor.op,sizeof h);const void *a=cursor.op+8;
     switch(h.op) {
     case OP_SET_RT:rt=*(const p_set_rt *)a;break;
     case OP_SCISSOR:sc=*(const p_scissor *)a;has_sc=1;break;

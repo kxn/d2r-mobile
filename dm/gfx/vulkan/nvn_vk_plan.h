@@ -3,6 +3,11 @@
 #pragma once
 #include "nvn_vk_internal.h"
 void vk_pass_plan_op(const uint8_t *op);
+typedef struct { const uint8_t *op; unsigned node,offset,ordinal; uint64_t generation; } vk_pass_cursor;
+// Reuse the header already decoded by ordinary replay.
+void vk_pass_plan_op_header(const uint8_t *op,unsigned opcode,unsigned size);
+int vk_pass_future_begin(vk_pass_cursor *cursor,const uint8_t **op,int *samples_live);
+int vk_pass_future_next(vk_pass_cursor *cursor,const uint8_t **op,int *samples_live);
 // After the original first state/checkpoint, consume a validated pure tail.
 // Caller proves all per-op observers inactive and no nested resource operation.
 unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left);

@@ -244,11 +244,11 @@ static __attribute__((noinline)) pl_candidate *pl_plan(const p_draw *draw,const 
   if(!pl_scratch)return NULL;
   pl_candidate *p=pl_scratch;memset(p,0,sizeof *p);
   p->generation=vk_pass_generation();p->descriptor_epoch=vk_texture_descriptor_epoch();p->width=width;p->height=height;p->first=S;
-  vk_state scan=S;const uint8_t *current;int live=1;
-  if(!vk_pass_future_op(0,&current,&live) || (live && vk_counter_counting()) || current+8!=(const void *)(draw? (const void *)draw:(const void *)idx))return NULL;
+  vk_state scan=S;const uint8_t *current;int live=1;vk_pass_cursor cursor;
+  if(!vk_pass_future_begin(&cursor,&current,&live) || (live && vk_counter_counting()) || current+8!=(const void *)(draw? (const void *)draw:(const void *)idx))return NULL;
   int changed=0;
   for(unsigned n=1;n<PL_MAX_OPS;n++) {
-    const uint8_t *op;if(!vk_pass_future_op(n,&op,&live))return NULL;
+    const uint8_t *op;if(!vk_pass_future_next(&cursor,&op,&live))return NULL;
     op_hdr h;memcpy(&h,op,8);p->ops[p->count++]=op;
     if(h.op==OP_SET_RT) {
       if(changed || !pl_payload(&h,sizeof(p_set_rt)))return NULL;

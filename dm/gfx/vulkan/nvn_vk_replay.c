@@ -48,7 +48,7 @@ void mtl_exec(const uint8_t *p) {
     if (h.size < 8 || (h.size & 7) || h.op >= OP_COUNT_)
       die("Vulkan invalid command op=%u size=%u", h.op, h.size);
     const uint8_t *a = p + sizeof h;
-    vk_pass_plan_op(p);
+    vk_pass_plan_op_header(p,h.op,h.size);
     vk_mip_clear_replay(p,h.op);
     vk_pixel_local_replay(p);
     if (vk_freeze_op(h.op,a)) {

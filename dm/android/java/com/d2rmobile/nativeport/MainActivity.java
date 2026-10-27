@@ -51,6 +51,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeSourcePartition(boolean enabled);
     private static native void nativeRecordStateCache(boolean enabled);
     private static native void nativeRecordStateExtraCache(boolean enabled);
+    private static native void nativeSparseSubmissionPlan(boolean enabled);
     private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeGuestWorkerQos(boolean enabled);
     private static native void nativeGuestWaitBudget(int microseconds);
@@ -293,6 +294,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
             nativeRecordStateCache(getIntent().getBooleanExtra("record_state_cache", false));
             nativeRecordStateExtraCache(getIntent().getBooleanExtra("record_state_extra_cache", false));
+            nativeSparseSubmissionPlan(getIntent().getBooleanExtra("sparse_submission_plan", false));
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeGuestWorkerQos(getIntent().getBooleanExtra("guest_worker_qos", false));
             nativeGuestWaitBudget(getIntent().getIntExtra("guest_wait_budget_us", 0));
@@ -553,6 +555,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("record_state_extra_cache")) {
             android.util.Log.w("D2RDriver", "extra recording state cache requires a cold restart");
             intent.removeExtra("record_state_extra_cache");
+        }
+        if (intent.hasExtra("sparse_submission_plan")) {
+            android.util.Log.w("D2RDriver", "sparse submission plan requires a cold restart");
+            intent.removeExtra("sparse_submission_plan");
         }
         if (intent.hasExtra("image_buffer_split")) {
             android.util.Log.w("D2RDriver", "image_buffer_split is startup-only; cold restart required");

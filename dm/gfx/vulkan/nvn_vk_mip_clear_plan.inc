@@ -3,14 +3,16 @@
 int vk_pass_mip_clear_plan(const p_set_rt *original,const p_set_rt *current,
                            const p_scissor *sc,vk_mip_clear_plan *out) {
   if(!valid || !store_valid || !replay || !vk_replay_preserves_ops() ||
-      plan[replay-1].opcode!=OP_CLEAR_COLOR || !original || !current ||
+      current_entry()->opcode!=OP_CLEAR_COLOR || !original || !current ||
       original->n!=2 || current->n!=2) return 0;
   memset(out,0,sizeof *out);out->generation=generation;
   p_set_rt rt=*current;p_scissor rectangle=sc?*sc:(p_scissor){0};
   int has_sc=sc!=NULL;unsigned groups=1,mask=0;
   unsigned begin=replay-1,limit=count-begin<256?count:begin+256;
-  for(unsigned k=begin;k<limit;k++) {
-    const planned_op *o=&plan[k];op_hdr h;memcpy(&h,o->op,sizeof h);
+  vk_pass_cursor cursor=cursor_at_current();
+  for(unsigned k=begin;k<limit;k++,cursor_advance_raw(&cursor)) {
+    planned_op entry=cursor_entry(&cursor,cursor_opcode(&cursor));const planned_op *o=&entry;
+    op_hdr h;memcpy(&h,o->op,sizeof h);
     const void *a=o->op+8;
     out->ops[out->op_count++]=o->op;
     switch(o->opcode) {
