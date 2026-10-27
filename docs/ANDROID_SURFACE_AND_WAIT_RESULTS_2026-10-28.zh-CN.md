@@ -25,7 +25,7 @@ owner身份来自原native日志TID及官方trace PID/TID/lifetime对应，未�
 线程猜。原通用报告一度缺少跨schema的receipt关联；比较器已补严格路径/
 SHA/PID/APK适配，两端scheduler与原Running数据相符，没有补造PMU budget。
 
-当前上游实际用原BC资源；我们6217个native条目中3379为ASTC4、2838为
+该轮上游实际用原BC资源；我们6217个native条目中3379为ASTC4、2838为
 ASTC6，其余24855个cache条目仍为原BC/普通格式。历史同营地GFXR非附件
 采样图像中，上游BC3为2442、ASTC为0；这些是对象数，不是读取次数，
 不能据6217的全包比例计算当前帧带宽收益。两种编码、共享与后端应分开看。
@@ -143,7 +143,7 @@ TVFS/root/config修改范围证明通过；原UI107个payload中106个SHA保持�
 原始BC3有效块401,317,552字节，当前同名单混合
 ASTC为318,250,336字节，少20.70%；这只是离线有效块量，不能换算当前帧
 流量。resident/lazy正向验收已在后续同APK两driver测试中完成，真实游戏
-性能对照尚未完成。
+性能对照随后完成，见第7节；不能继续把这里的准备阶段当最新状态。
 全包记录：`.local/build/native-original-bc3-full6217-v2-inputs/`及
 `.local/logs/native-original-bc3-full6217-v2-host-verify-final/`；同名单有效
 块量核对：`.local/logs/native-bc3-real-pack-v1/offline-format-footprint.json`。
@@ -174,7 +174,7 @@ ASTC策略不动，原FDL tiled/small-mip fallback复用；因布局变化，原
 producer重新加工两份256×256/9mip资源，size由94,208变135,168字节。
 新driver NPOT普通image参考及原NVN完整两格式/每baseMip回归均已真机
 通过并清理。13×9本身仍走small-mip linear，不能单独证明tiled正确；
-实际256/9mip NVN回归覆盖了tiled与线性mip尾部。尚无该候选FPS收益。
+实际256/9mip NVN回归覆盖了tiled与线性mip尾部。后续游戏对照见第7节。
 
 证据：`.local/logs/{mixed-compressed-copy-audit-v1,native-linear-layout-audit-v1}/`、
 `.local/build/turnip-native-bc3-tiled-v1/build.json`、
@@ -198,5 +198,95 @@ union测试，未使用provider override。四case363/361检查，两包清理�
 已用原SDK重封包为同签名正常主包carrier992c6f15/7a37；六库、DEX、assets
 125项字节不变，正常game/nativeStart入口未加入fixture EXPECT环境。
 该carrier供三臂共用，避免换runtime ELF混入布局对照；其source ledger
-明确来自本次fixture编译，未伪称原391。当前仅准备完成，游戏/SDP整轮
-净收益仍待实测，不能以这些GPU正确性通过替代FPS结论。
+明确来自本次fixture编译，未伪称原391。下节另列真实游戏/SDP整轮结果，
+不以这些GPU正确性通过替代FPS结论。
+
+## 7. 原BC3共享版本、平铺、上游与现成开关的正式结果
+
+下面五窗均通过实际尺寸准入：game/swapchain 1968×900、main 1673×765、
+scale .85，同营地5225,6289、角色与设置。GPU为官方SDP九项，CPU为同窗
+Perfetto完整Surface区间；这是工具活动窗口，不冒充无工具普通运行FPS。
+上游仍是保留b811后端的系统驱动控制包，资源为原BC；本地各候选共用
+carrier992c6f/ELF7a37、原始BC3完整合成资源、inline CPU7、shortwait30us、
+stream OFF、fixed/extra ON、sparse OFF。系统驱动与自带Turnip、后端实现
+仍不同，不将净差异归给单一共享机制。
+
+| 工具窗 | FPS | owner Running ms/Surface | owner运行期MHz | 全应用Running ms/Surface | GPU读 MB/Surface | GPU写 MB/Surface |
+|---|---:|---:|---:|---:|---:|---:|
+| 本地BC3 whole-linear | 43.3009 | 18.4342 | 1574.93 | 34.1558 | 105.260 | 44.141 |
+| 本地BC3 native tiled | 43.1613 | 18.2664 | 1635.72 | 33.6700 | 104.224 | 44.073 |
+| 上游原BC、系统驱动 | 43.3087 | 17.8907 | 1836.62 | 37.7256 | 106.538 | 45.868 |
+| 本地linear、既有ADPF ON | 43.2282 | 18.587 | 1599.4 | 34.328 | 105.568 | 44.344 |
+| 本地linear、MAILBOX | 43.3505 | 18.220 | 1603.5 | 33.538 | 105.731 | 44.186 |
+
+同尺寸上游与本地linear的FPS差仅−.018%，不能再把早先不同尺寸的差距
+当作当前事实。本地GPU写量少3.76%、读量少1.20%、片元指令少21.45%，
+全应用Running少9.46%；owner Running反而多.5435ms，运行期频率低14.25%。
+没有同窗PMU，不能据Running×频率补造指令数，也不能凭这些平均数断言
+调频是唯一根因。当前省工作尚未转成明显FPS提升，目标仍未完成。
+
+平铺与线性同源块、完整cache、同APK，仅新driver/layout及其全量新烘焙
+payload变化：读量少.98%、写量少.15%，未见显著FPS提升；整包物理payload
+443,588,608→696,385,536字节（+57%）。该候选保留为可复现实验，不设为
+默认；没有把某种GPU布局一般化为无效。两窗PSO均各自稳定，但分别180
+与179、variants均32，不能冒称逐draw完全相同或锁频热控实验。
+
+既有ADPF实际available/active/v2均成功、reports增加360、failures=0，
+但scope仅现有x_submit，不是已证明的完整游戏帧；这次阴性不否定完整帧
+CPU hint的可能性。MAILBOX实际presentMode=1、supportedMask=6，未消除
+等待。两开关各自原同trace内部7.272s均为315 guest submissions/315个
+Surface完成，没有证据说明多生产了一批永不显示的帧。显示视频只在预热
+前录制，不进入正式稳态工具窗；有限检查未见明显撕裂，不替代全场景验收。
+
+线性初筛G2窗内PSO变化、平铺G1冷启动fdsan abort均原样留档，未混入上述
+稳态对照。fdsan故障发生在JNI freopen重定向stderr、尚未进入driver/game；
+独立原子dup2修复已通过真实Bionic七项检查，但没有混入本轮992 APK。
+
+原始入口：`.local/logs/native-bc3-three-arm-game-v1/`。当前结果矩阵
+`CURRENT-RESULT-MATRIX.zh-CN.md`；整轮报告位于
+`{strict-layout,current-upstream,hints,mailbox}-whole-profile-v2/`；其GPU
+固定输入为`gpu-tools/comparison-all-frozen.json`，避免后续增加arm改写
+中间comparison.json。完整尺寸/场景准入以各receipt及实际创建日志为准，
+上游没有本地state schema，通用报告的missing不填假值。
+
+## 8. 呈现睡眠已定位到本机BufferQueue的上一生产fence
+
+OFFCPU-G1补采官方Perfetto gfx/hal、APP、scheduler、frequency、Surface、
+KGSL及可用dma_fence事件。实际8秒、PID29199/owner29256、342个完整
+Surface区间，没有因计划名称或预期时长重采。官方Simpleperf offcpu在
+run-as UID下因sched:sched_switch不可访问失败一次并停止；shell list
+显示事件存在不能证明app UID可用。没有产出本窗CPU调用链，不把失败
+说成已经有新火焰图。
+
+同一342区间内，340个完整waitForever均有唯一祖先链：
+
+```
+Vulkan present call → QueuePresentKHR → queueBuffer → queueBuffer → waitForever
+```
+
+wait总1260.999ms，即3.687132ms/Surface；其中S睡眠3.526350ms、Running
+.081818ms、Runnable .050092ms。321段S全部由kgsl-events tid1180唤醒。
+这是现成系统span与官方scheduler重叠，不是自写计时器、不是从waker名
+猜调用位置，也不是把各父子时间相加。
+
+只读拉取本机实际/system/lib64/libgui.so、libui.so、libvulkan.so，保留
+SHA/BuildID及原始反汇编。libgui SHA为
+`daf0e1c0dd1950f02923b99b2b65c49285026bf5c8f0c472ecbc708f31744bf4`。
+本机queueBuffer唯一waitForever调用位于0x10bf68；connect第三参数api
+写入core+0x54，queueBuffer读同字段，仅api==1(EGL)就走该等待。等待对象
+来自producer+0x58保存的上次QueueBufferInput acquire fence，本次输入
+fence再替换该字段。因此等待的是前一缓冲的GPU生产完成，非消费者显示
+释放。Android Vulkan loader连接API使用EGL，API名字不能当作OpenGL证据。
+
+AOSP16有仅async启用节流的feature flag，但本机该函数未使用，不能据
+上游源码假定改dequeue timeout会解除。MAILBOX已实际无大收益；同队列
+present worker已实证仅把等待搬到queue mutex，不重复当新方案。禁止删
+fence依赖或伪装连接API身份来规避。公开NDK当前没有直接关闭该节流的
+开关；合法的ASurfaceControl+AHardwareBuffer事务出图候选仍需核实能力、
+释放fence与生命周期，尚未实现或证明收益。3.5ms等待并非自动可省预算，
+仍须验证是否只是被其他依赖替代，且owner本身约18ms Running未消失。
+
+证据：`OFFCPU-G1/perfetto/`、`OFFCPU-G1/system-wsi-libraries/identity.json`、
+`.local/logs/queue-present-offcpu-audit-20261028/joint-proof.{sql,csv}`及
+`actual-libgui-BQP-{connect,queueBuffer}.asm`。当前另一路用已有工具细分
+owner Running的互斥高层职责，不能把未标记区间或旧采样硬凑成根因。
