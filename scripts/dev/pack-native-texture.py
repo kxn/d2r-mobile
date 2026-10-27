@@ -2,7 +2,7 @@
 """Build DMN1 containers/table from verified producer outputs; never deploy.
 
 The mip table describes native physical spans including padding, not compact
-ASTC blocks. Thumbnails remain the original linear bytes. This does not prove
+compressed blocks. Thumbnails remain the original source bytes. This does not prove
 that a game's thumbnail builder uses a different layout: that is a separate
 runtime integration gate, explicitly retained in the output manifest.
 """
@@ -39,8 +39,18 @@ def load_entry(spec, number):
     recipe = struct.unpack_from('<20I', wire, 32)
     fmt, width, height, depth, levels, layers, kind, samples, tiling, usage, flags, sharing, initial, handle, layout, family, *_ = recipe
     descriptor = source['source_descriptor']
-    format_map = {157: (95, 0x79), 158: (81, 0x87), 165: (99, 0x7d), 166: (85, 0x8b)}
-    if (fmt not in format_map or (version, header) != (1, 992) or
+    # DMNRES1 native recipe: producer fingerprint is the fifth hash after
+    # the 32-byte header, 20 uints and three UUIDs (resource_format.h).
+    # New raw-BC3 declarations pin it; legacy ASTC declarations may omit it.
+    if 'intended_producer_sha256' in source:
+        intended = source['intended_producer_sha256']
+        if (not isinstance(intended, str) or len(intended) != 64 or
+                any(c not in '0123456789abcdef' for c in intended) or
+                bytes.fromhex(intended) != wire[288:320]):
+            raise ValueError('source intended producer fingerprint differs from native recipe')
+    format_map = {137: (61, 0x44), 138: (62, 0x48), 157: (95, 0x79), 158: (81, 0x87), 165: (99, 0x7d), 166: (85, 0x8b)}
+    if (fmt not in format_map or not 1 <= width <= 4096 or not 1 <= height <= 4096 or
+            (version, header) != (1, 992) or
             size != len(payload) or not 0 < size <= 16 << 20 or
             alignment < 4096 or alignment > 65536 or alignment & (alignment - 1) or
             (depth, layers, kind, samples, tiling, flags, sharing, initial, handle, layout, family) !=
@@ -264,7 +274,7 @@ def build(specifications, output, driver_manifest, base_cache=None, driver_query
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--entries', type=Path, required=True, help='JSON list: source declaration, original texture, baked directory')
-    parser.add_argument('--base-cache', type=Path, help='complete already-ASTC descriptor cache; merged once, unselected entries exact')
+    parser.add_argument('--base-cache', type=Path, help='complete original descriptor cache; merged once, unselected entries exact')
     parser.add_argument('--driver-manifest', type=Path, required=True)
     parser.add_argument('--driver-query', type=Path, help='actual Turnip native-resource.json from exact authenticated driver; preserves all three queried UUIDs')
     parser.add_argument('--output', type=Path, required=True)

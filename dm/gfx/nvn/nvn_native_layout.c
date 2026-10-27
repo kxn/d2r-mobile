@@ -9,7 +9,8 @@ static int pow2(uint64_t n) {return n && !(n&(n-1));}
 static int valid_recipe(const nvn_native_entry *e,const nvn_native_identity *identity) {
   const nvn_native_recipe *r=&e->recipe; const nvn_texdesc *d=&e->description;
   // Exact supported platform contract, never a generic optimal layout claim.
-  uint32_t f=d->format==0x79?157:d->format==0x87?158:
+  uint32_t f=d->format==0x44?137:d->format==0x48?138:
+             d->format==0x79?157:d->format==0x87?158:
              d->format==0x7d?165:d->format==0x8b?166:0;
   if(e->reserved || !f || d->target!=1 || d->flags || d->samples>1 || d->samples<0 ||
      d->depth!=1 || d->stride || d->pkg_block_h || !d->width || !d->height ||
