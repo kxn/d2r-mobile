@@ -131,6 +131,26 @@ MONOTONIC混用。证据见`v3/causal-review/`（完整根目录同下）。
 完整报告：`.local/logs/sparse-plan-segment-v3/whole-profile-comparison/`；
 恢复凭证：`.local/logs/sparse-plan-segment-v3/pmu/accepted-restoration.json`。
 
+### 反序复核修正：小样本SELF不能被认定为新增成本
+
+后来追加同APK反序ON2→OFF2，并比较OFF1→OFF2、ON1→ON2。两对均观察
+到用户态指令下降，分别1.49～1.64%、2.37～2.51%；但Running一对增加
+1.10%、另一对减少0.62%，尚无稳定总CPU时间改善。同配置跨轮的指令
+漂移也有1.5～2.5%，与候选收益同量级，不能把单对差额当精确兑现量。
+
+更重要的是，state/segment SELF的方向翻转：`vk_state_op`第一对26→45
+条、反序44→35条；`vk_pass_state_segment`第一对20→37条、反序33→26条。
+相同OFF自身也分别26→44、20→33。**撤回将这些小样本权重变化认定为
+已证明新增管理成本的强归因**；此前表保留为各自窗口的真实观察，不能
+继续用它证明v3实现多执行了某些状态。宏观planning两对同向减少成立。
+
+四窗描述性合并为用户态指令少1.93～2.08%、cycles少1.72～1.87%，
+owner Running18.639→18.682ms、FPS43.123→43.222；不是置信区间、
+长期收益或严格固定因果百分比。完整报告在
+`.local/logs/sparse-plan-segment-v3/repeatability-review/`。反序结束后测试
+队列转入同交换链尺寸GPU对照，手机状态以该轮最终恢复凭证为准，不能
+沿用上段第一次两臂完成时的已恢复状态。
+
 ## 3. GPU负载因果对照：有响应，但不能草率定为纯带宽
 
 同d015 APK、同场景、fixed1/extra1/sparse0，输出1968×900与Surface2358×1080固定。
