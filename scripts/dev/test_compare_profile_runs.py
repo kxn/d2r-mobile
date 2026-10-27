@@ -349,6 +349,107 @@ class CompareRunsTest(unittest.TestCase):
         self.assertEqual(r['status'], 'available')
         self.assertTrue(r['provenance']['reused_official_reduction'])
 
+    def replay_only_fixture(self, name, ambiguous=False):
+        d = self.fixture(name)
+        (d.parent / 'offline-analysis' / d.name / 'budget.json').unlink()
+        rp = d.parent / (name + '-receipt.json')
+        receipt = json.loads(rp.read_text()); receipt.pop('owner_TID', None); self.write(rp, receipt)
+        text = (d / 'analysis.csv').read_text()
+        text = text.replace('"section","tid","comm","running_ms","running_ms_per_Surface_interval"', '"section","tid","comm","has_replay","running_ms","running_ms_per_Surface_interval"')
+        text = text.replace('"thread_CPU",11,"owner, contains comma",320,10', '"thread_CPU",11,"owner, contains comma",1,320,10')
+        text = text.replace('"thread_CPU",12,"worker",160,5', f'"thread_CPU",12,"worker",{1 if ambiguous else 0},160,5')
+        (d / 'analysis.csv').write_text(text)
+        return d
+
+    def explicit_metadata(self, d, pid=10, owner=11):
+        cap = json.loads((d / 'capture.json').read_text()); cap['APK_sha256'] = 'a' * 64; self.write(d / 'capture.json', cap)
+        rp = self.root / (d.name + '-external.json')
+        self.write(rp, {'identity': {'process': pid, 'apk': 'a' * 64}, 'owner': owner})
+        spec = {'path': str(rp), 'sha256': m.sha(rp), 'fields': {'pid': 'identity.process', 'apk_sha256': 'identity.apk', 'owner_tid': 'owner'}}
+        mp = self.root / (d.name + '-metadata.json'); self.write(mp, {'run_receipt': spec})
+        return mp, rp
+
+    def test_unique_official_replay_owner_without_budget_is_shared_with_scheduler(self):
+        d = self.replay_only_fixture('OWNER-UNIQUE')
+        a = m.Arm(d, 'unique'); owner = a.resolve_owner()
+        self.assertEqual(owner['value']['tid'], 11)
+        r = a.result()
+        self.assertEqual(r['CPU']['owner']['tid'], '11')
+        self.assertEqual(r['exact_owner_counters']['status'], 'missing')
+        self.assertEqual(r['CPU']['owner_evidence'], owner)
+
+    def test_ambiguous_replay_owner_refuses_busiest_thread(self):
+        d = self.replay_only_fixture('OWNER-AMBIGUOUS', True)
+        a = m.Arm(d, 'ambiguous')
+        self.assertEqual(a.resolve_owner()['status'], 'missing')
+        self.assertIsNone(a.result()['CPU']['owner'])
+        tool = self.root / 'must-not-run'; tool.write_text('not executable')
+        self.assertEqual(m.run_scheduler(a, tool, self.root / 'none')['status'], 'missing')
+
+    def test_explicit_receipt_adapter_identity_and_hash_refuse(self):
+        d = self.replay_only_fixture('OWNER-ADAPTER')
+        meta, rp = self.explicit_metadata(d)
+        a = m.Arm(d, 'explicit', metadata=meta)
+        self.assertTrue(a.metadata_identity_verified)
+        self.assertEqual(a.result()['CPU']['owner']['tid'], '11')
+        self.assertEqual(a.result()['exact_owner_counters']['status'], 'missing')
+        rp.write_text(rp.read_text() + ' ')
+        with self.assertRaisesRegex(ValueError, 'SHA256'): m.Arm(d, 'tampered', metadata=meta)
+        d = self.replay_only_fixture('OWNER-PID-MISMATCH'); meta, _ = self.explicit_metadata(d, pid=999)
+        with self.assertRaisesRegex(ValueError, 'PID/APK'): m.Arm(d, 'wrongpid', metadata=meta)
+
+    def test_owner_log_pinned_line_and_pid_then_conflict(self):
+        d = self.replay_only_fixture('OWNER-LOG')
+        log = self.root / 'owner.log'; log.write_text('I/tool(10): NVN pin tid=11 result=0\n')
+        proof = {'path': str(log), 'sha256': m.sha(log), 'line': 1, 'text': log.read_text().strip(),
+                 'regex': r'I/tool\((?P<pid>\d+)\): NVN pin tid=(?P<tid>\d+) result=0'}
+        mp = self.root / 'log-metadata.json'; self.write(mp, {'owner_evidence': proof})
+        a = m.Arm(d, 'log', metadata=mp)
+        self.assertEqual(a.resolve_owner()['value']['tid'], 11)
+        proof['line'] = 2; self.write(mp, {'owner_evidence': proof})
+        with self.assertRaisesRegex(ValueError, 'line number/text'): m.Arm(d, 'wrongline', metadata=mp).resolve_owner()
+        proof['line'] = 1; proof['text'] = 'different'; self.write(mp, {'owner_evidence': proof})
+        with self.assertRaisesRegex(ValueError, 'line number/text'): m.Arm(d, 'wrongtext', metadata=mp).resolve_owner()
+        log.write_text('I/tool(10): NVN pin tid=12 result=0\n'); proof.update(sha256=m.sha(log), text=log.read_text().strip()); self.write(mp, {'owner_evidence': proof})
+        self.assertEqual(m.Arm(d, 'conflict', metadata=mp).resolve_owner()['status'], 'invalid')
+
+    def test_owner_log_without_pid_requires_verified_receipt(self):
+        d = self.replay_only_fixture('OWNER-NOPID')
+        log = self.root / 'no-pid.log'; log.write_text('translation tid=11\n')
+        proof = {'path': str(log), 'sha256': m.sha(log), 'line': 1, 'text': log.read_text().strip(), 'regex': r'translation tid=(?P<tid>\d+)'}
+        mp = self.root / 'no-pid-meta.json'; self.write(mp, {'owner_evidence': proof})
+        with self.assertRaisesRegex(ValueError, 'verified run receipt'): m.Arm(d, 'no-binding', metadata=mp).resolve_owner()
+        meta, _ = self.explicit_metadata(d); content = json.loads(meta.read_text()); content['owner_evidence'] = proof; self.write(meta, content)
+        self.assertEqual(m.Arm(d, 'bound', metadata=meta).resolve_owner()['value']['tid'], 11)
+
+    def test_launch_adapter_requires_matching_capture_pid_and_apk_binding(self):
+        d = self.replay_only_fixture('OWNER-LAUNCH'); meta, _ = self.explicit_metadata(d)
+        launch = self.root / 'launch.json'; self.write(launch, {'pid': 999})
+        content = json.loads(meta.read_text()); content['launch'] = {'path': str(launch), 'sha256': m.sha(launch)}; self.write(meta, content)
+        with self.assertRaisesRegex(ValueError, 'launch PID'): m.Arm(d, 'bad-launch', metadata=meta)
+        self.write(launch, {'pid': 10}); content['launch']['sha256'] = m.sha(launch); self.write(meta, content)
+        self.assertEqual(m.Arm(d, 'good-launch', metadata=meta).launch['pid'], 10)
+
+    def test_log_pid_conflict_and_relative_pinned_path_refuse(self):
+        d = self.replay_only_fixture('OWNER-LOG-WRONGPID')
+        log = self.root / 'wrongpid.log'; log.write_text('pid=999 tid=11\n')
+        proof = {'path': str(log), 'sha256': m.sha(log), 'line': 1, 'text': log.read_text().strip(), 'regex': r'pid=(?P<pid>\d+) tid=(?P<tid>\d+)'}
+        meta = self.root / 'wrongpid-meta.json'; self.write(meta, {'owner_evidence': proof})
+        with self.assertRaisesRegex(ValueError, 'log PID'): m.Arm(d, 'refuse', metadata=meta).resolve_owner()
+        proof['path'] = 'relative.log'; self.write(meta, {'owner_evidence': proof})
+        with self.assertRaisesRegex(ValueError, 'absolute'): m.Arm(d, 'refuse-path', metadata=meta).resolve_owner()
+
+    def test_trace_owner_membership_rejection_removes_cpu_owner(self):
+        d = self.replay_only_fixture('OWNER-TRACE-BINDING'); a = m.Arm(d, 'binding')
+        self.assertEqual(a.resolve_owner()['value']['tid'], 11)
+        reply = m.metric({'owner': {'pid': '999', 'tid': '11'}})
+        rejected = m.bind_scheduler_owner(a, reply, 10, 11)
+        self.assertEqual(rejected['status'], 'invalid')
+        self.assertIsNone(a.result()['CPU']['owner'])
+        a = m.Arm(d, 'valid-binding')
+        m.bind_scheduler_owner(a, m.metric({'owner': {'pid': '10', 'tid': '11'}}), 10, 11)
+        self.assertTrue(a.resolve_owner()['value']['trace_PID_TID_verified'])
+
 
 if __name__ == '__main__':
     unittest.main()

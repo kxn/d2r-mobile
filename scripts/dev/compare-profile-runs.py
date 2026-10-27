@@ -198,6 +198,18 @@ def scheduler_summary(tables, expected_running, window, frames):
                   scope='official trace_processor thread_state, mutually exclusive clipped BOOTTIME states / same complete Surface interval count')
 
 
+def bind_scheduler_owner(arm, answer, pid, tid):
+    if answer.get('status') == 'available':
+        identity = answer['value'].get('owner', {})
+        if str(identity.get('pid')) != str(pid) or str(identity.get('tid')) != str(tid):
+            arm.owner_resolution = metric(None, status='invalid', reason='official scheduler owner identity conflicts with capture PID/TID')
+            return metric(None, status='invalid', reason='official scheduler owner identity conflicts with capture PID/TID')
+        arm.resolve_owner()['value']['trace_PID_TID_verified'] = True
+    elif answer.get('reason') == 'expected exactly one owner PID/TID/lifetime match':
+        arm.owner_resolution = metric(None, status=answer['status'], reason='official trace cannot uniquely bind claimed owner to capture PID/lifetime')
+    return answer
+
+
 def run_scheduler(arm, tool, output):
     if tool is None or not Path(tool).is_file():
         return metric(None, reason='official trace_processor unavailable; supply --trace-processor')
@@ -207,10 +219,10 @@ def run_scheduler(arm, tool, output):
     f = arm.first('corrected_complete_Surface_intervals')
     bounds = arm.first('corrected_Surface_time_bounds')
     pid = arm.capture.get('pid') or arm.budget.get('PID')
-    tid = arm.budget.get('TID') or arm.receipt.get('owner_TID')
-    if not tid:
-        owners = [r for r in arm.csv.get('thread_CPU', []) if r.get('has_replay') == '1']
-        tid = int(owners[0]['tid']) if len(owners) == 1 else None
+    resolution = arm.resolve_owner()
+    if resolution['status'] != 'available':
+        return metric(None, status=resolution['status'], reason=resolution.get('reason', 'owner evidence unavailable'))
+    tid = resolution['value']['tid']
     try:
         lo, hi = int(bounds['a']), int(bounds['b'])
         n = int(f['intervals'])
@@ -232,6 +244,7 @@ def run_scheduler(arm, tool, output):
         if cached.get('returncode') == 0 and cached.get('tool_sha256') == sha(Path(tool)) and cached.get('trace_sha256') == trace_hash and cached.get('sql_sha256') == query_hash and sha(sql) == query_hash and cached.get('csv_sha256') == sha(csv_path):
             owner_row = next((r for r in arm.csv.get('thread_CPU', []) if r.get('tid') == str(tid)), {})
             answer = scheduler_summary(sections(csv_path), number(owner_row.get('running_ms_per_Surface_interval')), [lo, hi], n)
+            answer = bind_scheduler_owner(arm, answer, pid, tid)
             answer['provenance'] = {**cached, 'reused_official_reduction': True}
             return answer
     sql.write_text(query)
@@ -252,6 +265,7 @@ def run_scheduler(arm, tool, output):
         return metric(None, status='invalid', reason='official trace_processor query failed; inspect original stderr', provenance=provenance)
     owner_row = next((r for r in arm.csv.get('thread_CPU', []) if r.get('tid') == str(tid)), {})
     answer = scheduler_summary(sections(csv_path), number(owner_row.get('running_ms_per_Surface_interval')), [lo, hi], n)
+    answer = bind_scheduler_owner(arm, answer, pid, tid)
     answer['provenance'] = provenance
     return answer
 
@@ -282,6 +296,10 @@ class Arm:
             self.remember(self.path / 'analysis.csv')
         self.gpu = self.load(Path(gpu)) if gpu else self.load(self.path / 'sdp-metrics.json')
         self.gpu_arm = gpu_arm
+        self.metadata_identity_verified = False
+        self.owner_resolution = None
+        self.metadata_adapter = {}
+        self.apply_metadata_adapter()
 
     def remember(self, path):
         self.sources.append({'path': str(path.resolve()), 'sha256': sha(path)})
@@ -295,6 +313,133 @@ class Arm:
         if not isinstance(v, dict):
             raise ValueError(f'{path}: expected JSON object')
         return v
+
+    def pinned_file(self, spec):
+        if not isinstance(spec, dict) or not isinstance(spec.get('path'), str):
+            raise ValueError('metadata file needs path and sha256')
+        path = Path(spec['path'])
+        if not path.is_absolute():
+            raise ValueError('metadata evidence paths must be absolute')
+        digest = spec.get('sha256')
+        if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise ValueError('metadata file needs canonical SHA256')
+        if not path.is_file() or sha(path) != digest:
+            raise ValueError(f'metadata evidence missing or SHA256 mismatch: {path}')
+        self.remember(path)
+        return path
+
+    def apply_metadata_adapter(self):
+        """Explicit field adapters, never heuristic traversal of nested schemas."""
+        cap_pid, cap_apk = self.capture.get('pid'), self.capture.get('APK_sha256')
+        def select(raw, selector):
+            if not isinstance(selector, str) or not selector or any(not part for part in selector.split('.')):
+                raise ValueError('metadata field selector must be a nonempty dotted string')
+            return dotted(raw, selector)
+        if 'run_receipt' in self.meta:
+            spec = self.meta['run_receipt']; path = self.pinned_file(spec)
+            raw = json.loads(path.read_text()); fields = spec.get('fields', {})
+            allowed = {'pid', 'apk_sha256', 'host_elf_sha256', 'source_revision', 'owner_tid', 'performance_baseline_eligible'}
+            if not isinstance(raw, dict) or not isinstance(fields, dict) or set(fields) - allowed:
+                raise ValueError('invalid explicit run receipt object/field schema')
+            pid, apk = select(raw, fields.get('pid', 'PID')), select(raw, fields.get('apk_sha256', 'APK.apk_sha256'))
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or pid != cap_pid or not isinstance(apk, str) or not re.fullmatch(r'[0-9a-f]{64}', apk) or apk != cap_apk:
+                raise ValueError('explicit run receipt PID/APK does not match capture identity')
+            normalized = dict(raw); normalized['PID'] = pid
+            old_apk = raw.get('APK'); normalized['APK'] = dict(old_apk) if isinstance(old_apk, dict) else {}
+            normalized['APK']['apk_sha256'] = apk
+            mapping = {'host_elf_sha256': ('APK', 'host_library_sha256'),
+                       'source_revision': (None, 'source'), 'owner_tid': (None, 'owner_TID'),
+                       'performance_baseline_eligible': ('APK', 'performance_baseline_eligible')}
+            for field, (parent, key) in mapping.items():
+                if field in fields:
+                    value = select(raw, fields[field])
+                    if value is None:
+                        raise ValueError(f'explicit run receipt field missing: {fields[field]}')
+                    if parent:
+                        normalized[parent][key] = value
+                    else:
+                        normalized[key] = value
+            self.receipt = normalized; self.metadata_identity_verified = True
+            self.metadata_adapter['run_receipt'] = {'path': str(path), 'sha256': spec['sha256'], 'fields': fields, 'PID_APK_match_capture': True}
+        if 'launch' in self.meta:
+            spec = self.meta['launch']; path = self.pinned_file(spec)
+            raw = json.loads(path.read_text()); fields = spec.get('fields', {})
+            if not isinstance(raw, dict) or not isinstance(fields, dict) or set(fields) - {'pid', 'apk_sha256'}:
+                raise ValueError('invalid explicit launch object/field schema')
+            pid = select(raw, fields.get('pid', 'pid'))
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid != cap_pid or pid <= 0:
+                raise ValueError('explicit launch PID does not match capture')
+            apk_field = fields.get('apk_sha256')
+            if apk_field:
+                if select(raw, apk_field) != cap_apk:
+                    raise ValueError('explicit launch APK does not match capture')
+            elif not self.metadata_identity_verified:
+                raise ValueError('launch without APK needs an independently verified run receipt')
+            self.launch = raw
+            self.metadata_adapter['launch'] = {'path': str(path), 'sha256': spec['sha256'], 'fields': fields, 'PID_match_capture': True}
+
+    def resolve_owner(self):
+        if self.owner_resolution is not None:
+            return self.owner_resolution
+        candidates, reasons = [], []
+        pid = self.capture.get('pid')
+        def positive(v):
+            return isinstance(v, int) and not isinstance(v, bool) and v > 0
+        if not positive(pid):
+            self.owner_resolution = metric(None, reason='capture PID missing or invalid')
+            return self.owner_resolution
+        if self.budget.get('TID') is not None:
+            if self.budget.get('PID') != pid or not positive(self.budget['TID']):
+                reasons.append('budget owner PID/TID conflicts with capture')
+            else:
+                candidates.append(('budget', self.budget['TID']))
+        if self.receipt.get('owner_TID') is not None:
+            tid = self.receipt['owner_TID']
+            rp = self.receipt.get('PID')
+            if not positive(tid) or (rp is not None and rp != pid):
+                reasons.append('run receipt owner PID/TID conflicts with capture')
+            else:
+                candidates.append(('run_receipt', tid))
+        replay_rows = [r for r in self.csv.get('thread_CPU', []) if r.get('has_replay') == '1']
+        if len(replay_rows) == 1:
+            value = number(replay_rows[0].get('tid'))
+            if value and value.is_integer() and value > 0:
+                candidates.append(('official_unique_has_replay', int(value)))
+            else:
+                reasons.append('unique official replay owner TID invalid')
+        proof = self.meta.get('owner_evidence')
+        if proof is not None:
+            path = self.pinned_file(proof); lines = path.read_text().splitlines(); line = proof.get('line')
+            if not positive(line) or line > len(lines) or lines[line - 1] != proof.get('text'):
+                raise ValueError('owner log original line number/text mismatch')
+            match = re.fullmatch(proof.get('regex', ''), lines[line - 1])
+            if not match or 'tid' not in match.groupdict():
+                raise ValueError('owner log regex must fully match original line and name tid')
+            tid = int(match.group('tid'))
+            if not positive(tid):
+                raise ValueError('owner log TID must be positive')
+            if 'pid' in match.groupdict():
+                if int(match.group('pid')) != pid:
+                    raise ValueError('owner log PID does not match capture')
+            elif not self.metadata_identity_verified:
+                raise ValueError('owner log without PID needs a verified run receipt binding')
+            candidates.append(('pinned_original_log_line', tid))
+            self.metadata_adapter['owner_evidence'] = {'path': str(path), 'sha256': proof['sha256'], 'line': line, 'text': lines[line - 1], 'regex': proof['regex'], 'matched_tid': tid, 'capture_pid': pid}
+        tids = {tid for _, tid in candidates}
+        if len(tids) > 1:
+            reasons.append('declared owner evidence conflicts; no fallback to busiest thread')
+        if reasons:
+            self.owner_resolution = metric(None, status='invalid', reason='; '.join(reasons))
+        elif len(tids) == 1:
+            tid = tids.pop()
+            rows = [r for r in self.csv.get('thread_CPU', []) if r.get('tid') == str(tid)]
+            if len(rows) != 1:
+                self.owner_resolution = metric(None, status='invalid', reason='verified owner must identify exactly one original thread_CPU row')
+            else:
+                self.owner_resolution = metric({'pid': pid, 'tid': tid, 'evidence': [{'kind': k, 'tid': v} for k, v in candidates]}, scope='explicit workload identity, never busiest-thread inference')
+        else:
+            self.owner_resolution = metric(None, reason='owner evidence missing or official has_replay ambiguous')
+        return self.owner_resolution
 
     def first(self, key):
         rows = self.csv.get(key, [])
@@ -345,7 +490,10 @@ class Arm:
         frames = int(frame) if frame is not None and frame > 0 else None
         mean = number(f.get('mean_ms'))
         whole = self.first('whole_app_CPU')
-        tid = self.budget.get('TID') or self.receipt.get('owner_TID')
+        owner_evidence = self.resolve_owner()
+        tid = owner_evidence['value']['tid'] if owner_evidence['status'] == 'available' else None
+        if owner_evidence['status'] == 'invalid':
+            self.issues.append('owner evidence invalid: ' + owner_evidence.get('reason', 'see evidence'))
         threads = []
         freqs = {r.get('tid'): r for r in self.csv.get('thread_CPU_frequency', [])}
         for row in self.csv.get('thread_CPU', []):
@@ -370,7 +518,9 @@ class Arm:
                     'source_revision': self.receipt.get('source') or apk.get('source_revision'),
                     'package': self.capture.get('package'), 'device_record_meta': self.budget.get('record_meta', {}),
                     'scene_before': before_id, 'scene_after': after_id, 'scene_changes': scene_changed,
-                    'switches': switches, 'performance_baseline_eligible': apk.get('performance_baseline_eligible')}
+                    'switches': switches, 'performance_baseline_eligible': apk.get('performance_baseline_eligible'),
+                    'normal_FPS_claim_allowed': self.receipt.get('normal_FPS_claim_allowed'),
+                    'measurement_scope': self.receipt.get('scope') or self.capture.get('scope')}
         if self.capture.get('APK_sha256') and apk.get('apk_sha256') and self.capture['APK_sha256'] != apk['apk_sha256']:
             self.issues.append('capture APK and run receipt APK mismatch')
         record_stat = dotted(self.budget, 'record_meta.record_stat') or ''
@@ -395,7 +545,7 @@ class Arm:
                                   'p95_ms': number(f.get('p95_ms')), 'max_ms': number(f.get('max_ms')),
                                   'FPS': 1000 / mean if mean and mean > 0 else None}, status='available' if frames else 'missing',
                                  denominator='complete Surface intervals', bounds_BOOTTIME_ns=self.counter_receipt.get('Surface_BOOTTIME_bounds_ns')),
-                'CPU': {'whole_app_running_ms_per_Surface': number(whole.get('running_ms_per_Surface_interval')),
+                'CPU': {'owner_evidence': owner_evidence, 'whole_app_running_ms_per_Surface': number(whole.get('running_ms_per_Surface_interval')),
                         'whole_app_running_ms': number(whole.get('running_ms')),
                         'whole_app_weighted_mhz_while_running': number(self.first('whole_app_CPU_frequency').get('weighted_mhz')),
                         'owner': owner, 'threads_sorted_by_running': threads,
@@ -412,7 +562,7 @@ class Arm:
                 'sample_support': support,
                 'sample_health': {'samples': self.budget.get('samples'), 'record_stat': dotted(self.budget, 'record_meta.record_stat'),
                                   'uncertainty': self.budget.get('uncertainty', [])},
-                'state_counters': counters, 'GPU': gpu, 'issues': self.issues, 'sources': self.sources}
+                'state_counters': counters, 'GPU': gpu, 'metadata_adapter': self.metadata_adapter, 'issues': self.issues, 'sources': self.sources}
 
     def sample_support(self, valid):
         """Count already classified reducer records; never re-symbolize/reclassify.
@@ -700,6 +850,8 @@ def markdown(report):
     lines = ['# 整轮 Profile 对照', '',
              f"{arms['reference']['label']} → {arms['candidate']['label']}；同binary：**{q['same_binary']}**；同窗口前场景：{q['same_scene_before']}；performance baseline资格：{q['both_performance_baseline_eligible']}；同设备metadata：{q['same_device_record_metadata']}。", '',
              'Δ = Candidate − Reference；missing不补0。完整身份、所有线程/计数与输入哈希见同目录comparison.json。']
+    if any(arm['identity'].get('normal_FPS_claim_allowed') is False for arm in arms.values()):
+        lines += ['', '**这是已标记工具活动窗口的观测FPS，不能当普通运行FPS基线。**']
     core = [{'key': k, **v} for k, v in c['frames'].items()]
     core += [{'key': k, **v} for k, v in c['CPU'].items()]
     table(lines, '核心净变化', core)

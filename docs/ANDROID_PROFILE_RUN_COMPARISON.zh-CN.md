@@ -109,3 +109,48 @@ python3 scripts/dev/compare-profile-runs.py \
 只有GPU整理结果的trace哈希和完整Surface BOOTTIME边界都与该arm相同，才标为同窗；否则明确 `unverified`。所有GPU计数始终标global/system（含compositor等），不能当进程独占。
 
 `Clocks / Second` 保留clock-count rate，不改叫实际瞬时GPU MHz或锁频。百分比计数可能互相重叠，不相加，不乘帧长变成独占stall ms。没有GPU数据时不宣称GPU bound，也不声称“FPS不涨已由GPU解释”。Scale GPU实验单独成报告，不能嫁接到extra/sparse CPU窗口伪装成同窗采集。
+
+## 非标准目录的身份与owner证据适配
+
+GPU工具窗口的目录可能没有自动发现规则所需的run receipt，也未采Simpleperf。不得因此猜最忙线程或伪造一个budget。现在 `--reference-metadata / --candidate-metadata` 除了原budget_path，还接受显式证据：
+
+```json
+{
+  "run_receipt": {
+    "path": "/absolute/path/original-run-result.json",
+    "sha256": "原文件的64位小写SHA256",
+    "fields": {
+      "pid": "PID",
+      "apk_sha256": "APK.apk_sha256",
+      "host_elf_sha256": "APK.host_library_sha256",
+      "owner_tid": "owner_TID",
+      "source_revision": "source"
+    }
+  },
+  "launch": {
+    "path": "/absolute/path/original-launch.json",
+    "sha256": "原文件的64位小写SHA256",
+    "fields": {"pid": "pid"}
+  },
+  "owner_evidence": {
+    "path": "/absolute/path/original-native.log",
+    "sha256": "原文件的64位小写SHA256",
+    "line": 587,
+    "text": "[dm] [nvn] translation CPU mask=80 tid=23904 result=0",
+    "regex": "\\[dm\\] \\[nvn\\] translation CPU mask=80 tid=(?P<tid>\\d+) result=0"
+  }
+}
+```
+
+以上SHA是占位说明，须填原文件真实hash；实际可运行例子保存在surface-parity日志的owner-metadata目录。不要用这个例子的TID替代另一进程的实际TID。
+
+规则：
+
+- 所有显式文件路径必须为绝对路径、原文件SHA必须匹配；字段路径是显式dotted selector，不猜不同项目的嵌套布局。run receipt的PID与APK必须同时匹配原capture；launch的PID也必须匹配，若launch无APK字段则依赖已验证run receipt绑定。
+- `owner_evidence`为可选日志证明：一基行号、原行全文、全行regex必须同时符合，regex必须命名`tid`。如同行有命名`pid`必须等于capturePID；否则必须有已验证run receipt把该日志证明绑定到同一capture身份。支持logcat行如 `I/dm-vulkan(26930): NVN pin tid=26997 ...`，可在regex中分别命名pid/tid。
+- 所有声明的owner证据必须一致；显式日志、receipt、budget、官方唯一has_replay冲突时拒绝，不悄悄换个来源。没有明确证据时owner为missing，不按Running排名猜。
+- 官方`thread_CPU`恰有一个`has_replay=1`也可独立确定工作负载owner；多个标记行不提供唯一owner。带确切日志/receipt的场景允许在多个线程中明确指认一个，但该TID必须对应CSV中的唯一原行。
+- CPU总表和scheduler使用同一resolve_owner结果。官方scheduler还要以capturePID+同TID+生命周期定位原trace；结果不匹配就拒绝owner，而不是显示另一线程。正常报告中 `trace_PID_TID_verified=true` 记录此步已通过。
+- 这些元数据不生成PMU budget。没有counter.data/合格budget时，instructions/cycles及sampled职责仍missing。GPU工具窗的 `normal_FPS_claim_allowed=false` 原声明也保留，并在Markdown提示不能当普通运行FPS基线。
+
+真实surface-parity两臂适配后，own23904与upstream26997均可显示真实Running、频率、S/D/Runnable与waker表；原先不完整的报告以before-owner-adapter前缀保留，未重新采集。
