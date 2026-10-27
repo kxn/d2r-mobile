@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import tarfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -184,6 +185,135 @@ def verify_pixel_local(cache, output, key, reflection, stage, descriptor_set, op
     return 'regenerated' if options.get('pixel_local_reflection') else 'disabled'
 
 
+DEPLOYMENT_TRACES = {'_deployment_sha256.txt', '_deployment_check.log'}
+
+
+def incremental_artifact_map(value, label):
+    """Flat verified artifacts only; never authorize paths from shell output."""
+    require(isinstance(value, dict) and value, label+' artifact map is empty/invalid')
+    for name, info in value.items():
+        require(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9_.][A-Za-z0-9_.-]*', name) and
+                name not in ('.', '..') and name not in DEPLOYMENT_TRACES,
+                label+' unsafe artifact name: '+str(name))
+        require(isinstance(info, dict) and isinstance(info.get('sha256'), str) and
+                re.fullmatch('[0-9a-f]{64}', info['sha256']) and
+                type(info.get('bytes')) is int and info['bytes'] >= 0,
+                label+' invalid artifact identity: '+name)
+    return value
+
+
+def incremental_input_plan(cache, artifacts, expected_receipt_sha):
+    receipt = cache/'_derived_input_receipt.json'
+    require(receipt.is_file() and not receipt.is_symlink() and sha(receipt)==expected_receipt_sha,
+            'incremental deployment requires the exact verified derived input receipt')
+    original = json.loads(receipt.read_text())
+    inputs = incremental_artifact_map(original.get('artifacts'), 'input')
+    candidate = incremental_artifact_map(artifacts, 'candidate')
+    changed = sorted(name for name, info in candidate.items() if inputs.get(name) != info)
+    removed = sorted(set(inputs)-set(candidate))
+    return inputs, changed, removed
+
+
+def shader_inventory_matches(output, artifacts, label):
+    names = []
+    for line in output.splitlines():
+        require(line.startswith('./'), label+' invalid inventory line')
+        names.append(line[2:])
+    require(len(names)==len(set(names)) and
+            set(artifacts) <= set(names) <= set(artifacts)|DEPLOYMENT_TRACES,
+            label+' has unknown/missing shader files, directories or links')
+
+
+def prepare_incremental_device_input(adb, package, args, cache, artifacts,
+                                     target, incoming, remote, report):
+    inputs, changed, removed = incremental_input_plan(cache, artifacts, args.derived_input_receipt_sha256)
+    def app(script):
+        return adb('shell','run-as '+package+' sh -c '+shlex.quote('set -e; '+script))
+    def inventory(directory, expected, label):
+        quoted=shlex.quote(directory)
+        app('test -d '+quoted+'; test ! -L '+quoted)
+        output=app('cd '+quoted+'; find . -mindepth 1 -maxdepth 1 -print').stdout
+        shader_inventory_matches(output, expected, label)
+        nonfiles=app('cd '+quoted+'; find . -mindepth 1 -maxdepth 1 ! -type f -print').stdout
+        require(not nonfiles.strip(), label+' contains a directory, symlink or nonregular file')
+    inventory(target, inputs, 'device input')
+    with tempfile.TemporaryDirectory(prefix='d2r-shader-delta-') as folder:
+        folder=Path(folder)
+        input_sums=folder/'input.sha256'
+        input_sums.write_text(''.join(info['sha256']+'  '+name+'\n' for name,info in sorted(inputs.items())))
+        final_sums=folder/'candidate.sha256'
+        final_sums.write_text(''.join(info['sha256']+'  '+name+'\n' for name,info in sorted(artifacts.items())))
+        delta=folder/'delta.tar'
+        with tarfile.open(delta,'w',dereference=True) as archive:
+            for name in changed:
+                source=cache/name
+                require(source.is_file() and not source.is_symlink(), 'nonregular changed shader: '+name)
+                archive.add(source,arcname=name,recursive=False)
+        adb('push',str(input_sums),remote+'/input.sha256')
+        # This verifies ALL original artifacts before any copy/publication.
+        app('cd '+target+'; sha256sum -c '+shlex.quote(remote+'/input.sha256')+' > /dev/null')
+        app('test ! -e '+incoming+'; test ! -L '+incoming+'; cp -a '+target+' '+incoming)
+        # Source directory remains untouched. cp -a is deliberately not cp -al.
+        cleanup=folder/'cleanup.sh'
+        names=sorted(DEPLOYMENT_TRACES|set(removed))
+        lines=['set -e','cd '+shlex.quote(incoming)]
+        for start in range(0,len(names),128):
+            lines.append('rm -f -- '+' '.join(shlex.quote(n) for n in names[start:start+128]))
+        cleanup.write_text('\n'.join(lines)+'\n')
+        adb('push',str(cleanup),remote+'/cleanup.sh')
+        app('sh '+shlex.quote(remote+'/cleanup.sh'))
+        adb('push',str(delta),remote+'/delta.tar')
+        app('tar -xf '+shlex.quote(remote+'/delta.tar')+' -C '+incoming)
+        inventory(incoming, artifacts, 'candidate input')
+        adb('push',str(final_sums),remote+'/candidate.sha256')
+        app('cp '+shlex.quote(remote+'/candidate.sha256')+' '+incoming+'/_deployment_sha256.txt; '
+            'cd '+incoming+'; sha256sum -c _deployment_sha256.txt > _deployment_check.log')
+        report['device_input_reuse']={'input_verified_files':len(inputs),'candidate_verified_files':len(artifacts),
+            'changed_files':len(changed),'changed_bytes':sum(artifacts[n]['bytes'] for n in changed),
+            'removed_files':removed,'tar_bytes':delta.stat().st_size,'tar_sha256':sha(delta),
+            'copy_mode':'cp -a (no source hard links)','source_directory':target,
+            'input_receipt_sha256':args.derived_input_receipt_sha256}
+
+
+def deploy_verified_artifacts(args, cache, artifacts, report):
+    require(not getattr(args,'reuse_device_input',False) or args.verified_cache_derived,
+            '--reuse-device-input requires --verified-cache-derived')
+    package = 'com.d2rmobile.nativeport'
+    base = ['adb','-s',args.serial]
+    def adb(*parts,check=True):
+        return subprocess.run([*base,*parts],capture_output=True,text=True,check=check)
+    def stopped():
+        require(not adb('shell','pidof',package,check=False).stdout.strip(),
+                'save and stop the game before deployment')
+    stopped()
+    token = uuid.uuid4().hex
+    remote = '/data/local/tmp/d2r-shaders-'+token
+    incoming = 'files/runtime/.shaders-'+token
+    previous = 'files/runtime/.shaders-previous-'+token
+    target = 'files/runtime/shaders'
+    sums = args.report.with_suffix('.sha256')
+    sums.write_text(''.join(a['sha256']+'  '+name+'\n' for name,a in artifacts.items()))
+    adb('shell','mkdir','-p',remote)
+    if getattr(args,'reuse_device_input',False):
+        prepare_incremental_device_input(adb,package,args,cache,artifacts,target,incoming,remote,report)
+    else:
+        adb('push',str(cache)+'/.',remote+'/')
+        adb('push',str(sums),remote+'/_deployment_sha256.txt')
+        adb('shell','run-as',package,'mkdir','-p',incoming)
+        adb('shell','run-as',package,'cp','-r',remote+'/.',incoming+'/')
+        script = 'set -e; cd '+shlex.quote(incoming)+'; sha256sum -c _deployment_sha256.txt > _deployment_check.log'
+        adb('shell','run-as '+package+' sh -c '+shlex.quote(script))
+    stopped()
+    # 完整验哈希后才发布；保留上个缓存，切换失败时恢复它。
+    # Publish only after full hashes pass; retain the previous cache and
+    # restore it if publication fails.
+    script = ('set -e; if test -d '+target+'; then mv '+target+' '+previous+'; fi; '
+              'if ! mv '+incoming+' '+target+'; then if test -d '+previous+'; then mv '+previous+' '+target+'; fi; exit 1; fi')
+    adb('shell','run-as '+package+' sh -c '+shlex.quote(script))
+    adb('shell','rm','-r',remote)
+    report.update(deployed=True, serial=args.serial, phone_verified_files=len(artifacts), previous=previous)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cache', type=Path, required=True)
@@ -191,9 +321,32 @@ def main():
     parser.add_argument('--serial', default='JNJF49UGBQ4XSCZT')
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--deploy', action='store_true', help='game must already be saved and stopped')
+    parser.add_argument('--reuse-device-input',action='store_true',help='derived deployment only: fully verify the stopped device input, copy it without hardlinks, upload changed artifacts, then fully verify the candidate')
+    parser.add_argument('--verified-cache-derived',action='store_true',help='explicit independently verified cache-input stage; legacy source verification is unchanged')
+    parser.add_argument('--derived-input-receipt-sha256',help='required exact original verified input receipt identity for a derived stage')
     parser.add_argument('--verify-workers',type=int,choices=range(1,9),default=4,help='independent proof/tool verification workers; all checks retained')
     args = parser.parse_args()
+    require(not args.reuse_device_input or args.verified_cache_derived,
+            '--reuse-device-input requires --verified-cache-derived')
     cache = args.cache.resolve()
+    if args.verified_cache_derived:
+        require(args.derived_input_receipt_sha256 and re.fullmatch('[0-9a-f]{64}',args.derived_input_receipt_sha256),
+                'derived stage requires explicit input receipt SHA256')
+        require(args.baseline is None,'derived stage declares its own immutable input; do not mix legacy --baseline')
+        from dmsh_derived_verify import verify as verify_derived
+        validation=verify_derived(cache,args.derived_input_receipt_sha256)
+        record=json.loads((cache/'_derived_build.json').read_text())
+        artifacts=dict(record['artifacts'])
+        artifacts['_derived_build.json']={'sha256':sha(cache/'_derived_build.json'),'bytes':(cache/'_derived_build.json').stat().st_size}
+        report={'chain':validation['chain'],'cache':str(cache),'verified_cache_derived':True,
+                'derived_validation':validation,'validated_game_and_builtin_shaders':validation['complete_shaders'],
+                'artifacts':artifacts,'deployed':False,'reuse_device_input_requested':args.reuse_device_input}
+        args.report.parent.mkdir(parents=True,exist_ok=True)
+        if args.deploy:deploy_verified_artifacts(args,cache,artifacts,report)
+        args.report.write_text(json.dumps(report,indent=2)+'\n')
+        print(json.dumps({k:v for k,v in report.items()if k!='artifacts'}),flush=True)
+        return
+    require(args.derived_input_receipt_sha256 is None,'derived input SHA requires explicit --verified-cache-derived')
     translator = Path(os.environ.get('XLATE', str(ROOT/'.local/build/dotnet/bin/dmsh_xlate/release/dmsh_xlate')))
     chain = dmsh_vulkan.version(dmsh_chain.version(), str(translator))
     require(cache.name == 'vk-' + chain and (cache/'.chain').read_text().strip() == chain,
@@ -362,37 +515,7 @@ def main():
               'raster':facts, 'original_proofs_unchanged':True,'specialization_recipes':len(specialization_keys),'texel_alternative_pairs':len(texel_alternative_keys),'predicate_sidecars':len(predicate_keys), 'baseline_spirv_identical':bool(args.baseline),
               'pixel_local_verification':pixel_local_verification, 'artifacts':artifacts, 'deployed':False}
     if args.deploy:
-        package = 'com.d2rmobile.nativeport'
-        base = ['adb','-s',args.serial]
-        def adb(*parts,check=True):
-            return subprocess.run([*base,*parts],capture_output=True,text=True,check=check)
-        def stopped():
-            require(not adb('shell','pidof',package,check=False).stdout.strip(),
-                    'save and stop the game before deployment')
-        stopped()
-        token = uuid.uuid4().hex
-        remote = '/data/local/tmp/d2r-shaders-'+token
-        incoming = 'files/runtime/.shaders-'+token
-        previous = 'files/runtime/.shaders-previous-'+token
-        target = 'files/runtime/shaders'
-        sums = args.report.with_suffix('.sha256')
-        sums.write_text(''.join(a['sha256']+'  '+name+'\n' for name,a in artifacts.items()))
-        adb('shell','mkdir','-p',remote)
-        adb('push',str(cache)+'/.',remote+'/')
-        adb('push',str(sums),remote+'/_deployment_sha256.txt')
-        adb('shell','run-as',package,'mkdir','-p',incoming)
-        adb('shell','run-as',package,'cp','-r',remote+'/.',incoming+'/')
-        script = 'set -e; cd '+shlex.quote(incoming)+'; sha256sum -c _deployment_sha256.txt > _deployment_check.log'
-        adb('shell','run-as '+package+' sh -c '+shlex.quote(script))
-        stopped()
-        # 完整验哈希后才发布；保留上个缓存，切换失败时恢复它。
-        # Publish only after full hashes pass; retain the previous cache and
-        # restore it if publication fails.
-        script = ('set -e; if test -d '+target+'; then mv '+target+' '+previous+'; fi; '
-                  'if ! mv '+incoming+' '+target+'; then if test -d '+previous+'; then mv '+previous+' '+target+'; fi; exit 1; fi')
-        adb('shell','run-as '+package+' sh -c '+shlex.quote(script))
-        adb('shell','rm','-r',remote)
-        report.update(deployed=True, serial=args.serial, phone_verified_files=len(artifacts), previous=previous)
+        deploy_verified_artifacts(args,cache,artifacts,report)
     args.report.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({k:v for k,v in report.items() if k!='artifacts'}),flush=True)
 
