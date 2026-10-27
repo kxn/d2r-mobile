@@ -36,6 +36,24 @@ v2也重新烘焙两份相同真实BC3输入，两个物理payload SHA与v1逐�
 
 现阶段仍须原NVN full/native、thumbnail/tail、Buffer GPU writer/alias/publication/retirement GPU fixture验证，之后才考虑6217全量原BC3烘焙和真实游戏候选；不能用host元数据测试代替这些里程碑。
 
+## 完整名单的原始 BC3 输入
+
+`prepare_full.py` 固定使用当前6217条native名单及顺序，复用原始CASC入口、NVN布局库和128项batch协议。它先检查完整名单的尺寸、格式、mip及thumbnail资格，再准备全部输入；遇到不支持的条目会失败，不将剩余子集标成完整。`verify_full.py` 调用冻结v2 producer的现成CPU解析模式，核全部batch及输入SHA，不进行GPU加工。
+
+```sh
+.local/venv/bin/python3 scripts/dev/experiments/native-bc3/prepare_full.py \
+  --romfs /path/to/original/Update/RomFS \
+  --producer .local/build/native-bc3-producer-v2 \
+  --selection .local/build/sparse-native-rebake-v1-inputs/batch-prepare.json \
+  --output /new/private/bc3-inputs
+.local/venv/bin/python3 scripts/dev/experiments/native-bc3/verify_full.py \
+  --producer .local/build/native-bc3-producer-v2 \
+  --prepared /new/private/bc3-inputs/batch-prepare.json \
+  --output /new/private/bc3-input-verification
+```
+
+实际完整结果为4048份UNORM、2169份sRGB，共49批，位于`.local/build/native-original-bc3-full6217-v2-inputs/`。全部53701个mip的有效原始BC3块401,317,552字节；相同名单当前混合ASTC块318,250,336字节，少20.70%。这是离线整包有效块量，**不是每帧读写、显存驻留或帧率改善**。全部输入已通过原NVN往返和v2 C解析，真机49批native布局加工与游戏使用仍待完成。
+
 ## 复现入口与产物
 
 - `prepare_producer.py`：从原b111473 git archive及冻结7源码清单建立新v1副本，真实tuple、BC3负例、sRGB块生成/skip门控的完整差异在 `producer-v1.patch`。

@@ -128,5 +128,11 @@ thumbnail形状回落。这一步只在host执行；原NVN full/native、tail/or
 `.local/logs/native-bc3-real-pack-v1/`，保留原始日志、query、SHA和清理记录。
 
 实施入口：`tools/experiments/turnip-native-bc3/`与
-`scripts/dev/experiments/native-bc3/`。全部6217条原始BC3同编码资源及
-真实游戏性能对照尚未完成。
+`scripts/dev/experiments/native-bc3/`。全部6217条原始BC3输入现已准备，
+与当前名单及顺序完全相同，共49批；原CASC及原NVN逐mip往返、冻结v2
+producer CPU解析通过。原始BC3有效块401,317,552字节，当前同名单混合
+ASTC为318,250,336字节，少20.70%；这只是离线有效块量，不能换算当前帧
+流量。全包真机native布局加工、NVN回归及真实游戏性能对照尚未完成。
+全包记录：`.local/build/native-original-bc3-full6217-v2-inputs/`及
+`.local/logs/native-original-bc3-full6217-v2-host-verify-final/`；同名单有效
+块量核对：`.local/logs/native-bc3-real-pack-v1/offline-format-footprint.json`。
