@@ -512,6 +512,27 @@ class Arm:
             self.issues.append('scene/output changed during arm; inspect identity.scene_changes')
         switches = {k: v for k, v in self.launch.items()
                     if k.startswith(('requested_', 'actual_')) and isinstance(v, (bool, str, int, float, type(None)))}
+        # Several existing launchers put real runtime policy in a nested state
+        # object. Do not silently report "no changed switch" for those tests.
+        policy_paths = [
+            'launch.performance_hints', 'launch.async_present',
+            'launch.actual_game_state.present_worker.reference',
+            'launch.actual_game_state.present_worker.active',
+            'launch.actual_game_state.performance_hint.reference',
+        ] + self.config.get('switch_paths', [])
+        objects = {'launch': self.launch, 'before': self.before, 'after': self.after,
+                   'receipt': self.receipt}
+        for path in policy_paths:
+            if not isinstance(path, str) or '.' not in path:
+                raise ValueError('switch_paths need source.field paths')
+            source, field = path.split('.', 1)
+            if source not in objects or not field or any(not part for part in field.split('.')):
+                raise ValueError('invalid switch_paths source or field')
+            value = dotted(objects[source], field)
+            if not isinstance(value, (bool, str, int, float, type(None))) or (
+                    isinstance(value, (int, float)) and not isinstance(value, bool) and not finite(value)):
+                raise ValueError('switch_paths must select finite scalar policy values')
+            switches[path] = value
         apk = self.receipt.get('APK', {})
         identity = {'APK_sha256': self.capture.get('APK_sha256') or apk.get('apk_sha256'),
                     'host_ELF_sha256': apk.get('host_library_sha256'),

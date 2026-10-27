@@ -439,6 +439,35 @@ class CompareRunsTest(unittest.TestCase):
         proof['path'] = 'relative.log'; self.write(meta, {'owner_evidence': proof})
         with self.assertRaisesRegex(ValueError, 'absolute'): m.Arm(d, 'refuse-path', metadata=meta).resolve_owner()
 
+    def test_nested_runtime_policy_switches_are_visible(self):
+        a, b = self.fixture('POLICY-A'), self.fixture('POLICY-B')
+        for directory, enabled in ((a, False), (b, True)):
+            p = directory.parent / (directory.parent.name + '-launch.json')
+            launch = json.loads(p.read_text())
+            launch['performance_hints'] = False
+            launch['actual_game_state'] = {
+                'present_worker': {'reference': not enabled, 'active': enabled},
+                'performance_hint': {'reference': True},
+            }
+            self.write(p, launch)
+        result = m.compare(self.arm(a), self.arm(b))
+        switches = result['qualification']['changed_switches']
+        self.assertEqual(switches['launch.actual_game_state.present_worker.active'],
+                         {'reference': False, 'candidate': True})
+        self.assertEqual(switches['launch.actual_game_state.present_worker.reference'],
+                         {'reference': True, 'candidate': False})
+        self.assertNotIn('launch.performance_hints', switches)
+        self.assertIn('present_worker.active', m.markdown(result))
+
+    def test_configurable_policy_paths_keep_missing_and_reject_objects(self):
+        d = self.fixture('POLICY-EXPLICIT')
+        a = self.arm(d, config={'switch_paths': ['before.area', 'before.not_present']})
+        self.assertEqual(a['identity']['switches']['before.area'], 1)
+        self.assertIsNone(a['identity']['switches']['before.not_present'])
+        for bad in ('unknown.area', 'before.game_output', 'before..area', 'before'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.arm(d, config={'switch_paths': [bad]})
+
     def test_trace_owner_membership_rejection_removes_cpu_owner(self):
         d = self.replay_only_fixture('OWNER-TRACE-BINDING'); a = m.Arm(d, 'binding')
         self.assertEqual(a.resolve_owner()['value']['tid'], 11)

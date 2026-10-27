@@ -76,6 +76,14 @@ python3 scripts/dev/test_compare_profile_runs.py
 
 ## 可配置高层分组
 
+开关对照默认同时读取launcher的`requested_*`/`actual_*`标量，以及已有
+`performance_hints`、`async_present`和`actual_game_state`内的present-worker/
+performance-hint真实布尔状态。这样不会把只在嵌套状态中出现的呈现线程
+实验错误地显示为“没有改变开关”。计数器和对象不当作开关。
+组配置可再增加`"switch_paths": ["before.my_policy.enabled", "launch.my_mode"]`，
+来源限`launch`、`before`、`after`、`receipt`，只允许有限标量；缺项保持null，
+不补成false。配置路径仅整理原数据，不猜测实际生效，也不代替工具时窗资格。
+
 `--groups groups.json` 接受例如：
 
 ```json
