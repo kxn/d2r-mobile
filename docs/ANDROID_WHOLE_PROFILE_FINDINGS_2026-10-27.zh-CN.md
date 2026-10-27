@@ -115,6 +115,17 @@ ON快照没有完全括住Surface窗口，不能用其1～3%的资源次数变�
 CPU成本因果。原始lost/truncated均为0；这并不能消除游戏动画、采样分配
 和调度差异。需要重复性证据后再决定默认策略，现保持sparse OFF。
 
+新增的样本支撑栏进一步限制了SELF结论：本对OFF/ON总计2968/3017条，
+每Surface只有3.46/3.51条；`vk_state_op` SELF为26/45条、
+`vk_pass_state_segment` SELF为20/37条。它们不是调用次数，不能把几十条
+样本的变化当作精确新增了多少指令。净硬件counter与函数采样分配分开报告，
+后续反序复核须同时核对两者。
+
+离线调度审查确认两臂owner全部Running都在CPU7、迁核0、频率覆盖完整。
+原trace缺syscall/IRQ事件及utime/stime counter，不能据此分离内核时间。
+资源after快照早47.44ms来自原1Hz状态文件的旧末行，不是BOOTTIME/
+MONOTONIC混用。证据见`v3/causal-review/`（完整根目录同下）。
+
 本轮后已恢复accepted日常APK `39197b1c…`、native `437c58f5…`及原profile6，
 完成原保存后进程已停止。没有把实验APK留在设备上冒充已接受版本。
 完整报告：`.local/logs/sparse-plan-segment-v3/whole-profile-comparison/`；
