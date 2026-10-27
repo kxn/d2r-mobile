@@ -556,7 +556,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRecordSt
   record_state_extra_cache_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
-static int discard_covered_clears_startup;
+static int discard_covered_clears_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeDiscardCoveredClears(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);

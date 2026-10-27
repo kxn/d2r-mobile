@@ -1,13 +1,13 @@
 // 原 attr_read/first_draw_covers；几何证明直接复用原 nvn_cover.h。
 // Upstream attr_read/first_draw_covers; reuse original nvn_cover.h geometry proof.
 #include "../nvn/nvn_cover.h"
-// Cold, independent experiment; the existing LOAD proof is unchanged.
+// Cold reference switch; the existing LOAD proof is unchanged.
 int vk_discard_covered_clears_enabled(void) {
   static int enabled=-1;
   if(enabled<0) {
     const char *v=getenv("DM_VULKAN_DISCARD_COVERED_CLEARS");
     if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_DISCARD_COVERED_CLEARS expects 0 or 1");
-    enabled=v && !strcmp(v,"1");
+    enabled=!v || !strcmp(v,"1");
     LOG("[vulkan covered clears] enabled=%d",enabled);
   }
   return enabled;

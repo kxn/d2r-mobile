@@ -111,7 +111,7 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertEqual(caught.exception.code,2)
             adb.assert_not_called()
 
-    def test_discard_covered_clears_is_explicit_default_off_and_cold(self):
+    def test_discard_covered_clears_has_explicit_cold_reference_overrides(self):
         self.assertNotIn('discard_covered_clears',self.launch_command([]))
         for option,value in [('--discard-covered-clears','true'),('--no-discard-covered-clears','false')]:
             command=self.launch_command([option]);index=command.index('discard_covered_clears')
