@@ -1,0 +1,16 @@
+{
+  "generator_sha256": "fb452ec6e25d675fb864d3240fc3adff16ea38a0e215225b970704e98f236e0c",
+  "outputs": {
+    "run_resident_nvn_fixture.py": {
+      "base": "/home/dl/d2r-mobile/scripts/dev/experiments/native-bc3/run_nvn_fixture.py",
+      "base_sha256": "5d69aa1fa3920c2f14de42e9a5bfe15cdc2be7e40e758bf4fd2aa0b0c9272f18",
+      "controller_sha256": "eb44004c55f4a3c3ef299fb563a9a68a353d63ede12f844b2509ecaf9011f446"
+    },
+    "run_tiled_resident_nvn_fixture.py": {
+      "base": "/home/dl/d2r-mobile/scripts/dev/experiments/native-bc3/run_tiled_nvn_fixture.py",
+      "base_sha256": "fe2d944bb4e0d2c804a7a4d0c6daec087a31af6a206e483d8850d0fd454efb67",
+      "controller_sha256": "55af81c17847ef972bb53ce8eac868c9031d6f8984c0304e090fd0e49f01ac98"
+    }
+  },
+  "scope": "Same cold ownership transaction and original NVN semantics. Exact same72ad APK for two exact drivers; require actual per-image owner2 and lazyactive/window checks, not flags alone. No rebuild/loader/timing added."
+}
