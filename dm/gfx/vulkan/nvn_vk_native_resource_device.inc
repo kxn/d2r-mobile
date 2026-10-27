@@ -75,9 +75,25 @@ static void native_resource_install(void) {
   static const uint8_t coherent_turnip_wsi[32]={
     0xb3,0xfc,0xe5,0xab,0x29,0xc6,0x61,0x7b,0xd2,0xcf,0x33,0x4b,0x3a,0x56,0xc6,0x79,
     0x51,0xde,0x27,0x1b,0xd8,0x70,0x87,0x8c,0x9a,0x31,0x21,0xff,0x60,0x6b,0x1b,0x9f};
+  // BC3 admission-only derivative of B3. Complete source comparison retains
+  // host import, coherency and layout code; ordinary-UID original NVN tests
+  // cover all mips, tail, GPU alias writers, CPU Flush and retirement.
+  // Runtime identity and live shared startup admission remain mandatory.
+  static const uint8_t coherent_turnip_bc3[32]={
+    0x0e,0x53,0xff,0xa2,0xbb,0xbf,0xf0,0xa4,0xf5,0x20,0xeb,0x08,0x00,0x39,0xa8,0x48,
+    0xf0,0x85,0x32,0x76,0xec,0xe5,0x9c,0xaa,0x8d,0xf9,0xa0,0x29,0xcf,0x2b,0x40,0x24};
+  // Same host allocation/coherent contract, with BC3 returned to the original
+  // FDL tiling path. Its distinct layout UUID and freshly baked payloads passed
+  // real ordinary-UID NVN mip/baseMip, tail and writer regressions. No old
+  // whole-linear payload is accepted under this ELF identity.
+  static const uint8_t coherent_turnip_bc3_tiled[32]={
+    0x3e,0x93,0x76,0xed,0x37,0x59,0xaf,0x2c,0xd0,0x15,0xcf,0x56,0x08,0x27,0x4f,0x66,
+    0x1b,0xa3,0xb3,0x3d,0xf6,0xe9,0x5c,0xb6,0xfa,0x25,0x42,0x66,0x6f,0x34,0xee,0x50};
   native_resident_driver=!memcmp(identity.driver_sha256,coherent_turnip,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_linear,32) ||
-      !memcmp(identity.driver_sha256,coherent_turnip_wsi,32);
+      !memcmp(identity.driver_sha256,coherent_turnip_wsi,32) ||
+      !memcmp(identity.driver_sha256,coherent_turnip_bc3,32) ||
+      !memcmp(identity.driver_sha256,coherent_turnip_bc3_tiled,32);
   // One cold identity record for the existing explicit resource contract.
   printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
   for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);

@@ -1,10 +1,20 @@
 // Real NVN entrypoints and command recording, finite owned MAP_SHARED backing.
-// No game modules. The reference is the verified original compact ASTC input,
+// No game modules. The reference is the verified original compact block input,
 // not another host-native export/import operation or a guessed vendor layout.
 #include "../../../gfx/nvn/nvn_native_layout.h"
+#include "../../../gfx/tex/nvn_bcdec.h"
 #include "mbedtls/sha256.h"
 #include "dm_guest_heap.h"
 #include <sys/mman.h>
+#ifdef DM_ANDROID_APP
+#include "../../guest_heap_startup.h"
+// The host whole-AS fixture already supplies this adapter in its SVC stubs.
+// Android links the real SVC, so use the same existing cold selector directly;
+// this publishes no custom allocator or arbitrary-pointer import certificate.
+int dm_guest_heap_startup_for_fixture(int requested) {
+  return dm_guest_heap_startup_freeze(requested,vk_pool_shared_mode);
+}
+#endif
 typedef struct {uint32_t width,height;uint64_t offset,size;uint8_t sha256[32];} nr_input_mip;
 typedef struct {
   uint8_t magic[8];uint32_t version,header_bytes;uint64_t file_bytes;
@@ -12,6 +22,19 @@ typedef struct {
   uint8_t texture_sha256[32],descriptor_sha256[32],declaration_sha256[32];
   nr_input_mip mips[16];uint8_t digest[32];
 } nr_input;
+static int nr_expected_resident,nr_expected_lazy;
+// Test-owned working bytes only. A constant BC3 image cannot be sensitized by
+// swapping identical blocks. Reuse the existing decoder to choose a different
+// alpha, then a valid constant-alpha block; source/pack bytes stay untouched.
+static void nr_mutated_blocks(uint32_t format,const uint8_t original[32],uint8_t changed[32]) {
+  memcpy(changed,original+16,16);memcpy(changed+16,original,16);
+  if(!memcmp(changed,original,32)) {
+    CHECK(format==0x44 || format==0x48);
+    uint8_t rgba[4*4*4];CHECK(!nvn_bc_decode(format,original,16,4,4,rgba,16));
+    changed[0]=changed[1]=rgba[3]^255;memset(changed+2,0,6);
+  }
+  CHECK(memcmp(changed,original,32));
+}
 _Static_assert(sizeof(nr_input)==1080,"original resource preparation ABI");
 extern void vk_test_shared_image_backing(const void *,size_t);
 static uint8_t *nr_read(const char *directory,const char *name,size_t *bytes) {
@@ -41,10 +64,12 @@ static void nr_draw(NVNtexture *source,unsigned level,NVNtexture *output,uint8_t
   NVNcopyRegion region={0,0,0,16,16,1};CALL(nvnTextureReadTexels,output,NULL,&region,pixels);
 }
 static void nr_samples(NVNtexture *native,NVNtexture *reference,NVNtexture *output,unsigned levels) {
+  extern int vk_test_native_image_owner(uint64_t);
   uint8_t expected[1024],actual[1024];
   for(unsigned level=0;level<levels;level++) {
     nr_draw(reference,level,output,expected);nr_draw(native,level,output,actual);
     CHECK(!memcmp(expected,actual,sizeof actual));
+    if(nr_expected_resident)CHECK(vk_test_native_image_owner(((const tex_t *)native)->serial)==2);
   }
 }
 static void nr_tail_compare(NVNtexture *tail,unsigned first,NVNtexture *native,NVNtexture *output,
@@ -58,10 +83,14 @@ static void nr_tail_compare(NVNtexture *tail,unsigned first,NVNtexture *native,N
   }
 }
 static int native_resource_gpu_test(const char *directory) {
+  const char *resident=getenv("DM_NATIVE_RESOURCE_EXPECT_RESIDENT");
+  CHECK(!resident || !strcmp(resident,"1"));nr_expected_resident=resident!=NULL;
+  const char *lazy=getenv("DM_NATIVE_RESOURCE_EXPECT_LAZY");
+  CHECK(!lazy || !strcmp(lazy,"1"));nr_expected_lazy=lazy!=NULL;
   enum {pool_bytes=4<<20,native_offset=(1<<20)+8192,reference_offset=2<<20,
     linear_offset=3<<20,vertex_offset=(3<<20)+(256<<10),output_offset=(3<<20)+(320<<10),
     alias_offset=(3<<20)+(384<<10)};
-  CHECK(vk_pool_shared_mode() && V.features.textureCompressionASTC_LDR);
+  CHECK(vk_pool_shared_mode());
   size_t table_size,payload_size,linear_size;
   // The table was already authenticated and installed by real driver startup.
   const char *table_path=getenv("DM_VULKAN_NATIVE_RESOURCE_TABLE");CHECK(table_path);
@@ -69,6 +98,16 @@ static int native_resource_gpu_test(const char *directory) {
   nvn_native_table header;nvn_native_entry entry;
   CHECK(fread(&header,1,sizeof header,table_file)==sizeof header && header.count==1);
   CHECK(fread(&entry,1,sizeof entry,table_file)==sizeof entry);
+  // Gate the actual selected compressed format, not an unrelated ASTC feature.
+  // This fixture still compares original linear blocks and ordinary VkImages;
+  // accepting BC3 here grants no native-resident/coherent driver shortcut.
+  int bc3=entry.recipe.format==VK_FORMAT_BC3_UNORM_BLOCK || entry.recipe.format==VK_FORMAT_BC3_SRGB_BLOCK;
+  int astc=entry.recipe.format==VK_FORMAT_ASTC_4x4_UNORM_BLOCK || entry.recipe.format==VK_FORMAT_ASTC_4x4_SRGB_BLOCK ||
+    entry.recipe.format==VK_FORMAT_ASTC_6x6_UNORM_BLOCK || entry.recipe.format==VK_FORMAT_ASTC_6x6_SRGB_BLOCK;
+  CHECK((bc3 && V.features.textureCompressionBC) || (astc && V.features.textureCompressionASTC_LDR));
+  VkFormatProperties supported;vkGetPhysicalDeviceFormatProperties(V.physical,entry.recipe.format,&supported);
+  VkFormatFeatureFlags required=VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_TRANSFER_SRC_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+  CHECK((supported.optimalTilingFeatures&required)==required);
   nvn_native_family family={0};
   if(header.version==2)CHECK(fread(&family,1,sizeof family,table_file)==sizeof family);
   CHECK(fgetc(table_file)==EOF && !fclose(table_file));
@@ -92,9 +131,14 @@ static int native_resource_gpu_test(const char *directory) {
     CHECK(m->size==(uint64_t)((m->width+input->block-1)/input->block)*((m->height+input->block-1)/input->block)*16);
   }
   int window_fixture=V.options.pool_window_bytes!=0;
+  int lazy_active;uint64_t lazy_unique,lazy_mapped,lazy_nodes,lazy_covers;
+  vk_pool_lazy_window_stats(&lazy_active,&lazy_unique,&lazy_mapped,&lazy_nodes,&lazy_covers);
+  if(nr_expected_lazy)CHECK(window_fixture && lazy_active);
+  int real_heap_fixture=getenv("DM_SHARED_GUEST_HEAP_FIXTURE")!=NULL;
   uint8_t *raw=NULL,*storage=NULL;
-  if(window_fixture) {
-    CHECK(V.options.pool_window_bytes==65536 && dm_guest_shared_heap_contains((uintptr_t)bytes,pool_bytes));
+  if(window_fixture || real_heap_fixture) {
+    CHECK((!window_fixture || V.options.pool_window_bytes==65536) &&
+      dm_guest_shared_heap_contains((uintptr_t)bytes,pool_bytes));
     storage=bytes;dm_guest_write_prepare(storage,pool_bytes);
   } else {
     raw=mmap(NULL,pool_bytes+65536,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);CHECK(raw!=MAP_FAILED);
@@ -155,7 +199,10 @@ static int native_resource_gpu_test(const char *directory) {
   NVNvertexStreamState stream;CALL(nvnVertexStreamStateSetDefaults,&stream);CALL(nvnVertexStreamStateSetStride,&stream,16);
   S.stream[0]=*(const vs_st *)&stream;S.vertex[0]=(NVNbufferRange){(uintptr_t)storage+vertex_offset,sizeof vertices};
   nr_samples(&native,&reference,&output,input->levels);
-  if(window_fixture) {
+  // Destructive union is a separate backing policy. Lazy immutable aliases
+  // retain the same native allocation; the alias writer/readback, CPU Flush,
+  // B2T/T2T and release checks below still execute through that real policy.
+  if(window_fixture && !lazy_active) {
     extern void vk_test_texture_native_binding(uint64_t,VkDeviceMemory *,uint64_t *);
     VkDeviceMemory original,current;uint64_t original_offset,current_offset;
     uint64_t serial=((const tex_t *)&native)->serial;
@@ -206,13 +253,14 @@ static int native_resource_gpu_test(const char *directory) {
     (uintptr_t)storage+alias_offset,(uintptr_t)storage+native_offset+alias_mip->offset,alias_mip->size,0);
   submit(end());CHECK(nvn_dirty_tracked(storage+native_offset+alias_mip->offset,alias_mip->size));
   nr_blocks(&native,input,linear);nr_samples(&native,&reference,&output,input->levels);
-  // Thumbnail-shaped publication: mutate valid ASTC blocks in mip4 and upload
+  // Thumbnail-shaped publication: swap valid compressed blocks in mip4 and upload
   // only levels4..8. This proves this specific full-Builder/B2T contract, not
   // the still-unobserved game's choice of a separate reduced Builder.
   const nr_input_mip *top=&input->mips[4];CHECK(top->size>=32);
   uint8_t before[1024],after[1024];nr_draw(&reference,4,&output,before);
-  CHECK(memcmp(linear+top->offset,linear+top->offset+16,16));
-  uint8_t block[16];memcpy(block,linear+top->offset,16);memcpy(linear+top->offset,linear+top->offset+16,16);memcpy(linear+top->offset+16,block,16);
+  uint8_t original_blocks[32],changed_blocks[32];memcpy(original_blocks,linear+top->offset,32);
+  nr_mutated_blocks(input->nvn_format,original_blocks,changed_blocks);
+  memcpy(linear+top->offset,changed_blocks,32);
   memcpy(storage+linear_offset,linear,linear_size);CALL(nvnMemoryPoolFlushMappedRange,&pool,linear_offset,linear_size);
   CALL(nvnCommandBufferBeginRecording,&cmd);
   for(unsigned level=4;level<input->levels;level++) {
@@ -239,7 +287,7 @@ static int native_resource_gpu_test(const char *directory) {
   dm_guest_write_prepare(storage+native_offset,payload_size);
   memcpy(storage+native_offset,payload,payload_size);
   CALL(nvnMemoryPoolFlushMappedRange,&pool,native_offset,payload_size);
-  memcpy(block,linear+top->offset,16);memcpy(linear+top->offset,linear+top->offset+16,16);memcpy(linear+top->offset+16,block,16);
+  memcpy(linear+top->offset,original_blocks,32);
   nr_blocks(&native,input,linear);
   // Native -> ordinary T2T restores the altered reference thumbnail mips.
   CALL(nvnCommandBufferBeginRecording,&cmd);
@@ -250,7 +298,7 @@ static int native_resource_gpu_test(const char *directory) {
   submit(end());nr_blocks(&reference,input,linear);nr_samples(&native,&reference,&output,input->levels);
   // Standard B2T -> native T2T in one recorded stream exercises the actual
   // cross-image transfer dependency rather than only waiting between copies.
-  memcpy(block,linear+top->offset,16);memcpy(linear+top->offset,linear+top->offset+16,16);memcpy(linear+top->offset+16,block,16);
+  memcpy(linear+top->offset,changed_blocks,32);
   memcpy(storage+linear_offset,linear,linear_size);CALL(nvnMemoryPoolFlushMappedRange,&pool,linear_offset,linear_size);
   NVNtextureView thumbnail=nr_view(4);NVNcopyRegion thumbnail_region={0,0,0,top->width,top->height,1};
   CALL(nvnCommandBufferBeginRecording,&cmd);
@@ -270,13 +318,17 @@ static int native_resource_gpu_test(const char *directory) {
   CALL(nvnTextureFinalize,&native);CALL(nvnTextureFinalize,&reference);CALL(nvnTextureFinalize,&output);
   if(has_tail)CALL(nvnTextureFinalize,&tail);
   CALL(nvnCommandBufferFinalize,&cmd);CALL(nvnMemoryPoolFinalize,&pool);
-  CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));if(!window_fixture)vk_test_shared_image_backing(NULL,0);
+  CHECK(!nvn_dirty_tracked(storage+native_offset,payload_size));if(raw)vk_test_shared_image_backing(NULL,0);
   storage[native_offset]=0x42;CHECK(storage[native_offset]==0x42);if(raw)CHECK(!munmap(raw,pool_bytes+65536));
   uint64_t count_after,bytes_after,metadata_after;vk_native_allocation_stats(&count_after,&bytes_after,&metadata_after);
   CHECK(!count_after && !bytes_after && !metadata_after);
   printf("{\"native_allocation_lane\":true,\"imports\":%llu,\"import_bytes\":%llu,\"metadata_bytes\":%llu,\"same_physical_pages_as_Buffer_imports\":true,\"no_payload_copy\":true,\"window_two_unions\":%s,\"last_release_collected\":true}\n",
-    (unsigned long long)native_import_count,(unsigned long long)native_import_bytes,(unsigned long long)native_metadata_bytes,window_fixture?"true":"false");
+    (unsigned long long)native_import_count,(unsigned long long)native_import_bytes,(unsigned long long)native_metadata_bytes,window_fixture && !lazy_active?"true":"false");
   free(payload);free(linear);CHECK(vk_validation_error_count()==0);
+  printf("{\"native_resource_owner_check\":true,\"resident_expected\":%s,\"all_sampled_mips_checked\":%s}\n",
+    nr_expected_resident?"true":"false",nr_expected_resident?"true":"false");
+  printf("{\"native_resource_lazy_check\":true,\"expected\":%s,\"active\":%s,\"window_bytes\":%llu}\n",
+    nr_expected_lazy?"true":"false",lazy_active?"true":"false",(unsigned long long)V.options.pool_window_bytes);
   printf("{\"test\":\"native-resource-original-NVN\",\"checks\":%u,\"format\":%u,\"mips\":%u,\"family_version\":%u,\"tail_levels\":%u,\"memory_flags\":%u,\"atom\":%llu,\"native_offset\":%u,\"pool_bytes\":%u,\"no_pool_shadow\":true,\"full_all_mips\":true,\"tail_packaged_and_B2T\":%s,\"shared_gpu_gate\":%s,\"default_enabled\":false,\"game_modules_executed\":false,\"result\":\"passed\"}\n",
     checks,entry.recipe.format,entry.recipe.levels,header.version,has_tail?entry.recipe.levels-family.thumbnail_mip:0,
     properties,(unsigned long long)V.props.limits.nonCoherentAtomSize,native_offset,pool_bytes,
