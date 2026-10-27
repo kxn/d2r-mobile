@@ -71,6 +71,23 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertEqual(caught.exception.code,2)
             adb.assert_not_called()
 
+    def test_record_state_extra_cache_is_explicit_incremental_and_cold(self):
+        self.assertNotIn('record_state_extra_cache', self.launch_command([]))
+        for option,value in [('--record-state-extra-cache','true'),('--no-record-state-extra-cache','false')]:
+            command=self.launch_command(['--record-state-cache',option])
+            index=command.index('record_state_extra_cache')
+            self.assertEqual(command[index-1:index+2],['--ez','record_state_extra_cache',value])
+        for argv in [ ['--attach','--record-state-extra-cache'],
+                      ['--attach','--no-record-state-extra-cache'],
+                      ['--record-state-extra-cache'],
+                      ['--no-record-state-cache','--record-state-extra-cache'] ]:
+            with patch('sys.argv',[str(LAUNCHER),*argv]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
+
     def test_guest_wait_budget_is_bounded_and_cold(self):
         self.assertNotIn('guest_wait_budget_us',self.launch_command([]))
         for value in ('0','30','100'):

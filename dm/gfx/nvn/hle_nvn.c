@@ -707,10 +707,28 @@ static int record_state_enabled(void) {
 }
 _Static_assert(sizeof(blend_st)<=24 && sizeof(color_st)<=24 && sizeof(chmask_st)<=24 &&
     sizeof(ms_st)<=24 && sizeof(poly_st)<=24 && sizeof(ds_st)<=24, "Fixed state recording shadow bounds");
+static _Atomic int record_state_extra_mode = -1;
+static int record_state_extra_enabled(void) {
+    int mode = atomic_load_explicit(&record_state_extra_mode, memory_order_acquire);
+    if (mode >= 0) return mode;
+    const char *value = getenv("DM_NVN_RECORD_STATE_EXTRA_CACHE");
+    if (value && strcmp(value, "0") && strcmp(value, "1"))
+        die("DM_NVN_RECORD_STATE_EXTRA_CACHE expects 0 or 1");
+    mode = value && !strcmp(value, "1");
+    int unknown = -1;
+    if (atomic_compare_exchange_strong_explicit(&record_state_extra_mode, &unknown, mode,
+            memory_order_acq_rel, memory_order_acquire))
+        LOG("[nvn record extra state] enabled=%d fixed-cache-required=1 fixed-before-recording", mode);
+    else mode = unknown;
+    return mode;
+}
 NVN(nvnCommandBufferInitialize, NVNboolean, NVNcommandBuffer *c, NVNdevice *d) {
     memset(c, 0, sizeof(cmd_t)); CB(c)->magic = MAGIC('C', 'M', 'D', 'B'); CB(c)->dev = d;
     // Allocation failure conservatively keeps the exact original recorder.
-    if (record_state_enabled()) CB(c)->record_state = calloc(1, sizeof(nvn_record_state_cache));
+    if (record_state_enabled()) {
+        CB(c)->record_state = calloc(1, sizeof(nvn_record_state_cache));
+        if (CB(c)->record_state) CB(c)->record_state->extra_enabled = record_state_extra_enabled();
+    }
     return 1;
 }
 NVN(nvnCommandBufferFinalize, void, NVNcommandBuffer *c) {
@@ -908,11 +926,15 @@ NVN(nvnCommandBufferBindPolygonState, void, NVNcommandBuffer *c, const NVNpolygo
 NVN(nvnCommandBufferBindDepthStencilState, void, NVNcommandBuffer *c, const NVNdepthStencilState *st) { bind_state(c, 5, st, sizeof(ds_st)); }
 NVN(nvnCommandBufferBindVertexAttribState, void, NVNcommandBuffer *c, int n, const NVNvertexAttribState *st) {
     if (n < 0 || n > 16) { LOG("【红】BindVertexAttribState n=%d", n); return; }
+    if (CB(c)->recording && nvn_record_layout_matches(CB(c)->record_state, 0, (unsigned)n, st)) return;
     p_bind_vattr *r = RECN(c, OP_BIND_VATTR, p_bind_vattr, st, n); r->first = 0; r->n = n; if (n) memcpy(r->st, st, 4 * n);
+    if (CB(c)->recording) nvn_record_layout_capture(CB(c)->record_state, 0, (unsigned)r->n, r->st);
 }
 NVN(nvnCommandBufferBindVertexStreamState, void, NVNcommandBuffer *c, int n, const NVNvertexStreamState *st) {
     if (n < 0 || n > 16) { LOG("【红】BindVertexStreamState n=%d", n); return; }
+    if (CB(c)->recording && nvn_record_layout_matches(CB(c)->record_state, 1, (unsigned)n, st)) return;
     p_bind_vstream *r = RECN(c, OP_BIND_VSTREAM, p_bind_vstream, st, n); r->first = 0; r->n = n; if (n) memcpy(r->st, st, 8 * n);
+    if (CB(c)->recording) nvn_record_layout_capture(CB(c)->record_state, 1, (unsigned)r->n, r->st);
 }
 NVN(nvnCommandBufferBindVertexBuffers, void, NVNcommandBuffer *c, int first, int n, const NVNbufferRange *rg) {
     if (n < 0 || first + n > 16) { LOG("【红】BindVertexBuffers first=%d n=%d", first, n); return; }
@@ -948,9 +970,17 @@ NVN(nvnCommandBufferBindSeparateSamplers, void, NVNcommandBuffer *c, NVNshaderSt
 NVN(nvnCommandBufferBindSeparateSampler, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNseparateSamplerHandle h) {
     bind_handles(c, OP_BIND_SAMP, st, i, 1, &h.value);
 }
-NVN(nvnCommandBufferSetStencilValueMask, void, NVNcommandBuffer *c, NVNface f, int m) { *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, m, 0, 0, 0}; }
-NVN(nvnCommandBufferSetStencilMask, void, NVNcommandBuffer *c, NVNface f, int m) { *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, 0, m, 0, 1}; }
-NVN(nvnCommandBufferSetStencilRef, void, NVNcommandBuffer *c, NVNface f, int v) { *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, 0, 0, v, 2}; }
+static void record_stencil(NVNcommandBuffer *c, unsigned which, NVNface face, int value) {
+    if (CB(c)->recording && nvn_record_stencil_matches(CB(c)->record_state, which, face, value)) return;
+    p_stencil *r = REC(c, OP_STENCIL, p_stencil);
+    *r = (p_stencil){face, which == 0 ? value : 0, which == 1 ? value : 0, which == 2 ? value : 0, (int)which};
+    // Allocate/callback first, then remember only the final encoded command.
+    if (CB(c)->recording) nvn_record_stencil_capture(CB(c)->record_state, (unsigned)r->which, r->face,
+        r->which == 0 ? r->value_mask : r->which == 1 ? r->mask : r->ref);
+}
+NVN(nvnCommandBufferSetStencilValueMask, void, NVNcommandBuffer *c, NVNface f, int m) { record_stencil(c, 0, f, m); }
+NVN(nvnCommandBufferSetStencilMask, void, NVNcommandBuffer *c, NVNface f, int m) { record_stencil(c, 1, f, m); }
+NVN(nvnCommandBufferSetStencilRef, void, NVNcommandBuffer *c, NVNface f, int v) { record_stencil(c, 2, f, v); }
 NVN(nvnCommandBufferSetPolygonOffsetClamp, void, NVNcommandBuffer *c, float fa, float un, float cl) {
     *REC(c, OP_POLY_OFFSET, p_poly_offset) = (p_poly_offset){fa, un, cl};
 }
