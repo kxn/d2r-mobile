@@ -66,6 +66,14 @@ public final class VerifiedStartupProfileTest {
             values.setProperty("stream_submits", "false");
             values.setProperty("turnip_autotune", "profiled");
         }
+        void useV3() {
+            useV2(); values.setProperty("schema", "3");
+            values.setProperty("turnip_swapchain_ubwc", "true");
+        }
+        void useV4() {
+            useV3(); values.setProperty("schema", "4");
+            values.setProperty("guest_wait_budget_us", "30");
+        }
         void store() throws Exception {
             try (Writer out = Files.newBufferedWriter(profile(), StandardCharsets.UTF_8)) { values.store(out, null); }
         }
@@ -131,6 +139,54 @@ public final class VerifiedStartupProfileTest {
             f.values.setProperty("schema", "2"); f.values.setProperty("turnip_swapchain_ubwc", "true");
             f.store(); rejects(f::load); // Older schemas still reject extra keys.
         }
+        for (String value : Arrays.asList("0", "30", "100")) {
+            try (Fixture f = new Fixture()) {
+                f.useV4(); f.values.setProperty("guest_wait_budget_us", value); f.store();
+                Map<String,Object> extras = f.load().extras;
+                check(extras.get("guest_wait_budget_us") instanceof Integer);
+                check(Integer.valueOf(value).equals(extras.get("guest_wait_budget_us")));
+                check(Boolean.TRUE.equals(extras.get("turnip_swapchain_ubwc")));
+                check(Boolean.TRUE.equals(extras.get("inline_translation")));
+                check(Integer.valueOf(128).equals(extras.get("translation_cpu_mask")));
+                check(Boolean.TRUE.equals(extras.get("stream_submit_reference")));
+                check("profiled".equals(extras.get("turnip_autotune")));
+            }
+        }
+        for (String value : Arrays.asList("-1", "101", "text", "+30", "030", "00", "-0",
+                " 30", "30 ", "30.0", "0x1e", "2147483648", "999999999999999999999999999999")) {
+            try (Fixture f = new Fixture()) {
+                f.useV4(); f.values.setProperty("guest_wait_budget_us", value); f.store(); rejects(f::load);
+            }
+        }
+        for (String key : Arrays.asList("guest_wait_budget_us", "turnip_swapchain_ubwc", "inline_translation",
+                "translation_cpu_mask", "stream_submits", "turnip_autotune", "receipt_sha256")) {
+            try (Fixture f = new Fixture()) { f.useV4(); f.values.remove(key); f.store(); rejects(f::load); }
+        }
+        for (String schema : Arrays.asList("1", "2", "3")) {
+            try (Fixture f = new Fixture()) {
+                if (schema.equals("2")) f.useV2();
+                if (schema.equals("3")) f.useV3();
+                f.store(); check(!f.load().extras.containsKey("guest_wait_budget_us"));
+                f.values.setProperty("guest_wait_budget_us", "0"); f.store(); rejects(f::load);
+            }
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV4(); f.values.setProperty("scale_3d", "1.0"); f.store(); rejects(f::load);
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV4(); f.store();
+            Files.write(f.profile(), "\nguest_wait_budget_us=30\n".getBytes(StandardCharsets.UTF_8),
+                    java.nio.file.StandardOpenOption.APPEND);
+            rejects(f::load);
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV4(); f.store();
+            Files.write(f.apk.toPath(), new byte[]{9}); rejects(f::load);
+        }
+        try (Fixture f = new Fixture()) {
+            f.useV4(); f.store();
+            Files.write(f.runtime.toPath().resolve("launch-profile-receipt.json"), new byte[]{9}); rejects(f::load);
+        }
         for (String key : Arrays.asList("inline_translation", "translation_cpu_mask", "stream_submits", "turnip_autotune")) {
             try (Fixture f = new Fixture()) { f.useV2(); f.values.remove(key); f.store(); rejects(f::load); }
         }
@@ -174,6 +230,6 @@ public final class VerifiedStartupProfileTest {
             Path link = f.runtime.toPath().resolve(f.files[3]); Files.delete(link); Files.createSymbolicLink(link,outside);
             f.store(); rejects(f::load);
         }
-        System.out.println("PASS verified desktop profile: identities, explicit-launch isolation, immutable typed cold options, user settings, bounded input and failures");
+        System.out.println("PASS verified desktop profile schemas 1-4: identities, exact fields, immutable typed cold options, canonical 0..100 us budget, bounded input and failures");
     }
 }

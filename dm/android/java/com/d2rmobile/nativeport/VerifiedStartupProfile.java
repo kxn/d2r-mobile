@@ -29,11 +29,14 @@ final class VerifiedStartupProfile {
     private static final Set<String> REQUIRED = new HashSet<>(Arrays.asList(KEYS));
     private static final Set<String> REQUIRED_V2 = new HashSet<>(REQUIRED);
     private static final Set<String> REQUIRED_V3 = new HashSet<>();
+    private static final Set<String> REQUIRED_V4 = new HashSet<>();
     static {
         REQUIRED_V2.addAll(Arrays.asList("inline_translation", "translation_cpu_mask",
                 "stream_submits", "turnip_autotune"));
         REQUIRED_V3.addAll(REQUIRED_V2);
         REQUIRED_V3.add("turnip_swapchain_ubwc");
+        REQUIRED_V4.addAll(REQUIRED_V3);
+        REQUIRED_V4.add("guest_wait_budget_us");
     }
     final String name;
     final Map<String, Object> extras;
@@ -76,10 +79,11 @@ final class VerifiedStartupProfile {
             throw invalid("profile properties", error);
         }
         String schema = values.getProperty("schema");
-        boolean version3 = "3".equals(schema);
+        boolean version4 = "4".equals(schema);
+        boolean version3 = "3".equals(schema) || version4;
         boolean version2 = "2".equals(schema) || version3;
         if (!version2 && !"1".equals(schema)) throw invalid("profile schema");
-        if (!values.stringPropertyNames().equals(version3 ? REQUIRED_V3 : version2 ? REQUIRED_V2 : REQUIRED))
+        if (!values.stringPropertyNames().equals(version4 ? REQUIRED_V4 : version3 ? REQUIRED_V3 : version2 ? REQUIRED_V2 : REQUIRED))
             throw invalid("profile fields");
         String name = values.getProperty("name");
         if (name.isEmpty() || name.length() > 64 || name.indexOf('\n') >= 0 || name.indexOf('\r') >= 0)
@@ -139,6 +143,15 @@ final class VerifiedStartupProfile {
             extras.put("turnip_autotune", autotune);
         }
         if (version3) extras.put("turnip_swapchain_ubwc", flag(values, "turnip_swapchain_ubwc"));
+        if (version4) {
+            String budget = values.getProperty("guest_wait_budget_us");
+            if (!budget.matches("0|[1-9][0-9]*")) throw invalid("guest wait budget");
+            int microseconds;
+            try { microseconds = Integer.parseInt(budget); }
+            catch (NumberFormatException error) { throw invalid("guest wait budget", error); }
+            if (microseconds > 100) throw invalid("guest wait budget range");
+            extras.put("guest_wait_budget_us", microseconds);
+        }
         return new VerifiedStartupProfile(name, extras);
     }
 

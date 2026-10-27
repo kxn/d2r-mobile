@@ -1,4 +1,4 @@
-# Verified desktop startup, schemas 1, 2 and 3
+# Verified desktop startup, schemas 1, 2, 3 and 4
 
 This corrects a delivery gap: transaction tests restore their original APK and
 assets; that original APK predates shared/native resources. Successful test
@@ -68,6 +68,28 @@ an externally configured experiment. The allocation request is not proof of
 actual compression: retain the allocator/mapper layout and real-game checks in
 the publication evidence. Old schemas continue rejecting this extra key.
 
+Schema 4 retains exactly every schema 3 field and requires one additional field
+(set `schema=4` in the same properties file):
+
+```
+guest_wait_budget_us=30
+```
+
+The value is a canonical decimal integer from 0 through 100, in microseconds.
+Signs, leading zeroes (except `0`), whitespace within the parsed value,
+nondecimal text and overflow are rejected. The loader emits an `Integer` cold
+extra for the existing native startup setter. Zero retains direct condition
+waiting; a positive budget selects the existing bounded primary-thread polling
+phase before falling back to that wait. This does not change guest lock
+ordering, timeout/cancellation semantics, or user display/thermal settings.
+Polling has a CPU cost, so the publisher must qualify the selected budget for
+the exact APK/device tuple rather than infer a general platform default.
+
+Schemas 1, 2 and 3 still accept only their original exact field sets. They do not
+emit this extra and retain the runtime's zero-budget default; they reject
+`guest_wait_budget_us` even when its value is `0`. Schema 4 cannot omit it or any
+inherited field. All existing identity, SHA, path and receipt checks apply.
+
 These values describe the locally qualified Q735 combination, not universal
 device defaults. The CPU mask is a canonical nonnegative decimal Java integer;
 128 selects CPU 7 on that device. `turnip_autotune` accepts only `default`,
@@ -79,7 +101,7 @@ SYSMEM mode. The stream field selects the existing heuristic submission policy;
 false retains guest-required submissions and asynchronous GPU completion.
 
 Schema 1 remains backward compatible and does not imply these four selections.
-Neither version overrides user resolution, 3D scale, FPS, or thermal controls.
+No schema overrides user resolution, 3D scale, FPS, or thermal controls.
 Any change to the APK or payload tuple requires verified matching hashes and a
 new receipt before ordinary desktop qualification.
 
