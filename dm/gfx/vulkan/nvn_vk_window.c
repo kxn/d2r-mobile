@@ -602,6 +602,15 @@ uint64_t vk_window_present(const void *texture, const int crop[4], uint64_t sequ
     if(dx+dw>(int)extent.width)dw=extent.width-dx;
     if(dy+dh>(int)extent.height)dh=extent.height-dy;
   }
+  // Guest output rounding can leave only one pixel on either edge even with
+  // the ordinary View-sized swapchain. Cover that negligible margin rather
+  // than clearing the whole swap image before overwriting almost all of it.
+  // This also keeps the full-coverage fast path independent of native sizing.
+  // A real letterbox still needs its original rectangle and initialized bars.
+  int margin_w=(int)extent.width-dw,margin_h=(int)extent.height-dh;
+  if(margin_w>=0 && margin_w<=2 && margin_h>=0 && margin_h<=2) {
+    dx=dy=0;dw=extent.width;dh=extent.height;
+  }
   if(geometry_changed)
     LOG("[vulkan present] native buffer applied=%ux%u content=%d,%d %dx%d",extent.width,extent.height,dx,dy,dw,dh);
   int full=!x && !y && w==t->d.width && h==t->d.height &&
