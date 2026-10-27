@@ -48,7 +48,7 @@ typedef struct render_job {
   int has_depth;
   int first_draw;
   int clear_only;
-  unsigned load_elisions;
+  unsigned load_elisions,clear_elisions;
   int preserve_stores;
   // Physical binding state of this secondary only. Buffer contents/ownership
   // are resolved separately on every draw before consulting these keys.
@@ -77,7 +77,7 @@ static int pl_render_end(render_job *job);
 static int pl_target_clear(const p_set_rt*,const p_scissor*,int,VkImageAspectFlags,const VkClearValue*);
 // Single recording owner; cross-thread getters see the last graphics_end.
 static struct {
-  uint64_t depth_omissions,store_omissions,load_omissions,readonly_store_omissions;
+  uint64_t depth_omissions,store_omissions,load_omissions,covered_clear_omissions,readonly_store_omissions;
   uint64_t clear_attachment_omissions,prepare_reuses,prepare_checks;
   uint64_t prepare_lookups;
   uint64_t pixel_local_plans,pixel_local_draws,pixel_local_aborts;
@@ -159,6 +159,7 @@ void vk_pixel_local_stats(uint64_t *planned,uint64_t *draws,uint64_t *aborts) {
 static atomic_uint_fast64_t depth_omissions;
 static atomic_uint_fast64_t store_omissions;
 static atomic_uint_fast64_t load_omissions;
+static atomic_uint_fast64_t covered_clear_omissions;
 static atomic_uint_fast64_t readonly_store_omissions;
 static atomic_uint_fast64_t clear_attachment_omissions;
 static atomic_int clear_attachment_reference;
@@ -170,6 +171,7 @@ uint64_t vk_render_clear_attachment_omissions(void) {
 uint64_t vk_render_depth_omissions(void) { return atomic_load(&depth_omissions); }
 uint64_t vk_render_store_omissions(void) { return atomic_load(&store_omissions); }
 uint64_t vk_render_load_omissions(void) { return atomic_load(&load_omissions); }
+uint64_t vk_render_covered_clear_omissions(void) { return atomic_load(&covered_clear_omissions); }
 uint64_t vk_render_readonly_store_omissions(void) { return atomic_load(&readonly_store_omissions); }
 static void render_primary_begin(render_job *j) {
   if(!j->direct || j->primary_begun)return;
@@ -663,8 +665,13 @@ void vk_render_end_at(const char *file, unsigned line) {
       if(n<=8 || (V.options.stats && n%600<j->load_elisions))
         LOG("[vulkan pass] omitted fully overwritten attachment loads total=%llu",(unsigned long long)n);
     }
+    if(j->clear_elisions) {
+      uint64_t n=(draw_recorded.covered_clear_omissions += j->clear_elisions);
+      if(n<=8 || (V.options.stats && n%600<j->clear_elisions))
+        LOG("[vulkan pass] omitted fully overwritten initial color clears total=%llu",(unsigned long long)n);
+    }
     int plane_none=render_ds_plane_stores(j);
-    if(dead||j->load_elisions||readonly_none||plane_none) {
+    if(dead||j->load_elisions||j->clear_elisions||readonly_none||plane_none) {
       VkSubpassDescription sub={.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount=j->color_count,.pColorAttachments=j->colors,
         .pDepthStencilAttachment=j->has_depth?&j->depth:NULL};
@@ -828,6 +835,7 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   }
   if (state->jobs) die("Vulkan graphics resources reused before recycling");
   graphics_state = state;
+  (void)vk_discard_covered_clears_enabled();
   mip_clear_begin();
   // 按提交锁定模式；命令更新和绘制必须使用同一套失效规则。
   // Latch per submission: state updates and draws must share invalidation rules.
@@ -844,6 +852,7 @@ void vk_graphics_end(vk_graphics_submission *state) {
   atomic_store_explicit(&depth_omissions,draw_recorded.depth_omissions,memory_order_relaxed);
   atomic_store_explicit(&store_omissions,draw_recorded.store_omissions,memory_order_relaxed);
   atomic_store_explicit(&load_omissions,draw_recorded.load_omissions,memory_order_relaxed);
+  atomic_store_explicit(&covered_clear_omissions,draw_recorded.covered_clear_omissions,memory_order_relaxed);
   atomic_store_explicit(&readonly_store_omissions,draw_recorded.readonly_store_omissions,memory_order_relaxed);
   atomic_store_explicit(&clear_attachment_omissions,draw_recorded.clear_attachment_omissions,memory_order_relaxed);
   atomic_store_explicit(&prepare_reuses,draw_recorded.prepare_reuses,memory_order_relaxed);

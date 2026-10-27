@@ -265,6 +265,8 @@ void vk_stream_checkpoint(void);
 void vk_stream_compute_checkpoint(void);
 int vk_render_active(void);
 void vk_render_materialize_pending(void);
+int vk_discard_covered_clears_enabled(void);
+uint64_t vk_render_covered_clear_omissions(void);
 void vk_render_attachment_representation_changed(void);
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
 void vk_test_attachment_reuse_stats(uint64_t *hits,uint64_t *retries);

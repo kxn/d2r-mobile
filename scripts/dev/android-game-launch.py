@@ -102,6 +102,7 @@ parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,def
 parser.add_argument('--source-partition',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental sparse image source responsibilities (default off)')
 parser.add_argument('--record-state-cache',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental elimination of identical fixed-state recordings (default off)')
 parser.add_argument('--record-state-extra-cache',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental stencil/layout recording elimination (default off); enabling requires --record-state-cache')
+parser.add_argument('--discard-covered-clears',action=argparse.BooleanOptionalAction,default=None,help='startup-only experiment: discard an initial color clear proven fully overwritten by the first draw (default off)')
 parser.add_argument('--sparse-submission-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental compact planning spans (default off); preserves resource/query/store semantics')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
@@ -212,6 +213,8 @@ if args.attach and args.record_state_cache is not None:
     parser.error('--record-state-cache is startup-only')
 if args.attach and args.record_state_extra_cache is not None:
     parser.error('--record-state-extra-cache is startup-only')
+if args.attach and args.discard_covered_clears is not None:
+    parser.error('--discard-covered-clears is startup-only')
 if args.attach and args.sparse_submission_plan is not None:
     parser.error('--sparse-submission-plan is startup-only')
 if args.record_state_extra_cache and args.record_state_cache is not True:
@@ -328,6 +331,8 @@ if not args.attach:
         launch += ['--ez','record_state_cache',str(args.record_state_cache).lower()]
     if args.record_state_extra_cache is not None:
         launch += ['--ez','record_state_extra_cache',str(args.record_state_extra_cache).lower()]
+    if args.discard_covered_clears is not None:
+        launch += ['--ez','discard_covered_clears',str(args.discard_covered_clears).lower()]
     if args.sparse_submission_plan is not None:
         launch += ['--ez','sparse_submission_plan',str(args.sparse_submission_plan).lower()]
     if args.state_segments is not None:
@@ -547,6 +552,10 @@ while time.monotonic() < deadline:
                     source_partition_modes=re.findall(r'\[vulkan\] image source partition enabled=([01])\b',log)
                     record_state_modes=re.findall(r'\[nvn record state\] enabled=([01])\b',log)
                     actual_record_state_cache=bool(int(record_state_modes[-1])) if record_state_modes else None
+                    covered_clear_modes=re.findall(r'\[vulkan covered clears\] enabled=([01])\b',log)
+                    actual_discard_covered_clears=bool(int(covered_clear_modes[-1])) if covered_clear_modes else None
+                    if args.discard_covered_clears is not None and actual_discard_covered_clears != args.discard_covered_clears:
+                        raise RuntimeError('discard_covered_clears actual policy mismatch')
                     sparse_plan_modes=re.findall(r'\[vulkan\] sparse submission plan: (enabled|disabled)\b',log)
                     actual_sparse_submission_plan=(sparse_plan_modes[-1]=='enabled') if sparse_plan_modes else None
                     if args.sparse_submission_plan is not None and actual_sparse_submission_plan != args.sparse_submission_plan:
@@ -642,6 +651,8 @@ while time.monotonic() < deadline:
                               'actual_record_state_cache':actual_record_state_cache,
                               'requested_record_state_extra_cache':args.record_state_extra_cache,
                               'actual_record_state_extra_cache':actual_record_state_extra_cache,
+                              'requested_discard_covered_clears':args.discard_covered_clears,
+                              'actual_discard_covered_clears':actual_discard_covered_clears,
                               'requested_sparse_submission_plan':args.sparse_submission_plan,
                               'actual_sparse_submission_plan':actual_sparse_submission_plan,
                               'actual_source_partition':actual_source_partition,

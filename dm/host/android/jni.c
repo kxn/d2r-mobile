@@ -556,6 +556,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRecordSt
   record_state_extra_cache_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
+static int discard_covered_clears_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeDiscardCoveredClears(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"discard_covered_clears is fixed before native startup");
+    return;
+  }
+  discard_covered_clears_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int sparse_submission_plan_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSparseSubmissionPlan(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -997,6 +1010,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
       setenv("DM_NVN_INLINE_SHARED",inline_translation_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SPARSE_PLAN",sparse_submission_plan_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_DISCARD_COVERED_CLEARS",discard_covered_clears_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_KEEP_ALL",keep_attachment_stores_startup?"1":"0",1) ||
       setenv("DM_VULKAN_RENDER_RECORD_MODE",render_record_mode,1) ||
       setenv("DM_NVN_RECORD_STATE_CACHE",record_state_cache_startup?"1":"0",1) ||

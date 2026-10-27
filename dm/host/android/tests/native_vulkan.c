@@ -1170,6 +1170,10 @@ int dm_vulkan_test_main(void) {
   CHECK(visit.pages == 0);
   CHECK(CALL(nvnCommandBufferInitialize, &cmd, &device));
   CALL(nvnCommandBufferAddCommandMemory, &cmd, &memory, 0, 1 << 20);
+  if(getenv("DM_COVER_CLEAR_FIXTURE")) {
+    load_cover_test();CHECK(vk_validation_error_count()==0);
+    printf("{\"test\":\"covered-initial-color-clears\",\"cases\":37,\"checks\":%u,\"discard_clears\":%d,\"result\":\"passed\",\"game_modules_executed\":false}\n",checks,vk_discard_covered_clears_enabled());return 0;
+  }
 #ifndef DM_ANDROID_APP
   if(getenv("DM_TEXTURE_RETIREMENT_INDEX_FIXTURE")) {
     texture_registration_retirement_test();image_retirement_test();

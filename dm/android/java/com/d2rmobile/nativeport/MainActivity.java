@@ -52,6 +52,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeRecordStateCache(boolean enabled);
     private static native void nativeRecordStateExtraCache(boolean enabled);
     private static native void nativeSparseSubmissionPlan(boolean enabled);
+    private static native void nativeDiscardCoveredClears(boolean enabled);
     private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeGuestWorkerQos(boolean enabled);
     private static native void nativeGuestWaitBudget(int microseconds);
@@ -295,6 +296,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeRecordStateCache(getIntent().getBooleanExtra("record_state_cache", false));
             nativeRecordStateExtraCache(getIntent().getBooleanExtra("record_state_extra_cache", false));
             nativeSparseSubmissionPlan(getIntent().getBooleanExtra("sparse_submission_plan", false));
+            nativeDiscardCoveredClears(getIntent().getBooleanExtra("discard_covered_clears", false));
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeGuestWorkerQos(getIntent().getBooleanExtra("guest_worker_qos", false));
             nativeGuestWaitBudget(getIntent().getIntExtra("guest_wait_budget_us", 0));
@@ -556,6 +558,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("record_state_extra_cache")) {
             android.util.Log.w("D2RDriver", "extra recording state cache requires a cold restart");
             intent.removeExtra("record_state_extra_cache");
+        }
+        if (intent.hasExtra("discard_covered_clears")) {
+            android.util.Log.w("D2RDriver", "covered clear discard requires a cold restart");
+            intent.removeExtra("discard_covered_clears");
         }
         if (intent.hasExtra("sparse_submission_plan")) {
             android.util.Log.w("D2RDriver", "sparse submission plan requires a cold restart");

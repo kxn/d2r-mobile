@@ -1,6 +1,17 @@
 // 原 attr_read/first_draw_covers；几何证明直接复用原 nvn_cover.h。
 // Upstream attr_read/first_draw_covers; reuse original nvn_cover.h geometry proof.
 #include "../nvn/nvn_cover.h"
+// Cold, independent experiment; the existing LOAD proof is unchanged.
+int vk_discard_covered_clears_enabled(void) {
+  static int enabled=-1;
+  if(enabled<0) {
+    const char *v=getenv("DM_VULKAN_DISCARD_COVERED_CLEARS");
+    if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_DISCARD_COVERED_CLEARS expects 0 or 1");
+    enabled=v && !strcmp(v,"1");
+    LOG("[vulkan covered clears] enabled=%d",enabled);
+  }
+  return enabled;
+}
 static int cover_positions(vk_shader *vs,vk_shader *fs,const p_draw *draw,const p_draw_idx *idx,float p[64][4]) {
   if(V.options.render_record_mode)return 0;
   if(!vs || !fs || vs->pos_attr<0 || vs->pos_attr>=16 || fs->may_discard || fs->writes_smask ||
@@ -88,13 +99,16 @@ static void cover_first_draw(render_job *j,vk_shader *list[6],const VkPipelineDe
   for(unsigned k=0;k<j->color_count;k++) {
     unsigned a=j->colors[k].attachment;const tex_t *target=S.targets.color[k];
     const view_t *v=S.targets.has_cview[k]?&S.targets.cview[k]:NULL;
-    if(a==VK_ATTACHMENT_UNUSED||!target||j->attachments[a].loadOp!=VK_ATTACHMENT_LOAD_OP_LOAD ||
+    int clear=a!=VK_ATTACHMENT_UNUSED && j->attachments[a].loadOp==VK_ATTACHMENT_LOAD_OP_CLEAR;
+    if(a==VK_ATTACHMENT_UNUSED||!target||
+       (j->attachments[a].loadOp!=VK_ATTACHMENT_LOAD_OP_LOAD && !(clear && vk_discard_covered_clears_enabled())) ||
        j->attachments[a].samples!=VK_SAMPLE_COUNT_1_BIT || target->d.target==NVN_TEXTURE_TARGET_3D ||
        !(list[1]->color_mask&(1u<<k)) || ((S.color.blend_en>>k)&1) || ((S.chmask.mask>>(k*4))&15)!=15 || cover_reads_target(list,target,v,bound_epoch)) continue;
     int level=v&&v->set_levels?v->base_level:0;if(level<0||level>31) continue;
     unsigned w=target->d.width>>level,h=target->d.height>>level;if(!w) w=1;if(!h) h=1;
     if(!nvn_cover(p,n,prim,S.poly.cull,S.poly.front==NVN_FRONT_FACE_CCW,S.has_viewport,S.viewport[0],S.has_scissor,sc,w,h)) continue;
-    j->attachments[a].loadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;j->load_elisions++;
+    j->attachments[a].loadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    if(clear)j->clear_elisions++;else j->load_elisions++;
     // 原 LOADPROBE 为常见浮点附件加载哨兵；正确的全覆盖必须覆盖它的每个像素。
     // Original LOADPROBE loads a sentinel for common float attachments. A
     // correct coverage proof must overwrite every one of its pixels.
