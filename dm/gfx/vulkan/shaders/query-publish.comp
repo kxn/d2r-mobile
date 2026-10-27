@@ -15,6 +15,15 @@ uvec2 add_pair(uvec2 a,uvec2 b) {
     uint carry;uint lo=uaddCarry(a.x,b.x,carry);
     return uvec2(lo,a.y+b.y+carry);
 }
+uint product_digit(uvec3 product,int first) {
+    // The numerator is a 96-bit product followed by binary_shift zero bits.
+    // Read one radix-65536 digit, including a partially shifted low digit.
+    if(first<0)return first>-16?(product.x<<uint(-first))&65535u:0u;
+    uint word=uint(first)/32u,bit=uint(first)%32u;
+    uint value=product[word]>>bit;
+    if(bit>16u && word<2u)value|=product[word+1u]<<(32u-bit);
+    return value&65535u;
+}
 uvec2 scaled_ticks(uvec2 raw) {
     if(p.valid_bits<32u)raw=uvec2(raw.x&((1u<<p.valid_bits)-1u),0u);
     else if(p.valid_bits==32u)raw.y=0u;
@@ -24,22 +33,25 @@ uvec2 scaled_ticks(uvec2 raw) {
     umulExtended(raw.y,p.multiplier,h1,l1);
     uint middle=uaddCarry(h0,l1,carry);
     uvec3 product=uvec3(l0,middle,h1+carry);
-    // Divide the 96-bit product (possibly shifted left) by625. Negative
-    // binary shifts are applied to the quotient, preserving exact floor.
+    // Exact long division in radix 65536 instead of one bit at a time.
+    // remainder<625, so remainder*65536+digit is <40960000: every division
+    // fits u32, with a constant divisor the compiler can strength-reduce.
+    // Negative shifts are applied to quotient digits, preserving exact floor.
     int positive=max(p.binary_shift,0),negative=max(-p.binary_shift,0);
     uint remainder=0u;uvec2 result=uvec2(0u);bool overflow=false;
-    for(int bit=95+positive;bit>=0;--bit) {
-        int source_bit=bit-positive;uint digit=0u;
-        if(source_bit>=0)digit=(product[source_bit/32]>>uint(source_bit%32))&1u;
-        remainder=(remainder<<1)|digit;
-        bool one=remainder>=625u;if(one)remainder-=625u;
-        int target_bit=bit-negative;
-        // Positive quotient bits above the original uint64 ABI are never
-        // dropped. Android's actual legacy __fixunstfdi returns UINT64_MAX
-        // on this overflow, so explicitly reproduce that defined policy.
-        if(one && target_bit>=64)overflow=true;
-        if(one && target_bit>=0 && target_bit<64)
-            result[target_bit/32]|=1u<<uint(target_bit%32);
+    for(int chunk=(95+positive)/16;chunk>=0;--chunk) {
+        uint numerator=(remainder<<16)|product_digit(product,chunk*16-positive);
+        uint digit=numerator/625u;remainder=numerator%625u;
+        int target=chunk*16-negative;
+        if(target<0) {
+            if(target>-16)result.x|=digit>>uint(-target);
+        } else if(target<32) {
+            result.x|=digit<<uint(target);
+            if(target>16)result.y|=digit>>uint(32-target);
+        } else if(target<64) {
+            result.y|=digit<<uint(target-32);
+            if(target>48 && (digit>>uint(64-target))!=0u)overflow=true;
+        } else if(digit!=0u)overflow=true;
     }
     return overflow?uvec2(0xffffffffu):result;
 }

@@ -14,9 +14,9 @@ static uint64_t query_integer_reference(uint64_t raw,float period,uint32_t bits)
   return product>UINT64_MAX?UINT64_MAX:(uint64_t)product;
 }
 static void gpu_query_math_test(void) {
-  const float periods[]={1,13,19.2f,52,76.92308f,0x1.000002p-20f,0x1p-126f,0x1p-149f,0x1p30f,0x1p40f,0x1.fffffep48f,FLT_MAX};
+  const float periods[]={1,13,19.2f,52,52.083333333f,76.92308f,0x1.000002p-20f,0x1p-126f,0x1p-149f,0x1p30f,0x1p40f,0x1.fffffep48f,FLT_MAX};
   const uint32_t widths[]={1,16,31,32,33,48,63,64};
-  const uint64_t raw_values[]={0,1,625,UINT32_MAX,UINT64_C(0x100000001),UINT64_C(0x123456789abc),UINT64_C(0x00ffffffffffffff),UINT64_MAX,UINT64_MAX-1,
+  const uint64_t raw_values[]={0,1,625,UINT64_C(0xffff),UINT64_C(0x10000),UINT64_C(0x10001),UINT32_MAX,UINT64_C(0x100000000),UINT64_C(0x100000001),UINT64_C(0x123456789abc),UINT64_C(0x00ffffffffffffff),UINT64_MAX,UINT64_MAX-1,
     UINT64_C(0x7fffffffffffffff),UINT64_C(0x8000000000000000),
     UINT64_C(12489982394828155300),UINT64_C(12489982394828155301),UINT64_C(12489982394828155302),
     UINT64_C(12489982394828155303),UINT64_C(12489982394828155304)};
