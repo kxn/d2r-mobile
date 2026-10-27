@@ -108,3 +108,27 @@ cmake --build "$D2R_ROOT/.local/build/upstream-native-ir-repro" --target dm -j 4
 - 补丁应用核验：`analysis-agent/patch-backup-application-check.json`。
 
 复现真机采集仍需原合法游戏模块/资源、相同原角色clone、Android壳和adrenotools配套库；补丁只覆盖宿主诊断，不包含或改写这些输入。本轮源码备份和文档整理没有操作ADB、重编产物或修改已冻结runner。
+
+## 候选已执行后的结果
+
+同一v2 APK普通运行的四轮8秒Perfetto初筛，依次reference/candidate/candidate/reference：
+39.9364 / 40.3752 / 40.0655 / 40.0644 FPS，均值40.0004→40.2203，约+0.55%。
+两次candidate实际环境只增加`IR3_SHADER_DEBUG=nodescprefetch`，游戏/driver/PSO输入不变；
+独立静态导出不计入这些FPS。初筛幅度小，未证明显著或长期净收益，未修改产品默认。
+
+后继标准KHR候选静态导出仍匹配12对完整PSO、stage和SPIRV，但IR1/IR2只返回初始NIR，
+未返回IR3 Assembly；原比较脚本因假设存在程序集而StopIteration，保留失败。
+派生v2整理脚本将缺失明确记null/unknown，不能把“没有程序集”算成“dummy请求清零”。
+IR2仅在工具窗尝试现成`MESA_SHADER_CACHE_DISABLE=true`仍未补出程序集，不继续重采碰运气。
+源码的IR3 disk-cache早返回和已有variant复用可跳过disasm生成，是明确工具覆盖风险，
+尚未证明IR2到底走了哪条路径。两次捕获和四次普通运行均已停止，环境/selector复原；
+上游APK也已装回原carrier，未把静态诊断构建留作日常运行版本。
+
+KHR统计提供较窄的机制证据：preamble169→130或226→185，body instruction计数
+2562→2564或2704→2704，cat5/cat6与寄存器/溢出统计基本不变。B3源码中body计数
+明确排除preamble，故不能说整Shader少39/41条body指令，也不能用统计代替程序集逐操作验证。
+此候选减少前言工作的同时可能失去隐藏descriptor延迟的收益；不能仅凭静态减少或单轮涨帧默认开启。
+
+原始证据在`.local/logs/q735-system-native-ir-v1/analysis-agent/`：
+`prefetch-screen-summary.json`、四份原Perfetto及receipt、`NDP-IR1/ir`、`NDP-IR2/ir`、
+派生parser与各自`ir-comparison-v2.json`。原冻结脚本和失败日志保留。

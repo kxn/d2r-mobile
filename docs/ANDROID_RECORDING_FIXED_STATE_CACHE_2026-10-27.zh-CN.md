@@ -123,3 +123,20 @@ schema5必填严格布尔，沿用原APK/输入/driver/receipt锚点验证，显
 - `.local/build/record-state-cache-v1/`和`record-state-cache-schema5-v1/`：源码/构建清单、native SHA、APK与来源资格。
 
 所有真机arm采后执行原生命周期fresh save2并停止。未使用Mali或6GB平板。
+
+## Q735桌面启动部署已完成
+
+schema5配置明确`record_state_cache=true`，保留原HLE30us、inline/native/shared、
+单提交、prefer_sysmem及UBWC等选项；游戏/Shader/driver/native resource原锚点全部核对。
+日常输出仍2358×1080、3D比例0.75（与性能对照1968×900/.85明确分开）。
+两次不带Intent额外参数的桌面冷启动，均实证读取该配置并打印
+`[nvn record state] enabled=1 fixed-before-recording`，进入真实游戏后原生命周期
+fresh save2，退出并核实进程已停。receipt与profile采用原停止状态CAS发布，
+不修改用户存档或HUD偏好。
+
+最终身份`.local/logs/remaining-upstream-gap-v1/accepted-record-state-deployment.json`；
+发布过程`record-state-publication/result.json`（两次ordinary记录及真实UBWC布局）。
+profile SHA `d759969dbca068944c5bcc0ac4507b90ed11fb66522d617a503ce1a85db2e238`，
+receipt SHA `b859fb27c612946acdf49e2e580e321356805c08342663390326d11348db5035`。
+APK仍为上述619c65…，全部六库/assets与已测730cc69逐字节相同。
+上游原carrier已恢复；工具/全局Mesa实验开关清除，perf_harden恢复1。

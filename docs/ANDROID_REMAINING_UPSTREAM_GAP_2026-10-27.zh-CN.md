@@ -189,3 +189,40 @@ schema4候选已在Q735上完成两次**不带Intent额外参数**的真实图�
 并行审查了现成双方真实GFXReconstruct整帧命令、PSO状态和Mesa条件。HDR双方均 depthTest=true、depthWrite=false、depthCompare=EQUAL；stencilTest=true，正反面 EQUAL / compareMask2 / reference0 / writeMask0，三个操作全KEEP。前置Pass确实向同一D24S8写入stencil bit1（ALWAYS/REPLACE、reference2/writeMask2），中间depth prepass只清DEPTH并LOAD/STORE保留stencil，HDR随后读取该bit筛选。没有中途stencil clear或动态状态覆盖。全KEEP只说明只读，不说明恒通过，关闭测试会改变内容；这里只证明真实生产消费依赖，不声称已经测量杀掉多少像素。
 
 Mesa CSV的 `lrz=true` 是 `state.lrz.valid`，不等于该draw硬件测试开启。`Stencil may kill fragments` 在这里单独禁止LRZ写入，不能直接等同整体LRZ关闭；HDR的depthCompare=EQUAL另外触发独立的temporary disable（源码注释系统blob也如此）。因此不能凭lrzStatus=DISABLED就新加跳过stencil或修改游戏深度语义的优化。核对脚本、原输入SHA、实际producer/LOAD/STORE/clear和源代码片段保存在 `gpu-next-after-wait/lrz-audit/`；没有为此重新抓整帧或占用设备。
+
+
+## 本轮收敛：真实减工已部署，但剩余差距仍未完成
+
+截至录制入口缓存部署，当前日常Q735 tuple为source1129bb4 / APK619c65… /
+ELFd327…，schema5明确打开record_state_cache；全部游戏/Shader/resource/driver锚点不变。
+已完成两次普通桌面冷启动、原生命周期fresh save2/退出，工具开关复原，
+上游原carrier恢复。日常2358×1080/.75与对照1968×900/.85不混用。
+
+- 固定状态在录制前消除：同一连续command buffer六类精确字节比较，
+  原CMDSTAT完整窗口新record44844→31600（−29.53%），bytes1851.0→1333.6KiB（−27.95%）。
+  普通ABBA43.225→43.153FPS，不宣称即时涨帧。另一同APK硬件计数窗owner
+  指令74.690–74.739M→70.901–70.952M（约−5%），cycles约−3.7%；
+  录制/规划/状态应用均有机制一致的采样下降，不能把全部差值强行归因。
+- 新owner planning预算6.974M，bindings12.502M，其他draw21.009M。
+  同B3上游owner47.969–48.003M；本实现更多指令主要位于host，而不是更多memcpy。
+  本实现原memmove SELF已少约2.711M，同时全app Running35.148ms低于上游41.529ms，
+  不按指令比例换算可省毫秒。resource多阶段调查包络21.974M包含必需工作，不能全删。
+- 同上游PSO/Shader输入严格配对的两driver静态表示已取得：12/12完整PSO和
+  实际SPIRV相同。System内部表示成功但返回0项，B3取得真实IR3，未见此HDR的spill。
+  关闭descriptor显式prefetch的四轮8秒初筛40.000→40.220FPS（+0.55%），
+  尚无显著/长期收益证据。候选后继IR未暴露assembly，精确dummy请求验证仍unknown，
+  不默认启用，不把缺少程序集当通过。
+- 上游最新源码为f1e4b08(Android2.0.2)，仍有snapshot/vcache/wtrack，并未改为
+  任意系统内存零拷贝。既有对照实测Storage的三范围×两版本约112MiB，
+  叠加vcache/临时arena是两三百MiB额外Buffer的量级估算，不是最新构建PSS实测。
+
+完整解释、测量口径与限制分别见：
+[录制优化](ANDROID_RECORDING_FIXED_STATE_CACHE_2026-10-27.zh-CN.md)、
+[上下游CPU宏观预算](ANDROID_SHARED_UPSTREAM_CPU_MACRO_2026-10-27.zh-CN.md)、
+[原生Shader表示与prefetch实验](ANDROID_MATCHED_DRIVER_NATIVE_IR_2026-10-27.zh-CN.md)、
+[上游快照内存](ANDROID_UPSTREAM_SNAPSHOT_MEMORY_2026-10-27.zh-CN.md)。
+
+主线任务继续：一条离线生产planner实验核查能否稀疏化无规划语义的状态span、
+保留全部DS/query/store/future原顺序；另一条核查CPU source/资源准备/绑定/依赖的
+一次解析多处消费。先证明减少完整流程、可覆盖次数和新增成本，不再以末端命中
+或更少指令直接承诺补齐帧率，更不以接近上游或单场景稳定作为全目标完成。
