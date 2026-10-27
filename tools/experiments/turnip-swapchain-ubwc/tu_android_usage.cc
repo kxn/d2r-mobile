@@ -1,6 +1,7 @@
 /* Experimental Turnip Android WSI allocation policy. SPDX-License-Identifier: MIT */
 #include "tu_device.h"
 #include "tu_image.h"
+#include "tu_android_usage.h"
 #include "vk_common_entrypoints.h"
 #include "util/u_debug.h"
 
@@ -8,6 +9,40 @@
  * compositor still own/describe the actual layout; never invent a modifier. */
 static constexpr uint64_t qcom_alloc_ubwc = UINT64_C(1) << 28;
 DEBUG_GET_ONCE_BOOL_OPTION(tu_ubwc_swapchain, "TU_UBWC_SWAPCHAIN", false)
+
+static bool
+supported_color(VkFormat format)
+{
+   return format == VK_FORMAT_R8G8B8A8_UNORM ||
+          format == VK_FORMAT_R8G8B8A8_SRGB ||
+          format == VK_FORMAT_B8G8R8A8_UNORM ||
+          format == VK_FORMAT_B8G8R8A8_SRGB;
+}
+
+void
+tu_android_apply_ubwc_usage(VkPhysicalDevice handle,
+                            const VkPhysicalDeviceImageFormatInfo2 *info,
+                            VkImageFormatProperties2 *properties)
+{
+   if (!debug_get_option_tu_ubwc_swapchain() ||
+       !supported_color(info->format) || info->type != VK_IMAGE_TYPE_2D ||
+       info->tiling != VK_IMAGE_TILING_OPTIMAL || info->flags ||
+       !(info->usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)))
+      return;
+   VkAndroidHardwareBufferUsageANDROID *usage = vk_find_struct(
+      properties->pNext, ANDROID_HARDWARE_BUFFER_USAGE_ANDROID);
+   if (!usage)
+      return;
+   VK_FROM_HANDLE(tu_physical_device, physical, handle);
+   if (!ubwc_possible(nullptr, info->format, info->type, 0, info->usage, 0,
+                      &physical->dev_info, VK_SAMPLE_COUNT_1_BIT, 1,
+                      physical->dev_info.props.has_z24uint_s8uint))
+      return;
+   usage->androidHardwareBufferUsage |= qcom_alloc_ubwc;
+   fprintf(stderr, "[Turnip WSI] UBWC request AHB format=%u usage=%#x ahb=%#" PRIx64 "\n",
+           info->format, info->usage, usage->androidHardwareBufferUsage);
+}
 
 static bool
 request_swapchain_ubwc(VkDevice handle, VkFormat format,

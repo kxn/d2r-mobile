@@ -55,6 +55,20 @@ shutil.copytree(source, new_source, symlinks=True,
 addition = new_source / 'src/freedreno/vulkan/tu_android_usage.cc'
 assert not addition.exists()
 shutil.copy2(HERE / addition.name, addition)
+header = addition.with_suffix('.h')
+assert not header.exists()
+shutil.copy2(HERE / header.name, header)
+formats_file = new_source / 'src/freedreno/vulkan/tu_formats.cc'
+old_formats = formats_file.read_text()
+include = '#include "tu_image.h"'
+assert old_formats.count(include) == 1
+formats_text = old_formats.replace(include, include +
+    '\n#ifdef VK_USE_PLATFORM_ANDROID_KHR\n#include "tu_android_usage.h"\n#endif')
+anchor_usage = '         props->sampleCounts = VK_SAMPLE_COUNT_1_BIT;'
+assert formats_text.count(anchor_usage) == 1
+formats_file.write_text(formats_text.replace(anchor_usage, anchor_usage +
+    '\n#ifdef VK_USE_PLATFORM_ANDROID_KHR\n'
+    '         tu_android_apply_ubwc_usage(physicalDevice, base_info, base_props);\n#endif'))
 meson_file = new_source / 'src/freedreno/vulkan/meson.build'
 old_meson = meson_file.read_text()
 anchor = "if tu_wsi\n  libtu_files += 'tu_wsi.cc'\nendif"
@@ -84,6 +98,9 @@ record = {
     'baseline_driver_sha256': sha(baseline_driver),
     'baseline_setup': {'path': str(setup_record), 'sha256': sha(setup_record)},
     'policy_source_sha256': sha(addition),
+    'policy_header_sha256': sha(header),
+    'original_formats_sha256': ledger['src/freedreno/vulkan/tu_formats.cc']['sha256'],
+    'candidate_formats_sha256': sha(formats_file),
     'original_meson_sha256': ledger['src/freedreno/vulkan/meson.build']['sha256'],
     'candidate_meson_sha256': sha(meson_file),
     'builder_sha256': sha(Path(__file__)),
