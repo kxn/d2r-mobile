@@ -21,10 +21,12 @@ parser.add_argument('--native-jobs',type=int,choices=range(1,65),default=4,help=
 parser.add_argument('--tlsdesc', action='store_true', help='Native dynamic TLS, without wrap.sh; requires elfdesc game rewrites')
 parser.add_argument('--opt-level', choices=['1', '2', '3'], default='3', help='native host optimization; preserves debug symbols and frame pointers')
 parser.add_argument('--renderdoc-api', action='store_true', help='optional official application-API capture, not custom timing')
-parser.add_argument('--mesa-gpu-trace', action='store_true', help='diagnostic APK: Android wrap.sh enables existing Mesa pass-level u_trace CSV; never a performance baseline')
+mesa_diagnostic = parser.add_mutually_exclusive_group()
+mesa_diagnostic.add_argument('--mesa-gpu-trace', action='store_true', help='diagnostic APK: Android wrap.sh enables existing Mesa pass-level u_trace CSV; never a performance baseline')
+mesa_diagnostic.add_argument('--mesa-shader-disasm', action='store_true', help='diagnostic APK: existing IR3 native shader disassembly, isolated pipeline cache and Mesa compiler log')
 args = parser.parse_args()
-if args.mesa_gpu_trace and not args.tlsdesc:
-    parser.error('--mesa-gpu-trace requires --tlsdesc; do not replace the legacy TLS preload wrapper')
+if (args.mesa_gpu_trace or args.mesa_shader_disasm) and not args.tlsdesc:
+    parser.error('Mesa diagnostic wrappers require --tlsdesc; do not replace the legacy TLS preload wrapper')
 if args.shared_import_windows and not args.shared_pools:
     parser.error("--shared-import-windows requires --shared-pools")
 if args.native_resources and not args.shared_pools:
@@ -108,6 +110,8 @@ with zipfile.ZipFile(OUT / 'unsigned.apk', 'a', compression=zipfile.ZIP_DEFLATED
         package.write(library,'lib/arm64-v8a/'+library.name)
     if args.mesa_gpu_trace:
         package.write(SOURCE / 'mesa_gpu_trace_wrap.sh', 'lib/arm64-v8a/wrap.sh')
+    elif args.mesa_shader_disasm:
+        package.write(SOURCE / 'mesa_shader_disasm_wrap.sh', 'lib/arm64-v8a/wrap.sh')
     elif not args.tlsdesc:
         package.write(SOURCE / 'wrap.sh', 'lib/arm64-v8a/wrap.sh')
     layer = ROOT / '.local/tools/vulkan-validation/libVkLayer_khronos_validation.so'
@@ -161,6 +165,7 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'tlsdesc':args.tlsdesc,'host_opt_level':args.opt_level,'contains_game_binary':False,
           'official_renderdoc_api':args.renderdoc_api,
           'mesa_gpu_trace':args.mesa_gpu_trace,
+          'mesa_shader_disasm':args.mesa_shader_disasm,
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
           'native_resources_compiled':args.native_resources,
