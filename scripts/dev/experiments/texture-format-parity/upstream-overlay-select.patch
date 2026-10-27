@@ -1,0 +1,40 @@
+--- a/dm/android/jni_android.c
++++ b/dm/android/jni_android.c
+@@ -143,6 +143,25 @@
+         *eq = 0; setenv(line, eq + 1, 1); LOG("boot: 环境 %s=%s（来自 %s）", line, eq + 1, path);
+     }
+     fclose(fp);
++}
++
++/* Diagnostic resource A/B only: resolve a cold, app-private overlay without
++ * replacing the original resource tree. Unset preserves the upstream default;
++ * an invalid explicit selection fails closed before graphics/game startup. */
++static int diagnostic_texture_overlay(char *selected, size_t capacity) {
++    const char *requested = getenv("DM_DIAG_TEXTURE_OVERLAY");
++    if (!requested) return 1;
++    if (!*requested) return 0;
++    char *private_dir = realpath(g_files, NULL);
++    char *candidate = realpath(requested, NULL);
++    char allowed[1300];
++    int n = private_dir ? snprintf(allowed, sizeof allowed, "%s/texture-format-parity/", private_dir) : -1;
++    int valid = candidate && n > 0 && (size_t)n < sizeof allowed &&
++                !strncmp(candidate, allowed, (size_t)n) && candidate[n] && strlen(candidate) < capacity;
++    if (valid) memcpy(selected, candidate, strlen(candidate) + 1);
++    free(candidate);
++    free(private_dir);
++    return valid;
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env, jclass cls, jstring files, jstring ext, jstring src, jstring lang) {
+@@ -293,6 +312,11 @@
+     } closedir(shaders); }
+     if (!have_shader) { LOG("boot: no shader bundles in %s", required); return -4; }
+     snprintf(required, sizeof required, "%s/overlay", g_runtime);
++    if (!diagnostic_texture_overlay(required, sizeof required)) {
++        LOG("boot: diagnostic texture overlay rejected: expected canonical app-private child");
++        return -10;
++    }
++    LOG("boot: selected overlay %s", required);
+     // 启动前核必需覆盖层；旧资源不能自动补指纹，也不能带着错误资源进入游戏。
+     // Validate the required overlay before starting; never stamp old resources or enter with mismatched content.
+     char overlay_reason[256];
