@@ -40,8 +40,13 @@ SYSMEM；不能继续假设每个 Vulkan pass 边界都是一次 GMEM 整图往�
    掩盖了相同向量下标；普通 `spirv-opt -O` 仍有 72 次右移／44 次整数加。
    通用已知低位归零证明工具将两模块各改为 12／8，保留原 float、范围、
    robust 和 32 位回绕语义。官方 validator 通过，标准 Z3 对各 48 个
-   重写结果证明全 32 位等价。**尚不能由此宣称 48 native LDC 变 12**：
-   必须用同实际 driver 编译并先核原始 PSO 能复现此形状。
+   重写结果证明全 32 位等价。随后普通 UID 独立四 PSO 编译已验证真实
+   12b8：第一原 VS 精确复现阴影组 349 条指令／48 cat6，候选为 **142 条
+   指令／12 cat6**，12 full 寄存器／16 waves 保持；robust 仍开启。第二
+   VS 配同阴影 FS 为 413→195 条、48→12 cat6，16 full／12 waves 保持。
+   第二份不能冒充完整 HDR PSO 的原 485 条，因为 fragment link 条件不同。
+   夹具仅调用标准 pipeline 创建、原厂 IR3 输出，不 draw／submit／计时；
+   证明机器代码削减，尚未证明游戏画面或整帧收益。真实游戏链 A/B 待完成。
 2. **HDR 已有谓词特化的实际输入分布。** 两个 canonical fragment key
    `5c1ca4e7c3e4657c`／`38f344adf801b153`，含各自多个 native PSO，合计
    496/642，即约 77.26% HDR draw。不是 77% 片元或时间。当前原 Spec0
