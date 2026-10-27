@@ -7,6 +7,7 @@
 // the optional second queue is only for the WSI worker's presentation waits.
 // 0: inline reference; 1: worker with second queue; 2: worker on render queue.
 // Mode 2 isolates host-thread overlap from a change in the Vulkan queue graph.
+// 3: same-queue worker, requiring the actual negotiated KHR internal-sync flag.
 void vk_window_mailbox_present(int enabled);
 void vk_window_presentation_mode_stats(int *requested,int *actual,unsigned *supported);
 void vk_window_present_worker_mode(int mode);

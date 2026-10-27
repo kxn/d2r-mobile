@@ -89,11 +89,20 @@ static void native_resource_install(void) {
   static const uint8_t coherent_turnip_bc3_tiled[32]={
     0x3e,0x93,0x76,0xed,0x37,0x59,0xaf,0x2c,0xd0,0x15,0xcf,0x56,0x08,0x27,0x4f,0x66,
     0x1b,0xa3,0xb3,0x3d,0xf6,0xe9,0x5c,0xb6,0xfa,0x25,0x42,0x66,0x6f,0x34,0xee,0x50};
+  // Exact 0e53 derivative: only the Android allowlist for the implemented KHR
+  // internally-synchronized-queues extension changed. Full source and generated
+  // table comparison retain the host-import/coherent/image contract. This is
+  // not permission to load an old table under a different driver SHA: the
+  // strict table installer above still requires the actual consumer identity.
+  static const uint8_t coherent_turnip_bc3_queue_sync[32]={
+    0x12,0xb8,0xb5,0x4a,0x25,0x14,0xff,0x1c,0xdf,0x8d,0xa4,0x22,0xc7,0x1d,0xb7,0x9a,
+    0x68,0x3d,0x45,0x17,0xeb,0x9a,0xec,0xfb,0xb2,0x0a,0x41,0x25,0x52,0x25,0x59,0xf5};
   native_resident_driver=!memcmp(identity.driver_sha256,coherent_turnip,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_linear,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_wsi,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_bc3,32) ||
-      !memcmp(identity.driver_sha256,coherent_turnip_bc3_tiled,32);
+      !memcmp(identity.driver_sha256,coherent_turnip_bc3_tiled,32) ||
+      !memcmp(identity.driver_sha256,coherent_turnip_bc3_queue_sync,32);
   // One cold identity record for the existing explicit resource contract.
   printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
   for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);

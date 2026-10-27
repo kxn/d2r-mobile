@@ -1,7 +1,8 @@
 // Android WSI has blocking host calls. Keep acquire, present and presentation
 // feedback on one owner thread (including swapchain external synchronization),
 // while the original NVN queue keeps all rendering/compute/transfer operations.
-// The second queue belongs to the same family, so no ownership transfer occurs.
+// Mode 1 uses a second queue in the same family; modes 2/3 use the rendering
+// queue. Only mode 3 negotiates the public internally-synchronized queue flag.
 typedef struct {
   VkResult result;
   uint32_t index;

@@ -1,0 +1,13 @@
+--- a/src/vulkan/util/vk_extensions.py
++++ b/src/vulkan/util/vk_extensions.py
+@@ -382,6 +382,10 @@
+     # "VK_KHR_video_encode_queue": 35,
+     # "VK_KHR_video_maintenance1": 35,
+ 
++    # App-local single-extension experiment, not Android CTS certification.
++    # Preserve the frozen API34 build floor; this queue feature uses no newer Android ABI.
++    "VK_KHR_internally_synchronized_queues": 34,
++
+     # on android16-tests-release
+     "VK_KHR_compute_shader_derivatives": 36,
+     "VK_KHR_maintenance7": 36,
