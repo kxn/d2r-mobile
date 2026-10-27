@@ -24,9 +24,10 @@ parser.add_argument('--renderdoc-api', action='store_true', help='optional offic
 diagnostic_wrapper = parser.add_mutually_exclusive_group()
 diagnostic_wrapper.add_argument('--mesa-gpu-trace', action='store_true', help='diagnostic APK: Android wrap.sh enables existing Mesa pass-level u_trace CSV; never a performance baseline')
 diagnostic_wrapper.add_argument('--mesa-shader-disasm', action='store_true', help='diagnostic APK: existing IR3 native shader disassembly, isolated pipeline cache and Mesa compiler log')
+diagnostic_wrapper.add_argument('--mesa-draw-identities', action='store_true', help='diagnostic APK: standard Mesa draw shader identities plus IR3 disassembly; per-draw timing is not a cost measurement')
 diagnostic_wrapper.add_argument('--nvn-command-stats', action='store_true', help='diagnostic APK: Android wrap.sh enables existing NVN recording counts every 300 frames; never a performance baseline')
 args = parser.parse_args()
-if (args.mesa_gpu_trace or args.mesa_shader_disasm or args.nvn_command_stats) and not args.tlsdesc:
+if (args.mesa_gpu_trace or args.mesa_shader_disasm or args.mesa_draw_identities or args.nvn_command_stats) and not args.tlsdesc:
     parser.error('Diagnostic wrappers require --tlsdesc; do not replace the legacy TLS preload wrapper')
 if args.shared_import_windows and not args.shared_pools:
     parser.error("--shared-import-windows requires --shared-pools")
@@ -113,6 +114,8 @@ with zipfile.ZipFile(OUT / 'unsigned.apk', 'a', compression=zipfile.ZIP_DEFLATED
         package.write(SOURCE / 'mesa_gpu_trace_wrap.sh', 'lib/arm64-v8a/wrap.sh')
     elif args.mesa_shader_disasm:
         package.write(SOURCE / 'mesa_shader_disasm_wrap.sh', 'lib/arm64-v8a/wrap.sh')
+    elif args.mesa_draw_identities:
+        package.write(SOURCE / 'mesa_draw_identities_wrap.sh', 'lib/arm64-v8a/wrap.sh')
     elif args.nvn_command_stats:
         package.write(SOURCE / 'nvn_command_stats_wrap.sh', 'lib/arm64-v8a/wrap.sh')
     elif not args.tlsdesc:
@@ -169,11 +172,13 @@ manifest={'source_revision':subprocess.check_output(['git','-C',str(ROOT),'rev-p
           'official_renderdoc_api':args.renderdoc_api,
           'mesa_gpu_trace':args.mesa_gpu_trace,
           'mesa_shader_disasm':args.mesa_shader_disasm,
+          'mesa_draw_identities':args.mesa_draw_identities,
           'nvn_command_stats':args.nvn_command_stats,
           'diagnostic_mode':'nvn-command-stats' if args.nvn_command_stats else
               'mesa-gpu-trace' if args.mesa_gpu_trace else
-              'mesa-shader-disasm' if args.mesa_shader_disasm else None,
-          'performance_baseline_eligible':not (args.nvn_command_stats or args.mesa_gpu_trace or args.mesa_shader_disasm),
+              'mesa-shader-disasm' if args.mesa_shader_disasm else
+              'mesa-draw-identities' if args.mesa_draw_identities else None,
+          'performance_baseline_eligible':not (args.nvn_command_stats or args.mesa_gpu_trace or args.mesa_shader_disasm or args.mesa_draw_identities),
           'fixed_shared_pools_compiled':args.shared_pools,
           'shared_import_windows_compiled':args.shared_import_windows,
           'native_resources_compiled':args.native_resources,
