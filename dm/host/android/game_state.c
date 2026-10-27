@@ -391,6 +391,9 @@ static void observe_tick(const uint64_t *registers) {
     fprintf(state_log, ",\"clear_only_attachments\":{\"reference\":%s,\"omitted\":%llu}",
       vk_render_clear_reference_mode()?"true":"false",
       (unsigned long long)vk_render_clear_attachment_omissions());
+    uint64_t vk_render_covered_clear_omissions(void);
+    fprintf(state_log, ",\"covered_initial_color_clears\":{\"omitted\":%llu}",
+      (unsigned long long)vk_render_covered_clear_omissions());
     uint64_t vk_render_readonly_store_omissions(void);
     fprintf(state_log, ",\"readonly_store\":{\"omitted\":%llu}",
       (unsigned long long)vk_render_readonly_store_omissions());
