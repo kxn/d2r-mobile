@@ -1,6 +1,7 @@
 # 同队列呈现等待：标准内部同步队列实验
 
-状态：实现和规范APK构建完成，真机资格及整轮收益待验证。保持默认关闭，
+状态：实现和规范APK构建完成，原0e53真机扩展资格被拒，未安装候选游戏包；
+仅开放该标准扩展的独立驱动正在构建，整轮收益尚待验证。保持默认关闭，
 不将源码支持或一次能力查询当作实际创建成功，不将少等CPU等同于涨帧。
 
 ## 问题与依据
@@ -91,6 +92,36 @@ fixture carrier编译当成普通发布。因此性能因果只能比较新同AP
    还是背压仅迁移到Acquire/worker ring/其他依赖。
 5. 沿原Android生命周期fresh save2后停止，不让手机空跑；原用户save及
    原资源目录由既有事务保留，工具与包身份完整记录。
+
+## 首次真实冷查询：被Android扩展白名单阻断
+
+独立包`org.kxn.scahb`的冻结APK
+`afc93e06a9262e3268523eba50640a7bcfaaee24df9a4b18e61084717beb313b`
+以普通UID10331实际加载0e53，driver UUID与device UUID均匹配原记录。
+真实广告`VK_KHR_internally_synchronized_queues=0`、feature=0。按前置合同
+停止，未尝试flag4创建，更没有无合同解锁；7dcd候选游戏APK尚未安装。
+本次不创建logical device、queue、AHB或hint session。实际包已清理，
+原游戏992仍停止，官方SDP暂停前后记录数/最后时间戳相同。
+
+根因在驱动自己的Android兼容白名单，不能归罪系统loader：生成的
+`vk_extensions.c`内`vk_android_allowed_device_extensions`把该项设为false；
+`vk_physical_device.c`据此过滤广告，`vk_device.c`也拒绝创建时启用。
+真实hardware/API为1.4，`tu_is_vk_1_1`并非这次拒绝来源。
+
+因此下一驱动候选只给`vk_extensions.py`的此项白名单开放，不改Turnip
+实际锁实现、image layout/profile盐、共享契约或WSI。原build的
+platform-sdk-version为34；不会为此全局升36并额外解锁其他扩展。该KHR
+feature只需已有Vulkan1.1的GetDeviceQueue2，没有新增Android函数ABI。
+候选仍仅在已核Android16机型实验，须对照生成表确认只多此一项，并逐层
+核准实际UUID、扩展广告、flagged creation和正确出图。源码已实现不等于
+当前0e53实际可用，原失败收条保留。
+
+同一只读冷查询实测基础ADPF SESSIONS=1，但SURFACE_BINDING、
+GRAPHICS_PIPELINE、AUTO_CPU、AUTO_GPU均为0。之前普通hint成功不能推出
+自动pipeline计时可用；本次没有创建或改变session。
+
+原始查询：`.local/logs/native-bc3-three-arm-game-v1/public-cold-query/`，
+含sc-ahb.log、actual maps/driver SHA、result.json及清理记录。
 
 目前不能给出净毫秒/FPS收益。即使全部隐藏3.526ms睡眠，当前owner约
 18ms实际Running仍存在；GPU也可能已连续执行。该实验有明确公开合同与
