@@ -1,0 +1,297 @@
+diff --git a/dm/android/CMakeLists.txt b/dm/android/CMakeLists.txt
+index 38493ad..265d702 100644
+--- a/dm/android/CMakeLists.txt
++++ b/dm/android/CMakeLists.txt
+@@ -22,6 +22,14 @@ get_filename_component(DM_PATH_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../.. ABSOLUTE)
+ foreach(map "${CMAKE_BINARY_DIR}=build" "${DM_GEN_DIR}=gen" "${CMAKE_ANDROID_NDK}=ndk" "${DM_PATH_ROOT}=src")
+   add_compile_options("-ffile-prefix-map=${map}")
+ endforeach()
++# Isolated driver control: identical Vulkan dispatch in both comparison arms.
++# No guest module, resource, shader transformation, or rendering change.
++set(CONTROL_VOLK "${DM_CONTROL_VOLK}")
++add_library(control_volk STATIC ${CONTROL_VOLK}/volk.c)
++set_target_properties(control_volk PROPERTIES POSITION_INDEPENDENT_CODE ON)
++target_link_libraries(control_volk PUBLIC dl)
++add_compile_definitions(VK_NO_PROTOTYPES VK_USE_PLATFORM_ANDROID_KHR)
++add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-include${CONTROL_VOLK}/volk.h>)
+ add_subdirectory(../gfx/vulkan ${CMAKE_CURRENT_BINARY_DIR}/vulkan)
+ 
+ set(DM ${CMAKE_CURRENT_SOURCE_DIR}/..)
+diff --git a/dm/android/app/build.gradle b/dm/android/app/build.gradle
+index d14197c..ce76fcd 100644
+--- a/dm/android/app/build.gradle
++++ b/dm/android/app/build.gradle
+@@ -53,7 +53,7 @@ android {
+     if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
+     if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
+     sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile) } }
+-    packaging { jniLibs { useLegacyPackaging false; keepDebugSymbols += ['**/*.so'] } }
++    packaging { jniLibs { useLegacyPackaging true; keepDebugSymbols += ['**/*.so'] } }
+     buildFeatures { buildConfig true }
+     // 正式版签名：钥匙不进仓库，路径与密码从环境变量来（tools/shell_apk.sh release 读本机 ~/.config/dm-android/release.env）；没设就不签
+     // Release signing: the key never goes into the repository; path and password come from the environment (tools/shell_apk.sh release reads the
+diff --git a/dm/android/vulkan_present.cpp b/dm/android/vulkan_present.cpp
+index 23a32bc..f375ce6 100644
+--- a/dm/android/vulkan_present.cpp
++++ b/dm/android/vulkan_present.cpp
+@@ -292,6 +292,36 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
+ }
+ extern "C" void dm_android_vk_set_window(ANativeWindow *window){if(window)ANativeWindow_acquire(window);{std::lock_guard<std::mutex> l(window_mutex);if(desired)ANativeWindow_release(desired);desired=window;++generation;}window_cv.notify_all();}
+ extern "C" int dm_android_vk_has_window(){return has_window(nullptr);}
++static bool control_driver_initialize(){
++    static bool initialized=false;
++    if(initialized)return true;
++    const char *root="/data/user/0/org.kxn.d2r.upstream.profile/files/turnip-control/";
++    std::string marker=std::string(root)+"enabled";
++    if(FILE *f=fopen(marker.c_str(),"rb")){
++        fclose(f);
++        Dl_info owner{};
++        if(!dladdr(reinterpret_cast<void *>(&dm_android_vk_initialize),&owner)||!owner.dli_fname)return false;
++        std::string hooks=owner.dli_fname;hooks=hooks.substr(0,hooks.find_last_of('/'));
++        void *tools=dlopen((hooks+"/libadrenotools.so").c_str(),RTLD_NOW|RTLD_LOCAL);
++        if(!tools)return false;
++        using open_fn=void *(*)(int,int,const char *,const char *,const char *,const char *,const char *,void **);
++        auto open_driver=reinterpret_cast<open_fn>(dlsym(tools,"adrenotools_open_libvulkan"));
++        if(!open_driver)return false;
++        setenv("TU_AUTOTUNE_ALGO","prefer_sysmem",1);
++        setenv("TU_UBWC_SWAPCHAIN","1",1);
++        setenv("MESA_SHADER_CACHE_DIR",(std::string(root)+"mesa-cache").c_str(),1);
++        void *driver=open_driver(RTLD_NOW|RTLD_LOCAL,1,nullptr,hooks.c_str(),root,"libvulkan_freedreno.so",nullptr,nullptr);
++        if(!driver)return false;
++        auto proc=reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(driver,"vkGetInstanceProcAddr"));
++        if(!proc)return false;
++        volkInitializeCustom(proc);
++        __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","CONTROL_DRIVER=turnip B3 prefer_sysmem UBWC1 shared0");
++    }else{
++        if(volkInitialize()!=VK_SUCCESS)return false;
++        __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","CONTROL_DRIVER=system shared0");
++    }
++    initialized=true;return true;
++}
+ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t bytes){
+     if(path){std::string dir=path;size_t cut=dir.find_last_of('/');if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-present-native").c_str(),"rb")){present_native=fgetc(m)!='0';fclose(m);}
+         if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-present-timing").c_str(),"rb")){present_timing=true;fclose(m);}}
+@@ -302,8 +332,9 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
+     frame_rate_vote=120;
+     {std::string dir=path;size_t cut=dir.find_last_of('/');if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-frame-rate").c_str(),"rb")){float v=0;frame_rate_vote=fscanf(m,"%f",&v)==1 && v>=0 && v<=240?v:0;fclose(m);}}
+ 
++    if(!control_driver_initialize())return fail("Isolated driver control loader",VK_ERROR_INITIALIZATION_FAILED);
+     VkApplicationInfo ai{VK_STRUCTURE_TYPE_APPLICATION_INFO};ai.pApplicationName="dm-android";ai.apiVersion=VK_API_VERSION_1_1;
+-    const char *ext[]={VK_KHR_SURFACE_EXTENSION_NAME,VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ic.pApplicationInfo=&ai;ic.enabledExtensionCount=2;ic.ppEnabledExtensionNames=ext;VkResult r=vkCreateInstance(&ic,nullptr,&instance);if(r)return fail("vkCreateInstance",r);
++    const char *ext[]={VK_KHR_SURFACE_EXTENSION_NAME,VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ic.pApplicationInfo=&ai;ic.enabledExtensionCount=2;ic.ppEnabledExtensionNames=ext;VkResult r=vkCreateInstance(&ic,nullptr,&instance);if(r)return fail("vkCreateInstance",r);volkLoadInstance(instance);
+     uint32_t n=0;vkEnumeratePhysicalDevices(instance,&n,nullptr);std::vector<VkPhysicalDevice> devices(n);vkEnumeratePhysicalDevices(instance,&n,devices.data());if(!n)return fail("No Vulkan device",VK_ERROR_INITIALIZATION_FAILED);
+     physical=devices[0];
+     // 启动期间也可能旋转/切后台；等待新窗口，不把瞬时撤回误报为启动失败。
+@@ -320,8 +351,8 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
+     std::vector<const char*> dext={VK_KHR_SWAPCHAIN_EXTENSION_NAME};if(mirror)dext.push_back(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
+     // Diagnostic (marker gfx-pipe-stats): the driver's per-pipeline statistics (VK_KHR_pipeline_executable_properties).
+     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pef{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
+-    if(FILE *ps=[&]{std::string dir=path;size_t cut=dir.find_last_of('/');return fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pipe-stats").c_str(),"rb");}()){fclose(ps);dext.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);pef.pipelineExecutableInfo=VK_TRUE;pef.pNext=draw.pNext;draw.pNext=&pef;}
+-    float priority=1;VkDeviceQueueCreateInfo qc{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qc.queueFamilyIndex=family;qc.queueCount=1;qc.pQueuePriorities=&priority;VkDeviceCreateInfo dc{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dc.pNext=&draw;dc.pEnabledFeatures=&features.features;dc.queueCreateInfoCount=1;dc.pQueueCreateInfos=&qc;dc.enabledExtensionCount=uint32_t(dext.size());dc.ppEnabledExtensionNames=dext.data();if((r=vkCreateDevice(physical,&dc,nullptr,&device)))return fail("vkCreateDevice",r);vkGetDeviceQueue(device,family,0,&queue);
++    if(FILE *ps=[&]{std::string dir=path;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);FILE *f=fopen((base+"/gfx-pipe-stats").c_str(),"rb");return f?f:fopen((base+"/gfx-pipe-internals").c_str(),"rb");}()){fclose(ps);dext.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);pef.pipelineExecutableInfo=VK_TRUE;pef.pNext=draw.pNext;draw.pNext=&pef;}
++    float priority=1;VkDeviceQueueCreateInfo qc{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qc.queueFamilyIndex=family;qc.queueCount=1;qc.pQueuePriorities=&priority;VkDeviceCreateInfo dc{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dc.pNext=&draw;dc.pEnabledFeatures=&features.features;dc.queueCreateInfoCount=1;dc.pQueueCreateInfos=&qc;dc.enabledExtensionCount=uint32_t(dext.size());dc.ppEnabledExtensionNames=dext.data();if((r=vkCreateDevice(physical,&dc,nullptr,&device)))return fail("vkCreateDevice",r);volkLoadDevice(device);vkGetDeviceQueue(device,family,0,&queue);
+     for(;;){
+         wait_window();
+         if(!surface||window_changed()){
+diff --git a/dm/gfx/vulkan/CMakeLists.txt b/dm/gfx/vulkan/CMakeLists.txt
+index 6670497..a73c25b 100644
+--- a/dm/gfx/vulkan/CMakeLists.txt
++++ b/dm/gfx/vulkan/CMakeLists.txt
+@@ -11,6 +11,6 @@ target_compile_features(dm_vulkan_engine PUBLIC cxx_std_17)
+ target_compile_options(dm_vulkan_engine PRIVATE -O2 -fno-strict-aliasing -Wall -Wextra -Wno-missing-field-initializers -Wno-format)
+ set_source_files_properties(${E}/xbg_texture.c PROPERTIES COMPILE_OPTIONS -fsigned-char)
+ set_target_properties(dm_vulkan_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+-target_link_libraries(dm_vulkan_engine PUBLIC vulkan log)
++target_link_libraries(dm_vulkan_engine PUBLIC control_volk log)
+ # nvn_vk.c is compiled in dmcore (host compatibility flags); engine deliberately
+ # reuses dmcore's nvn_tex.c / nvn_deswizzle.c rather than duplicate definitions.
+diff --git a/dm/gfx/vulkan/engine/xbg_game.cpp b/dm/gfx/vulkan/engine/xbg_game.cpp
+index c5f567f..8d5ebee 100644
+--- a/dm/gfx/vulkan/engine/xbg_game.cpp
++++ b/dm/gfx/vulkan/engine/xbg_game.cpp
+@@ -55,6 +55,8 @@ __attribute__((weak)) float dm_bright_k(void);
+ #include <ucontext.h>
+ #endif
+ #include <cerrno>
++#include <fcntl.h>
++#include <sys/stat.h>
+ #include <unistd.h>
+ #include <dlfcn.h>
+ #include <map>
+@@ -1747,6 +1749,7 @@ const RegisteredTexture &null_texture(const xbg_shader_binding &b){
+ 
+ /* SHA-256 over the original NVN 0x880-byte control segment. */
+ std::string control_key(const void *data){char key[17];need(xbg_shader_control_key(data,key)==0,"Missing shader control segment");return key;}
++#include "xbg_pipeline_internals_config.inc"
+ struct Shader {std::string key;uint32_t stage;VkShaderModule module{};std::vector<xbg_shader_binding> bindings;std::vector<uint32_t> inputs,input_classes;std::vector<uint8_t> c1;
+     std::set<uint32_t> storage_writes; // Vulkan bindings of storage buffers the SPIR-V may write
+     bool discards=true; // fragment shader may kill/demote (conservative default)
+@@ -1947,6 +1950,7 @@ Shader *load_shader(const void *control){
+     if(h.stage==0){p->input_classes.resize(p->inputs.size());need(xbg_vertex_input_classes(words.data(),words.size(),p->inputs.data(),p->inputs.size(),p->input_classes.data())==0,"Unsupported vertex input scalar interface");}
+     load_t3=timing_clock();
+     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};ci.codeSize=words.size()*4;ci.pCode=words.data();VK(vkCreateShaderModule(cfg.device,&ci,nullptr,&p->module));warm::register_module(p->module,key);Shader *out=p.get();shaders.emplace(key,std::move(p));++stats.shader_loads;++hud::shaders;const uint64_t load_t4=timing_clock();hud::shader_ns+=load_t4-load_t0;
++    piri::shader(out->module,key,h.stage,words);
+     xbg_logf("NVN shader %s stage=%u loaded words=%zu ms read=%.2f rewrite=%.2f analyse=%.2f module=%.2f reused=%d",key.c_str(),h.stage,words.size(),(load_t1-load_t0)/1e6,(load_t2-load_t1)/1e6,(load_t3-load_t2)/1e6,(load_t4-load_t3)/1e6,int(have_reused));return out;
+ }
+ // nvnProgramSetShaders assigns a new serial, and NVN shader control/code memory
+@@ -2177,16 +2181,17 @@ PFN_vkGetPipelineExecutablePropertiesKHR pstat_props=nullptr;PFN_vkGetPipelineEx
+ struct PstatUse{uint64_t draws=0;std::string what;};std::unordered_map<VkPipeline,PstatUse> pstat_use;
+ std::string pstat_what(){std::string s;for(unsigned st=0;st<6;st++)if(state.shader[st]){if(!s.empty())s+=';';s+=std::to_string(st)+":"+state.shader[st]->key;}return s;}
+ void pstat_log(VkPipeline pl){
+-    VkPipelineInfoKHR pi{VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR};pi.pipeline=pl;uint32_t n=0;if(pstat_props(cfg.device,&pi,&n,nullptr)!=VK_SUCCESS)return;
+-    std::vector<VkPipelineExecutablePropertiesKHR> ex(n,VkPipelineExecutablePropertiesKHR{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});pstat_props(cfg.device,&pi,&n,ex.data());
+-    for(uint32_t i=0;i<n;i++){VkPipelineExecutableInfoKHR ei{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};ei.pipeline=pl;ei.executableIndex=i;uint32_t m=0;pstat_stats(cfg.device,&ei,&m,nullptr);
+-        std::vector<VkPipelineExecutableStatisticKHR> st(m,VkPipelineExecutableStatisticKHR{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR});pstat_stats(cfg.device,&ei,&m,st.data());
++    VkPipelineInfoKHR pi{VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR};pi.pipeline=pl;uint32_t n=0;if(pstat_props(cfg.device,&pi,&n,nullptr)!=VK_SUCCESS || n>32)return;
++    std::vector<VkPipelineExecutablePropertiesKHR> ex(n,VkPipelineExecutablePropertiesKHR{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});if(pstat_props(cfg.device,&pi,&n,ex.data())!=VK_SUCCESS || n>ex.size())return;
++    for(uint32_t i=0;i<n;i++){VkPipelineExecutableInfoKHR ei{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};ei.pipeline=pl;ei.executableIndex=i;uint32_t m=0;if(pstat_stats(cfg.device,&ei,&m,nullptr)!=VK_SUCCESS || m>256)continue;
++        std::vector<VkPipelineExecutableStatisticKHR> st(m,VkPipelineExecutableStatisticKHR{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR});if(pstat_stats(cfg.device,&ei,&m,st.data())!=VK_SUCCESS || m>st.size())continue;
+         std::string line;for(auto &x:st){char v[48];switch(x.format){case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:snprintf(v,sizeof v,"%u",x.value.b32);break;case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:snprintf(v,sizeof v,"%lld",(long long)x.value.i64);break;
+                 case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:snprintf(v,sizeof v,"%llu",(unsigned long long)x.value.u64);break;default:snprintf(v,sizeof v,"%g",x.value.f64);}
+             std::string name=x.name;for(auto &c:name)if(c==' ' || c=='=')c='_';line+=" "+name+"="+v;}
+         std::string en=ex[i].name;for(auto &c:en)if(c==' ')c='_';
+         xbg_logf("NVN PSTAT pipeline=%p what=%s exec=%u stages=%#x name=%s subgroup=%u%s",(void*)pl,pstat_what().c_str(),i,unsigned(ex[i].stages),en.c_str(),ex[i].subgroupSize,line.c_str());}
+ }
++#include "xbg_pipeline_internals_dump.inc"
+ void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable,const VkGraphicsPipelineCreateInfo *graphics,const VkComputePipelineCreateInfo *compute,bool may_skip=false){
+     static std::string bytes;bytes.clear();   // reused key buffer (graphics thread only)
+     if(cacheable){
+@@ -2198,8 +2203,8 @@ void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable
+     if(graphics && cacheable && warm::take(bytes,out.pipeline)){++warm::hits;}
+     // A draw that may be skipped gets no pipeline while its build is queued (warm::async_request); it is not cached.
+     else if(graphics && cacheable && may_skip && warm::async_request(*graphics,key,bytes)){out.pipeline=VK_NULL_HANDLE;out.transient=true;++warm::async_skips;return;}
+-    else if(graphics){uint64_t t0=timing_clock();VkGraphicsPipelineCreateInfo g=*graphics;if(pipe_stats)g.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&g,nullptr,&out.pipeline));if(pipe_stats)pstat_log(out.pipeline);uint64_t dt=timing_clock()-t0;if(dt>=compile_ns)++pipelines_unsaved;++warm::creates;warm::create_ns+=dt;++hud::pipelines;hud::pipeline_ns+=dt;warm::create_max_ns=std::max(warm::create_max_ns,dt);if(cacheable)warm::record(*graphics,key);}
+-    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline));++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);}
++    else if(graphics){uint64_t t0=timing_clock();VkGraphicsPipelineCreateInfo g=*graphics;if(pipe_stats)g.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;if(piri::selected(graphics,nullptr))g.flags|=VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR;VK(vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&g,nullptr,&out.pipeline));if(pipe_stats)pstat_log(out.pipeline);uint64_t dt=timing_clock()-t0;if(dt>=compile_ns)++pipelines_unsaved;++warm::creates;warm::create_ns+=dt;++hud::pipelines;hud::pipeline_ns+=dt;warm::create_max_ns=std::max(warm::create_max_ns,dt);if(cacheable)warm::record(*graphics,key);piri::dump(out.pipeline,key,&g,nullptr);}
++    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;if(piri::selected(nullptr,compute))cc.flags|=VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR;VK(vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline));++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);piri::dump(out.pipeline,key,nullptr,&cc);}
+     if(!cacheable){out.transient=true;return;}
+     if(pipeline_objects.size()==pipeline_object_limit){
+         // All prior draws/dispatches waited their fence. This lookup occurs
+@@ -3715,12 +3720,13 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
+      xbg_logf("NVN translator output clean-up: component fold=%d (marker gfx-ldc-fold) forwarded temporaries=%d (marker gfx-forward-temps)",int(ldc_fold),int(forward_temps));
+      {FILE *q=fopen((base+"/gfx-shader-reuse").c_str(),"rb");shader_reuse=0;if(q){int c=fgetc(q);shader_reuse=c=='0'?0:c=='2'?2:1;fclose(q);}else if(const char *e=getenv("DM_GFX_SHADER_REUSE"))shader_reuse=atoi(e);
+       warm::keep_rewritten=shader_reuse!=0;xbg_logf("NVN shader loads take the warm-up's rewritten SPIR-V=%d (marker gfx-shader-reuse; 2 also rewrites and compares)",shader_reuse);}}
+-    xbg_module_id_hook=warm::module_id;{std::string lp=warm::list_path();FILE *nw=fopen((lp.substr(0,lp.find_last_of('/'))+"/gfx-no-warm").c_str(),"rb");warm::enabled=!nw;if(nw)fclose(nw);}warm::start();
++    piri::configure();
++    xbg_module_id_hook=warm::module_id;{std::string lp=warm::list_path();FILE *nw=fopen((lp.substr(0,lp.find_last_of('/'))+"/gfx-no-warm").c_str(),"rb");warm::enabled=!nw&&!piri::enabled;if(nw)fclose(nw);}warm::start();
+     wtrack::enabled=false;state=State{};state.color.logic_op=3;state.color.alpha_func=8;for(unsigned i=0;i<8;i++)state.blend[i]={i,2,1,2,1,1,1};stats.reset();timing=XbgCpuTiming(timing_clock);pipeline_counts={};pipeline_before={};pipeline_tick=0;timing_active=false;timing_first=timing_last=0;live_profile_used=false;descriptor_detail=false;descriptor_timing=XbgDescriptorTiming{};descriptor_root=nullptr;draw_detail=false;draw_timing=XbgDrawTiming{};draw_root=nullptr;completed=0;last_attachment_trace=UINT64_MAX;sampler_mirror_clamp_enabled=VK_FALSE;failed=false;error_text[0]=0;initialized=true;
+     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-sync-submit").c_str(),"rb");bool sync_submit=false;if(m){sync_submit=fgetc(m)=='1';fclose(m);}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-async-pool-reset").c_str(),"rb");poolreset::enabled=false;if(w){poolreset::enabled=fgetc(w)!='0';fclose(w);}else if(const char *e=getenv("DM_GFX_ASYNC_POOL_RESET"))poolreset::enabled=atoi(e)!=0;poolreset::start();xbg_logf("NVN async command pool reset=%d (marker gfx-async-pool-reset)",int(poolreset::enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-bindcache").c_str(),"rb");if(w){bind_cache_enabled=false;fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-imgcache").c_str(),"rb");if(w){img_cache_enabled=false;fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pass-profile").c_str(),"rb");if(w){pass_prof_enabled=true;unsigned long long from=0,period=0,count=0;if(fscanf(w,"%llu %llu %llu",&from,&period,&count)>=2){pass_prof_next=from;pass_prof_period=period?period:1;if(count)pass_prof_until=from+count;}fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-descmemo").c_str(),"rb");if(w){desc_memo_enabled=false;fclose(w);}xbg_logf("NVN descmemo enabled=%d",int(desc_memo_enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-dynpartial").c_str(),"rb");if(w){dyn_partial_enabled=false;fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-xmemo").c_str(),"rb");if(w){xmemo_enabled=false;fclose(w);}xbg_logf("NVN cross-frame memo enabled=%d",int(xmemo_enabled));}{auto marker=[&](const char *name){FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+name).c_str(),"rb");int c=-1;if(w){c=fgetc(w);fclose(w);}return c;};persistent_fb_enabled=marker("/gfx-no-persistent-fb")<0;slot_pools_enabled=marker("/gfx-no-slot-pools")<0;readback_cached=marker("/gfx-readback-cached")=='1' || (marker("/gfx-readback-cached")<0 && getenv("DM_GFX_READBACK_CACHED") && *getenv("DM_GFX_READBACK_CACHED")=='1');texel_memo_enabled=marker("/gfx-no-texel-memo")<0;no_occlusion_queries=marker("/gfx-no-occlusion")=='1';samples_report_seen=false;open_occlusion=OpenOcclusion{};occlusion_queries_started=0;occlusion_batch_enabled=marker("/gfx-query-per-draw")!='1' && marker("/gfx-no-query-batch")<0;heavy_timestamps=marker("/gfx-heavy-timestamps")=='1';xbg_logf("NVN persistent framebuffers=%d slot command pools=%d cached readback=%d texel memo=%d (markers gfx-no-persistent-fb, gfx-no-slot-pools, gfx-readback-cached, gfx-no-texel-memo)",int(persistent_fb_enabled),int(slot_pools_enabled),int(readback_cached),int(texel_memo_enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-wtrack").c_str(),"rb");wtrack::marker=-1;if(w){wtrack::marker=fgetc(w)=='1'?1:0;fclose(w);}wtrack::enabled=wtrack::marker==1;}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-wtrack").c_str(),"rb");if(w){wtrack::enabled=false;wtrack::marker=0;fclose(w);}xbg_logf("NVN wtrack enabled=%d (markers gfx-no-wtrack, gfx-wtrack=0)",int(wtrack::enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-mutable-images").c_str(),"rb");no_mutable_images=true;if(w){no_mutable_images=fgetc(w)!='1';fclose(w);}xbg_logf("NVN mutable-format images=%d (marker gfx-mutable-images)",int(!no_mutable_images));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-mutable-test").c_str(),"rb");mutable_test=0;if(w){if(fscanf(w,"%u",&mutable_test)!=1)mutable_test=0;fclose(w);}if(mutable_test)xbg_logf("NVN mutable upgrade test every %u images (marker gfx-mutable-test)",mutable_test);}
+      /* Android: no guest memory remapping probe. */
+-     {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pipe-stats").c_str(),"rb");if(m){fclose(m);pstat_props=reinterpret_cast<PFN_vkGetPipelineExecutablePropertiesKHR>(vkGetDeviceProcAddr(cfg.device,"vkGetPipelineExecutablePropertiesKHR"));
+-       pstat_stats=reinterpret_cast<PFN_vkGetPipelineExecutableStatisticsKHR>(vkGetDeviceProcAddr(cfg.device,"vkGetPipelineExecutableStatisticsKHR"));pipe_stats=pstat_props && pstat_stats;}xbg_logf("NVN pipeline statistics=%d (marker gfx-pipe-stats)",int(pipe_stats));}
++     {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pipe-stats").c_str(),"rb");if(m||piri::enabled){if(m)fclose(m);pstat_props=reinterpret_cast<PFN_vkGetPipelineExecutablePropertiesKHR>(vkGetDeviceProcAddr(cfg.device,"vkGetPipelineExecutablePropertiesKHR"));
++       pstat_stats=reinterpret_cast<PFN_vkGetPipelineExecutableStatisticsKHR>(vkGetDeviceProcAddr(cfg.device,"vkGetPipelineExecutableStatisticsKHR"));pipe_stats=pstat_props && pstat_stats;}if(piri::enabled&&!pipe_stats){piri::enabled=false;xbg_logf("NVN PIR properties/statistics API unavailable; disabled");}xbg_logf("NVN pipeline statistics=%d (marker gfx-pipe-stats)",int(pipe_stats));}
+      {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-wb-skip").c_str(),"rb");wb_skip=false;if(m){wb_skip=fgetc(m)!='0';fclose(m);}else if(const char *e=getenv("DM_GFX_WB_SKIP"))wb_skip=atoi(e)!=0;
+       xbg_logf("NVN superseded storage writebacks skipped=%d pool_flags=%d (marker gfx-wb-skip)",int(wb_skip),int(nvn_pool_flags!=nullptr));}
+      {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pipe-memo").c_str(),"rb");pipe_memo=false;pipe_memo_valid=false;if(m){pipe_memo=fgetc(m)!='0';fclose(m);}else if(const char *e=getenv("DM_GFX_PIPE_MEMO"))pipe_memo=atoi(e)!=0;
+@@ -3733,6 +3739,7 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
+      {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-upload-prologue").c_str(),"rb");upload_prologue=false;if(m){upload_prologue=fgetc(m)!='0';fclose(m);}else if(const char *e=getenv("DM_GFX_UPLOAD_PROLOGUE"))upload_prologue=atoi(e)!=0;
+       xbg_logf("NVN whole uploads of images not yet used in a submission go ahead of it=%d (marker gfx-upload-prologue)",int(upload_prologue));}
+      {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-async-pipelines").c_str(),"rb");warm::async_on=false;if(m){warm::async_on=fgetc(m)!='0';fclose(m);}else if(const char *e=getenv("DM_GFX_ASYNC_PIPELINES"))warm::async_on=atoi(e)!=0;
++      if(piri::enabled)warm::async_on=false;
+       xbg_logf("NVN background builds for skippable draws=%d (marker gfx-async-pipelines)",int(warm::async_on));}
+      {uint32_t n=0;vkEnumerateDeviceExtensionProperties(cfg.physical,nullptr,&n,nullptr);std::vector<VkExtensionProperties> ext(n);vkEnumerateDeviceExtensionProperties(cfg.physical,nullptr,&n,ext.data());
+       std::string list;for(auto &e:ext){list+=e.extensionName;list+=' ';}
+diff --git a/dm/gfx/vulkan/engine/xbg_pipeline_internals_config.inc b/dm/gfx/vulkan/engine/xbg_pipeline_internals_config.inc
+new file mode 100644
+index 0000000..a4a847f
+--- /dev/null
++++ b/dm/gfx/vulkan/engine/xbg_pipeline_internals_config.inc
+@@ -0,0 +1,52 @@
++// Optional cold diagnostic using VK_KHR_pipeline_executable_properties only.
++// No timing/sampling. The marker is read once, before any warm worker starts.
++namespace piri {
++bool enabled=false;
++std::string directory;
++std::set<std::string> filters;
++constexpr size_t file_limit=8u*1024u*1024u,total_limit=128u*1024u*1024u;
++constexpr unsigned pipeline_limit=128,executable_limit=32,representation_limit=32;
++size_t written_bytes=0;
++unsigned module_serial=0,pipeline_serial=0;
++PFN_vkGetPipelineExecutableInternalRepresentationsKHR get_ir=nullptr;
++struct Source {std::string key,file;size_t bytes=0;bool saved=false;};
++std::map<VkShaderModule,Source> sources;
++std::string quote(const std::string &s){std::string o="\"";for(unsigned char c:s){if(c=='"'||c=='\\'){o+='\\';o+=char(c);}else if(c<32){char b[7];snprintf(b,sizeof b,"\\u%04x",unsigned(c));o+=b;}else o+=char(c);}return o+'"';}
++std::string hex(const void *p,size_t n){static const char h[]="0123456789abcdef";const auto *b=static_cast<const uint8_t*>(p);std::string o;o.reserve(n*2);for(size_t i=0;i<n;i++){o+=h[b[i]>>4];o+=h[b[i]&15];}return o;}
++bool save(const std::string &name,const void *data,size_t bytes){
++    if(bytes>file_limit || bytes>total_limit-written_bytes){xbg_logf("NVN PIR save limit file=%s bytes=%zu",name.c_str(),bytes);return false;}
++    std::string path=directory+"/"+name;
++    int fd=open(path.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0600);
++    if(fd<0){xbg_logf("NVN PIR open failed file=%s errno=%d",name.c_str(),errno);return false;}
++    FILE *f=fdopen(fd,"wb");if(!f){close(fd);return false;}
++    size_t n=bytes?fwrite(data,1,bytes,f):0;bool ok=n==bytes;int rc=fclose(f);written_bytes+=n;
++    if(!ok || rc){xbg_logf("NVN PIR write failed file=%s written=%zu expected=%zu",name.c_str(),n,bytes);return false;}return true;
++}
++bool save_text(const std::string &name,const std::string &data){return save(name,data.data(),data.size());}
++bool wants_key(const std::string &key){return filters.empty()||filters.count(key);}
++void configure(){
++    enabled=false;directory.clear();filters.clear();sources.clear();get_ir=nullptr;written_bytes=0;module_serial=0;pipeline_serial=0;
++    std::string base=cfg.shader_directory;size_t cut=base.find_last_of('/');if(cut!=std::string::npos)base.resize(cut);
++    FILE *f=fopen((base+"/gfx-pipe-internals").c_str(),"rb");if(!f)return;
++    char bytes[8193];size_t n=fread(bytes,1,sizeof bytes,f);bool bad=ferror(f)||n>8192;fclose(f);
++    if(!bad){std::string all(bytes,n);size_t p=0;while(p<all.size()){size_t a=all.find_first_not_of(" \r\n\t",p);if(a==std::string::npos)break;size_t b=all.find_first_of(" \r\n\t",a);if(b==std::string::npos)b=all.size();std::string key=all.substr(a,b-a);if(key.empty()||key.size()>64||key.find_first_not_of("0123456789abcdefABCDEF")!=std::string::npos||filters.size()>=128){bad=true;break;}for(char &c:key)if(c>='A'&&c<='F')c=char(c-'A'+'a');filters.insert(key);p=b;}}
++    if(bad){filters.clear();xbg_logf("NVN PIR invalid/oversized gfx-pipe-internals filter; disabled");return;}
++    directory=base+"/pipeline-internals-"+std::to_string(unsigned(getpid()));
++    if(mkdir(directory.c_str(),0700)){xbg_logf("NVN PIR directory refused errno=%d path=%s",errno,directory.c_str());return;}
++    get_ir=reinterpret_cast<PFN_vkGetPipelineExecutableInternalRepresentationsKHR>(vkGetDeviceProcAddr(cfg.device,"vkGetPipelineExecutableInternalRepresentationsKHR"));
++    if(!get_ir){xbg_logf("NVN PIR standard internal representation function unavailable");return;}
++    enabled=true;
++    char v[256];snprintf(v,sizeof v,"{\"vendorID\":%u,\"deviceID\":%u,\"apiVersion\":%u,\"driverVersion\":%u,\"pipelineCacheUUID\":",properties.vendorID,properties.deviceID,properties.apiVersion,properties.driverVersion);
++    std::string session=v+quote(hex(properties.pipelineCacheUUID,VK_UUID_SIZE))+",\"deviceName\":"+quote(properties.deviceName)+",\"filter_keys\":[";bool first=true;for(const auto &key:filters){if(!first)session+=',';first=false;session+=quote(key);}session+="],\"scope\":\"Static standard driver IR; not GPU timing. capture flags may force recompilation. Full pointer-free PSO schema: xbg_pipeline_key.h at upstream b811b901.\"}\n";
++    if(!save_text("session.json",session)){enabled=false;return;}
++    xbg_logf("NVN PIR enabled filters=%zu directory=%s maxPipeline=%u maxFile=%zu maxTotal=%zu",filters.size(),directory.c_str(),pipeline_limit,file_limit,total_limit);
++}
++void shader(VkShaderModule module,const std::string &key,uint32_t stage,const std::vector<uint32_t> &words){
++    if(!enabled)return;
++    if(sources.size()>=2048){xbg_logf("NVN PIR module limit reached");return;}
++    Source s;s.key=key;s.bytes=words.size()*4;s.file="module-"+std::to_string(++module_serial)+"-stage-"+std::to_string(stage)+".spv";
++    // Record exact post-rewrite bytes passed to vkCreateShaderModule, including
++    // the vertex modules of a selected fragment pipeline. No retained snapshot.
++    s.saved=save(s.file,words.data(),s.bytes);sources[module]=std::move(s);
++}
++}
+diff --git a/dm/gfx/vulkan/engine/xbg_pipeline_internals_dump.inc b/dm/gfx/vulkan/engine/xbg_pipeline_internals_dump.inc
+new file mode 100644
+index 0000000..8d2f659
+--- /dev/null
++++ b/dm/gfx/vulkan/engine/xbg_pipeline_internals_dump.inc
+@@ -0,0 +1,39 @@
++namespace piri {
++bool selected(const VkGraphicsPipelineCreateInfo *g,const VkComputePipelineCreateInfo *c){
++    if(!enabled || pipeline_serial>=pipeline_limit)return false;
++    if(filters.empty())return true;
++    const auto *s=g?g->pStages:&c->stage;unsigned n=g?g->stageCount:1;
++    for(unsigned i=0;i<n;i++){auto it=sources.find(s[i].module);if(it!=sources.end()&&wants_key(it->second.key))return true;}return false;
++}
++void dump(VkPipeline pipeline,const XbgPipelineKey &key,const VkGraphicsPipelineCreateInfo *g,const VkComputePipelineCreateInfo *c){
++    if(!selected(g,c))return;
++    unsigned serial=++pipeline_serial;std::string prefix="pipeline-"+std::to_string(serial);std::string meta="{\"pipeline\":"+quote(std::to_string(uint64_t(pipeline)))+",\"what\":"+quote(pstat_what())+",\"kind\":"+quote(g?"graphics":"compute")+",\"canonical_pso_key_valid\":"+(key.valid?"true":"false")+",\"canonical_pso_key_words\":[";
++    for(unsigned i=0;i<key.count;i++){if(i)meta+=',';meta+=std::to_string(key.words[i]);}meta+="],\"pipeline_flags\":"+std::to_string(g?g->flags:c->flags)+",\"stages\":[";
++    const auto *ss=g?g->pStages:&c->stage;unsigned ns=g?g->stageCount:1;
++    for(unsigned i=0;i<ns;i++){if(i)meta+=',';auto it=sources.find(ss[i].module);meta+="{\"stage\":"+std::to_string(ss[i].stage)+",\"flags\":"+std::to_string(ss[i].flags)+",\"entry\":"+quote(ss[i].pName?ss[i].pName:"")+",\"module\":"+quote(std::to_string(uint64_t(ss[i].module)));
++        if(it!=sources.end()){const auto &s=it->second;meta+=",\"key\":"+quote(s.key)+",\"spirv_file\":"+quote(s.file)+",\"spirv_bytes\":"+std::to_string(s.bytes)+",\"spirv_saved\":"+(s.saved?"true":"false");}
++        if(ss[i].pSpecializationInfo){const auto &sp=*ss[i].pSpecializationInfo;meta+=",\"specialization_present\":true,\"specialization_bytes\":"+std::to_string(sp.dataSize);if(sp.dataSize<=65536&&sp.mapEntryCount<=64){meta+=",\"specialization_data_hex\":"+quote(hex(sp.pData,sp.dataSize))+",\"specialization_map\":[";for(unsigned j=0;j<sp.mapEntryCount;j++){if(j)meta+=',';const auto &e=sp.pMapEntries[j];meta+="["+std::to_string(e.constantID)+","+std::to_string(e.offset)+","+std::to_string(e.size)+"]";}meta+=']';}else meta+=",\"specialization_oversized\":true";}
++        meta+='}';}meta+="],\"executables\":[";
++    VkPipelineInfoKHR pi{VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR};pi.pipeline=pipeline;uint32_t n=0;VkResult rc=pstat_props(cfg.device,&pi,&n,nullptr);
++    if(rc!=VK_SUCCESS || n>executable_limit){meta+="],\"properties_status\":"+std::to_string(rc)+",\"properties_count\":"+std::to_string(n)+"}\n";save_text(prefix+".json",meta);return;}
++    std::vector<VkPipelineExecutablePropertiesKHR> ex(n,VkPipelineExecutablePropertiesKHR{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});rc=pstat_props(cfg.device,&pi,&n,ex.data());if(rc!=VK_SUCCESS || n>ex.size()){meta+="],\"properties_status\":"+std::to_string(rc)+"}\n";save_text(prefix+".json",meta);return;}
++    for(unsigned i=0;i<n;i++){if(i)meta+=',';VkPipelineExecutableInfoKHR ei{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};ei.pipeline=pipeline;ei.executableIndex=i;
++        meta+="{\"index\":"+std::to_string(i)+",\"name\":"+quote(ex[i].name)+",\"description\":"+quote(ex[i].description)+",\"stages\":"+std::to_string(ex[i].stages)+",\"subgroupSize\":"+std::to_string(ex[i].subgroupSize)+",\"statistics\":[";
++        uint32_t count=0;VkResult sr=pstat_stats(cfg.device,&ei,&count,nullptr);
++        if(sr==VK_SUCCESS&&count<=256){std::vector<VkPipelineExecutableStatisticKHR> st(count,VkPipelineExecutableStatisticKHR{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR});sr=pstat_stats(cfg.device,&ei,&count,st.data());if(sr==VK_SUCCESS&&count<=st.size())for(unsigned j=0;j<count;j++){if(j)meta+=',';auto &s=st[j];char v[80];switch(s.format){case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:snprintf(v,sizeof v,"%u",s.value.b32);break;case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:snprintf(v,sizeof v,"%lld",(long long)s.value.i64);break;case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:snprintf(v,sizeof v,"%llu",(unsigned long long)s.value.u64);break;default:snprintf(v,sizeof v,"%.17g",s.value.f64);}meta+="{\"name\":"+quote(s.name)+",\"description\":"+quote(s.description)+",\"format\":"+std::to_string(s.format)+",\"value\":"+quote(v)+"}";}}
++        meta+="],\"statistics_status\":"+std::to_string(sr)+",\"internal_representations\":[";
++        VkResult irc=VK_INCOMPLETE;uint32_t ic=0;bool too_large=false;std::vector<VkPipelineExecutableInternalRepresentationKHR> ir;std::vector<std::vector<uint8_t>> data;
++        unsigned attempts=0;
++        for(;attempts<3;attempts++){
++            ic=0;irc=get_ir(cfg.device,&ei,&ic,nullptr);if(irc!=VK_SUCCESS&&irc!=VK_INCOMPLETE)break;if(ic>representation_limit){too_large=true;break;}
++            ir.assign(ic,VkPipelineExecutableInternalRepresentationKHR{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR});uint32_t cap=ic;irc=get_ir(cfg.device,&ei,&ic,ir.data());if(ic>cap){irc=VK_INCOMPLETE;continue;}if(irc!=VK_SUCCESS&&irc!=VK_INCOMPLETE)break;if(irc==VK_INCOMPLETE)continue;
++            size_t total=0;too_large=false;for(unsigned j=0;j<ic;j++){if(ir[j].dataSize>file_limit||ir[j].dataSize>total_limit-written_bytes-total){too_large=true;break;}total+=ir[j].dataSize;}if(too_large)break;
++            data.clear();data.resize(ic);for(unsigned j=0;j<ic;j++){data[j].resize(ir[j].dataSize);ir[j].pData=data[j].empty()?nullptr:data[j].data();}
++            irc=get_ir(cfg.device,&ei,&ic,ir.data());if(ic>cap){irc=VK_INCOMPLETE;continue;}if(irc!=VK_INCOMPLETE)break;
++        }
++        if(irc==VK_SUCCESS&&!too_large&&ic<=ir.size()&&ic<=data.size())for(unsigned j=0;j<ic;j++){if(j)meta+=',';auto &r=ir[j];std::string name=prefix+"-exec-"+std::to_string(i)+"-ir-"+std::to_string(j)+(r.isText?".txt":".bin");bool size_ok=r.dataSize<=data[j].size();bool ok=size_ok&&save(name,data[j].data(),r.dataSize);meta+="{\"name\":"+quote(r.name)+",\"description\":"+quote(r.description)+",\"isText\":"+(r.isText?"true":"false")+",\"bytes\":"+std::to_string(r.dataSize)+",\"file\":"+quote(name)+",\"saved\":"+(ok?"true":"false")+"}";}
++        meta+="],\"internal_status\":"+std::to_string(irc)+",\"internal_count\":"+std::to_string(ic)+",\"internal_attempts\":"+std::to_string(std::min(attempts+1,3u))+",\"internal_limit_rejected\":"+(too_large?"true":"false")+"}";
++    }
++    meta+="]}\n";bool ok=save_text(prefix+".json",meta);xbg_logf("NVN PIR pipeline=%p metadata=%s saved=%d",(void*)pipeline,prefix.c_str(),int(ok));
++}
++}
