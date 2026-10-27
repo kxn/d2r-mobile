@@ -388,9 +388,16 @@ unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left) {
   // mismatch here: the ordinary next iteration retains query-elision's fatal
   // mismatch rule and all original diagnostics. No new per-member checks.
   if(!valid || !done || replay>=count || (sparse_mode?next_cursor.op:plan[replay].op)!=*next)return 0;
-  planned_op first;
-  if(sparse_mode)first=cursor_entry(&next_cursor,cursor_opcode(&next_cursor));
-  unsigned n=sparse_mode?first.state_run:plan[replay].state_run;
+  unsigned n,raw=0;
+  const planned_op *span=NULL;
+  if(sparse_mode) {
+    // Every pure opcode is grouped by walk. A nonempty state tail is one
+    // sequential span: CALL/JUMP/END and every other non-pure opcode flush it.
+    // The anchor after it has state_run=0, so no cross-node run is possible.
+    if(!V.options.state_segments || !plan_is_span(&plan[next_cursor.node]))return 0;
+    span=&plan[next_cursor.node];raw=plan_raw_count(span);
+    n=raw-next_cursor.offset;if(n>255)n=255;
+  } else n=plan[replay].state_run;
   if(n>guard_left)n=guard_left;
   if(!n)return 0;
   // Admission is once per nonempty span, never once per state member.
@@ -405,30 +412,25 @@ unsigned vk_pass_state_segment(const uint8_t **next,unsigned guard_left) {
   // only changes CPU state/version bookkeeping under the caller's no-operation
   // proof; it cannot inspect the plan or enter a GPU callback in this scope.
   if(sparse_mode) {
-    vk_pass_cursor cursor=next_cursor,last=cursor;unsigned remaining=n,last_opcode=0;
-    while(remaining) {
-      const planned_op *o=&plan[cursor.node];
-      if(plan_is_span(o)) {
-        unsigned raw=plan_raw_count(o),take=raw-cursor.offset;
-        if(take>remaining)take=remaining;
-        const uint8_t *p=cursor.op,*last_op=p;
-        // Only ordinary state application and sequential header stepping per
-        // member. Cursor/proof publication happens once per consumed piece.
-        for(unsigned i=0;i<take;i++) {
-          op_hdr h;memcpy(&h,p,8);last_op=p;last_opcode=h.op;
-          vk_state_op(h.op,p+sizeof(op_hdr));p+=h.size;
-        }
-        last=cursor;last.op=last_op;last.ordinal+=take-1;last.offset+=take-1;
-        cursor.ordinal+=take;cursor.offset+=take;remaining-=take;
-        if(cursor.offset==raw) {
-          cursor.offset=0;cursor.node++;cursor.op=cursor.ordinal<count?plan[cursor.node].op:NULL;
-        } else cursor.op=p;
-      } else {
-        last=cursor;last_opcode=o->opcode;
-        vk_state_op(o->opcode,o->op+sizeof(op_hdr));cursor_advance(&cursor,0);remaining--;
-      }
+    vk_pass_cursor cursor=next_cursor,last=cursor;
+    const uint8_t *p=cursor.op,*last_op=p;unsigned last_opcode=0;
+    for(unsigned i=0;i<n;i++) {
+      op_hdr h;memcpy(&h,p,8);last_op=p;last_opcode=h.op;
+      vk_state_op(h.op,p+sizeof(op_hdr));p+=h.size;
     }
-    current_cursor=last;sparse_current=cursor_entry(&last,last_opcode);next_cursor=cursor;
+    // Publish once after all state applications, as in dense replay. Current
+    // still denotes the last consumed RAW op; future/done consumers must not
+    // observe the next anchor as though it had already executed.
+    last.op=last_op;last.ordinal+=n-1;last.offset+=n-1;
+    unsigned run=raw-last.offset;
+    sparse_current=(planned_op){.op=last_op,.opcode=last_opcode,
+      .need=span->need,.writes=span->writes,.sample_live=span->sample_live,
+      .state_run=run>255?255:run};
+    cursor.ordinal+=n;cursor.offset+=n;
+    if(cursor.offset==raw) {
+      cursor.offset=0;cursor.node++;cursor.op=cursor.ordinal<count?plan[cursor.node].op:NULL;
+    } else cursor.op=p;
+    current_cursor=last;next_cursor=cursor;
   } else {
     for(unsigned i=0;i<n;i++) {
       const planned_op *o=&plan[replay+i];
