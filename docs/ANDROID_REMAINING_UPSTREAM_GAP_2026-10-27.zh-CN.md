@@ -79,7 +79,7 @@ IR3 原生汇编已取得。大型 FS 的统计中可见约 2900 条指令、较
 
 再次读取上游 main 至 `d93985b`：新增 2.0.1、740–799 改写默认策略、编译失败处理、BC4/5 过滤格式回退、30 FPS 省电设置和 UI 修复。本机 735 不在新 740–799 默认策略范围；实测 40～43 FPS 亦不是 30 FPS 上限。当前固定 release/诊断对照仍明确标为 `b811b90`，不把旧产物冒充刚更新 main。
 
-## 原厂 GPU 计数已将范围缩到 driver 执行
+## 原厂 GPU 计数将范围缩到 driver 与渲染策略组合
 
 同一诊断 APK 再以官方 Snapdragon Profiler 2026.9 采集九项指标，工具原生全局样本通过 Perfetto clock snapshot 对齐到每端首末完整游戏 Surface 间隔：
 
@@ -96,7 +96,7 @@ IR3 原生汇编已取得。大型 FS 的统计中可见约 2900 条指令、较
 | Texture Fetch Stall % | 12.192 | 11.882 |
 | Wave Context Occupancy % | 57.946 | 54.821 |
 
-两边 GPU clock-count rate 接近（不是瞬时频率锁定证明），读取接近，Turnip 写入与归一化片元指令反而更少，却慢约 3.37 FPS。这是不同 driver 的执行效率差异实证，不能继续以更多总写入解释，也不能直接定性为 DRAM 带宽饱和。Shader 停顿更高、波占用较低，优先查编译结果、依赖延迟隐藏及其他 GPU 命令成本；这些指标不可相加，尚未证明具体哪条 shader 或调度机制应对全部差距负责。
+两边 GPU clock-count rate 接近（不是瞬时频率锁定证明），读取接近，Turnip 写入与归一化片元指令反而更少，却慢约 3.37 FPS。这是不同 driver 配置组合的执行差异实证，不能继续以更多总写入解释，也不能直接定性为 DRAM 带宽饱和。Shader 停顿更高、波占用较低，优先查编译结果、依赖延迟隐藏及其他 GPU 命令成本；这些指标不可相加，尚未证明具体哪条 shader 或调度机制应对全部差距负责。
 
 原始 .sdp、只读解包数据库、指标定义与样本、两份原 Perfetto 和同窗口积分在 `.local/logs/remaining-upstream-gap-v1/gpu-tools/`。工具通过现成 GUI 选择指标，未手改数据库或重写采样/计时。复用已有整理程序，将验证所需指标列表切换为本次实际九项，保留定义核对、global 范围、非有限/负值/百分比哨兵、覆盖与间隙检查。没有图形抓帧层插入。
 
@@ -165,3 +165,27 @@ IR3 原生汇编已取得。大型 FS 的统计中可见约 2900 条指令、较
 schema4候选已在Q735上完成两次**不带Intent额外参数**的真实图标冷启动。两次原HLE日志均证明 `primary_budget_us=30`，共享池/lazy窗口、native资源、CPU7内联翻译、应用内UBWC和prefer_sysmem保持原配置；现成原Android生命周期均fresh save2后退出。截图目视未见新黑块或几何异常，不代表全游戏验收。
 
 桌面保持用户原设置2358×1080游戏输出、0.75比例，不把1968×900/0.85对比窗口冒充日常模式；截图约40.7的瞬时HUD也不替代正式ABBA的43.33。已安装APK为 `52965c563846c58c4090d96e0e7a84f1399f633ef0107f04ffe31c5bafceef5c`。profile SHA为 `73727b0ba8d576f96308ddd62309e7e882c6be39fcff1c468e98318403b7f850`，receipt SHA为 `6e55c3908dfb709d89e5743c3772542bf83c01033251e8ac24c03b03ea4bf94f`。当前接受状态保存于 `.local/logs/remaining-upstream-gap-v1/accepted-short-wait-deployment.json`，上个query部署记录保留为历史。原模块/Shader/native表/driver等锚点再次确认，系统显示、调试配置和Mesa临时属性已恢复；两个游戏进程均停止。
+
+
+## 并行复核后的资格纠正与模式实验
+
+还发现一个重要的对照边界：原上游诊断loader给B3硬编码 `TU_AUTOTUNE_ALGO=prefer_sysmem`，系统driver用自身自动选择。因此43.3/40.0证明的是“系统自动策略”与“B3+prefer_sysmem+UBWC”整个组合的差距，**尚未单独隔离shader编译器本体**。相近流量和时钟指标不能跳过模式这个条件。旧项目在不同资源/.60下的模式记录不能替代同一上游APK实验。
+
+无需重编，用上游现成env入口设置Mesa标准 `TU_DEBUG=gmem,startup`。源码证明其分支在autotune之前，保留不可容纳附件、empty/tess、XFB/query等硬性SYSMEM回退；不是删barrier或改guest/shader。正常不插工具的20秒Perfetto窗口：GMEM臂 **25.486 FPS**；恢复原env后的新鲜prefer_sysmem参考 **39.989 FPS**。这排除了“直接把关键Pass推入GMEM即可补齐差距”的方案，不能据此断言所有自动策略都差。
+
+实际模式另外用Mesa现成CSV确认，**不再重复正式FPS采集**：两次冷启公用cmd_buffer/render_pass/IB tracepoints，不开逐draw时间戳；每臂取最后60个完整主要HDR batch，排除尾4个。1673×765的两个大Pass，参考臂各640draw、`tiledRender=false` / Autotune selected sysmem；GMEM臂各641draw、`tiledRender=true` / TU_DEBUG(GMEM)。游戏仍正常推进，场景微小draw变化明确保留，不称逐帧相同。这里证明关键Pass真正换模式；没有拿每draw边界时间当纯shader成本。工具窗口FPS不用于上述普通结果。
+
+自己已发布c19d39f包则直接用原cold接口选 `bandwidth`，无需装新包，其他条件与WAIT30相同。8秒初筛约 **35.348 FPS**，低于已正式测量的prefer_sysmem约43.33；只能作为不改默认的筛选结果，不报告正式百分比或将其冒充同上游APK对照。不能说已经测试了上游B3的默认bandwidth——该上游loader硬编码仍需源码参数化才能做。
+
+本次没有新写采样器、计时器或改驱动。官方Snapdragon SnapshotPlayer的 `-updatabledriver` 指GDD包，没有已验证入口加载应用内B3；现成capture里SCOPE动态表为空，静态ShaderStat存在，故不能把系统driver重放当Turnip数据。相应手册/二进制能力核实与工具缺口保留在 `gpu-next-after-wait/TOOLS.zh-CN.md`，未因工具缺口退回自制GPU计时。优先沿现成Mesa实际mode和原厂全局计数推进。
+
+模式原CSV、源字段核对、APK/driver/env哈希与CAS恢复在 `gpu-next-after-wait/UPSTREAM-MODE1/`；正式与初筛摘要为 `mode-control-final-summary.json`。采后原env和marker状态已恢复，上游原release carrier APK b8d1fcd1已重新装回，移除本次启用selector；主线schema4已发布组合保留，两个游戏均停止，临时Mesa属性为空。未接触Mali或6GB平板。
+
+准备开销的进一步离线审计修正了范围：四臂暖机19.553～45.877秒，共123.934秒，28.6只是第一臂；真实启动约21.18～23.25秒/臂。没有每轮重新扫描52240个shader和36模块，显式Intent也不会重复六项桌面Java检查，完整验证实际已复用。剩余每臂采前第二次APK哈希确有重复，四次合计读88.46MB，但没有命令耗时证据，不能声称又可省几十秒。原save2的应用内工作约0.282～0.301秒，不含ADB/helper等待；不为省这点开销破坏保存。审计没有找到第二个与旧固定94秒暖机相当的浪费点，不再为小哈希开销造管理缓存。
+
+
+### 模式记录引出的 LRZ 方向已核实，不能直接删 stencil
+
+并行审查了现成双方真实GFXReconstruct整帧命令、PSO状态和Mesa条件。HDR双方均 depthTest=true、depthWrite=false、depthCompare=EQUAL；stencilTest=true，正反面 EQUAL / compareMask2 / reference0 / writeMask0，三个操作全KEEP。前置Pass确实向同一D24S8写入stencil bit1（ALWAYS/REPLACE、reference2/writeMask2），中间depth prepass只清DEPTH并LOAD/STORE保留stencil，HDR随后读取该bit筛选。没有中途stencil clear或动态状态覆盖。全KEEP只说明只读，不说明恒通过，关闭测试会改变内容；这里只证明真实生产消费依赖，不声称已经测量杀掉多少像素。
+
+Mesa CSV的 `lrz=true` 是 `state.lrz.valid`，不等于该draw硬件测试开启。`Stencil may kill fragments` 在这里单独禁止LRZ写入，不能直接等同整体LRZ关闭；HDR的depthCompare=EQUAL另外触发独立的temporary disable（源码注释系统blob也如此）。因此不能凭lrzStatus=DISABLED就新加跳过stencil或修改游戏深度语义的优化。核对脚本、原输入SHA、实际producer/LOAD/STORE/clear和源代码片段保存在 `gpu-next-after-wait/lrz-audit/`；没有为此重新抓整帧或占用设备。
