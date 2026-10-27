@@ -59,6 +59,19 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_swapchain_ubwc_requires_explicit_cold_custom_provider(self):
+        self.assertNotIn('turnip_swapchain_ubwc',self.launch_command([]))
+        for option,value in [('--turnip-swapchain-ubwc','true'),('--no-turnip-swapchain-ubwc','false')]:
+            command=self.launch_command(['--vulkan-provider','adreno',option])
+            index=command.index('turnip_swapchain_ubwc')
+            self.assertEqual(command[index-1:index+2],['--ez','turnip_swapchain_ubwc',value])
+            for invalid in ([option],['--vulkan-provider','system',option],['--attach',option]):
+                with patch('sys.argv',[str(LAUNCHER),*invalid]), \
+                        patch('subprocess.check_output') as adb, \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                    runpy.run_path(str(LAUNCHER),run_name='__main__')
+                self.assertEqual(caught.exception.code,2)
+                adb.assert_not_called()
     def test_query_attachment_reference_is_explicit_and_cold_only(self):
         self.assertNotIn('query_attachment_reference',self.launch_command([]))
         for option,value in [('--query-attachment-reference','true'),('--no-query-attachment-reference','false')]:

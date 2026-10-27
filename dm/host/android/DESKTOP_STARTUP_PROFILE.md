@@ -1,4 +1,4 @@
-# Verified desktop startup, schemas 1 and 2
+# Verified desktop startup, schemas 1, 2 and 3
 
 This corrects a delivery gap: transaction tests restore their original APK and
 assets; that original APK predates shared/native resources. Successful test
@@ -58,6 +58,15 @@ translation_cpu_mask=128
 stream_submits=false
 turnip_autotune=prefer_sysmem
 ```
+
+Schema 3 retains every schema 2 field and additionally requires the strict
+boolean `turnip_swapchain_ubwc`. A qualified publication may set it to `true`
+for its exact driver/device tuple. It sets `TU_UBWC_SWAPCHAIN` only inside the
+app process, before driver initialization, without changing Android properties.
+The default driver policy remains disabled; absent explicit selection preserves
+an externally configured experiment. The allocation request is not proof of
+actual compression: retain the allocator/mapper layout and real-game checks in
+the publication evidence. Old schemas continue rejecting this extra key.
 
 These values describe the locally qualified Q735 combination, not universal
 device defaults. The CPU mask is a canonical nonnegative decimal Java integer;

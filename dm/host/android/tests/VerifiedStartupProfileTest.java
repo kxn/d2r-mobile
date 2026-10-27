@@ -120,6 +120,17 @@ public final class VerifiedStartupProfileTest {
                 f.useV2(); f.values.setProperty(entry[0], entry[1]); f.store(); rejects(f::load);
             }
         }
+        try (Fixture f = new Fixture()) {
+            f.useV2(); f.values.setProperty("schema", "3");
+            f.store(); rejects(f::load); // V3 cannot silently omit the policy.
+            for (String value : Arrays.asList("true", "false")) {
+                f.values.setProperty("turnip_swapchain_ubwc", value); f.store();
+                check(Boolean.valueOf(value).equals(f.load().extras.get("turnip_swapchain_ubwc")));
+            }
+            f.values.setProperty("turnip_swapchain_ubwc", "yes"); f.store(); rejects(f::load);
+            f.values.setProperty("schema", "2"); f.values.setProperty("turnip_swapchain_ubwc", "true");
+            f.store(); rejects(f::load); // Older schemas still reject extra keys.
+        }
         for (String key : Arrays.asList("inline_translation", "translation_cpu_mask", "stream_submits", "turnip_autotune")) {
             try (Fixture f = new Fixture()) { f.useV2(); f.values.remove(key); f.store(); rejects(f::load); }
         }

@@ -375,6 +375,8 @@ static int keep_attachment_stores_startup;
 static int render_record_mode_startup;
 static unsigned translation_cpu_mask_startup;
 static char turnip_autotune_startup[32];
+// -1 preserves an external reference experiment; explicit profiles own 0/1.
+static int turnip_swapchain_ubwc_startup=-1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeQueryAttachmentReference(
     JNIEnv *env,jclass klass,jboolean reference) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);
@@ -426,6 +428,18 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTurnipAu
   if(!valid || frozen) {
     jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
     if(error)(*env)->ThrowNew(env,error,"turnip_autotune requires a valid cold selection");
+  }
+}
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeTurnipSwapchainUbwc(
+    JNIEnv *env,jclass klass,jint selection) {
+  (void)klass;
+  pthread_mutex_lock(&operation_mode_mutex);
+  int valid=selection>=-1 && selection<=1 && !operation_mode_fixed;
+  if(valid)turnip_swapchain_ubwc_startup=selection;
+  pthread_mutex_unlock(&operation_mode_mutex);
+  if(!valid) {
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,"turnip_swapchain_ubwc requires a cold selection");
   }
 }
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSubmissionPlanReference(
@@ -915,6 +929,10 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
   if(turnip_autotune_startup[0] && strcmp(turnip_autotune_startup,"default") &&
       setenv("TU_AUTOTUNE_ALGO",turnip_autotune_startup,1))
     die("Android Turnip autotune startup environment");
+  if(turnip_swapchain_ubwc_startup>=0 &&
+      setenv("TU_UBWC_SWAPCHAIN",turnip_swapchain_ubwc_startup?"1":"0",1))
+    die("Android Turnip swapchain UBWC startup environment");
+  LOG("Android Turnip swapchain UBWC selection=%d",turnip_swapchain_ubwc_startup);
   char translation_cpu_mask[16];snprintf(translation_cpu_mask,sizeof translation_cpu_mask,"%x",translation_cpu_mask_startup);
   char render_record_mode[2]={(char)('0'+render_record_mode_startup),0};
   if(setenv("DM_NVN_CPU_MASK",translation_cpu_mask,1) ||

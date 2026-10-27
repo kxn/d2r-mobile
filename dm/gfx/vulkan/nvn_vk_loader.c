@@ -154,6 +154,8 @@ void vk_loader_initialize(void) {
       if(getenv("DM_VULKAN_NATIVE_RESOURCE_TABLE"))native_driver_hash(driver_path);
 #endif
       LOG("[vulkan loader] custom=%slibvulkan_freedreno.so",driver_directory);
+      const char *swapchain_ubwc=getenv("TU_UBWC_SWAPCHAIN");
+      LOG("[vulkan loader] Turnip swapchain UBWC startup=%s",swapchain_ubwc?swapchain_ubwc:"external");
     }
 #else
     die("Application-local Vulkan driver loading requires Android");

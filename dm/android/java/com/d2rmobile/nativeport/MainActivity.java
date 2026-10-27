@@ -58,6 +58,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeRenderRecordMode(int mode);
     private static native void nativeTranslationCpuMask(int mask);
     private static native void nativeTurnipAutotune(String selection);
+    private static native void nativeTurnipSwapchainUbwc(int selection);
     private static native void nativeSampleLivenessReference(boolean reference);
     private static native void nativeStorageBiasReference(boolean reference);
     private static native void nativePoolSyncReference(boolean reference);
@@ -301,6 +302,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     !getIntent().getBooleanExtra("custom_vulkan_driver", false))
                 throw new IllegalArgumentException("Turnip autotune requires the app-local Adreno provider");
             nativeTurnipAutotune(autotune);
+            if (getIntent().hasExtra("turnip_swapchain_ubwc") &&
+                    !"adreno".equals(getIntent().getStringExtra("vulkan_provider")) &&
+                    !getIntent().getBooleanExtra("custom_vulkan_driver", false))
+                throw new IllegalArgumentException("Turnip UBWC requires the app-local Adreno provider");
+            nativeTurnipSwapchainUbwc(getIntent().hasExtra("turnip_swapchain_ubwc") ?
+                    (getIntent().getBooleanExtra("turnip_swapchain_ubwc", false) ? 1 : 0) : -1);
             nativeSharedGuestHeap(getIntent().getBooleanExtra("shared_guest_heap", false));
             nativeSharedLazyWindows(getIntent().getBooleanExtra("shared_lazy_windows", false));
             nativeSharedImageRawObserve(getIntent().getBooleanExtra("shared_image_raw_observe", true));

@@ -28,9 +28,12 @@ final class VerifiedStartupProfile {
     };
     private static final Set<String> REQUIRED = new HashSet<>(Arrays.asList(KEYS));
     private static final Set<String> REQUIRED_V2 = new HashSet<>(REQUIRED);
+    private static final Set<String> REQUIRED_V3 = new HashSet<>();
     static {
         REQUIRED_V2.addAll(Arrays.asList("inline_translation", "translation_cpu_mask",
                 "stream_submits", "turnip_autotune"));
+        REQUIRED_V3.addAll(REQUIRED_V2);
+        REQUIRED_V3.add("turnip_swapchain_ubwc");
     }
     final String name;
     final Map<String, Object> extras;
@@ -73,9 +76,10 @@ final class VerifiedStartupProfile {
             throw invalid("profile properties", error);
         }
         String schema = values.getProperty("schema");
-        boolean version2 = "2".equals(schema);
+        boolean version3 = "3".equals(schema);
+        boolean version2 = "2".equals(schema) || version3;
         if (!version2 && !"1".equals(schema)) throw invalid("profile schema");
-        if (!values.stringPropertyNames().equals(version2 ? REQUIRED_V2 : REQUIRED))
+        if (!values.stringPropertyNames().equals(version3 ? REQUIRED_V3 : version2 ? REQUIRED_V2 : REQUIRED))
             throw invalid("profile fields");
         String name = values.getProperty("name");
         if (name.isEmpty() || name.length() > 64 || name.indexOf('\n') >= 0 || name.indexOf('\r') >= 0)
@@ -134,6 +138,7 @@ final class VerifiedStartupProfile {
                 throw invalid("Turnip autotune");
             extras.put("turnip_autotune", autotune);
         }
+        if (version3) extras.put("turnip_swapchain_ubwc", flag(values, "turnip_swapchain_ubwc"));
         return new VerifiedStartupProfile(name, extras);
     }
 

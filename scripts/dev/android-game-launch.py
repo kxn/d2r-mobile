@@ -51,6 +51,7 @@ parser.add_argument('--keep-attachment-stores',action='store_true',help='cold co
 parser.add_argument('--fixed-render-recording',choices=['secondary','primary'],help='cold controlled comparison of command buffer recording, with identical fixed LOAD/STORE; requires --keep-attachment-stores --no-pixel-local and no deferred mip clears')
 parser.add_argument('--translation-cpu-mask',type=lambda s:int(s,0),default=0,help='cold translation-owner affinity bitmask; default0 retains Android scheduling')
 parser.add_argument('--turnip-autotune',choices=['default','bandwidth','profiled','prefer_sysmem'],help='app-private cold Turnip render-pass policy; default preserves external driver configuration')
+parser.add_argument('--turnip-swapchain-ubwc',action=argparse.BooleanOptionalAction,default=None,help='app-private cold compressed swapchain allocation; requires the qualified experimental Turnip driver')
 parser.add_argument('--storage-usage-reference',action='store_true',help='startup-only comparison: reserve Storage usage from the NVN IMAGE hint instead of first actual binding')
 parser.add_argument('--attachment-usage-reference',action='store_true',help='startup-only comparison: reserve Color Attachment usage for every supporting format')
 parser.add_argument('--texel-storage',action='store_true',help='experimental paired RGBA32F buffer storage path; requires matching alternative shader sidecars')
@@ -184,6 +185,9 @@ if args.attach and args.submission_plan_reference:
     parser.error('--submission-plan-reference is startup-only and cannot be used with --attach')
 if args.attach and args.native_buffer_geometry is not None:
     parser.error('--native-buffer-geometry is startup-only and cannot be used with --attach')
+if args.turnip_swapchain_ubwc is not None and (args.attach or not
+        (args.vulkan_provider=='adreno' or (args.custom_vulkan_driver and args.vulkan_provider in (None,'adreno')))):
+    parser.error('--turnip-swapchain-ubwc requires a cold app-local Adreno provider')
 if args.attach and args.query_attachment_reference is not None:
     parser.error('--query-attachment-reference is startup-only and cannot be used with --attach')
 if args.attach and args.keep_attachment_stores:
@@ -325,6 +329,8 @@ if not args.attach:
         launch += ['--es','vulkan_provider',args.vulkan_provider]
     if args.turnip_autotune is not None:
         launch += ['--es','turnip_autotune',args.turnip_autotune]
+    if args.turnip_swapchain_ubwc is not None:
+        launch += ['--ez','turnip_swapchain_ubwc',str(args.turnip_swapchain_ubwc).lower()]
     if args.native_resource_table is not None:
         launch += ['--es','native_resource_table',args.native_resource_table,
                    '--es','native_resource_pack_sha256',args.native_resource_pack_sha256,
@@ -446,6 +452,10 @@ while time.monotonic() < deadline:
                         0 <= observed - state.get('present_sample_ns', 0) < 1_000_000_000 and
                         (not args.attach or observed > initial_observed)):
                     external = 'external profiling: custom CPU/GPU timers disabled' in log
+                    ubwc_selection=re.findall(r'\[vulkan loader\] Turnip swapchain UBWC startup=([01])\b',log)
+                    if args.turnip_swapchain_ubwc is not None and (not ubwc_selection or
+                            len(set(ubwc_selection))!=1 or bool(int(ubwc_selection[-1]))!=args.turnip_swapchain_ubwc):
+                        raise SystemExit('app-private Turnip swapchain UBWC selection not proven by running loader')
                     if args.external_profile and not external:
                         raise SystemExit('current process is not in the expected external-profile mode')
                     async_submit = '[vulkan] submission overlap: enabled' in log
