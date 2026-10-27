@@ -1,0 +1,242 @@
+--- a/scripts/dev/native-image-payload/CMakeLists.txt
++++ b/scripts/dev/native-image-payload/CMakeLists.txt
+@@ -2,6 +2,10 @@
+ project(dm_native_image_payload C)
+ option(DM_BUILD_NATIVE_IMPORTED_IMAGE "Build opt-in PanVK native image import contract fixture" OFF)
+ option(DM_NATIVE_TURNIP_HOST_ASTC "Explicit experimental Turnip host-image ASTC contract" OFF)
++option(DM_NATIVE_TURNIP_HOST_BC3 "Independent BC3 native producer probe" OFF)
++if(DM_NATIVE_TURNIP_HOST_BC3 AND NOT DM_NATIVE_TURNIP_HOST_ASTC)
++  message(FATAL_ERROR "BC3 probe requires the original Turnip coherent host contract")
++endif()
+ if(DM_NATIVE_TURNIP_HOST_ASTC AND NOT DM_BUILD_NATIVE_IMPORTED_IMAGE)
+   message(FATAL_ERROR "Turnip ASTC contract requires DM_BUILD_NATIVE_IMPORTED_IMAGE")
+ endif()
+@@ -37,7 +41,12 @@
+   string(APPEND DM_NATIVE_PRODUCER_CONTENT "${input}:${input_sha}\n")
+ endforeach()
+ if(DM_NATIVE_TURNIP_HOST_ASTC)
+-  string(APPEND DM_NATIVE_PRODUCER_CONTENT "contract-profile:turnip-coherent-host-astc-v1\n")
++  if(DM_NATIVE_TURNIP_HOST_BC3)
++    string(APPEND DM_NATIVE_PRODUCER_CONTENT "contract-profile:turnip-coherent-host-bc3-npot-reference-v2\n")
++    target_compile_definitions(native_image_payload PRIVATE DM_NATIVE_TURNIP_HOST_BC3=1)
++  else()
++    string(APPEND DM_NATIVE_PRODUCER_CONTENT "contract-profile:turnip-coherent-host-astc-v1\n")
++  endif()
+   target_compile_definitions(native_image_payload PRIVATE DM_NATIVE_TURNIP_HOST_ASTC=1)
+ endif()
+ string(SHA256 DM_NATIVE_PRODUCER_SHA "${DM_NATIVE_PRODUCER_CONTENT}")
+@@ -60,4 +69,7 @@
+   if(DM_NATIVE_TURNIP_HOST_ASTC)
+     target_compile_definitions(native_image_payload_embed PRIVATE DM_NATIVE_TURNIP_HOST_ASTC=1)
+   endif()
++  if(DM_NATIVE_TURNIP_HOST_BC3)
++    target_compile_definitions(native_image_payload_embed PRIVATE DM_NATIVE_TURNIP_HOST_BC3=1)
++  endif()
+ endif()
+--- a/scripts/dev/native-image-payload/fixture.c
++++ b/scripts/dev/native-image-payload/fixture.c
+@@ -4,6 +4,7 @@
+ #include "native_sample_spv.h"
+ #include "volk.h"
+ #include <fcntl.h>
++#include <math.h>
+ #include <stddef.h>
+ #include <stdint.h>
+ #include <stdio.h>
+@@ -23,7 +24,9 @@
+     }                                                                          \
+   } while (0)
+ #define VK(c) CHECK((c) == VK_SUCCESS)
+-#ifdef DM_NATIVE_TURNIP_HOST_ASTC
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++enum { FIXTURE_WIDTH=13, FIXTURE_HEIGHT=9 };
++#elif defined(DM_NATIVE_TURNIP_HOST_ASTC)
+ enum { FIXTURE_WIDTH=8, FIXTURE_HEIGHT=8 };
+ #else
+ enum { FIXTURE_WIDTH=13, FIXTURE_HEIGHT=9 };
+@@ -293,7 +296,7 @@
+                              .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+ }
+ static int supported(VkFormat format) {
+-  if ((format == VK_FORMAT_BC3_UNORM_BLOCK && !bc) ||
++  if (((format == VK_FORMAT_BC3_UNORM_BLOCK || format == VK_FORMAT_BC3_SRGB_BLOCK) && !bc) ||
+       ((format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK ||
+         format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
+         format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK ||
+@@ -398,6 +401,19 @@
+                        ? 6
+                        : 4,
+            n = (x / block + y / block + layer + level + pattern_version) % 3;
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++  if (format == VK_FORMAT_BC3_UNORM_BLOCK || format == VK_FORMAT_BC3_SRGB_BLOCK) {
++    const uint8_t encoded[3] = {n == 0 ? 123 : 0, n == 1 ? 125 : 0, n == 2 ? 123 : 0};
++    for (unsigned c = 0; c < 3; c++) {
++      float v = encoded[c] / 255.0f;
++      if (format == VK_FORMAT_BC3_SRGB_BLOCK)
++        v = v <= 0.04045f ? v / 12.92f : powf((v + 0.055f) / 1.055f, 2.4f);
++      rgba[c] = (uint8_t)lroundf(v * 255.0f);
++    }
++    rgba[3] = 255;
++    return;
++  }
++#endif
+   rgba[0] = n == 0 ? 255 : 0;
+   rgba[1] = n == 1 ? 255 : 0;
+   rgba[2] = n == 2 ? 255 : 0;
+@@ -427,9 +443,13 @@
+     for (uint32_t x = 0; x < cols; x++) {
+       uint8_t rgba[4], *b = out + (y * cols + x) * 16;
+       expected(format, level, layer, x * block, y * block, rgba);
+-      if (format == VK_FORMAT_BC3_UNORM_BLOCK) {
++      if (format == VK_FORMAT_BC3_UNORM_BLOCK || format == VK_FORMAT_BC3_SRGB_BLOCK) {
+         b[0] = 255;
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++        uint16_t color = rgba[0] ? 0x7800 : rgba[1] ? 0x03e0 : 0x000f;
++#else
+         uint16_t color = rgba[0] ? 0xf800 : rgba[1] ? 0x07e0 : 0x001f;
++#endif
+         memcpy(b + 8, &color, 2);
+         memcpy(b + 10, &color, 2);
+       } else { // Same owned U16 void-extent vector as original astc_metadata
+@@ -651,7 +671,11 @@
+   VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cp, NULL, &pipeline));
+   vkDestroyShaderModule(device, shader, NULL);
+ }
++static uint8_t sample_output_sha256[32];
+ static void sample_all(image *i, VkFormat format) {
++  mbedtls_sha256_context samples;
++  mbedtls_sha256_init(&samples);
++  mbedtls_sha256_starts(&samples, 0);
+   pipeline_create();
+   VkImageView view;
+   VkSampler sampler;
+@@ -778,13 +802,22 @@
+         for (uint32_t x = 0; x < push[0]; x++) {
+           uint8_t rgba[4];
+           expected(format, level, layer, x, y, rgba);
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++          if (format == VK_FORMAT_BC3_UNORM_BLOCK || format == VK_FORMAT_BC3_SRGB_BLOCK) {
++            for (unsigned c = 0; c < 4; c++)
++              CHECK(abs((int)((uint8_t *)mapped)[(y * push[0] + x) * 4 + c] - rgba[c]) <= (c == 3 ? 0 : 1));
++          } else
++#endif
+           CHECK(!memcmp((uint8_t *)mapped + (y * push[0] + x) * 4, rgba, 4));
+         }
++      mbedtls_sha256_update(&samples, mapped, (size_t)push[0] * push[1] * 4);
+       for (uint32_t n = push[0] * push[1]; n < FIXTURE_WIDTH * FIXTURE_HEIGHT; n++)
+         CHECK(((uint32_t *)mapped)[n] == 0xccccccccu);
+       VK(vkResetFences(device, 1, &fence));
+       VK(vkResetCommandPool(device, commands, 0));
+     }
++  mbedtls_sha256_finish(&samples, sample_output_sha256);
++  mbedtls_sha256_free(&samples);
+   vkDestroyFence(device, fence, NULL);
+   vkFreeCommandBuffers(device, commands, 1, &command);
+   vkDestroyDescriptorPool(device, pool, NULL);
+@@ -794,6 +827,35 @@
+   vkDestroySampler(device, sampler, NULL);
+   vkDestroyImageView(device, view, NULL);
+ }
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++static void ordinary_sample_reference(VkFormat format, const uint8_t native_digest[32]) {
++  int saved = native_mode;
++  native_mode = 0;
++  image reference = create_image(format); /* No external handle, normal optimal image. */
++  native_mode = saved;
++  transition(&reference, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
++  for (unsigned level = 0; level < LEVELS; level++) {
++    size_t bytes;
++    uint8_t *linear = linear_source(format, level, 0, &bytes);
++    VkMemoryToImageCopyEXT copy = {
++        .sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
++        .pHostPointer = linear,
++        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1},
++        .imageExtent = {mip(FIXTURE_WIDTH, level), mip(FIXTURE_HEIGHT, level), 1}};
++    VkCopyMemoryToImageInfoEXT upload = {
++        .sType = VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
++        .dstImage = reference.image, .dstImageLayout = VK_IMAGE_LAYOUT_GENERAL,
++        .regionCount = 1, .pRegions = &copy};
++    VK(vkCopyMemoryToImageEXT(device, &upload));
++    free(linear);
++  }
++  transition(&reference, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++  sample_all(&reference, format);
++  CHECK(!memcmp(native_digest, sample_output_sha256, 32));
++  printf("{\"ordinary_BC3_reference\":true,\"format\":%u,\"width\":%u,\"height\":%u,\"mips\":%u,\"nonexternal_optimal\":true,\"native_sample_bytes_exact\":true,\"nonendpoint_RGB565\":true,\"NPOT\":true}\n", format, FIXTURE_WIDTH, FIXTURE_HEIGHT, LEVELS);
++  destroy_image(&reference);
++}
++#endif
+ static void restore(const char *directory, VkFormat format) {
+   char path[4096];
+   CHECK(snprintf(path, sizeof path, "%s/native-%u.bin", directory, format) <
+@@ -914,6 +976,9 @@
+   }
+   const VkFormat formats[] = {VK_FORMAT_R8G8B8A8_UNORM,
+                               VK_FORMAT_BC3_UNORM_BLOCK,
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++                              VK_FORMAT_BC3_SRGB_BLOCK,
++#endif
+                               VK_FORMAT_ASTC_4x4_UNORM_BLOCK,
+                               VK_FORMAT_ASTC_6x6_UNORM_BLOCK
+ #ifdef DM_NATIVE_IMPORTED_IMAGE
+@@ -933,7 +998,15 @@
+ #endif
+     for (unsigned n = 0; n < sizeof formats / sizeof *formats; n++) {
+ #ifdef DM_NATIVE_IMPORTED_IMAGE
+-      if (native_mode && formats[n] != VK_FORMAT_ASTC_4x4_UNORM_BLOCK &&
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++      if (native_mode && formats[n] != VK_FORMAT_BC3_UNORM_BLOCK && formats[n] != VK_FORMAT_BC3_SRGB_BLOCK)
++        continue;
++#endif
++      if (native_mode &&
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++          formats[n] != VK_FORMAT_BC3_UNORM_BLOCK && formats[n] != VK_FORMAT_BC3_SRGB_BLOCK &&
++#endif
++          formats[n] != VK_FORMAT_ASTC_4x4_UNORM_BLOCK &&
+           formats[n] != VK_FORMAT_ASTC_6x6_UNORM_BLOCK &&
+           formats[n] != VK_FORMAT_ASTC_4x4_SRGB_BLOCK &&
+           formats[n] != VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
+--- a/scripts/dev/native-image-payload/native_import.inc
++++ b/scripts/dev/native-image-payload/native_import.inc
+@@ -300,7 +300,11 @@
+   CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
+         VK_ERROR_FORMAT_NOT_SUPPORTED);
+   query.type = VK_IMAGE_TYPE_2D;
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++  query.format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
++#else
+   query.format = VK_FORMAT_BC3_UNORM_BLOCK;
++#endif
+   CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
+         VK_ERROR_FORMAT_NOT_SUPPORTED);
+ }
+@@ -416,6 +420,11 @@
+       native_ownership(&i, 1);
+       pattern_version = version;
+       sample_all(&i, format);
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++      uint8_t imported_samples[32];
++      memcpy(imported_samples, sample_output_sha256, 32);
++      ordinary_sample_reference(format, imported_samples);
++#endif
+       native_ownership(&i, 0);
+       uint8_t digest[32];
+       native_sha(pool_memory + offset, h.image_size, digest);
+--- a/scripts/dev/native-image-payload/resource_bake.inc
++++ b/scripts/dev/native-image-payload/resource_bake.inc
+@@ -62,7 +62,14 @@
+     max >>= 1;
+   }
+   CHECK(h->levels <= levels);
+-  CHECK((h->game_format == 95 && h->nvn_format == 0x79 &&
++  CHECK(
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++        (h->game_format == 61 && h->nvn_format == 0x44 &&
++         h->vk_format == VK_FORMAT_BC3_UNORM_BLOCK && h->block == 4) ||
++        (h->game_format == 62 && h->nvn_format == 0x48 &&
++         h->vk_format == VK_FORMAT_BC3_SRGB_BLOCK && h->block == 4) ||
++#endif
++        (h->game_format == 95 && h->nvn_format == 0x79 &&
+          h->vk_format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK && h->block == 4) ||
+         (h->game_format == 81 && h->nvn_format == 0x87 &&
+          h->vk_format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK && h->block == 4) ||

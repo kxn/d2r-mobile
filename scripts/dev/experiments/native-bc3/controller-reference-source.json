@@ -1,0 +1,27 @@
+{
+  "base": "/home/dl/d2r-mobile/.local/worktrees/turnip-native-bulk-producer-v1/scripts/dev/run-turnip-native-image-fixture-v2.py",
+  "base_sha256": "39d227f41f4a2b147483240f9f1c4c7a058dbc678cbe6ed7d3309764fa71f9a8",
+  "generator_sha256": "89e61e30160f3ef6939d1bbad2a4dbde983dbe29fd86f78239f9d35b79eb67ba",
+  "controller_sha256": "fc3fe50cd073318385fa730dc5811a458b5c7af4c5dfcae5e88d74dc43d5224d",
+  "changes": [
+    "a=P.parse_args();R=Path(__file__).resolve().parents[2]",
+    "pkg='com.d2rmobile.turniphostimagefixture'",
+    "assert sha(a.driver)=='aa185374ef6c1135ddcbff08506aa4dc720e29b82e45a9ae9f5ce767f54564db'",
+    "assert len(deployment['artifacts'])==28",
+    "'module_count':28 if a.module_report else 0",
+    "ONE installation, TWO cold standalone owned native-image modes: bake/import, each once; game=false; original package rea",
+    "'launches_allowed':2,'modes_once':['native-bake','native-import']",
+    "for kind,test_name in [('native-bake','native-host-image-payload'),('native-import','native-host-image-payload')]:",
+    "run={'name':kind,'kind':kind",
+    "final['formats']==4",
+    " and identity[0]['width']==8 and identity[0]['height']==8 and identity[0]['mips']==4",
+    "formats={157,158,165,166}",
+    "assert len(preflights)==4 and {r['format'] for r in preflights}==formats",
+    "assert len(baked)==8 and",
+    "  else:\n   imported=[r for r in rows if r.get('native_import_sampled') is True]",
+    "assert len(imported)==16 and",
+    "  run.update(result='passed');save()",
+    "  run['PID_absent_after']=True;save()"
+  ],
+  "scope": "Only orchestration and assertions. Original cold app/PID/crash/installer/cleanup ownership logic retained; no profiler, timer, shader or loader implementation."
+}

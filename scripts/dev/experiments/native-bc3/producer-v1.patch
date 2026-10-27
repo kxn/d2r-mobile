@@ -1,0 +1,110 @@
+--- a/scripts/dev/native-image-payload/CMakeLists.txt
++++ b/scripts/dev/native-image-payload/CMakeLists.txt
+@@ -2,6 +2,10 @@
+ project(dm_native_image_payload C)
+ option(DM_BUILD_NATIVE_IMPORTED_IMAGE "Build opt-in PanVK native image import contract fixture" OFF)
+ option(DM_NATIVE_TURNIP_HOST_ASTC "Explicit experimental Turnip host-image ASTC contract" OFF)
++option(DM_NATIVE_TURNIP_HOST_BC3 "Independent BC3 native producer probe" OFF)
++if(DM_NATIVE_TURNIP_HOST_BC3 AND NOT DM_NATIVE_TURNIP_HOST_ASTC)
++  message(FATAL_ERROR "BC3 probe requires the original Turnip coherent host contract")
++endif()
+ if(DM_NATIVE_TURNIP_HOST_ASTC AND NOT DM_BUILD_NATIVE_IMPORTED_IMAGE)
+   message(FATAL_ERROR "Turnip ASTC contract requires DM_BUILD_NATIVE_IMPORTED_IMAGE")
+ endif()
+@@ -37,7 +41,12 @@
+   string(APPEND DM_NATIVE_PRODUCER_CONTENT "${input}:${input_sha}\n")
+ endforeach()
+ if(DM_NATIVE_TURNIP_HOST_ASTC)
+-  string(APPEND DM_NATIVE_PRODUCER_CONTENT "contract-profile:turnip-coherent-host-astc-v1\n")
++  if(DM_NATIVE_TURNIP_HOST_BC3)
++    string(APPEND DM_NATIVE_PRODUCER_CONTENT "contract-profile:turnip-coherent-host-bc3-probe-v1\n")
++    target_compile_definitions(native_image_payload PRIVATE DM_NATIVE_TURNIP_HOST_BC3=1)
++  else()
++    string(APPEND DM_NATIVE_PRODUCER_CONTENT "contract-profile:turnip-coherent-host-astc-v1\n")
++  endif()
+   target_compile_definitions(native_image_payload PRIVATE DM_NATIVE_TURNIP_HOST_ASTC=1)
+ endif()
+ string(SHA256 DM_NATIVE_PRODUCER_SHA "${DM_NATIVE_PRODUCER_CONTENT}")
+@@ -60,4 +69,7 @@
+   if(DM_NATIVE_TURNIP_HOST_ASTC)
+     target_compile_definitions(native_image_payload_embed PRIVATE DM_NATIVE_TURNIP_HOST_ASTC=1)
+   endif()
++  if(DM_NATIVE_TURNIP_HOST_BC3)
++    target_compile_definitions(native_image_payload_embed PRIVATE DM_NATIVE_TURNIP_HOST_BC3=1)
++  endif()
+ endif()
+--- a/scripts/dev/native-image-payload/fixture.c
++++ b/scripts/dev/native-image-payload/fixture.c
+@@ -293,7 +293,7 @@
+                              .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+ }
+ static int supported(VkFormat format) {
+-  if ((format == VK_FORMAT_BC3_UNORM_BLOCK && !bc) ||
++  if (((format == VK_FORMAT_BC3_UNORM_BLOCK || format == VK_FORMAT_BC3_SRGB_BLOCK) && !bc) ||
+       ((format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK ||
+         format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK ||
+         format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK ||
+@@ -427,7 +427,7 @@
+     for (uint32_t x = 0; x < cols; x++) {
+       uint8_t rgba[4], *b = out + (y * cols + x) * 16;
+       expected(format, level, layer, x * block, y * block, rgba);
+-      if (format == VK_FORMAT_BC3_UNORM_BLOCK) {
++      if (format == VK_FORMAT_BC3_UNORM_BLOCK || format == VK_FORMAT_BC3_SRGB_BLOCK) {
+         b[0] = 255;
+         uint16_t color = rgba[0] ? 0xf800 : rgba[1] ? 0x07e0 : 0x001f;
+         memcpy(b + 8, &color, 2);
+@@ -914,6 +914,9 @@
+   }
+   const VkFormat formats[] = {VK_FORMAT_R8G8B8A8_UNORM,
+                               VK_FORMAT_BC3_UNORM_BLOCK,
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++                              VK_FORMAT_BC3_SRGB_BLOCK,
++#endif
+                               VK_FORMAT_ASTC_4x4_UNORM_BLOCK,
+                               VK_FORMAT_ASTC_6x6_UNORM_BLOCK
+ #ifdef DM_NATIVE_IMPORTED_IMAGE
+@@ -933,7 +936,11 @@
+ #endif
+     for (unsigned n = 0; n < sizeof formats / sizeof *formats; n++) {
+ #ifdef DM_NATIVE_IMPORTED_IMAGE
+-      if (native_mode && formats[n] != VK_FORMAT_ASTC_4x4_UNORM_BLOCK &&
++      if (native_mode &&
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++          formats[n] != VK_FORMAT_BC3_UNORM_BLOCK && formats[n] != VK_FORMAT_BC3_SRGB_BLOCK &&
++#endif
++          formats[n] != VK_FORMAT_ASTC_4x4_UNORM_BLOCK &&
+           formats[n] != VK_FORMAT_ASTC_6x6_UNORM_BLOCK &&
+           formats[n] != VK_FORMAT_ASTC_4x4_SRGB_BLOCK &&
+           formats[n] != VK_FORMAT_ASTC_6x6_SRGB_BLOCK)
+--- a/scripts/dev/native-image-payload/native_import.inc
++++ b/scripts/dev/native-image-payload/native_import.inc
+@@ -300,7 +300,11 @@
+   CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
+         VK_ERROR_FORMAT_NOT_SUPPORTED);
+   query.type = VK_IMAGE_TYPE_2D;
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++  query.format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
++#else
+   query.format = VK_FORMAT_BC3_UNORM_BLOCK;
++#endif
+   CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &query, &out) ==
+         VK_ERROR_FORMAT_NOT_SUPPORTED);
+ }
+--- a/scripts/dev/native-image-payload/resource_bake.inc
++++ b/scripts/dev/native-image-payload/resource_bake.inc
+@@ -62,7 +62,14 @@
+     max >>= 1;
+   }
+   CHECK(h->levels <= levels);
+-  CHECK((h->game_format == 95 && h->nvn_format == 0x79 &&
++  CHECK(
++#ifdef DM_NATIVE_TURNIP_HOST_BC3
++        (h->game_format == 61 && h->nvn_format == 0x44 &&
++         h->vk_format == VK_FORMAT_BC3_UNORM_BLOCK && h->block == 4) ||
++        (h->game_format == 62 && h->nvn_format == 0x48 &&
++         h->vk_format == VK_FORMAT_BC3_SRGB_BLOCK && h->block == 4) ||
++#endif
++        (h->game_format == 95 && h->nvn_format == 0x79 &&
+          h->vk_format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK && h->block == 4) ||
+         (h->game_format == 81 && h->nvn_format == 0x87 &&
+          h->vk_format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK && h->block == 4) ||

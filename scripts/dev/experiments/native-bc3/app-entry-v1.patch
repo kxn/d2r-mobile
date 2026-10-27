@@ -1,0 +1,24 @@
+--- a/dm/host/android/jni.c
++++ b/dm/host/android/jni.c
+@@ -760,7 +760,8 @@
+   const char *path=(*env)->GetStringUTFChars(env,directory,NULL);
+   const char *kind=(*env)->GetStringUTFChars(env,mode,NULL);
+   if(!path || !kind) die("Native image fixture strings unavailable");
+-  if(strcmp(kind,"--resource-bake") && strcmp(kind,"--resource-bake-batch"))
++  if(strcmp(kind,"--resource-bake") && strcmp(kind,"--resource-bake-batch") &&
++     strcmp(kind,"--native-bake") && strcmp(kind,"--native-import"))
+     die("Native image fixture mode invalid");
+   char output[4096];
+   if(snprintf(output,sizeof output,"%s/native-image-test.log",path)>=(int)sizeof output)
+--- a/dm/android/java/com/d2rmobile/nativeport/MainActivity.java
++++ b/dm/android/java/com/d2rmobile/nativeport/MainActivity.java
+@@ -242,7 +242,8 @@
+                     getIntent().getBooleanExtra("vulkan_test_validation", true))
+                 throw new IllegalArgumentException("Native image requires exclusive cold Turnip test, explicit validation=false and run_game=false");
+             String imageMode = getIntent().getStringExtra("native_image_mode");
+-            if (!"--resource-bake".equals(imageMode) && !"--resource-bake-batch".equals(imageMode))
++            if (!"--resource-bake".equals(imageMode) && !"--resource-bake-batch".equals(imageMode) &&
++                    !"--native-bake".equals(imageMode) && !"--native-import".equals(imageMode))
+                 throw new IllegalArgumentException("Unknown native image fixture mode");
+             new Thread(() -> nativeNativeImageTest(root.getAbsolutePath(), imageMode, false),
+                     "owned-native-image").start();
