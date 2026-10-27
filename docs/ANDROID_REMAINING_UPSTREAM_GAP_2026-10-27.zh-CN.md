@@ -78,3 +78,46 @@ IR3 原生汇编已取得。大型 FS 的统计中可见约 2900 条指令、较
 原始记录：`.local/logs/remaining-upstream-gap-v1/`，包括各 arm 的 argv/receipt、原 Perfetto/SQL/CSV、Simpleperf 原记录及累积硬件计数边界、两组 Mesa 原 CSV/摘要、IR3 原汇编、GPU 夹具和构建清单。采集后均存档并停止本次游戏；Mali 与 6GB 平板本轮未使用。
 
 再次读取上游 main 至 `d93985b`：新增 2.0.1、740–799 改写默认策略、编译失败处理、BC4/5 过滤格式回退、30 FPS 省电设置和 UI 修复。本机 735 不在新 740–799 默认策略范围；实测 40～43 FPS 亦不是 30 FPS 上限。当前固定 release/诊断对照仍明确标为 `b811b90`，不把旧产物冒充刚更新 main。
+
+## 原厂 GPU 计数已将范围缩到 driver 执行
+
+同一诊断 APK 再以官方 Snapdragon Profiler 2026.9 采集九项指标，工具原生全局样本通过 Perfetto clock snapshot 对齐到每端首末完整游戏 Surface 间隔：
+
+| 指标 | 系统 Qualcomm | 同 B3 Turnip |
+|---|---:|---:|
+| FPS | 43.244 | 39.874 |
+| GPU MHz | 498.869 | 499.434 |
+| 读取 MB/间隔 | 106.416 | 106.615 |
+| 写入 MB/间隔 | 45.834 | 45.327 |
+| 片元指令 G/间隔 | 2.396 | 2.115 |
+| Shaders Busy % | 80.144 | 82.667 |
+| Shaders Stalled % | 16.937 | 23.010 |
+| Stalled on System Memory % | 0.362 | 0.414 |
+| Texture Fetch Stall % | 12.192 | 11.882 |
+| Wave Context Occupancy % | 57.946 | 54.821 |
+
+两边 GPU 频率接近，读取接近，Turnip 写入与归一化片元指令反而更少，却慢约 3.37 FPS。这是不同 driver 的执行效率差异实证，不能继续以更多总写入解释，也不能直接定性为 DRAM 带宽饱和。Shader 停顿更高、波占用较低，优先查编译结果、依赖延迟隐藏及其他 GPU 命令成本；这些指标不可相加，尚未证明具体哪条 shader 或调度机制应对全部差距负责。
+
+原始 .sdp、只读解包数据库、指标定义与样本、两份原 Perfetto 和同窗口积分在 `.local/logs/remaining-upstream-gap-v1/gpu-tools/`。工具通过现成 GUI 选择指标，未手改数据库或重写采样/计时。复用已有整理程序，将验证所需指标列表切换为本次实际九项，保留定义核对、global 范围、非有限/负值/百分比哨兵、覆盖与间隙检查。没有图形抓帧层插入。
+
+## 实际管线与一次波大小反证
+
+上游现成 `gfx-pipe-stats` / `gfx-no-warm` 经实际生效确认，使用标准 `VK_KHR_pipeline_executable_properties` 取得两端编译统计，以及帧 3000–3059 的实际 PSO 绘制使用。系统 365 条 executable 统计、Turnip 541 条，各 80 条绘制使用记录。两个主要 HDR FS（原 shader key `5c1ca4e7c3e4657c`、`38f344adf801b153`）在两端实际都为 subgroup64；Turnip 分别为 19 full registers / max10 waves。对照系统 driver 的 full-register footprint 为 19 / 22，各厂统计口径不同，不能推导 Turnip 必然占用更多寄存器。
+
+约 706 次/帧的 UI PSO `ce3ad354c986bf85` 是另一个明确差异：系统 subgroup64，Turnip subgroup128。用现成 `IR3_SHADER_DEBUG=thread64` 做冷启动单变量测试，源码确认该位同时进入 Vulkan pipeline 与 Mesa disk shader cache key；强制 single/double 的必要硬件约束仍优先。后继原 pipeline 统计实证 UI 变为 subgroup64、主 HDR 保持64；没有只看设置值便宣布生效。
+
+该候选官方窗口 38.936 FPS，对照 Turnip 39.874；频率指标约499.87 / 499.43 M clocks/s，写入均约45.3 MB/帧，片元指令约2.115G/帧相近。Wave occupancy 54.82→58.24%、texture fetch stall 11.88→7.05%，但 shader stalled 23.01→22.94%基本不变，净帧率反而下降。较小波需要更多波执行/preamble，是明确新增成本；不能用单一更好看的 occupancy 代表总收益。实验保留，未启用产品默认；原 comparison env 字节及 SHA 已恢复。它没有解决驱动差异。
+
+补齐了先前静态汇编与实际 Shader 的关联：官方 GFXReconstruct 既有营地记录的主要 HDR module318 原始 SPIR-V SHA `e10275407159e69ae08a811dd28bb00b8a69b80c8706304e724ad27c59b4c175`，按 Mesa 原 `spirv_to_nir` 的 source BLAKE3 规则核对，与本实现真实 IR3 日志中六个编译块完全匹配。对应约1967～2133条静态指令、19 full registers、10 max waves；之前日志里最大的约2900条 FS 不能因此被指认为这个热模块。这里只建立源模块关联，尚未把各特化 native variant 的逐 draw 执行成本全部关联起来；没有用 static stall 估计替代硬件测量。
+
+管线统计首次尝试的零长度 marker 权限不足，日志明确显示未开启，失败保留、不算成功。后继只给本次两个自建 marker 设置可读权限，启动12秒先验证真实状态，再进入采集；结束删除两文件。没有修改原游戏、shader 或数据资源。
+
+## 剩余 HLE 交接成本：已发现原有短等待策略遗漏
+
+重新按调度状态分析最忙线程，必须将睡眠段与其后相邻 Runnable 段的 `waker_utid` 关联；waker 并不写在睡眠段本身。现成旧轨迹已经能回答这一点，前一次仅查询睡眠行得到 NULL 是查询方法错误，不能归咎工具缺失。新增一次 wake/syscall 轨迹保留；实际记录了 waking/wakeup，四个 syscall 事件不可用，记录 notice=4，不将其称为完整 futex 调用栈。
+
+在原窗口逐段关联后，本实现 WSI-A3 每上屏间隔由两个 guest worker 唤醒的睡眠共 **0.547+0.528=1.075 ms**，约 **26.76 次/帧**；原 release 上游共 **0.205+0.184=0.389 ms**，约 **10.15 次/帧**。本实现另有约2.139 ms由kgsl-events唤醒，上游约2.577 ms；`dm-gpu-complete`只对应约0.00025 ms，不能再说收尾线程大锁就是当前全部等待的解释。候选 RADIX-B2 的两个 guest worker 睡眠仍约1.068 ms，新增 wake 窗口约1.064 ms，方向重复。
+
+对应源码差异已找到：原上游 `b811b90` 的 HLE 在主线程登记等待后释放 G，最多短暂轮询30微秒，再回到原条件等待；醒来时只有仍在polling阶段才省去条件信号。Android启动默认设置30微秒。本实现旧路径没有这部分，每次直接条件等待。正在补齐相同 HLE 语义的有界等待处理，保留原优先级/FIFO、超时、取消、锁交接和真正睡眠回退；预算冷启动选择、不反复读环境变量、不新增性能计时/计数。截止目前仅功能测试通过，尚未报告真机净收益，默认仍0。
+
+查询算法候选 `ef3e1f6` 已单独完成两次正式图标冷启动、fresh save2/停止及匹配的 schema3 profile/receipt 发布。原 driver、native表、CPU游戏模块、shader链和UI均未改。后继短等待候选是另一次实验，不把其未完成状态算到已发布包里。
