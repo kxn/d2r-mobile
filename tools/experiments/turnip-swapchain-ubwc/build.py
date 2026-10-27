@@ -33,7 +33,8 @@ source = BASE / 'mesa-26.2.5'
 ledger_path = BASE / 'AA-entire-source-ledger.json'
 ledger = json.loads(ledger_path.read_text())
 actual = {str(p.relative_to(source)) for p in source.rglob('*')
-          if p.is_file() or p.is_symlink()}
+          if (p.is_file() or p.is_symlink())
+          and '.git' not in p.relative_to(source).parts}
 assert actual == set(ledger), 'baseline source membership changed'
 for relative, declaration in ledger.items():
     p = source / relative
@@ -46,7 +47,8 @@ assert sha(baseline_driver) == 'f830285fe68f0a744792269da5f160ed8636c172b1f6511d
 
 out.mkdir(parents=True)
 new_source = out / source.name
-shutil.copytree(source, new_source, symlinks=True)
+shutil.copytree(source, new_source, symlinks=True,
+                ignore=shutil.ignore_patterns('.git'))
 addition = new_source / 'src/freedreno/vulkan/tu_android_usage.cc'
 assert not addition.exists()
 shutil.copy2(HERE / addition.name, addition)
