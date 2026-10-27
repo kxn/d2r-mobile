@@ -64,7 +64,8 @@ include = '#include "tu_image.h"'
 assert old_formats.count(include) == 1
 formats_text = old_formats.replace(include, include +
     '\n#ifdef VK_USE_PLATFORM_ANDROID_KHR\n#include "tu_android_usage.h"\n#endif')
-anchor_usage = '         props->sampleCounts = VK_SAMPLE_COUNT_1_BIT;'
+anchor_usage = ('         props->maxMipLevels = 1;\n'
+                '         props->sampleCounts = VK_SAMPLE_COUNT_1_BIT;')
 assert formats_text.count(anchor_usage) == 1
 formats_file.write_text(formats_text.replace(anchor_usage, anchor_usage +
     '\n#ifdef VK_USE_PLATFORM_ANDROID_KHR\n'

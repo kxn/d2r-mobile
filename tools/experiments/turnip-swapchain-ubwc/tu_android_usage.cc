@@ -3,6 +3,7 @@
 #include "tu_image.h"
 #include "tu_android_usage.h"
 #include "vk_common_entrypoints.h"
+#include "vk_image.h"
 #include "util/u_debug.h"
 
 /* Qualcomm's documented vendor gralloc usage bit. The allocator, mapper and
@@ -24,24 +25,27 @@ tu_android_apply_ubwc_usage(VkPhysicalDevice handle,
                             const VkPhysicalDeviceImageFormatInfo2 *info,
                             VkImageFormatProperties2 *properties)
 {
+   VkImageCreateFlags2KHR flags = vk_image_format_info_2_flags(info);
+   VkImageUsageFlags2KHR image_usage = vk_image_format_info_2_usage(info);
    if (!debug_get_option_tu_ubwc_swapchain() ||
        !supported_color(info->format) || info->type != VK_IMAGE_TYPE_2D ||
-       info->tiling != VK_IMAGE_TILING_OPTIMAL || info->flags ||
-       !(info->usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)))
+       info->tiling != VK_IMAGE_TILING_OPTIMAL || flags ||
+       image_usage > UINT32_MAX ||
+       !(image_usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)))
       return;
    VkAndroidHardwareBufferUsageANDROID *usage = vk_find_struct(
       properties->pNext, ANDROID_HARDWARE_BUFFER_USAGE_ANDROID);
    if (!usage)
       return;
    VK_FROM_HANDLE(tu_physical_device, physical, handle);
-   if (!ubwc_possible(nullptr, info->format, info->type, 0, info->usage, 0,
+   if (!ubwc_possible(nullptr, info->format, info->type, 0, image_usage, 0,
                       &physical->dev_info, VK_SAMPLE_COUNT_1_BIT, 1,
                       physical->dev_info.props.has_z24uint_s8uint))
       return;
    usage->androidHardwareBufferUsage |= qcom_alloc_ubwc;
    fprintf(stderr, "[Turnip WSI] UBWC request AHB format=%u usage=%#x ahb=%#" PRIx64 "\n",
-           info->format, info->usage, usage->androidHardwareBufferUsage);
+           info->format, (VkImageUsageFlags)image_usage, usage->androidHardwareBufferUsage);
 }
 
 static bool
