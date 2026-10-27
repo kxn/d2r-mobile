@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a separate WSI correctness APK; never modify the game package."""
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import subprocess as S
@@ -9,7 +10,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / 'fixture'
-OUT = ROOT / '.local/build/turnip-swapchain-ubwc-fixture-v1'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--output', type=Path, required=True)
+args = parser.parse_args()
+OUT = args.output.resolve()
 OUT.mkdir(exist_ok=False)
 SDK = ROOT / '.local/android-sdk'
 BUILD = SDK / 'build-tools/36.0.0'

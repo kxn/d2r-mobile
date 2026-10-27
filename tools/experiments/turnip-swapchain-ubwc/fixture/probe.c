@@ -1,5 +1,4 @@
 /* Functional Android WSI exercise, no timing or performance conclusions. */
-#define VK_USE_PLATFORM_ANDROID_KHR
 #include "volk.h"
 #include <android/native_window_jni.h>
 #include <jni.h>
