@@ -1,0 +1,12 @@
+--- a/src/freedreno/vulkan/tu_image.cc
++++ b/src/freedreno/vulkan/tu_image.cc
+@@ -1132,7 +1132,8 @@
+                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    return physical->has_host_ptr_import && tu_host_ptr_memory_types(physical) &&
+       (format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK || format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK ||
+-       format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK || format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK) &&
++       format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK || format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK ||
++       format == VK_FORMAT_BC3_UNORM_BLOCK || format == VK_FORMAT_BC3_SRGB_BLOCK) &&
+       type == VK_IMAGE_TYPE_2D && tiling == VK_IMAGE_TILING_OPTIMAL &&
+       !flags && (usage & required) == required && !(usage & ~allowed);
+ }
