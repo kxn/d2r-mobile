@@ -1,0 +1,28 @@
+{
+  "base": "/home/dl/d2r-mobile/.local/build/turnip-real-native-family-v1-candidate/source/scripts/dev/run-turnip-real-native-family.py",
+  "base_sha256": "48a04ec213dcb84ea5111fc5b123a33032f973021b7205de37658b5962b5c209",
+  "map_checker_source": "/home/dl/d2r-mobile/.local/worktrees/turnip-native-bulk-controller-v2/scripts/dev/run-turnip-native-resource-batches-v2.py",
+  "generator_sha256": "8dce268866d9210f314f12efd9441687024f3807d008c82818b2cfe536522de4",
+  "controller_sha256": "5d69aa1fa3920c2f14de42e9a5bfe15cdc2be7e40e758bf4fd2aa0b0c9272f18",
+  "changes": [
+    "a=P.parse_args();R=Path(__file__).resolve().parents[2]",
+    "pkg='com.d2rmobile.turniprealfamily'",
+    "m=json.loads((a.artifact/'candidate.apk.build.json').read_text())",
+    "P.add_argument('--execute',action='store_true')",
+    "assert sha(a.driver)=='aa185374ef6c1135ddcbff08506aa4dc720e29b82e45a9ae9f5ce767f54564db'",
+    "assert set(inputs['resources'])=={'resource4'}",
+    "for name in ['resource4']",
+    "assert len(deployment['artifacts'])==28",
+    "'module_count':28 if a.module_report else 0",
+    "ONE installation, ONE cold original NVN real ASTC4 family; full/native + original tail CPU-packaged/",
+    "'launches_allowed':1,'modes_once':['resource4']",
+    "for kind,test_name in [('resource4','native-resource-original-NVN')]:",
+    "assert final['format']==(158 if kind=='resource4' else 166)",
+    "assert all(identities[0][k]==inputs['actual_identity'][k] for k in ('layout_UUID','device_UUID','dri",
+    "def snapshot():",
+    " result['runs']=[]",
+    "  assert 'files/runtime/vulkan-driver/libvulkan_freedreno.so' in maps_text",
+    "'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),"
+  ],
+  "scope": "Reuse original cold launch/PID/crash/installer/cleanup transaction; original NVN C untouched; no profiler/loader/timer."
+}

@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""One cold original NVN native-family mode; strict package/PID/provenance transaction, no game or profiling."""
+import argparse, hashlib, io, json, re, subprocess, time, uuid, signal, zipfile, os, xml.etree.ElementTree as ET
+from pathlib import Path
+P=argparse.ArgumentParser()
+P.add_argument('--serial',required=True)
+P.add_argument('--artifact',type=Path,required=True)
+P.add_argument('--driver',type=Path,required=True)
+P.add_argument('--original-artifact',type=Path,required=True)
+P.add_argument('--module-report',type=Path)
+P.add_argument('--resource-report',type=Path)
+P.add_argument('--expected-original-apk')
+P.add_argument('--expected-original-elf')
+P.add_argument('--expected-shaderchain')
+P.add_argument('--output',type=Path,required=True)
+P.add_argument('--driver-query',type=Path,required=True,help='prior actual new-driver real resource metadata')
+P.add_argument('--execute',action='store_true')
+a=P.parse_args();R=Path(__file__).resolve().parents[4]
+pkg='com.d2rmobile.nativefamilyfixture';original='com.d2rmobile.nativeport'
+B=[str(R/'.local/android-sdk/platform-tools/adb'),'-s',a.serial]
+sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+m=json.loads((a.artifact/'candidate.apk.build.json').read_text())
+ready=json.loads((a.artifact/'ready.json').read_text())
+assert ready['APK']['sha256']==m['apk_sha256'] and ready['native_libraries']==m['native_library_sha256']
+assert sha(a.artifact/'candidate.apk.build.json')==ready['candidate_manifest']['sha256']
+asset_root=Path(ready['artifact_root']);assert asset_root.resolve()==a.artifact.resolve().parent
+assert sha(Path(ready['driver_build']['path']))==ready['driver_build']['sha256']
+assert ready['driver']['sha256']=='0e53ffa2bbbff0a4f520eb080039a848f0853276ece59caa8df9a029cf2b4024'
+assert m['package']==pkg and m['activity']=='com.d2rmobile.nativeport.MainActivity'
+assert sha(a.artifact/'candidate.apk')==m['apk_sha256']
+with zipfile.ZipFile(a.artifact/'candidate.apk') as archive:
+ for leaf,digest in m['native_library_sha256'].items():
+  assert hashlib.sha256(archive.read('lib/arm64-v8a/'+leaf)).hexdigest()==digest
+assert len(m['native_library_sha256'])==6
+assert sha(a.driver)=='0e53ffa2bbbff0a4f520eb080039a848f0853276ece59caa8df9a029cf2b4024'
+query=json.loads(a.driver_query.read_text());assert query['complete'] and query['driverID']==18
+assert query['producer_source_sha256']=='9a8a5a64bc4dc8b9e19fb35d2ff1c0d0bd72f307f2e772f8a18e4e9d6f99019b'
+assert all(re.fullmatch('[0-9a-f]{32}',query[k]) and int(query[k],16) for k in ('layout_UUID','device_UUID','driver_UUID'))
+assert sha(asset_root/'fixture-inputs.json')==m['fixture_inputs_sha256']
+inputs=json.loads((asset_root/'fixture-inputs.json').read_text())
+assert inputs['driver_sha256']==sha(a.driver)==m['driver_sha256']
+assert set(inputs['resources'])=={'bc3-unorm','bc3-srgb'}
+assert all(row['producer_sha256']==query['producer_source_sha256'] for row in inputs['resources'].values())
+resource_inputs={name+'/'+leaf:r['sha256'] for name,row in inputs['resources'].items() for leaf,r in row['files'].items()}
+assert resource_inputs==m['owned_resource_inputs']
+assert set(resource_inputs)=={name+'/'+leaf for name in ['bc3-unorm','bc3-srgb'] for leaf in ['native-layouts.bin','native-resource.bin','resource-input.bin']}
+assert all(re.fullmatch('[0-9a-f]{64}',h) and sha(asset_root/'resources'/name)==h for name,h in resource_inputs.items())
+shader_files=m['shader_files'];assert shader_files and all(sha(asset_root/'vulkan-fixture'/n)==h for n,h in shader_files.items())
+assert shader_files=={n:r['sha256'] for n,r in inputs['shaders'].items()}
+baseline_bound=bool(a.module_report and a.expected_original_apk and a.expected_original_elf and a.expected_shaderchain)
+if a.execute:assert baseline_bound,'Execution requires current root APK/ELF/28modules/shaderchain bindings'
+if a.expected_original_elf:assert re.fullmatch('[0-9a-f]{64}',a.expected_original_elf)
+if a.expected_original_apk:assert re.fullmatch('[0-9a-f]{64}',a.expected_original_apk)
+if a.expected_shaderchain:assert re.fullmatch('[0-9a-f]{12,64}',a.expected_shaderchain)
+expected={}
+if a.module_report:
+ deployment=json.loads(a.module_report.read_text())
+ assert deployment['verified_on_device'] and deployment['serial']==a.serial and deployment['package']==original
+ assert 28<=len(deployment['artifacts'])<=64
+ for name,item in deployment['artifacts'].items():
+  assert re.fullmatch('[A-Za-z0-9_.-]+',name) and name not in ('.','..')
+  assert re.fullmatch('[0-9a-f]{64}',item['sha256'])
+  expected['files/runtime/modules/'+name]=item['sha256']
+if a.resource_report:
+ resources=json.loads(a.resource_report.read_text())
+ assert resources['stage']=='deployed' and resources['phone_hashes_verified'] and len(resources['expected_hashes'])>0
+ for name,digest in resources['expected_hashes'].items():
+  assert re.fullmatch('[A-Za-z0-9_./-]+',name) and not Path(name).is_absolute() and '..' not in Path(name).parts and re.fullmatch('[0-9a-f]{64}',digest)
+  expected['files/runtime/romfs_overlay/'+name]=digest
+plan={'scope':'ONE installation, TWO cold original NVN real BC3 UNORM/sRGB families; full/native plus original thumbnail/tail packaged and B2T, alias/publication/retirement assertions; no window/lazy, no game/performance claim',
+ 'serial':a.serial,'package':pkg,'activity':m['activity'],'APK_sha256':m['apk_sha256'],
+ 'native_libraries':m['native_library_sha256'],'owned_resource_inputs':resource_inputs,'shader_files':shader_files,'driver_sha256':sha(a.driver),'controller_sha256':sha(__file__),'driver_query_sha256':sha(a.driver_query),
+ 'expected_original_APK':a.expected_original_apk,'expected_original_ELF':a.expected_original_elf,'module_report_sha256':sha(a.module_report) if a.module_report else None,'module_count':len(deployment['artifacts']) if a.module_report else 0,'resource_count':len(resources['expected_hashes']) if a.resource_report else 0,'resource_report_sha256':sha(a.resource_report) if a.resource_report else None,
+ 'baseline_bound':baseline_bound,'expected_shaderchain':a.expected_shaderchain,
+ 'crash_natural_exit_bound_seconds':30,'functional_timeout_seconds':45,'installation_timeout_seconds':70,'launches_allowed':2,'modes_once':['bc3-unorm','bc3-srgb'],'GUP_unprotect_retry':False,
+ 'writes_only':'new independent package + unique /data/local/tmp directory; cleanup exact package only'}
+if not a.execute:
+ print(json.dumps(plan,indent=2));raise SystemExit(0)
+a.output.mkdir(exist_ok=False,parents=True)
+tmp='/data/local/tmp/dm-native-family-'+uuid.uuid4().hex
+result={**plan,'stage':'preflight','cleanup_errors':[]};made_tmp=False;installation_requested=False;installed=False;launched=False;installer=None;launch=None;original_before=None;first_pid=None;active_phase=None
+result['owned_tmp']=tmp
+
+def save():(a.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+def ad(*args,check=True):
+ p=subprocess.run(B+list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
+ error=p.stderr.decode(errors='replace')
+ if p.returncode and (check or any(x in error.lower() for x in ('device offline','no devices','device not found','connection reset','error: closed'))):
+  raise RuntimeError(repr(args)+': '+error)
+ return p.stdout.decode(errors='replace').strip()
+def process(name):return ad('shell','pidof',name,check=False)
+def validate_driver_maps(maps_text,aliases):
+ mappings=[]
+ for line in maps_text.splitlines():
+  columns=line.split(None,5)
+  if len(columns)!=6 or columns[5] not in aliases:continue
+  expected=aliases[columns[5]]
+  major,minor=(int(v,16) for v in columns[3].split(':'))
+  assert (major,minor,int(columns[4]))==(expected['major'],expected['minor'],expected['inode'])
+  mappings.append(line)
+ assert mappings,'Exact private driver path/device/inode missing from owned live PID maps'
+ return mappings
+
+def snapshot():
+ assert not process(original),'Original game is running; leave it untouched'
+ path=ad('shell','pm','path',original).removeprefix('package:')
+ assert path.startswith('/') and '\n' not in path
+ digest=ad('shell','sha256sum',path).split()[0]
+ assert digest==a.expected_original_apk,'Original APK changed since lease: do not install'
+ # Exact local artifact avoids a large exec-out transfer; device SHA binds it.
+ raw_apk=a.original_artifact.read_bytes()
+ assert hashlib.sha256(raw_apk).hexdigest()==digest
+ with zipfile.ZipFile(io.BytesIO(raw_apk)) as archive:
+  elf=hashlib.sha256(archive.read('lib/arm64-v8a/libdmhost_android.so')).hexdigest()
+ assert elf==a.expected_original_elf,'Original native ELF changed since lease'
+ raw=ad('exec-out','run-as',original,'sha256sum',*expected)
+ got={line.split(None,1)[1].strip():line.split(None,1)[0] for line in raw.splitlines()}
+ assert got==expected,'Original module baseline mismatch'
+ chain=ad('exec-out','run-as',original,'cat','files/runtime/shaders/.chain')
+ assert chain==a.expected_shaderchain,'Original shaderchain changed since lease'
+ return {'APK':digest,'ELF':elf,'modules_and_resources':got,'shaderchain':chain,'PID_absent':True}
+def exact_fixture():
+ path=ad('shell','pm','path',pkg,check=False).removeprefix('package:')
+ if not path:return False
+ assert path.startswith('/') and '\n' not in path
+ assert ad('shell','sha256sum',path).split()[0]==m['apk_sha256'],'Unclaimed package; leave untouched'
+ return True
+# PID/crash ownership helpers adapted from frozen5c185ca matrix controller.
+# Final JSON has no PID and cannot rescue ambiguous/replacement ownership.
+def read_oracle_log(phase):
+ log=ad('exec-out','run-as',pkg,'cat','files/runtime/vulkan-test.log',check=False)
+ if log:(a.output/(phase['name']+'-vulkan-test.log')).write_text(log)
+ return log
+
+def parse_oracle_log(log):
+ rows=[]
+ for line in log.splitlines():
+  if line.startswith('{'):
+   try:rows.append(json.loads(line))
+   except json.JSONDecodeError:pass
+ if 'FATAL' in log or 'native fault signal=' in log or 'CHECK line' in log:return rows,'native-assertion-failed',None
+ finals=[r for r in rows if r.get('test')==active_phase['expected_test']]
+ if finals:return rows,'oracle-'+finals[-1].get('result','unknown'),finals[-1]
+ terminals=[r for r in rows if r.get('native_resource_app_terminal') is True]
+ if terminals and terminals[-1].get('rc')!=0:return rows,'oracle-unsupported-or-terminal-error',None
+ return rows,None,None
+
+def observe_pid(phase,allow_claim=True):
+ global first_pid
+ current=process(pkg)
+ # Persist raw text before interpreting or rejecting anything. Crash dump/fork
+ # transients must never erase the failed oracle or become another owned PID.
+ raw=phase.setdefault('pid_raw',[])
+ if not raw or raw[-1]!=current:raw.append(current)
+ phase['last_pid_raw']=current;save()
+ if not current:return current,'absent'
+ tokens=current.split()
+ if len(tokens)!=1 or not current.isdecimal():
+  phase['ownership_ambiguous']=True;phase['pid_anomaly']='multiple-or-invalid';save()
+  return current,'ambiguous'
+ if phase.get('ownership_ambiguous'):return current,'ambiguous'
+ if first_pid is None:
+  if not allow_claim:return current,'unclaimed'
+  first_pid=current;phase['first_pid']=int(current);save()
+ elif current!=first_pid:
+  phase['ownership_ambiguous']=True;phase['pid_anomaly']='replacement';save()
+  return current,'replacement'
+ return current,'owned'
+
+def wait_natural_exit(phase):
+ # Functional crash cleanup only; no process is claimed or force-stopped here.
+ wait=phase.setdefault('natural_exit',{'bound_seconds':30,'all_PIDs_absent':False})
+ if wait.get('timed_out'):raise TimeoutError('Unclaimed/crashing PIDs remain; no force-stop or repeated wait')
+ deadline=time.monotonic()+30
+ while True:
+  log=read_oracle_log(phase)
+  rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+  if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+  current,kind=observe_pid(phase,allow_claim=False)
+  if not current:
+   log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+   if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+   wait['all_PIDs_absent']=True;save();return log
+  if time.monotonic()>=deadline:
+   wait['timed_out']=True;save()
+   raise TimeoutError('Crash/ambiguous PIDs did not naturally exit; leave them untouched')
+  time.sleep(.2)
+
+def stop_owned(phase=None):
+ phase=phase if phase is not None else active_phase
+ if phase is None:
+  current=process(pkg);result['cleanup_pid_raw']=current;save()
+  assert not current,'No owned launch phase; preserve unclaimed process'
+  return
+ current,kind=observe_pid(phase,allow_claim=False)
+ if current and (phase.get('native_terminal_seen') or kind!='owned'):
+  wait_natural_exit(phase);return
+ if current:
+  assert first_pid is not None and current==first_pid
+  assert exact_fixture();ad('shell','am','force-stop',pkg)
+ assert not process(pkg)
+
+def install():
+ global installer
+ with (a.output/'install.txt').open('w') as log:
+  installer=subprocess.Popen(B+['install','--no-incremental',str(a.artifact/'candidate.apk')],stdout=log,stderr=subprocess.STDOUT)
+  deadline=time.monotonic()+70;approvals=set()
+  while installer.poll() is None:
+   if time.monotonic()>deadline:raise TimeoutError('single install pending; no retry')
+   # Existing Android/Oplus package-installer approval, only this pending new
+   # app install. No packageinstaller kill/service/permission changes.
+   remote=tmp+'/installer.xml'
+   ad('shell','uiautomator','dump',remote)
+   xml=ad('exec-out','cat',remote)
+   try:tree=ET.fromstring(xml)
+   except ET.ParseError:tree=None
+   if tree is not None:
+    safe=any(n.get('text')=='D2R Mobile' for n in tree.iter('node'))
+    nodes=[n for n in tree.iter('node') if
+      (n.get('package')=='com.android.packageinstaller' and n.get('resource-id')=='android:id/button1' and (n.get('text') in ('Install','安装','继续安装') or any(c.get('resource-id')=='com.android.packageinstaller:id/vbutton_title' and c.get('text')=='继续安装' for c in n.iter('node')))) or
+      (n.get('package')=='com.oplus.appdetail' and n.get('resource-id','').endswith('/btn_left') and n.get('text')=='Install')]
+    # Observed Vivo installer for this exact D2R Mobile app: acknowledge
+    # the pending-install result only; never enter its settings/account link.
+    acknowledgements=[n for n in tree.iter('node') if n.get('package')=='com.android.packageinstaller' and n.get('resource-id')=='com.android.packageinstaller:id/deleted_file_state_cb' and n.get('text')=='已了解应用的风险检测结果' and n.get('checked')!='true']
+    if safe and len(acknowledgements)==1 and len(nodes)==1:
+     node=acknowledgements[0];key='ack:'+node.get('resource-id')
+     if key not in approvals:
+      (a.output/'installer-risk-ack.xml').write_text(xml)
+      x,y,z,w=map(int,re.findall(r'\d+',node.get('bounds')))
+      ad('shell','input','tap',str((x+z)//2),str((y+w)//2));approvals.add(key)
+    if safe and len(nodes)==1:
+     key=nodes[0].get('package')+':'+nodes[0].get('resource-id')
+     if key not in approvals:
+      (a.output/('installer-'+str(len(approvals))+'.xml')).write_text(xml)
+      x,y,z,w=map(int,re.findall(r'\d+',nodes[0].get('bounds')))
+      ad('shell','input','tap',str((x+z)//2),str((y+w)//2));approvals.add(key)
+   time.sleep(.5)
+  assert installer.returncode==0,(a.output/'install.txt').read_text()
+def interrupted(sig,frame):raise KeyboardInterrupt('fixture interrupted; owned cleanup')
+signal.signal(signal.SIGTERM,interrupted);signal.signal(signal.SIGINT,interrupted)
+save() # Persist the precise unique tmp before any device-side mutation.
+try:
+ original_before=snapshot();result['original_before']=original_before;save()
+ assert not ad('shell','pm','path',pkg,check=False),'Existing independent fixture: do not replace'
+ assert not process(pkg)
+ layers=ad('shell','settings','get','global','enable_gpu_debug_layers')
+ layer_app=ad('shell','settings','get','global','gpu_debug_app')
+ assert not (layers=='1' and layer_app==pkg),'Fixture targeted by external GPU layers; leave settings untouched'
+ result['external_layer_preflight']={'enabled':layers,'app':layer_app};save()
+ ad('shell','mkdir','-p',tmp);made_tmp=True;installation_requested=True
+ install();installed=True;assert exact_fixture()
+ assert not process(pkg),'Installer unexpectedly opened fixture; no test launch'
+ ad('push',a.driver,tmp+'/libvulkan_freedreno.so')
+ ad('shell','run-as',pkg,'mkdir','-p','files/runtime/vulkan-driver','files/runtime/vulkan-fixture')
+ ad('shell','run-as',pkg,'cp',tmp+'/libvulkan_freedreno.so','files/runtime/vulkan-driver/libvulkan_freedreno.so')
+ assert ad('exec-out','run-as',pkg,'sha256sum','files/runtime/vulkan-driver/libvulkan_freedreno.so').split()[0]==sha(a.driver)
+ ad('push',asset_root/'resources',tmp+'/resources')
+ ad('shell','run-as',pkg,'cp','-R',tmp+'/resources/.','files/runtime/')
+ raw=ad('exec-out','run-as',pkg,'sha256sum',*['files/runtime/'+name for name in resource_inputs])
+ assert {line.split(None,1)[1].strip().removeprefix('files/runtime/'):line.split()[0] for line in raw.splitlines()}==resource_inputs
+ driver_alias_stat={}
+ for private in (f'/data/data/{pkg}/files/runtime/vulkan-driver/libvulkan_freedreno.so',f'/data/user/0/{pkg}/files/runtime/vulkan-driver/libvulkan_freedreno.so'):
+  raw_stat=ad('exec-out','run-as',pkg,'stat','-c','%d:%i:%s',private)
+  device,inode,size=map(int,raw_stat.split(':'))
+  assert inode>0 and size==a.driver.stat().st_size
+  assert ad('exec-out','run-as',pkg,'sha256sum',private).split()[0]==sha(a.driver)
+  driver_alias_stat[private]={'major':os.major(device),'minor':os.minor(device),'inode':inode,'size':size}
+ assert len({(x['major'],x['minor'],x['inode'],x['size']) for x in driver_alias_stat.values()})==1
+ result['driver_alias_stat']=driver_alias_stat
+ result['runs']=[]
+ ad('push',asset_root/'vulkan-fixture',tmp+'/vulkan-fixture')
+ ad('shell','run-as',pkg,'cp','-R',tmp+'/vulkan-fixture/.','files/runtime/vulkan-fixture/')
+ raw=ad('exec-out','run-as',pkg,'sha256sum',*['files/runtime/vulkan-fixture/'+n for n in shader_files])
+ assert {line.split(None,1)[1].strip().removeprefix('files/runtime/vulkan-fixture/'):line.split()[0] for line in raw.splitlines()}==shader_files
+ result['shader_files_on_device_verified']=True
+ for kind,test_name in [('bc3-unorm','native-resource-original-NVN'),('bc3-srgb','native-resource-original-NVN')]:
+  assert exact_fixture() and not process(pkg),'Each mode is a fresh owned process, never a warm reselection'
+  ad('shell','run-as',pkg,'rm','-f','files/runtime/vulkan-test.log')
+  row=inputs['resources'][kind];private='/data/user/0/'+pkg+'/files/runtime/'+kind
+  args=['shell','am','start','-W','-n',pkg+'/'+m['activity'],'--ez','run_game','false',
+   '--ez','run_vulkan_tests','true','--ez','async_submit','true','--ez','shared_guest_heap','true',
+   '--es','vulkan_provider','adreno','--ez','validate','false','--ez','vulkan_test_validation','false',
+   '--es','native_resource_fixture_dir',private,'--es','native_resource_table',private+'/native-layouts.bin',
+   '--es','native_resource_pack_sha256',row['pack_sha256'],'--es','native_resource_producer_sha256',row['producer_sha256']]
+  first_pid=None;run={'name':kind,'kind':kind,'expected_test':test_name,'launch_command':B+args,'launches':1};active_phase=run
+  result['runs'].append(run);result.update(stage='one-cold-'+kind,launches=len(result['runs']));save();launched=True
+  with (a.output/(kind+'-launch.txt')).open('w') as launch_log:launch=subprocess.Popen(B+args,stdout=launch_log,stderr=subprocess.STDOUT)
+  deadline=time.monotonic()+45;log='';rows=[];phase=run
+  while True:
+   # Retain oracle bytes/FATAL before examining transient crash PID lists.
+   log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log);phase['rows']=rows
+   if stage=='native-assertion-failed':phase['native_terminal_seen']=True;phase['stage']=stage
+   current,pid_kind=observe_pid(phase,allow_claim=not phase.get('native_terminal_seen',False))
+   if stage=='native-assertion-failed' or pid_kind in ('ambiguous','replacement','unclaimed'):
+    log=wait_natural_exit(phase);rows,stage,final=parse_oracle_log(log)
+    # Final JSON has no PID: after lost ownership a pass cannot be
+    # attributed to this launch. Only preserve an explicit native failure.
+    phase['stage']='native-assertion-failed' if stage=='native-assertion-failed' else 'ownership-failed'
+    phase['terminal_after_unowned_wait']=stage
+    if final is not None:phase['untrusted_final']=final
+    break
+   if stage is not None:
+    if final is not None and first_pid is None:
+     phase['stage']='ownership-failed';phase['untrusted_final']=final
+    else:
+     phase['stage']=stage
+     if final is not None:phase['final']=final
+    break
+   if first_pid is not None and not current:
+    # Re-read after exit so the last flushed FATAL/final row is not discarded.
+    log=read_oracle_log(phase);rows,stage,final=parse_oracle_log(log)
+    phase['stage']=stage or 'exited-without-final'
+    if stage=='native-assertion-failed':phase['native_terminal_seen']=True
+    if final is not None:phase['final']=final
+    break
+   if time.monotonic()>=deadline:phase['stage']='functional-bound-reached';break
+   time.sleep(.2)
+  launch.wait(timeout=5);run['results']=rows;save()
+  assert run.get('stage')=='oracle-passed','Original failure or lost PID ownership; no later mode/retry'
+  final=run['final']
+  assert final['result']=='passed' and final['checks']>0 and final['game_modules_executed'] is False
+  assert final['format']==(137 if kind=='bc3-unorm' else 138) and final['mips']==9 and final['family_version']==2
+  assert final['tail_levels']==5 and final['full_all_mips'] is True and final['tail_packaged_and_B2T'] is True
+  assert final['native_offset']==1056768 and final['pool_bytes']==4194304 and final['no_pool_shadow'] is True
+  assert final['memory_flags'] & 14 == 14 and final['atom']>0 and not (final['atom']&(final['atom']-1))
+  # The C oracle retains coherent OR actual NC prewrite-gate safety. Coherent
+  # Turnip does not require the old PanVK-only metadata flags11/gate=true.
+  config=[r for r in rows if r.get('native_resource_app_configuration') is True]
+  assert len(config)==1 and config[0]['uid']>=10000 and config[0]['async'] is True and config[0]['validation'] is False
+  assert config[0]['game_modules_executed'] is False
+  assert '[vulkan loader] custom=/data/user/0/'+pkg+'/files/runtime/vulkan-driver/libvulkan_freedreno.so' in log
+  maps_text=ad('exec-out','run-as',pkg,'cat','/proc/'+first_pid+'/maps')
+  (a.output/(kind+'-maps.txt')).write_text(maps_text)
+  run['actual_driver_maps']=validate_driver_maps(maps_text,driver_alias_stat)
+  assert ad('exec-out','run-as',pkg,'sha256sum','files/runtime/vulkan-driver/libvulkan_freedreno.so').split()[0]==sha(a.driver)
+  identities=[r for r in rows if r.get('native_resource_identity') is True]
+  assert len(identities)==1 and identities[0]['driver_sha256']==sha(a.driver)
+  assert all(identities[0][k]==query[k] for k in ('layout_UUID','device_UUID','driver_UUID'))
+  assert not re.search(r'VUID-|FATAL|native fault signal=|CHECK line',log)
+  # Fixture mutations apply only to its finite MAP_SHARED allocation. Original
+  # native payload/input/table files are immutable in both cold modes.
+  raw=ad('exec-out','run-as',pkg,'sha256sum',*['files/runtime/'+n for n in resource_inputs])
+  assert {line.split(None,1)[1].strip().removeprefix('files/runtime/'):line.split()[0] for line in raw.splitlines()}==resource_inputs
+  run.update(result='passed');save()
+  stop_owned(run)
+  assert not process(pkg),'Owned process must stop between cold modes'
+  run['PID_absent_after']=True;save()
+ result.update(stage='actual-original-NVN-native-family-owned-passed',
+  no_game_acceptance=True,native_owned_only=True,performance_claim=False)
+
+except BaseException as e:result.update(stage='failed-preserved',error=repr(e))
+finally:
+ try:
+  for owned_client in (installer,launch):
+   if owned_client is not None and owned_client.poll() is None:
+    owned_client.terminate()
+    try:owned_client.wait(timeout=3)
+    except subprocess.TimeoutExpired:owned_client.kill();owned_client.wait(timeout=3)
+  if installation_requested and not installed:installed=exact_fixture()
+  if installed:
+   try:(a.output/'app-events.txt').write_text(ad('logcat','-d','-v','threadtime','-s','AndroidRuntime:E','DEBUG:E','libc:E','MESA:I'))
+   except BaseException as capture_error:result['cleanup_errors'].append('capture: '+repr(capture_error))
+   stop_owned();assert not process(pkg);result['fixture_PID_absent']=True
+   assert exact_fixture();ad('uninstall',pkg)
+   assert not ad('shell','pm','path',pkg,check=False);result['fixture_uninstalled']=True
+  if made_tmp:
+   ad('shell','rm','-r',tmp);ad('shell','test','!','-e',tmp);result['fixture_tmp_absent']=True
+  result['owned_clients_stopped']=all(client is None or client.poll() is not None for client in (installer,launch))
+  if original_before is not None:
+   result['original_after']=snapshot();assert result['original_after']==original_before
+   result['original_unchanged']=True
+ except BaseException as e:result['cleanup_errors'].append(repr(e))
+ save()
+print(json.dumps(result))
+raise SystemExit(0 if result['stage']=='actual-original-NVN-native-family-owned-passed' and not result['cleanup_errors'] else 1)

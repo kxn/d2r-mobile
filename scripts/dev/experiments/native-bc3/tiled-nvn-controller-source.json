@@ -1,0 +1,8 @@
+{
+  "base": "scripts/dev/experiments/native-bc3/run_nvn_fixture.py",
+  "base_sha256": "5d69aa1fa3920c2f14de42e9a5bfe15cdc2be7e40e758bf4fd2aa0b0c9272f18",
+  "controller_sha256": "fe2d944bb4e0d2c804a7a4d0c6daec087a31af6a206e483d8850d0fd454efb67",
+  "driver_sha256": "3e9376ed3759af2cd015cf5608274f661ba3b33df6e95cb6fa2542666f34ee50",
+  "producer_sha256": "9194548d1b1c897d299d6f42b9336aa445a48f39c21f099a9b806b77fbace8fa",
+  "scope": "Only exact driver/producer/source-data binding changed. Original cold transaction and public NVN C unchanged."
+}

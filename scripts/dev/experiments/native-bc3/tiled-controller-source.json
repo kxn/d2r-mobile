@@ -1,0 +1,10 @@
+{
+  "base": "/home/dl/d2r-mobile/scripts/dev/experiments/native-bc3/run_reference_probe.py",
+  "base_sha256": "fc3fe50cd073318385fa730dc5811a458b5c7af4c5dfcae5e88d74dc43d5224d",
+  "generator_sha256": "3fc6e2a37c315ef335fb9b764819c626008549d507aa4da45236aeb8f128a673",
+  "controller_sha256": "f47767058f099a311aa9cefa536209570f459901295f52b8120637c9f5b442b3",
+  "new_driver_build": "/home/dl/d2r-mobile/.local/build/turnip-native-bc3-tiled-v1/build.json",
+  "new_driver_build_sha256": "2bd2a4dda07326e662a2b1b706db0b7dde0c977a67a1efe3cb90e8b06c0b8fb4",
+  "driver_sha256": "3e9376ed3759af2cd015cf5608274f661ba3b33df6e95cb6fa2542666f34ee50",
+  "scope": "Same immutable APK and compact source bytes; new exact driver query/bake. No old opaque payload, UUID or previous driver receipt relabeled."
+}

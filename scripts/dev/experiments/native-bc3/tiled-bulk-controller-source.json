@@ -1,0 +1,9 @@
+{
+  "base": "/home/dl/d2r-mobile/scripts/dev/experiments/native-bc3/run_bulk.py",
+  "base_sha256": "dc422c76a72f05667ddfaa0e42efec4a86d7f6d942ec693b57e243676929d756",
+  "generator_sha256": "9b4353a2771866b86f117b818fbf6297117870a17ba3122b09eb72994098e691",
+  "controller_sha256": "48734c672f8bac13747b263e7562ad125549011747940c122c34039184ef2eae",
+  "driver_build_sha256": "2bd2a4dda07326e662a2b1b706db0b7dde0c977a67a1efe3cb90e8b06c0b8fb4",
+  "driver_sha256": "3e9376ed3759af2cd015cf5608274f661ba3b33df6e95cb6fa2542666f34ee50",
+  "scope": "Same passed bulk transaction, APK/919 producer and original compact6217 inputs. Fresh new-driver queries/opaque output only; no old payload identity rewritten."
+}
