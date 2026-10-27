@@ -312,6 +312,9 @@ void vk_uniform_specialization_enabled(int enabled);
 void vk_uniform_specialization_stats(uint64_t *hits,uint64_t *pending,uint64_t *limits,uint64_t *variants,int *enabled);
 VkShaderModule vk_uniform_specialization_pick(vk_shader *shader,uint32_t *value);
 void vk_uniform_predicate_enabled(int enabled);
+// Optional cold observe-only diagnostic; caller frees the published JSON.
+int vk_uniform_predicate_observation_enabled(void);
+char *vk_uniform_predicate_observation_json(void);
 void vk_uniform_predicate_stats(uint64_t *hits,uint64_t *pending,uint64_t *limits,
                                uint64_t *variants,uint64_t *rejected,uint64_t masks[16],int *enabled);
 VkShaderModule vk_uniform_hybrid_pick(vk_shader *shader,uint32_t values[2]);

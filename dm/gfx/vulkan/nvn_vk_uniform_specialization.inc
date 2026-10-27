@@ -15,7 +15,11 @@ static struct {
 static atomic_uint_fast64_t uniform_predicate_hits,uniform_predicate_pending,
   uniform_predicate_limits,uniform_predicate_variants,uniform_predicate_rejects,
   uniform_predicate_masks[16];
-void vk_uniform_predicate_enabled(int enabled) { atomic_store(&uniform_predicate_enabled,!!enabled); }
+#include "nvn_vk_uniform_predicate.inc"
+void vk_uniform_predicate_enabled(int enabled) {
+  if(enabled && uniform_predicate_observe_active)die("Uniform predicate observation requires hybrid disabled");
+  atomic_store(&uniform_predicate_enabled,!!enabled);
+}
 void vk_uniform_predicate_stats(uint64_t *hits,uint64_t *pending,uint64_t *limits,
                                uint64_t *variants,uint64_t *rejected,uint64_t masks[16],int *enabled) {
   *hits=atomic_load(&uniform_predicate_hits);*pending=atomic_load(&uniform_predicate_pending);
@@ -24,6 +28,7 @@ void vk_uniform_predicate_stats(uint64_t *hits,uint64_t *pending,uint64_t *limit
   for(unsigned n=0;n<16;n++) masks[n]=atomic_load(&uniform_predicate_masks[n]);
 }
 static void uniform_predicate_publish(void) {
+  uniform_predicate_observe_publish();
   atomic_store_explicit(&uniform_predicate_hits,uniform_predicate_recorded.hits,memory_order_relaxed);
   atomic_store_explicit(&uniform_predicate_pending,uniform_predicate_recorded.pending,memory_order_relaxed);
   atomic_store_explicit(&uniform_predicate_limits,uniform_predicate_recorded.limits,memory_order_relaxed);
@@ -101,12 +106,16 @@ static void uniform_predicate_load(vk_shader *s,const uint32_t *base,size_t base
   // Like base/spec shader modules, this object is owned for device/process
   // lifetime. Ordinary queue finish/submission recycling must not free it;
   // a future global shader teardown must destroy module then free the object.
-  vk_uniform_predicate *p=calloc(1,sizeof *p);if(!p)die("Vulkan Uniform predicate allocation");
+  int observing=uniform_predicate_observe_policy();
+  vk_uniform_predicate *p=observing?uniform_predicate_observe_allocate():calloc(1,sizeof *p);
+  if(!p)die("Vulkan Uniform predicate allocation");
   p->slot=data[5]-3;p->offset=data[6];p->id=data[3];p->count=data[7];
   memcpy(p->predicates,data+25,sizeof p->predicates);
   VkShaderModuleCreateInfo ci={.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
     .codeSize=(size_t)data[8]*4,.pCode=data+41};
-  VK_CHECK(vkCreateShaderModule(V.device,&ci,NULL,&p->module));s->predicate=p;free(data);
+  if(observing)uniform_predicate_observe_register(p,s,base,base_bytes,old_recipe,old_bytes);
+  else VK_CHECK(vkCreateShaderModule(V.device,&ci,NULL,&p->module));
+  s->predicate=p;free(data);
 }
 static void uniform_specialization_load(vk_shader *s,const uint32_t *base,size_t base_bytes) {
   if(s->stage!=1) return;
@@ -166,6 +175,8 @@ VkShaderModule vk_uniform_specialization_pick(vk_shader *s,uint32_t *value) {
 }
 VkShaderModule vk_uniform_hybrid_pick(vk_shader *s,uint32_t values[2]) {
   values[0]=values[1]=0;
+  if(uniform_predicate_observe_active && s && s->predicate)
+    return uniform_predicate_observe_pick(s,values);
   // No extra source read or variant lookup in the original default path.
   if(!s || !s->predicate || s->predicate->disabled || !atomic_load(&uniform_predicate_enabled))
     return vk_uniform_specialization_pick(s,values);

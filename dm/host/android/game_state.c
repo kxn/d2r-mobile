@@ -394,6 +394,13 @@ static void observe_tick(const uint64_t *registers) {
     uint64_t vk_render_covered_clear_omissions(void);
     fprintf(state_log, ",\"covered_initial_color_clears\":{\"omitted\":%llu}",
       (unsigned long long)vk_render_covered_clear_omissions());
+    int vk_uniform_predicate_observation_enabled(void);
+    char *vk_uniform_predicate_observation_json(void);
+    if(vk_uniform_predicate_observation_enabled()) {
+      char *observation=vk_uniform_predicate_observation_json();
+      fprintf(state_log, ",\"uniform_predicate_observation\":%s",observation);
+      free(observation);
+    }
     uint64_t vk_render_readonly_store_omissions(void);
     fprintf(state_log, ",\"readonly_store\":{\"omitted\":%llu}",
       (unsigned long long)vk_render_readonly_store_omissions());
