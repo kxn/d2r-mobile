@@ -75,9 +75,38 @@ stage:
    is not implemented, use the original complete build and compare all unchanged
    base/meta/spec bytes; do not bypass source identity to save build time.
 
-This document is the minimal construction plan, **not** a claim that the derived
-entry or Android observation qualification has already run. No shader cache or
-game input was changed by the host tests.
+The original entry now implements this explicit stage:
+
+```sh
+python dm/gfx/tools/dmsh_build.py --derive-predicates build \
+  --input-cache ORIGINAL_VERIFIED_CACHE \
+  --input-receipt ORIGINAL_COMPLETE_VERIFICATION_JSON \
+  --input-receipt-sha256 VERIFIED_FULL_SHA256 \
+  --keys CURRENT_SHADER_KEY OTHER_CURRENT_SHADER_KEY \
+  --output-parent NEW_OUTPUT_PARENT --report NEW_BUILD_RECEIPT
+python scripts/dev/deploy-android-shaders.py --cache NEW_DERIVED_CACHE \
+  --verified-cache-derived --derived-input-receipt-sha256 VERIFIED_FULL_SHA256 \
+  --report HOST_VERIFICATION_RECEIPT
+```
+
+The second command verifies only; deployment still requires the original explicit
+`--deploy`, saved/stopped app and transaction. Legacy source verification remains
+strict and separate. `dmsh_derived_verify.py` uses a fixed registry for the
+predicate and independently owned UBO-address stages; arbitrary module names are
+rejected. These stages are independent candidates, never silently combined.
+
+The cache stage keeps original reflection JSON as well as SPIR-V/metadata/spec
+bytes identical. New DPR1/closure proof fields live in a derived manifest overlay.
+It copies the **raw original manifest bytes** into the output and checks them
+against the authoritative input receipt before trusting their options; rewriting
+the derived identity/options self-consistently cannot disable closure checks.
+
+The actual complete-cache host construction and original-deployer verification
+have run. Eight real-input build/regeneration/negative tests, five deployment
+routing/rejection tests and the eleven legacy deployment tests pass. The initial
+stage before raw-manifest binding remains historical; it is not accepted by the
+current verifier. No device installation or Android observation acceptance is
+claimed by these host results.
 
 ## Validation
 

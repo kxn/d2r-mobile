@@ -4,6 +4,7 @@
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import struct
 import sys
@@ -33,11 +34,12 @@ def compiler_options():
     pixel_runtime = os.environ.get('DMSH_VK_PIXEL_LOCAL_RUNTIME', '0')
     quad_derivatives = os.environ.get('DMSH_VK_QUAD_DERIVATIVES', '0')
     component_fold = os.environ.get('DMSH_VK_COMPONENT_FOLD', '0')
+    ubo_normalize = os.environ.get('DMSH_VK_UBO_ADDRESS_NORMALIZE', '0')
     if quad_derivatives not in ('0','1') or component_fold not in ('0','1'):
         raise ValueError('SPIR-V rewrite switches must be 0 or 1')
     if quad_derivatives == '1' and quad_mode != 'native':
         raise ValueError('quad derivatives require the original native subgroup translator form')
-    if size not in (16, 32, 64, 128) or any(v not in ('0','1') for v in (helper,bias,c1,texels,functions,color_half,uniform_spec,uniform_predicates,texel_storage,pixel_local,pixel_runtime)):
+    if size not in (16, 32, 64, 128) or any(v not in ('0','1') for v in (helper,bias,c1,texels,functions,color_half,uniform_spec,uniform_predicates,texel_storage,pixel_local,pixel_runtime,ubo_normalize)):
         raise ValueError('expected subgroup size 16/32/64/128 and boolean compiler switches 0/1')
     if uniform_predicates == '1' and uniform_spec != '1':
         raise ValueError('additional Uniform predicates require old full-word specialization')
@@ -54,6 +56,7 @@ def compiler_options():
     if quad_mode != 'native': options['fragment_subgroup_mode'] = quad_mode
     if quad_derivatives == '1': options['quad_derivatives'] = True
     if component_fold == '1': options['component_fold'] = True
+    if ubo_normalize == '1': options['ubo_address_normalize'] = True
     # Preserve the legacy default dictionary for existing verified phone chains.
     # Non-default models are explicit, fingerprinted compiler inputs.
     if texel_model != IDENTITY_MODEL:
@@ -65,6 +68,34 @@ def compiler_options():
     if pixel_runtime == '1':
         options['pixel_local_runtime'] = True
     return options
+
+
+def ubo_address_normalizer_source():
+    return Path(__file__).resolve().parents[3]/'tools/experiments/spirv-ubo-address-normalize/normalize.py'
+
+
+def normalize_ubo_address(source):
+    """Opt-in exact scalar-int32 address form; Z3 is not a build dependency.
+
+    The finite transform proves known low bits and carry conditions. Standard
+    SPIRV-Tools handle binary I/O, cleanup and validation. A no-op preserves the
+    original bytes, rather than incidentally optimizing unrelated modules.
+    """
+    normalizer = ubo_address_normalizer_source()
+    tool = shutil.which('spirv-opt')
+    if not tool:
+        raise ValueError('UBO address normalization needs official SPIRV-Tools')
+    with tempfile.TemporaryDirectory(prefix='dmsh_ubo_address_') as temporary:
+        output = Path(temporary)/'normalized'
+        subprocess.run([sys.executable, str(normalizer), '--input', str(source),
+                        '--output', str(output), '--tools', str(Path(tool).resolve().parent)],
+                       check=True, capture_output=True)
+        record = json.loads((output/'result.json').read_text())
+        proof = {k:record[k] for k in ('contract','tool_source_sha256','proofs',
+                 'changed_shift_results','rewrite_steps','new_float_precision',
+                 'memory_operations_or_robustness_changed_by_custom_pass')}
+        return ((output/'candidate.spv').read_bytes() if proof['changed_shift_results']
+                else source.read_bytes()), proof
 
 
 def protected_color_half(source):
@@ -193,6 +224,8 @@ def version(base, translator):
     """固定源码、翻译器与 SPIR-V 工具指纹。 | Pin source, translator and SPIR-V tool fingerprints."""
     h = hashlib.sha256(base.encode())
     h.update(Path(__file__).read_bytes())
+    if compiler_options().get('ubo_address_normalize'):
+        h.update(ubo_address_normalizer_source().read_bytes())
     if compiler_options().get('quad_derivatives') or compiler_options().get('component_fold'):
         for path in sorted(Path(__file__).with_name('spirv_rewrites').iterdir()):
             if path.is_file():h.update(path.name.encode()+b'\0'+path.read_bytes())
@@ -433,6 +466,10 @@ def build(g):
                 code,proof=protected_color_half(destination)
                 destination.write_bytes(code)
                 reflection['protected_color_half']=proof
+            if options.get('ubo_address_normalize') and stage == 'vs':
+                code,proof=normalize_ubo_address(destination)
+                destination.write_bytes(code)
+                reflection['ubo_address_normalize']=proof
             validated = subprocess.run(['spirv-val', '--target-env', 'vulkan1.1', str(destination)], capture_output=True, text=True)
             if validated.returncode:
                 destination.unlink()
