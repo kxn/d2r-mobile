@@ -12,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 SOURCE = HERE / 'fixture'
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--driver-build', type=Path, required=True)
 args = parser.parse_args()
 OUT = args.output.resolve()
 OUT.mkdir(exist_ok=False)
@@ -21,7 +22,8 @@ NDK = SDK / 'ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64'
 VOLK = ROOT / 'dm/third_party/volk'
 TOOLS = ROOT / 'dm/third_party/libadrenotools/include'
 JAR = SDK / 'platforms/android-36/android.jar'
-driver_record = json.loads((ROOT / '.local/build/turnip-swapchain-ubwc-v1/build.json').read_text())
+driver_record_path = args.driver_build.resolve() / 'build.json'
+driver_record = json.loads(driver_record_path.read_text())
 assert driver_record['complete']
 driver = Path(driver_record['driver']['path'])
 sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
@@ -64,7 +66,7 @@ run(BUILD / 'apksigner', 'sign', '--ks', keystore, '--ks-key-alias', 'androiddeb
 run(BUILD / 'apksigner', 'verify', '--verbose', apk)
 run(BUILD / 'zipalign', '-c', '-P', '16', '4', apk)
 record = {'complete': True, 'APK': str(apk), 'APK_sha256': sha(apk), 'driver': driver_record['driver'],
-          'driver_build_record_sha256': sha(ROOT / '.local/build/turnip-swapchain-ubwc-v1/build.json'),
+          'driver_build_record_sha256': sha(driver_record_path),
           'reused_hooks': native, 'commands': commands,
           'source_revision': S.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip(),
           'source_inputs': {str(p.relative_to(ROOT)): sha(p) for p in
