@@ -68,8 +68,16 @@ static void native_resource_install(void) {
   static const uint8_t coherent_turnip_linear[32]={
     0xf8,0x30,0x28,0x5f,0xe6,0x8f,0x0a,0x74,0x47,0x92,0x26,0x9d,0xa5,0xf1,0x60,0xed,
     0x86,0x36,0xc1,0x72,0xb1,0xf6,0x51,0x1d,0xb9,0xd9,0x94,0x78,0xe1,0xa2,0xac,0xce};
+  // Isolated Android WSI/AHB usage candidate. Its complete frozen source
+  // comparison retains the f830 coherent host-import and ASTC layout code;
+  // regenerated producer declarations must still authenticate this exact ELF.
+  // UBWC requests are cold/default-OFF and do not touch native ASTC images.
+  static const uint8_t coherent_turnip_wsi[32]={
+    0xb3,0xfc,0xe5,0xab,0x29,0xc6,0x61,0x7b,0xd2,0xcf,0x33,0x4b,0x3a,0x56,0xc6,0x79,
+    0x51,0xde,0x27,0x1b,0xd8,0x70,0x87,0x8c,0x9a,0x31,0x21,0xff,0x60,0x6b,0x1b,0x9f};
   native_resident_driver=!memcmp(identity.driver_sha256,coherent_turnip,32) ||
-      !memcmp(identity.driver_sha256,coherent_turnip_linear,32);
+      !memcmp(identity.driver_sha256,coherent_turnip_linear,32) ||
+      !memcmp(identity.driver_sha256,coherent_turnip_wsi,32);
   // One cold identity record for the existing explicit resource contract.
   printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
   for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);
