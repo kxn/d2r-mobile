@@ -64,7 +64,11 @@ public final class ProbeActivity extends Activity implements SurfaceHolder.Callb
     }
     @Override public void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
-        if (intent.hasExtra("color")) color(intent.getIntExtra("color", 0));
+        if (intent.hasExtra("color")) {
+            int selected = intent.getIntExtra("color", 0);
+            getIntent().putExtra("color", selected);
+            color(selected);
+        }
     }
     @Override public void onResume() { super.onResume(); resumed = true; start(); }
     @Override public void onPause() { resumed = false; stopWorker(); super.onPause(); }

@@ -96,6 +96,23 @@ JNIEXPORT void JNICALL Java_org_kxn_wsiubwc_ProbeActivity_render(
     CHECK(vkGetSwapchainImagesKHR(device,swap,&count,NULL)); VkImage *images=calloc(count,sizeof *images); REQUIRE(images);
     CHECK(vkGetSwapchainImagesKHR(device,swap,&count,images));
     fprintf(stderr,"WSI_SWAPCHAIN width=%u height=%u count=%u\n",extent.width,extent.height,count);
+    VkImageCreateInfo source_info={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,.imageType=VK_IMAGE_TYPE_2D,
+        .format=format.format,.extent={extent.width,extent.height,1},.mipLevels=1,.arrayLayers=1,
+        .samples=VK_SAMPLE_COUNT_1_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL,
+        .usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .sharingMode=VK_SHARING_MODE_EXCLUSIVE,.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED};
+    VkImage source;CHECK(vkCreateImage(device,&source_info,NULL,&source));
+    VkMemoryRequirements requirements;vkGetImageMemoryRequirements(device,source,&requirements);
+    VkPhysicalDeviceMemoryProperties properties;vkGetPhysicalDeviceMemoryProperties(physical,&properties);
+    uint32_t memory_type=UINT32_MAX;
+    for(uint32_t n=0;n<properties.memoryTypeCount;n++)
+        if((requirements.memoryTypeBits&(1u<<n)) &&
+           (properties.memoryTypes[n].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {memory_type=n;break;}
+    REQUIRE(memory_type!=UINT32_MAX);
+    VkMemoryAllocateInfo memory_info={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize=requirements.size,.memoryTypeIndex=memory_type};
+    VkDeviceMemory source_memory;CHECK(vkAllocateMemory(device,&memory_info,NULL,&source_memory));
+    CHECK(vkBindImageMemory(device,source,source_memory,0));
     VkCommandPoolCreateInfo pool_info={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.queueFamilyIndex=family};
     VkCommandPool pool; CHECK(vkCreateCommandPool(device,&pool_info,NULL,&pool));
     VkCommandBufferAllocateInfo alloc={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=pool,
@@ -117,7 +134,18 @@ JNIEXPORT void JNICALL Java_org_kxn_wsiubwc_ProbeActivity_render(
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&barrier);
         int selected=atomic_load(&selected_color)&3;
         VkClearColorValue value={.float32={selected==0 || selected==3,selected==1 || selected==3,selected==2 || selected==3,1}};
-        vkCmdClearColorImage(command,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&value,1,&barrier.subresourceRange);
+        VkImageMemoryBarrier source_barrier=barrier;source_barrier.image=source;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&source_barrier);
+        vkCmdClearColorImage(command,source,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&value,1,&barrier.subresourceRange);
+        source_barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;source_barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        source_barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;source_barrier.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&source_barrier);
+        VkImageBlit blit={.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .srcOffsets={{0,0,0},{extent.width,extent.height,1}},
+            .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .dstOffsets={{0,0,0},{extent.width,extent.height,1}}};
+        vkCmdBlitImage(command,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,images[index],
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
         barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=0;
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,0,NULL,1,&barrier);
@@ -132,6 +160,7 @@ JNIEXPORT void JNICALL Java_org_kxn_wsiubwc_ProbeActivity_render(
         usleep(16000); /* Fixture pacing only; never used to calculate GPU time or FPS. */
     }
     CHECK(vkDeviceWaitIdle(device)); vkDestroyFence(device,fence,NULL); vkDestroyCommandPool(device,pool,NULL);
+    vkDestroyImage(device,source,NULL);vkFreeMemory(device,source_memory,NULL);
     vkDestroySwapchainKHR(device,swap,NULL); free(images); vkDestroyDevice(device,NULL);
     vkDestroySurfaceKHR(instance,target,NULL); vkDestroyInstance(instance,NULL); ANativeWindow_release(window);
     fprintf(stderr,"WSI_TERMINAL frames=%u game_modules_executed=0\n",frames);
