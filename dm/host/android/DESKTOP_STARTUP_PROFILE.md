@@ -1,4 +1,4 @@
-# Verified desktop startup, schemas 1, 2, 3, 4 and 5
+# Verified desktop startup, schemas 1, 2, 3, 4, 5 and 6
 
 This corrects a delivery gap: transaction tests restore their original APK and
 assets; that original APK predates shared/native resources. Successful test
@@ -111,6 +111,43 @@ they reject this additional field even when it is `false`. Explicit CLI or test
 Intents still bypass the desktop profile, including an explicit
 `--no-record-state-cache` launch. A schema 5 publication does not turn on the
 cache globally or alter the existing cold-start-only rule.
+
+Schema 6 retains every schema 5 field and requires exactly two additional
+strict booleans (set `schema=6` in the same properties file):
+
+```
+record_state_extra_cache=true
+sparse_submission_plan=false
+```
+
+Both values must be explicitly present as lowercase `true` or `false`; the
+loader emits `Boolean` cold extras for the existing native startup setters.
+`record_state_extra_cache=true` requires `record_state_cache=true`, otherwise
+the profile is rejected. Selecting the extra cache removes additional
+identical NVN recording state; it does not change game logic or resource
+synchronization. `sparse_submission_plan` is a separate experimental planning
+selection, not implied by either recording cache. Its runtime default remains
+off; a publisher must explicitly qualify any selected value for the exact
+APK/device tuple. The current intended Q735 publication selects extra cache
+on and sparse planning off: the extra cache has GPU correctness and CPU work
+reduction evidence, while sparse-v1 added management work in the measured
+whole-owner instruction budget. Schema support does not qualify sparse-v1
+for default activation.
+
+Schemas 1–5 emit neither of these new extras and reject either new key even
+when it is `false`. Schema 6 cannot silently omit either field or any inherited
+field. All APK, driver, module, shader-chain, native-table, pack/producer and
+receipt identity checks are unchanged. Explicit Intent launches continue to
+bypass the desktop profile; absent profiles retain the original defaults.
+Dynamic resolution, scale, frame rate and thermal settings remain outside
+the profile.
+
+This schema change only updates the Java cold selection and its host contract
+tests. It does not alter or rebuild native code. Reusing earlier native
+performance evidence for a new Java APK requires verifying that its native
+libraries and runtime payloads remain byte-identical to that measured tuple;
+the new APK hash and publication receipt must still be updated and verified.
+Parser tests alone are not a desktop deployment or two-launch qualification.
 
 These values describe the locally qualified Q735 combination, not universal
 device defaults. The CPU mask is a canonical nonnegative decimal Java integer;
