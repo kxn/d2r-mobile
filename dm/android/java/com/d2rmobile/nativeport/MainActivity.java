@@ -49,6 +49,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeAttachmentRasterRun(boolean enabled);
     private static native void nativeStateSegments(boolean enabled);
     private static native void nativeSourcePartition(boolean enabled);
+    private static native void nativeRecordStateCache(boolean enabled);
     private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeGuestWorkerQos(boolean enabled);
     private static native void nativeGuestWaitBudget(int microseconds);
@@ -289,6 +290,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeAttachmentRasterRun(getIntent().getBooleanExtra("attachment_raster_run", true));
             nativeStateSegments(getIntent().getBooleanExtra("state_segments", true));
             nativeSourcePartition(getIntent().getBooleanExtra("source_partition", false));
+            nativeRecordStateCache(getIntent().getBooleanExtra("record_state_cache", false));
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeGuestWorkerQos(getIntent().getBooleanExtra("guest_worker_qos", false));
             nativeGuestWaitBudget(getIntent().getIntExtra("guest_wait_budget_us", 0));
@@ -541,6 +543,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("guest_wait_budget_us")) {
             android.util.Log.w("D2RDriver", "guest wait budget requires a cold restart");
             intent.removeExtra("guest_wait_budget_us");
+        }
+        if (intent.hasExtra("record_state_cache")) {
+            android.util.Log.w("D2RDriver", "record state cache requires a cold restart");
+            intent.removeExtra("record_state_cache");
         }
         if (intent.hasExtra("image_buffer_split")) {
             android.util.Log.w("D2RDriver", "image_buffer_split is startup-only; cold restart required");

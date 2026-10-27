@@ -527,6 +527,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStateSeg
   state_segments_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
+static int record_state_cache_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRecordStateCache(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"record_state_cache is fixed before native startup");
+    return;
+  }
+  record_state_cache_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int source_partition_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSourcePartition(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -957,6 +970,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
       setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_KEEP_ALL",keep_attachment_stores_startup?"1":"0",1) ||
       setenv("DM_VULKAN_RENDER_RECORD_MODE",render_record_mode,1) ||
+      setenv("DM_NVN_RECORD_STATE_CACHE",record_state_cache_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SOURCE_PARTITION",source_partition_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STATE_SEGMENTS",state_segments_startup?"1":"0",1) ||
       setenv("DM_VULKAN_NATIVE_READ_GROUP_FRONT",native_read_group_front_startup?"1":"0",1) ||

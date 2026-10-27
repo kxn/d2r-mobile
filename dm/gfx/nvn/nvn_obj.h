@@ -65,6 +65,7 @@ typedef struct {
     uint8_t *begin;                      // 本次录制的 BEGIN 记录 | BEGIN record of this recording
     PFNNVNCOMMANDBUFFERMEMORYCALLBACKPROC cb; void *cb_data;
     NVNdevice *dev;
+    struct nvn_record_state_cache *record_state; // optional per-object by-value recording shadow, owned until Finalize
 } cmd_t;                                                                                     FITS(cmd_t, NVNcommandBuffer);
 
 // ---------- 状态对象（默认值按 NVN / GL 默认） ----------

@@ -59,6 +59,18 @@ class AttachedBackingTests(unittest.TestCase):
 
 
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_record_state_cache_is_explicit_default_off_and_cold_only(self):
+        self.assertNotIn('record_state_cache',self.launch_command([]))
+        for option,value in [('--record-state-cache','true'),('--no-record-state-cache','false')]:
+            command=self.launch_command([option]);index=command.index('record_state_cache')
+            self.assertEqual(command[index-1:index+2],['--ez','record_state_cache',value])
+            with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
+
     def test_guest_wait_budget_is_bounded_and_cold(self):
         self.assertNotIn('guest_wait_budget_us',self.launch_command([]))
         for value in ('0','30','100'):

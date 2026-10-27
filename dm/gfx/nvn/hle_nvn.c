@@ -34,6 +34,7 @@ static void x_shared_cache(uint64_t,size_t,int);
 #include "nvn_tex.h"
 #include "nvn_mtl.h"
 #include "nvn_pace.h"
+#include "nvn_record_state.h"
 #include "../../host/front.h"
 #include "nvn_dirty.h"
 #include "nvn_platform.h"
@@ -687,10 +688,35 @@ NVN(nvnQueueFinish, void, NVNqueue *q) { (void)q; x_drain(); mtl_finish(); }
 #define CB(c) ((cmd_t *)(c))
 #define OP_RESERVE 24                             // 段尾永远留够一条 JUMP / END | Always keep enough room at the segment end for one JUMP / END
 
-NVN(nvnCommandBufferInitialize, NVNboolean, NVNcommandBuffer *c, NVNdevice *d) {
-    memset(c, 0, sizeof(cmd_t)); CB(c)->magic = MAGIC('C', 'M', 'D', 'B'); CB(c)->dev = d; return 1;
+// Cold, default-OFF comparison. No getenv, hashing, global lock or per-call
+// allocation in bind_state; each initialized command object owns its shadow.
+static _Atomic int record_state_mode = -1;
+static int record_state_enabled(void) {
+    int mode = atomic_load_explicit(&record_state_mode, memory_order_acquire);
+    if (mode >= 0) return mode;
+    const char *value = getenv("DM_NVN_RECORD_STATE_CACHE");
+    if (value && strcmp(value, "0") && strcmp(value, "1"))
+        die("DM_NVN_RECORD_STATE_CACHE expects 0 or 1");
+    mode = value && !strcmp(value, "1");
+    int unknown = -1;
+    if (atomic_compare_exchange_strong_explicit(&record_state_mode, &unknown, mode,
+            memory_order_acq_rel, memory_order_acquire))
+        LOG("[nvn record state] enabled=%d fixed-before-recording", mode);
+    else mode = unknown;
+    return mode;
 }
-NVN(nvnCommandBufferFinalize, void, NVNcommandBuffer *c) { CB(c)->magic = 0; }
+_Static_assert(sizeof(blend_st)<=24 && sizeof(color_st)<=24 && sizeof(chmask_st)<=24 &&
+    sizeof(ms_st)<=24 && sizeof(poly_st)<=24 && sizeof(ds_st)<=24, "Fixed state recording shadow bounds");
+NVN(nvnCommandBufferInitialize, NVNboolean, NVNcommandBuffer *c, NVNdevice *d) {
+    memset(c, 0, sizeof(cmd_t)); CB(c)->magic = MAGIC('C', 'M', 'D', 'B'); CB(c)->dev = d;
+    // Allocation failure conservatively keeps the exact original recorder.
+    if (record_state_enabled()) CB(c)->record_state = calloc(1, sizeof(nvn_record_state_cache));
+    return 1;
+}
+NVN(nvnCommandBufferFinalize, void, NVNcommandBuffer *c) {
+    free(CB(c)->record_state); CB(c)->record_state = NULL;
+    CB(c)->recording = 0; CB(c)->magic = 0;
+}
 NVN(nvnCommandBufferSetMemoryCallback, void, NVNcommandBuffer *c, PFNNVNCOMMANDBUFFERMEMORYCALLBACKPROC cb) { CB(c)->cb = cb; }
 NVN(nvnCommandBufferSetMemoryCallbackData, void, NVNcommandBuffer *c, void *d) { CB(c)->cb_data = d; }
 static uint8_t *align8(uint8_t *p) { return (uint8_t *)(((uintptr_t)p + 7) & ~(uintptr_t)7); }
@@ -717,6 +743,9 @@ static void put_hdr(uint8_t *p, uint32_t op, uint32_t size) { op_hdr h = {op, si
 // New segment: if recording is in progress, write a JUMP at the end of the old segment to link it
 static void cmd_new_segment(cmd_t *o, uint8_t *mem, size_t n) {
     uint8_t *start = align8(mem), *end = mem + n;
+    // A JUMP to a fresh segment preserves this recording's state. No other
+    // use of a segment (including a not-yet-started handle) supplies authority.
+    if (!o->recording || !o->cur) nvn_record_state_clear(o->record_state);
     if (o->recording && o->cur) { if (cs_on() && o->end > o->cur) { pthread_mutex_lock(&g_cs_mu); g_cs.waste += (uint64_t)(o->end - o->cur); pthread_mutex_unlock(&g_cs_mu); } put_hdr(o->cur, OP_JUMP, 16); memcpy(o->cur + 8, &start, 8); }
     o->cur = start; o->end = end;
 }
@@ -759,7 +788,12 @@ static uint8_t *cmd_alloc(cmd_t *o, uint32_t size) {
     for (int tries = 0; !o->cur || o->cur + size + OP_RESERVE > o->end; tries++) {
         if (!o->cb || tries == 2) die("NVN 命令内存耗尽且无法补充（cb=%p）", (void *)o->cb);
         if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.cbs++; pthread_mutex_unlock(&g_cs_mu); }
+        // The guest callback can reenter setters/CopyCommands on this object.
+        // Retain no state proof across arbitrary guest code. A later outer
+        // bind captures ONLY its own final, actually recorded payload.
+        nvn_record_state_clear(o->record_state);
         o->cb((NVNcommandBuffer *)o, NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY, size + OP_RESERVE, o->cb_data);
+        nvn_record_state_clear(o->record_state);
     }
     if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.bytes += size; g_cs.recs++; pthread_mutex_unlock(&g_cs_mu); }
     uint8_t *p = o->cur; o->cur += size; put_hdr(p, 0, size); return p;
@@ -767,18 +801,28 @@ static uint8_t *cmd_alloc(cmd_t *o, uint32_t size) {
 NVN(nvnCommandBufferBeginRecording, void, NVNcommandBuffer *c) {
     cmd_t *o = CB(c);
     if (o->recording) LOG("【红】BeginRecording 重入");
+    nvn_record_state_clear(o->record_state);
     o->recording = 1;
     uint8_t *p = cmd_alloc(o, 8); put_hdr(p, OP_BEGIN, 8); o->begin = p;
+    // Allocation may have recorded callback commands BEFORE this BEGIN. They
+    // are outside the returned handle and cannot establish its initial state.
+    nvn_record_state_clear(o->record_state);
 }
 NVN(nvnCommandBufferEndRecording, NVNcommandHandle, NVNcommandBuffer *c) {
     cmd_t *o = CB(c);
     uint8_t *p = cmd_alloc(o, 8); put_hdr(p, OP_END, 8);
     o->recording = 0;
+    nvn_record_state_clear(o->record_state);
     return (NVNcommandHandle)o->begin;
 }
 NVN(nvnCommandBufferIsRecording, NVNboolean, const NVNcommandBuffer *c) { return ((const cmd_t *)c)->recording != 0; }
 NVN(nvnCommandBufferCopyCommands, void, NVNcommandBuffer *c, int n, const NVNcommandHandle *h) {
-    for (int i = 0; i < n; i++) { uint8_t *p = cmd_alloc(CB(c), 16); put_hdr(p, OP_CALL, 16); memcpy(p + 8, &h[i], 8); }
+    for (int i = 0; i < n; i++) {
+        uint8_t *p = cmd_alloc(CB(c), 16); put_hdr(p, OP_CALL, 16); memcpy(p + 8, &h[i], 8);
+        // CALL inherits and may change every fixed state; even a repeated
+        // handle or apparently empty callee must take the original path.
+        nvn_record_state_clear(CB(c)->record_state);
+    }
 }
 NVN(nvnCommandBufferSignalEvent, void, NVNcommandBuffer *c, const NVNevent *e, NVNeventSignalMode m, NVNeventSignalLocation loc, int flags, uint32_t v) {
     (void)loc; (void)flags;
@@ -846,7 +890,16 @@ NVN(nvnCommandBufferSetDepthRange, void, NVNcommandBuffer *c, float n, float f) 
 NVN(nvnCommandBufferBindProgram, void, NVNcommandBuffer *c, const NVNprogram *p, int stages) {
     *REC(c, OP_BIND_PROGRAM, p_bind_program) = (p_bind_program){snap_prog(p), stages};
 }
-static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) { p_bind_state *r = REC(c, OP_BIND_STATE, p_bind_state); r->kind = kind; memcpy(r->bytes, st, n); }
+static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) {
+    cmd_t *o = CB(c);
+    // Full value comparison includes blend target. A caller may reuse/mutate
+    // the same NVN state address; pointer identity is never a proof.
+    if (o->recording && nvn_record_state_matches(o->record_state, (unsigned)kind, st, n)) return;
+    p_bind_state *r = REC(c, OP_BIND_STATE, p_bind_state); r->kind = kind; memcpy(r->bytes, st, n);
+    // REC may invoke guest memory callbacks. Read/copy at the original point,
+    // then capture the final encoded bytes, not a pre-callback input snapshot.
+    if (o->recording) nvn_record_state_capture(o->record_state, (unsigned)kind, r->bytes, n);
+}
 NVN(nvnCommandBufferBindBlendState, void, NVNcommandBuffer *c, const NVNblendState *st) { bind_state(c, 0, st, sizeof(blend_st)); }
 NVN(nvnCommandBufferBindColorState, void, NVNcommandBuffer *c, const NVNcolorState *st) { bind_state(c, 1, st, sizeof(color_st)); }
 NVN(nvnCommandBufferBindChannelMaskState, void, NVNcommandBuffer *c, const NVNchannelMaskState *st) { bind_state(c, 2, st, sizeof(chmask_st)); }

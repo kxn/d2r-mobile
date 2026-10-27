@@ -99,6 +99,7 @@ parser.add_argument('--attachment-job-reuse',action=argparse.BooleanOptionalActi
 parser.add_argument('--attachment-raster-run',action=argparse.BooleanOptionalAction,default=None,help='startup-only fulfilled ordinary attachment access runs (default on; --no-attachment-raster-run for reference); verify actual history reuse')
 parser.add_argument('--state-segments',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental validated pure-state replay segments (default off); verify effective backend mode')
 parser.add_argument('--source-partition',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental sparse image source responsibilities (default off)')
+parser.add_argument('--record-state-cache',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental elimination of identical fixed-state recordings (default off)')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
 parser.add_argument('--descriptor-history-reference',action='store_true',help='comparison: cache only consecutive identical descriptor contents')
@@ -204,6 +205,8 @@ if args.attach and args.image_buffer_split is not None:
     parser.error('--image-buffer-split/--no-image-buffer-split are startup-only and cannot be used with --attach')
 if args.attach and args.source_partition is not None:
     parser.error('--source-partition is startup-only')
+if args.attach and args.record_state_cache is not None:
+    parser.error('--record-state-cache is startup-only')
 if args.attach and args.state_segments is not None:
     parser.error('--state-segments/--no-state-segments are startup-only and cannot be used with --attach')
 if args.attach and args.native_read_group_front is not None:
@@ -310,6 +313,8 @@ if not args.attach:
         launch += ['--ez','image_buffer_split',str(args.image_buffer_split).lower()]
     if args.source_partition is not None:
         launch += ['--ez','source_partition',str(args.source_partition).lower()]
+    if args.record_state_cache is not None:
+        launch += ['--ez','record_state_cache',str(args.record_state_cache).lower()]
     if args.state_segments is not None:
         launch += ['--ez','state_segments',str(args.state_segments).lower()]
     if args.native_read_group_front is not None:
@@ -524,6 +529,10 @@ while time.monotonic() < deadline:
                     if not args.attach and args.shared_guest_heap is not None and state.get('guest_heap',{}).get('backing_initialized') is not True:
                         raise RuntimeError('Current APK did not publish actual guest heap backing metadata')
                     source_partition_modes=re.findall(r'\[vulkan\] image source partition enabled=([01])\b',log)
+                    record_state_modes=re.findall(r'\[nvn record state\] enabled=([01])\b',log)
+                    actual_record_state_cache=bool(int(record_state_modes[-1])) if record_state_modes else None
+                    if args.record_state_cache is not None and actual_record_state_cache != args.record_state_cache:
+                        raise RuntimeError('record_state_cache actual recorder mode mismatch')
                     actual_source_partition=bool(int(source_partition_modes[-1])) if source_partition_modes else None
                     source_partition_hit='[vulkan] image source partition actual sparse CPU operation' in log
                     if args.source_partition is not None and actual_source_partition != args.source_partition:
@@ -605,6 +614,8 @@ while time.monotonic() < deadline:
                               'requested_attachment_job_reuse':args.attachment_job_reuse,
                               'actual_attachment_job_reuse':actual_attachment_reuse,
                               'requested_source_partition':args.source_partition,
+                              'requested_record_state_cache':args.record_state_cache,
+                              'actual_record_state_cache':actual_record_state_cache,
                               'actual_source_partition':actual_source_partition,
                               'source_partition_actual_sparse':source_partition_hit,
                               'requested_state_segments':args.state_segments,
