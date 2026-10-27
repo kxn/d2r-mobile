@@ -69,6 +69,85 @@ class CompareRunsTest(unittest.TestCase):
     def arm(self, d, **kw):
         return m.Arm(d, d.name, **kw).result()
 
+    def add_sample_records(self, d):
+        p = d.parent / 'offline-analysis' / d.name / 'budget.json'
+        budget = json.loads(p.read_text())
+        rows = [{'time': 300 + i * 100, 'period': r['sampled_instruction_period'],
+                 'phase': r['key'][0], 'duty': r['key'][1], 'chain': [f'leaf{i}', 'ancestor']}
+                for i, r in enumerate(budget['disjoint_actual_phase_duties'])]
+        budget['samples'] = len(rows)
+        budget['top_self_by_duty'] = [dict(r, key=[*r['key'], f'leaf{i}']) for i, r in enumerate(budget['disjoint_actual_phase_duties'])]
+        self.write(p, budget)
+        sidecar = p.with_name('sample-chain-values.json')
+        sidecar.write_text(json.dumps(rows))
+        return p, sidecar
+
+    def test_raw_counts_total_density_and_self_are_visible(self):
+        d = self.fixture('SAMPLES'); _, path = self.add_sample_records(d)
+        a = self.arm(d)
+        self.assertEqual(a['sample_support']['status'], 'available')
+        self.assertEqual(a['sample_support']['value']['samples'], 2)
+        self.assertEqual(a['sample_support']['value']['samples_per_Surface'], 2 / 32)
+        self.assertEqual(a['sampled_phase_duties']['value'][0]['sample_count'], 1)
+        self.assertEqual(a['sampled_top_self']['value'][0]['sample_count'], 1)
+        self.assertTrue(any(x['path'] == str(path) for x in a['sources']))
+        r = m.compare(a, a)
+        self.assertEqual(r['comparison']['top_self_changes_not_complete'][0]['reference_samples'], 1)
+        self.assertIn('Ref samples|Cand samples', m.markdown(r))
+        self.assertIn('samples / Surface', m.markdown(r))
+
+    def test_raw_counts_follow_existing_group_members(self):
+        d = self.fixture('GROUP-SAMPLES'); self.add_sample_records(d)
+        a = self.arm(d, config={'groups': [{'label': 'merged', 'phase': '.*', 'duty': '.*'}]})
+        self.assertEqual(a['sampled_phase_duties']['value'][0]['sample_count'], 2)
+        self.assertEqual(a['sample_support']['value']['phase_duties'][0]['sample_count'], 1)
+
+    def test_missing_raw_counts_do_not_invalidate_exact_or_become_zero(self):
+        d = self.fixture('NO-SAMPLES')
+        a = self.arm(d)
+        self.assertEqual(a['sample_support']['status'], 'missing')
+        self.assertEqual(a['exact_owner_counters']['status'], 'available')
+        self.assertIsNone(a['sampled_phase_duties']['value'][0]['sample_count'])
+        r = m.compare(a, a)
+        self.assertIsNone(r['comparison']['all_disjoint_phase_duties_Minstructions_per_Surface'][0]['reference_samples'])
+
+    def test_raw_window_count_sum_and_partition_must_match_budget(self):
+        for name, mutate in [
+                ('bounds', lambda r: r[0].update(time=1200)),
+                ('count', lambda r: r.pop()),
+                ('periodsum', lambda r: r[0].update(period=r[0]['period'] + 1)),
+                ('partition', lambda r: r[0].update(phase='different')),
+                ('booleanperiod', lambda r: r[0].update(period=True)),
+                ('booleantime', lambda r: r[0].update(time=True)),
+                ('chain', lambda r: r[0].update(chain=[]))]:
+            with self.subTest(name=name):
+                d = self.fixture('INVALID-' + name); _, p = self.add_sample_records(d)
+                rows = json.loads(p.read_text()); mutate(rows); p.write_text(json.dumps(rows))
+                a = self.arm(d)
+                self.assertEqual(a['sample_support']['status'], 'invalid')
+                self.assertIsNone(a['sampled_phase_duties']['value'][0]['sample_count'])
+                self.assertEqual(a['exact_owner_counters']['status'], 'available')
+
+    def test_raw_self_period_match_and_qualified_budget_required(self):
+        d = self.fixture('SELF-PERIOD'); p, _ = self.add_sample_records(d)
+        b = json.loads(p.read_text()); b['top_self_by_duty'][0]['key'][-1] = 'wrong-leaf'
+        self.write(p, b)
+        self.assertEqual(self.arm(d)['sample_support']['status'], 'invalid')
+        d = self.fixture('RAW-IDENTITY'); self.add_sample_records(d)
+        (d / 'counter.data').write_text('tamper')
+        self.assertEqual(self.arm(d)['sample_support']['status'], 'invalid')
+
+    def test_raw_samples_missing_top_entry_stays_not_ranked(self):
+        a = self.fixture('TOP-A'); pa, _ = self.add_sample_records(a)
+        b = self.fixture('TOP-B'); pb, _ = self.add_sample_records(b)
+        budget = json.loads(pb.read_text()); budget['top_self_by_duty'] = budget['top_self_by_duty'][1:]
+        self.write(pb, budget)
+        r = m.compare(self.arm(a), self.arm(b))
+        row = next(x for x in r['comparison']['top_self_changes_not_complete'] if x['key'][-1] == 'leaf0')
+        self.assertEqual(row['reference_samples'], 1)
+        self.assertIsNone(row['candidate_samples'])
+        self.assertIsNone(row['delta'])
+
     def test_full_partition_and_new_cost_not_just_target(self):
         a = self.arm(self.fixture('OFF', (6000000, 4000000)))
         b = self.arm(self.fixture('ON', (3000000, 6000000), True))

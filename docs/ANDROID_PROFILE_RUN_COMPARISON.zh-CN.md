@@ -31,6 +31,7 @@ python3 scripts/dev/test_compare_profile_runs.py
 
 - `analysis.csv` 是官方 trace_processor 多段 CSV，包含 `section` 表头、完整 Surface intervals、whole-app/thread Running 和运行期频率等。按每段表头解析，不能作为一张单一表格读取。
 - `budget.json` 复用现成 Simpleperf reducer 的 `exact_owner_counter_brackets`、`disjoint_actual_phase_duties`、`top_self_by_duty`、`inputs_sha256` 等。不把inclusive调用栈相加当互斥预算。
+- 若预算旁有原reducer的`sample-chain-values.json`，先核其半开MONOTONIC窗口、条数等于`budget.samples`、period总和及每个既有phase/duty分区完全一致，并核原top SELF的period。然后只按已有phase/duty和`chain[0]`聚合原始sample条数；不重符号化、不重分类。完整sidecar校验失败只将sample支撑标invalid，不篡改仍合格的硬件exact边界；文件缺失为missing。原文件路径与SHA进入来源清单。
 - Counter receipt 的 MONOTONIC 边界必须与预算一致；预算 Surface 数必须与 `analysis.csv` 一致；实际 trace/counter/receipt 哈希和receipt里的host ELF必须与预算关联一致。Exact边界还须满足上下界与分母一致。资格不符时，预算数据标 `invalid`，不会继续作为精确结论使用。
 - 分区要求key唯一、样本period之和等于总period、每Surface归一化一致。分区不完整就不生成可相加的差值表。只有两边都是完整互斥分区时，某职责未出现才可作为该窗口的0；原top self列表缺项不能按0处理。
 - `same_binary=same` 要求两臂APK和host ELF哈希均存在且相同。缺少身份为 `unverified`；capture与receipt内部冲突为 `invalid`。这只是binary身份，不是因果证明。
@@ -44,6 +45,7 @@ python3 scripts/dev/test_compare_profile_runs.py
 1. 先读第一屏 FPS、mean/p95/max、Surface帧数、whole-app与owner Running、运行期频率和exact指令/周期边界。owner是实际被采线程，可能包含游戏代码、HLE、录制和翻译，不能全部叫“翻译CPU”。不同进程的TID不直接按数值匹配。
 2. 再看整张互斥职责表以及所有新增成本。目标路径少了，但其他路径增加、频率变化、调度变化，都可能让Running或FPS暂不变。采样工作量不是精确函数时间；不能拿某项Δother填成已解释根因。
 3. 精简SELF函数变化表保留阶段/职责/函数三重定位，只对两边原top列表都有的条目算Δ；未进top列表标not_ranked，不能补0。SELF不与父职责预算再次相加。unknown、缺祖先和宽泛other保留单独身份。`migration` 默认 `unproven`：阶段间一增一减不足以证明工作搬家，需要核对真实祖先与同窗行为。
+   表旁显示两臂原sample条数，另列总samples及samples/Surface。几十条样本的SELF差值是有限观察，不是精确调用次数；各sample的period会变化，不能拿条数比例代替指令比例，也不据此制造置信区间。自定义高层组只合计原成员sample；缺失sidecar、非法窗口或原top未列出的SELF都不补0。
 4. 默认用现有官方trace_processor从同一原trace自动补齐Sleep/runnable/waker，见下节。工具不可用、原trace或track缺失时才明确missing；工具查询/身份/时窗校验失败标invalid。不以帧长减owner Running构造等待时间；CPU/GPU和其他线程可能重叠。
 5. 单对实验不构成跨温度/频率/场景的统计置信度。Exact counter区间是现成reducer的两个采样边缘上下界，不是置信区间。原lost/truncated记录也保留并提示。
 

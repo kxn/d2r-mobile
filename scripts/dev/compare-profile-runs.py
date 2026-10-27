@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare existing official profiler reductions; never acquire or sample a device."""
 import argparse
+import collections
 import csv
 import hashlib
 import json
@@ -376,7 +377,14 @@ class Arm:
         for field, value in re.findall(r'(\w*(?:lost|truncated)\w*)=(\d+)', record_stat):
             if int(value):
                 self.issues.append(f'official sample loss/truncation: {field}={value}')
+        support = self.sample_support(budget_ok)
+        phase_counts = {tuple(r['key']): r['sample_count'] for r in (support.get('value') or {}).get('phase_duties', [])}
+        self_counts = {tuple(r['key']): r['sample_count'] for r in (support.get('value') or {}).get('self', [])}
         duties = self.phase_table(budget_ok)
+        if duties['value'] is not None:
+            for row in duties['value']:
+                row['sample_count'] = sum(phase_counts.get(tuple(k), 0) for k in row['members']) if support['status'] == 'available' else None
+        selfs = [dict(r, sample_count=self_counts.get(tuple(r['key']))) for r in self.budget.get('top_self_by_duty', [])] if budget_ok else None
         counters = self.state_counters()
         gpu = self.gpu_result()
         # Scheduler state/waker tables are optional reductions, never inferred
@@ -399,11 +407,69 @@ class Arm:
                 'sampled_phase_duties': duties,
                 'sampled_representative_chains': self.budget.get('actual_representative_chains') if budget_ok else None,
                 'sampled_leaf_modules_by_duty': self.budget.get('leaf_modules_by_duty') if budget_ok else None,
-                'sampled_top_self': metric(self.budget.get('top_self_by_duty') if budget_ok else None,
+                'sampled_top_self': metric(selfs,
                                           scope='sampled self periods only; truncated top list, absent entries are unknown, not zero'),
+                'sample_support': support,
                 'sample_health': {'samples': self.budget.get('samples'), 'record_stat': dotted(self.budget, 'record_meta.record_stat'),
                                   'uncertainty': self.budget.get('uncertainty', [])},
                 'state_counters': counters, 'GPU': gpu, 'issues': self.issues, 'sources': self.sources}
+
+    def sample_support(self, valid):
+        """Count already classified reducer records; never re-symbolize/reclassify.
+
+        The sidecar has no independent capture identity, so accept it only when
+        its full time window, count, period partition and listed SELF weights
+        agree with the qualified budget anchored to original counter/trace/ELF.
+        """
+        path = self.budget_path.with_name('sample-chain-values.json')
+        if not path.exists():
+            return metric(None, reason='sample-chain-values.json absent; raw counts are missing, not zero')
+        self.remember(path)
+        if not valid:
+            return metric(None, status='invalid', reason='raw sample counts require a qualified budget')
+        with path.open() as f:
+            samples = json.load(f)
+        def invalid(reason):
+            self.issues.append('sample support invalid: ' + reason)
+            return metric(None, status='invalid', reason=reason)
+        expected = self.budget.get('samples')
+        if isinstance(expected, bool) or not isinstance(expected, int) or expected <= 0 or not isinstance(samples, list) or len(samples) != expected:
+            return invalid('raw record count does not match budget.samples')
+        bounds = self.budget.get('MONOTONIC_bounds_ns')
+        if not isinstance(bounds, list) or len(bounds) != 2 or any(isinstance(v, bool) or not isinstance(v, int) for v in bounds) or bounds[0] >= bounds[1]:
+            return invalid('budget MONOTONIC window invalid')
+        phases, selfs, phase_periods, self_periods = (collections.Counter() for _ in range(4))
+        total = 0
+        for r in samples:
+            if not isinstance(r, dict):
+                return invalid('raw sample must be an object')
+            t, period = r.get('time'), r.get('period')
+            if isinstance(t, bool) or not isinstance(t, int) or not bounds[0] <= t < bounds[1]:
+                return invalid('raw sample outside qualified half-open MONOTONIC window')
+            if isinstance(period, bool) or not isinstance(period, int) or period <= 0:
+                return invalid('raw sample period must be a positive integer')
+            chain = r.get('chain')
+            if not all(isinstance(r.get(k), str) and r[k] for k in ('phase', 'duty')) or not isinstance(chain, list) or not chain or not all(isinstance(v, str) and v for v in chain):
+                return invalid('existing phase/duty/chain identity missing or malformed')
+            phase = (r['phase'], r['duty'])
+            leaf = (*phase, chain[0])
+            phases[phase] += 1; selfs[leaf] += 1
+            phase_periods[phase] += period; self_periods[leaf] += period; total += period
+        if total != self.budget.get('sampled_instruction_period_sum'):
+            return invalid('raw period sum does not match budget total')
+        rows = self.budget.get('disjoint_actual_phase_duties', [])
+        expected_phases = {tuple(r['key']): r['sampled_instruction_period'] for r in rows}
+        if len(expected_phases) != len(rows) or dict(phase_periods) != expected_phases:
+            return invalid('raw phase/duty periods do not match complete budget partition')
+        for r in self.budget.get('top_self_by_duty', []):
+            if self_periods.get(tuple(r['key'])) != r.get('sampled_instruction_period'):
+                return invalid('raw SELF period does not match budget top SELF row')
+        n = self.budget['Surface_intervals']
+        return metric({'samples': len(samples), 'samples_per_Surface': len(samples) / n,
+                       'sampled_instruction_period_sum': total, 'MONOTONIC_bounds_ns': bounds,
+                       'phase_duties': [{'key': list(k), 'sample_count': v} for k, v in sorted(phases.items())],
+                       'self': [{'key': list(k), 'sample_count': v} for k, v in sorted(selfs.items())]},
+                      scope='Counts of existing official reducer records, grouped only by their existing phase/duty and chain[0]. Not calls, exact instructions, uncertainty intervals, or new classification.')
 
     def phase_table(self, valid):
         rows = self.budget.get('disjoint_actual_phase_duties')
@@ -505,11 +571,19 @@ def compare_rows(a, b, value_key, complete=False):
     aa = {tuple(r['key']) if isinstance(r['key'], list) else r['key']: r for r in a or []}
     bb = {tuple(r['key']) if isinstance(r['key'], list) else r['key']: r for r in b or []}
     rows = []
+    has_sample_counts = any('sample_count' in r for r in [*aa.values(), *bb.values()])
     for k in sorted(aa.keys() | bb.keys()):
         av = aa[k].get(value_key) if k in aa else (0 if complete else None)
         bv = bb[k].get(value_key) if k in bb else (0 if complete else None)
-        rows.append({'key': list(k) if isinstance(k, tuple) else k, **delta(av, bv),
-                     'reference_members': aa.get(k, {}).get('members'), 'candidate_members': bb.get(k, {}).get('members')})
+        row = {'key': list(k) if isinstance(k, tuple) else k, **delta(av, bv),
+               'reference_members': aa.get(k, {}).get('members'), 'candidate_members': bb.get(k, {}).get('members')}
+        if has_sample_counts:
+            # An absent key may mean zero only in a complete partition whose
+            # observed keys all have validated counts. Missing sidecar != zero.
+            for label, values in [('reference', aa), ('candidate', bb)]:
+                counts_valid = bool(values) and all(r.get('sample_count') is not None for r in values.values())
+                row[label + '_samples'] = values[k].get('sample_count') if k in values else (0 if complete and counts_valid else None)
+        rows.append(row)
     return sorted(rows, key=lambda r: abs(r['delta']) if r['delta'] is not None else -1, reverse=True)
 
 
@@ -608,11 +682,15 @@ def fmt(v):
 
 
 def table(lines, title, rows, unit=''):
-    lines.extend(['', f'## {title}', '', f'|项目{unit}|Reference|Candidate|Δ|Δ%|', '|---|---:|---:|---:|---:|'])
+    sample_columns = any('reference_samples' in r for r in rows)
+    lines.extend(['', f'## {title}', '', f'|项目{unit}|Reference|Candidate|Δ|Δ%|' + ('Ref samples|Cand samples|' if sample_columns else ''), '|---|---:|---:|---:|---:|' + ('---:|---:|' if sample_columns else '')])
     for r in rows:
         key = ' / '.join(r['key']) if isinstance(r['key'], list) else r['key']
         key = key.replace('|', '\\|')
-        lines.append('|'+ '|'.join([key, fmt(r.get('reference')), fmt(r.get('candidate')), fmt(r.get('delta')), fmt(r.get('percent'))])+'|')
+        cells = [key, fmt(r.get('reference')), fmt(r.get('candidate')), fmt(r.get('delta')), fmt(r.get('percent'))]
+        if sample_columns:
+            cells += [fmt(r.get('reference_samples')), fmt(r.get('candidate_samples'))]
+        lines.append('|' + '|'.join(cells) + '|')
     if not rows:
         lines.append('|missing|missing|missing|missing|missing|')
 
@@ -648,6 +726,11 @@ def markdown(report):
             lines.append('  资格问题：' + '; '.join(arm['issues']))
     lines += ['', '不同开关：' + ('; '.join(f"{k}: {v['reference']} → {v['candidate']}" for k, v in q['changed_switches'].items()) or 'none / 未提供'), '',
               'Exact区间来自原硬件counter reducer的采样边缘界，不是统计置信区间。owner包含guest/HLE及录制，不等于纯翻译。']
+    lines += ['', '## 原始采样支撑', '', '|Arm|原始sample条数|samples / Surface|资格|', '|---|---:|---:|---|']
+    for role, arm in arms.items():
+        support = arm['sample_support']; values = support['value'] or {}
+        lines.append(f"|{role}|{fmt(values.get('samples'))}|{fmt(values.get('samples_per_Surface'))}|{support.get('reason', support['status'])}|")
+    lines += ['', '下表samples是原记录命中条数，不是调用次数；period不同，不能按条数比例当指令比例。几十条SELF样本的差值不具备精确调用量含义；不生成伪置信区间。缺sidecar或资格失败为missing，不能补0。']
     table(lines, '互斥阶段/职责完整变化', c['all_disjoint_phase_duties_Minstructions_per_Surface'], ' (M instructions / Surface; sampled)')
     table(lines, '最大新增成本（前5）', c['top_new_sampled_costs'][:5], ' (M instructions / Surface; sampled)')
     table(lines, '最大减少（前5）', report['net_conclusion']['less_work_sampled'][:5], ' (M instructions / Surface; sampled)')
