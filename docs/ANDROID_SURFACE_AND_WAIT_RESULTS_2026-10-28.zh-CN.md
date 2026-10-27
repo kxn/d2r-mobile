@@ -107,9 +107,26 @@ copy分支只处理4×4，不能部署后忽略该边界。其header内部分策
 UNORM/sRGB两种格式：原始CASC字节、原NVN排布、原GPU布局查询和现成
 producer均复用，不新写encoder/tiler，不改游戏模块。独立driver仅增加
 格式准入，runtime/packer保留原identity/大小/mip/thumbnail限制。未知
-driver仍保留FOREIGN交接；新driver真实GPU查询、导入、采样及coherency
-通过之前，不添加已资格SHA、不替换日常资源、不报告FPS收益。
+driver仍保留FOREIGN交接。新driver实际ELF SHA为
+`0e53ffa2bbbff0a4f520eb080039a848f0853276ece59caa8df9a029cf2b4024`；
+尚未加入resident/lazy准入，不替换日常资源、不报告FPS收益。
+
+独立普通UID真机验证已通过两阶段：v1保留原ASTC4/6回归并加入BC3
+UNORM/sRGB；v2覆盖BC3 13×9、4级mip，比较同一压缩块的共享导入与普通
+非external optimal VkImage，8组GPU采样读回逐字节相同，另含非端点
+RGB565及sRGB CPU参考。两份原始CASC资源各256×256、9级mip已分别完成
+driver布局加工/压缩块回读；v1/v2物理payload SHA相同，producer身份
+与recipe分别记录，未重标旧8064身份。两次测试包均卸载、进程及临时目录
+均清理，原391 APK、437 ELF、28模块、shader、profile与native表未改变。
+
+v1两份实际bake产物通过原packer生成独立BC3表，原NVN公开metadata
+fixture各61项检查通过，覆盖完整Builder的size/alignment/mip offset及
+thumbnail形状回落。这一步只在host执行；原NVN full/native、tail/original
+的GPU绘制/更新/别名回归与真实游戏仍待验证，不能以producer通过替代。
+
+证据：`.local/logs/native-bc3-gpu-probe-v{1,2}/actual/`与
+`.local/logs/native-bc3-real-pack-v1/`，保留原始日志、query、SHA和清理记录。
 
 实施入口：`tools/experiments/turnip-native-bc3/`与
-`scripts/dev/experiments/native-bc3/`。当前是单纹理验证阶段，全部6217条
-原始BC3同编码资源及真实游戏性能对照尚未完成。
+`scripts/dev/experiments/native-bc3/`。全部6217条原始BC3同编码资源及
+真实游戏性能对照尚未完成。
