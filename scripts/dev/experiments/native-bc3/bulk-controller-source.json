@@ -2,8 +2,8 @@
   "base": "/home/dl/d2r-mobile/.local/worktrees/turnip-native-bulk-controller-v2/scripts/dev/run-turnip-native-resource-batches-v2.py",
   "base_sha256": "029b496d371362eb311457ab8b824310842038df3d5b5c3fbf802055bf67cc3a",
   "base_revision": "3f2d062619a429b6e1074c7b377a4051b408767e",
-  "generator_sha256": "ecd618e542e68418dc405dd5c01d1cfe6679a285db63a7c1a70f0eb684bdce97",
-  "controller_sha256": "dc422c76a72f05667ddfaa0e42efec4a86d7f6d942ec693b57e243676929d756",
+  "generator_sha256": "ed68fa495d4d1385c9742640ed06300b90848f5af36860d2aa47f5ace25ae2c8",
+  "controller_sha256": "a0d2057dff1145ad4624ba47be87da25ae876eff9903729f4cbcebd566460fe5",
   "unchanged_helpers": {
     "native_batch_installer.py": "3f17aeb88f854756619bf9d5524b84a8042db3a72c310d5ac075007f50a08cb4",
     "native_batch_outputs.py": "1577491a78a175dd12b631fa361204546256cc170bd056cc00ce21fd0eaa126d"

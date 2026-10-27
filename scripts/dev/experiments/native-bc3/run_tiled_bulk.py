@@ -45,7 +45,7 @@ new_build=R/'.local/build/turnip-native-bc3-tiled-v1/build.json'
 assert sha(new_build)=='2bd2a4dda07326e662a2b1b706db0b7dde0c977a67a1efe3cb90e8b06c0b8fb4'
 new_driver=json.loads(new_build.read_text());assert new_driver['complete'] and new_driver['driver']['sha256']==sha(a.driver)
 assert sha(Path(ready['driver_build']['path']))==ready['driver_build']['sha256']
-assert sha(a.resource_input/'batch-prepare.json')=='320bac7f3b4beaa8ecd9cd4dba55c795f4d612c1c5010dbbe07f368f0086001f' 
+assert sha(a.resource_input/'batch-prepare.json')=='320bac7f3b4beaa8ecd9cd4dba55c795f4d612c1c5010dbbe07f368f0086001f'
 prepared=json.loads((a.resource_input/'batch-prepare.json').read_text())
 assert prepared['complete'] and prepared['batch_max_entries']==128
 assert len(prepared['entries'])==6217 and len(prepared['batches'])==49

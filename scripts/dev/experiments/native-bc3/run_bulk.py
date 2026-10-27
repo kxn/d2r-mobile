@@ -39,7 +39,7 @@ ready=json.loads((a.artifact/'ready.json').read_text())
 assert ready['APK']['sha256']==m['apk_sha256'] and ready['producer_source_sha256']==PRODUCER_SHA==m['producer_source_sha256']
 assert ready['native_libraries']==m['native_library_sha256'] and ready['driver']['sha256']==sha(a.driver)
 assert sha(Path(ready['driver_build']['path']))==ready['driver_build']['sha256']
-assert sha(a.resource_input/'batch-prepare.json')=='320bac7f3b4beaa8ecd9cd4dba55c795f4d612c1c5010dbbe07f368f0086001f' 
+assert sha(a.resource_input/'batch-prepare.json')=='320bac7f3b4beaa8ecd9cd4dba55c795f4d612c1c5010dbbe07f368f0086001f'
 prepared=json.loads((a.resource_input/'batch-prepare.json').read_text())
 assert prepared['complete'] and prepared['batch_max_entries']==128
 assert len(prepared['entries'])==6217 and len(prepared['batches'])==49

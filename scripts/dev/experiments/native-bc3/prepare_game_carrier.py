@@ -37,7 +37,10 @@ def require(value, reason):
 def build(base, out):
     require(not out.exists(), 'New output required; never overwrite accepted/carrier artifacts')
     ready_path, manifest_path = base / 'ready.json', base / 'candidate.apk.build.json'
-    ready, source_manifest = json.loads(ready_path.read_text()), json.loads(manifest_path.read_text())
+    ready_bytes, manifest_bytes = ready_path.read_bytes(), manifest_path.read_bytes()
+    ready, source_manifest = json.loads(ready_bytes), json.loads(manifest_bytes)
+    ready_sha = hashlib.sha256(ready_bytes).hexdigest()
+    manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
     apk = base / 'candidate.apk'
     require(sha(apk) == ready['APK']['sha256'] == source_manifest['apk_sha256'], 'Fixture APK binding')
     require(ready['candidate_manifest']['sha256'] == sha(manifest_path), 'Fixture manifest binding')
@@ -121,7 +124,10 @@ def build(base, out):
         native = {n for n in dst.namelist() if n.startswith('lib/') and n.endswith('.so')}
         require(native == {'lib/arm64-v8a/' + n for n in libraries}, 'Unexpected native library')
         require(not any('launch-profile' in n or n.endswith('.nso') for n in dst.namelist()), 'Profile/game module embedded')
-    require(sha(ready_path) == record(ready_path)['sha256'] and sha(manifest_path) == ready['candidate_manifest']['sha256'], 'Frozen inputs changed')
+    require(sha(ready_path) == ready_sha and
+            sha(manifest_path) == manifest_sha == ready['candidate_manifest']['sha256'] and
+            sha(apk) == source_manifest['apk_sha256'] and
+            sha(final_ledger_path) == final_record['sha256'], 'Frozen inputs changed')
     result = {'schema': 1, 'package': PACKAGE, 'activity': ACTIVITY, 'apk_sha256': sha(result_apk),
               'host_library_sha256': libraries['libdmhost_android.so'], 'native_library_sha256': libraries,
               'source_revision': ready['base_revision'], 'compiled_source_root': str(source),

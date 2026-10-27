@@ -19,7 +19,7 @@ assert sha(a.resource_input/'batch-prepare.json')=='320bac7f3b4beaa8ecd9cd4dba55
 change("assert prepared['complete'] and prepared['batch_max_entries']==128","assert prepared['complete'] and prepared['batch_max_entries']==128\nassert len(prepared['entries'])==6217 and len(prepared['batches'])==49")
 change("assert expected_query['complete'] and expected_query['driverID']==18","assert expected_query['complete'] and expected_query['driverID']==18\nassert expected_query['producer_source_sha256']==PRODUCER_SHA")
 change('ONE installation, explicit finite cold ASTC4 batches; original bake per entry; each stops/pulls/verifies before next; no game/performance claim','ONE installation, explicit finite cold original BC3 UNORM/sRGB batches for the unchanged6217 logical set; existing driver host-copy bake per entry; each stops/pulls/verifies before next; no game/sampling/performance claim')
-path=Path(__file__).with_name('run_bulk.py');path.write_text(s)
+path=Path(__file__).with_name('run_bulk.py');path.write_text('\n'.join(line.rstrip() for line in s.splitlines())+'\n')
 helpers={}
 for name in ['native_batch_installer.py','native_batch_outputs.py']:
  src=FROZEN/name;dest=Path(__file__).with_name(name);shutil.copy2(src,dest);helpers[name]=hashlib.sha256(src.read_bytes()).hexdigest()
