@@ -18,6 +18,15 @@ top-task、hispeed、RTG/uclamp及上下调限速；不能只用整秒CPU利用�
 原始本机证据、固定官方内核源码与链接保存在
 `.local/logs/cpu-gpu-dvfs-feedback-v1/policy-review/`。
 
+同尺寸测试收尾后的一次只读快照另发现一个必须区分的约束：policy7
+`scaling_max_freq=2150400`，而`cpuinfo_max_freq=3014400` kHz；policy3为
+2188800对2803200，policy0为1900800对2016000。三者governor均为walt。
+top-app cpuset为0-7、uclamp.min为0、uclamp.max为max。不是因为CPU没有
+任务而仅`scaling_cur_freq`降低：公开policy上限本身低于硬件能力。
+但此快照在游戏停止后，不能嫁接成运行窗口的温控、功耗模式或具体限频
+原因证据。需区分外部上限约束与governor在可用上限之内的按需选频。
+原文、路径、单位：`.local/logs/surface-parity-20261027/post-stop-policy-snapshot.*`。
+
 ## 现有官方Perfetto逐事件分析
 
 复用v3 OFF1/ON1的同窗官方trace，不增加采样或运行时计时。
