@@ -1,0 +1,22 @@
+--- a/src/freedreno/vulkan/tu_image.cc
++++ b/src/freedreno/vulkan/tu_image.cc
+@@ -536,6 +536,8 @@
+     * alignment; never combine a lower linear minimum with tiled mips.
+     */
+    const bool native_astc_linear =
++      image->vk.format != VK_FORMAT_BC3_UNORM_BLOCK &&
++      image->vk.format != VK_FORMAT_BC3_SRGB_BLOCK &&
+       image->vk.external_handle_types == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT &&
+       tu_host_image_format_supported(device->physical_device, image->vk.format,
+          image->vk.image_type, image->vk.tiling, image->vk.usage, image->vk.create_flags) &&
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -1582,7 +1582,7 @@
+       /* Native HOST_ALLOCATION ASTC uses a different opaque physical layout.
+        * Reject AA185 and the abandoned mixed-tail experiment's payloads.
+        */
+-      const char *driver = "turnip-v3-native-astc-whole-linear256";
++      const char *driver = "turnip-v4-native-bc3-tiled-astc-linear256";
+       _mesa_blake3_update(&blake3_ctx, driver, strlen(driver));
+ 
+       /* Hash in UBWC configuration */
