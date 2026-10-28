@@ -171,6 +171,30 @@ FS 减少很多计算仍没有可靠收益的既有实验，应降低继续纯�
 代表每条 load 都在串行等同一次传输。工具未给出对应计数时保留未知，
 不把当前访存优化方向写成已经证明所有 Android 场景都 DRAM bound。
 
+### 阶段与数据来源的优先级
+
+按最新要求，寻址调查先覆盖**实际热点 VS／CS**：动态骨骼/实例索引、
+间接 UBO/SSBO、连续宽加载拆分，以及 compute 的 global/workgroup
+读取和跨读取依赖。阶段和指令助记符只是筛选入口；还要核当前实际执行
+覆盖、加载形态和可得停顿指标，不将全部 VS／CS 访问假定为随机外存读取。
+
+FS 则按来源拆开。普通按插值 UV 的纹理采样在没有实际 cache、采样吞吐
+或带宽热点证据时后排；UBO／SSBO／结构化数据、依赖前次结果的间接读取、
+查表/ramp 等依赖采样单独调查。当前已准备 FS 候选改的是 **UBO/LDC
+地址表达**，没有减少或改写普通纹理采样，不将两类工作混为一谈。
+
+机制边界：tile buffer 的附件驻留、texture cache 的局部性和驱动在执行
+前预取可知坐标的样本是不同机制。不能因为按屏幕 tile 绘制便假定所有
+被采样纹理已在片上；也不能只因 ramp/LUT 的坐标不随屏幕 tile 就认定
+它慢，小工作集可能很好缓存。依赖数据会限制提前发起请求，但具体等待
+仍取决于缓存与可并发工作。
+
+原厂依据：[Apple 的 tile memory 说明](https://developer.apple.com/documentation/metal/tailor-your-apps-for-apple-gpus-and-tile-based-deferred-rendering)、
+[Arm 对依赖采样和延迟隐藏的解释](https://community.arm.com/forums/f/mobile-graphics-and-gaming-forum/52704/dependent-texture-reads-performance/177046)、
+[PowerVR 对可预取纹理访问的说明](https://docs.imgtec.com/performance-guides/graphics-recommendations/html/topics/texture-sampling.html)。
+PowerVR/旧 OpenGL ES 的预取行为不能直接当作当前 Mali 或 Adreno 驱动事实；
+当前 Turnip 的实际 prefetch 路径仍须按精确驱动源码和原生输出核准。
+
 ### 具体候选
 
 1. **先扩现有精确地址规则的热点覆盖。** 按已有捕获中实际发生的 Shader
