@@ -2,6 +2,8 @@
 
 **这台 SM8635／Snapdragon 8s Gen 3 有可落地的 SGSR shader 路线，适合先试 SGSR1。它不能直接使用最新 Adreno Neural Fusion 的专用 AI 超分硬件。** 最大接入难点是把超分放在低分辨率3D与原生UI之间，避免在已经放大、已经合成UI的最终图像上再处理一遍。本轮只调研、下载与主机编译，未操作ADB、部署或执行GPU。
 
+后续进展：已用同一12b驱动、独立普通应用完成SGSR1与QCOM硬件加权过滤的真实PSO编译；QCOM候选生成了专用HOF指令，API依赖也已核实。见[SGSR1真实编译](ANDROID_SGSR1_ACTUAL_COMPILE_RESULT_2026-10-28.zh-CN.md)与[QCOM HOF-v2真实编译](ANDROID_QCOM_HOF_V2_ACTUAL_COMPILE_2026-10-28.zh-CN.md)。这些独立阶段不改写下文最初调研的执行范围，也仍不等于已经完成真机过滤、游戏画质或性能验证。
+
 ## 芯片与功能资格
 
 本机既有记录 `.local/logs/qualcomm-new-device-inventory.txt` 明确为 V2528A、SM8635；当前原生运行日志为 Turnip Adreno 735。高通8s Gen3产品简报列出 SGSR、Frame Motion Engine 2.0 和 Game Post Processing Accelerator，不能把这三项混成同一种超分功能。[官方产品简报](https://docs.qualcomm.com/bundle/publicresource/87-73942-1_REV_C_Snapdragon_8s_Gen_3_Mobile_Platform_Product_Brief.pdf)
@@ -39,7 +41,7 @@ SGSR1不需要历史，后台恢复与分辨率变化只需更新常量、目标
 
 在营地石砖、草木、怪物轮廓、亮色技能、地牢暗部和完整菜单/文字中，分别观察静止细节与持续移动：锐化光晕、边缘锯齿/闪烁、噪点、颜色偏差、alpha和UI。SGSR2另外检查鬼影、遮挡显露、转场/传送/暂停后的history reset。使用原厂Profile看整主GPU批次、增加pass的读写和停顿，复用整轮成本比较；图像用现成抓帧/录屏工具，不做CPU版重采样来伪造GPU效果。
 
-官方SGSR1/2文档中的耗时来自其他芯片、最大频率及不同输入/输出；不能移植为本机当前约500MHz下的成本。SGSR2的history与附加pass会增加驻留和带宽；SGSR1也会增加过滤采样，收益须来自替代原过滤及减少主3D负载，而不是假定超分本身免费。[SGSR2官方性能上下文](https://www.qualcomm.com/developer/blog/2024/10/introducing-snapdragon-game-super-resolution-2)
+官方SGSR1/2文档中的耗时来自其他芯片、最大频率及不同输入/输出，不能移植为本机成本。现有SDP频率字段不是独立物理OPP证据，不能据它假定GPU固定约500MHz再缩放官方耗时。SGSR2的history与附加pass会增加驻留和带宽；SGSR1也会增加过滤采样，收益须来自替代原过滤及减少主3D负载，而不是假定超分本身免费。[SGSR2官方性能上下文](https://www.qualcomm.com/developer/blog/2024/10/introducing-snapdragon-game-super-resolution-2)
 
 工程量估计：通用present开关原型约1–2个工作日；证明3D/UI边界并完成保留原pass副作用的SGSR1接入、移动画面和热稳定验证约3–5个工作日。SGSR2在输入齐备后仍需额外数日；当前未证实motion/jitter与history，不能给总工期承诺。以上是代码范围估计，不是已完成进度。
 

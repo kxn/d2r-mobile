@@ -49,6 +49,10 @@ typedef struct vk_shader {
   vk_buffer c1_buffer;
   VkShaderModule module;
   VkShaderModule specialization_module;
+  // DSP3 keeps the complete legacy specialization as its range fallback.
+  VkShaderModule range_module;
+  uint32_t range_slot,range_min_bytes;
+  int range_disabled;
   vk_uniform_predicate *predicate;
   uint32_t specialization_slot,specialization_offset,specialization_id;
   uint32_t specialization_values[16],specialization_count;
@@ -309,6 +313,8 @@ void vk_shader_writebacks(void);
 VkBufferView vk_texel_buffer(int id,int storage,int writable,VkPipelineStageFlags stages);
 
 void vk_uniform_specialization_enabled(int enabled);
+// Successful old-selector selection attempts; not GPU invocations/draw count.
+void vk_uniform_range_stats(uint64_t *selected,uint64_t *fallback);
 void vk_uniform_specialization_stats(uint64_t *hits,uint64_t *pending,uint64_t *limits,uint64_t *variants,int *enabled);
 VkShaderModule vk_uniform_specialization_pick(vk_shader *shader,uint32_t *value);
 void vk_uniform_predicate_enabled(int enabled);

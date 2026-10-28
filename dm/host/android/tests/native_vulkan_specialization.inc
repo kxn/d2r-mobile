@@ -1,3 +1,16 @@
+// Inject only an actual optional pipeline creation failure in owned fixtures.
+static PFN_vkCreateGraphicsPipelines uniform_range_create_original;
+static VkShaderModule uniform_range_fail_modules[2];
+static unsigned uniform_range_failures;
+static VkResult VKAPI_CALL uniform_range_create_fail(VkDevice dev,VkPipelineCache cache,uint32_t count,
+    const VkGraphicsPipelineCreateInfo *info,const VkAllocationCallbacks *allocator,VkPipeline *pipelines) {
+  for(uint32_t i=0;i<count && uniform_range_failures;i++)for(uint32_t j=0;j<info[i].stageCount;j++)
+    if(info[i].pStages[j].module==uniform_range_fail_modules[2-uniform_range_failures]) {
+      uniform_range_failures--;for(uint32_t k=0;k<count;k++)pipelines[k]=VK_NULL_HANDLE;
+      return VK_ERROR_UNKNOWN;
+    }
+  return uniform_range_create_original(dev,cache,count,info,allocator,pipelines);
+}
 // Exact selectors must be read for every draw, including unchanged UBO binding.
 // A GPU producer keeps the original shader until CPU visibility is proven.
 static void uniform_specialization_test(const void *vertex,int raw) {
@@ -6,6 +19,14 @@ static void uniform_specialization_test(const void *vertex,int raw) {
   NVNprogram program,compute;CHECK(CALL(nvnProgramInitialize,&program,&device));CHECK(CALL(nvnProgramSetShaders,&program,2,shaders));
   CHECK(CALL(nvnProgramInitialize,&compute,&device));CHECK(CALL(nvnProgramSetShaders,&compute,1,&cs));
   vk_shader *shader=vk_shader_get(control);CHECK(shader->specialization_module!=VK_NULL_HANDLE);CHECK(shader->specialization_integer_only==raw);
+  if(shader->range_module && getenv("DM_UNIFORM_RANGE_REJECT")) {
+    CHECK(!uniform_range_create_original);uniform_range_create_original=vkCreateGraphicsPipelines;
+    unsigned both=atoi(getenv("DM_UNIFORM_RANGE_REJECT"))==2;
+    uniform_range_failures=both?2:1;
+    uniform_range_fail_modules[0]=both?shader->range_module:VK_NULL_HANDLE;
+    uniform_range_fail_modules[1]=both?shader->specialization_module:shader->range_module;
+    vkCreateGraphicsPipelines=uniform_range_create_fail;
+  }
   uint8_t *storage;CHECK(!posix_memalign((void **)&storage,65536,262144));memset(storage,0,262144);
   NVNmemoryPoolBuilder mb;NVNmemoryPool pool;
   CALL(nvnMemoryPoolBuilderSetDefaults,&mb);CALL(nvnMemoryPoolBuilderSetDevice,&mb,&device);
@@ -49,6 +70,8 @@ static void uniform_specialization_test(const void *vertex,int raw) {
     CALL(nvnCommandBufferBindVertexAttribState,&local_cmd,0,NULL);CALL(nvnCommandBufferBindVertexStreamState,&local_cmd,0,NULL);
     CALL(nvnCommandBufferBindProgram,&local_cmd,&program,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
     CALL(nvnCommandBufferBindUniformBuffer,&local_cmd,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)storage,65536);
+    if(shader->range_module)CALL(nvnCommandBufferBindUniformBuffer,&local_cmd,NVN_SHADER_STAGE_FRAGMENT,
+        shader->range_slot,(uintptr_t)(storage+4096),step%3==1?176:192);
     CALL(nvnCommandBufferDrawArrays,&local_cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);submit(CALL(nvnCommandBufferEndRecording,&local_cmd));
     CALL(nvnTextureReadTexels,&texture,NULL,&region,pixels);
     for(unsigned i=0;i<256;i++) {
@@ -70,6 +93,37 @@ static void uniform_specialization_test(const void *vertex,int raw) {
     const uint8_t *p=pixels+(y*16+x)*4;CHECK(abs((int)p[0]-(x<8?64:191))<=1);
     CHECK(p[1]==(x<8?255:0)&&p[2]==(x<8?0:255)&&p[3]==255);
   }
+  if(raw && shader->range_module) {
+    // A warm candidate may not survive a second UBO's range-only change.
+    // Keep selector, target, raster state and source address exactly the same.
+    vk_state before_prefix=S;NVNtexture fresh;
+    CALL(nvnTextureBuilderSetStorage,&tb,&pool,200704);CHECK(CALL(nvnTextureInitialize,&fresh,&tb));
+    const NVNtexture *fresh_target[]={&fresh};
+    uint32_t one=1;dm_guest_write_prepare(storage,4);memcpy(storage,&one,4);
+    uint64_t prefix_before[3]={0},prefix_after[3]={0};
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    extern void vk_test_render_prefix_stats(uint64_t [3]);vk_test_render_prefix_stats(prefix_before);
+#endif
+    CALL(nvnCommandBufferBeginRecording,&local_cmd);
+    CALL(nvnCommandBufferSetRenderTargets,&local_cmd,1,fresh_target,NULL,NULL,NULL);
+    CALL(nvnCommandBufferSetScissor,&local_cmd,0,0,16,16);
+    CALL(nvnCommandBufferBindUniformBuffer,&local_cmd,NVN_SHADER_STAGE_FRAGMENT,0,(uintptr_t)storage,65536);
+    const uint32_t ranges[]={192,192,176,192};
+    for(unsigned i=0;i<4;i++) {
+      CALL(nvnCommandBufferBindUniformBuffer,&local_cmd,NVN_SHADER_STAGE_FRAGMENT,shader->range_slot,(uintptr_t)(storage+4096),ranges[i]);
+      CALL(nvnCommandBufferDrawArrays,&local_cmd,NVN_DRAW_PRIMITIVE_TRIANGLES,0,3);
+    }
+    submit(CALL(nvnCommandBufferEndRecording,&local_cmd));CALL(nvnTextureReadTexels,&fresh,NULL,&region,pixels);
+    for(unsigned i=0;i<256;i++)CHECK(abs((int)pixels[i*4]-64)<=1 && pixels[i*4+1]==255 && !pixels[i*4+2] && pixels[i*4+3]==255);
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+    vk_test_render_prefix_stats(prefix_after);
+    // This owned UBO fixture can lack the image-domain receipt required by
+    // the independent prefix cache. Do not turn zero hits into fake coverage.
+#endif
+    LOG("[vulkan Uniform range GPU fixture] same-selector warm PSO 192/192/176/192; prefix hits delta=%llu",
+        (unsigned long long)(prefix_after[0]-prefix_before[0]));
+    vk_state_restore(&before_prefix);CALL(nvnTextureFinalize,&fresh);
+  }
   uint64_t hits,pending,limits,variants;vk_uniform_specialization_stats(&hits,&pending,&limits,&variants,&enabled);
   CHECK(hits>hits0);
   if(!shader->specialization_disabled) { CHECK(pending>pending0);CHECK(limits>limits0);CHECK(variants-variants0==16); }
@@ -82,7 +136,8 @@ static void uniform_specialization_test(const void *vertex,int raw) {
   if(raw && !shader->specialization_disabled) {
     const uint32_t exceptional=UINT32_C(0x7fc12345);uint32_t bits;
     dm_guest_write_prepare(storage,4);memcpy(storage,&exceptional,4);
-    CHECK(vk_uniform_specialization_pick(shader,&bits)==shader->specialization_module);CHECK(bits==exceptional);
+    CHECK(vk_uniform_specialization_pick(shader,&bits)==(shader->range_module && !shader->range_disabled &&
+        S.ubo[1][shader->range_slot].size>=shader->range_min_bytes?shader->range_module:shader->specialization_module));CHECK(bits==exceptional);
   }
   p_bind_buf bound=S.ubo[1][shader->specialization_slot];
   S.ubo[1][shader->specialization_slot].addr=UINT64_MAX-65536;
@@ -92,6 +147,11 @@ static void uniform_specialization_test(const void *vertex,int raw) {
   vk_uniform_specialization_enabled(0);S=saved;vk_pipeline_state_changed();
   CALL(nvnCommandBufferFinalize,&local_cmd);
   CALL(nvnTextureFinalize,&texture);CALL(nvnProgramFinalize,&program);CALL(nvnProgramFinalize,&compute);CALL(nvnMemoryPoolFinalize,&pool);free(storage);
+  if(uniform_range_create_original) {
+    vkCreateGraphicsPipelines=uniform_range_create_original;uniform_range_create_original=NULL;
+    CHECK(!uniform_range_failures && shader->range_disabled);
+    CHECK(shader->specialization_disabled==(atoi(getenv("DM_UNIFORM_RANGE_REJECT"))==2));
+  }
   LOG("[vulkan Uniform specialization fixture] integer_only=%d driver_variant_disabled=%d",raw,shader->specialization_disabled);
   LOG("[vulkan Uniform specialization fixture] exact per-draw values, same-submission updates, full/prepared PSO keys, GPU-producer fallback and bounded variants passed");
 }

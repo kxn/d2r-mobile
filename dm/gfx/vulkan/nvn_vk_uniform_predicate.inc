@@ -57,7 +57,7 @@ static VkShaderModule uniform_predicate_observe_pick(vk_shader *shader,uint32_t 
   VkShaderModule module=vk_uniform_specialization_pick(shader,values);
   uniform_predicate_observer *observer=(uniform_predicate_observer *)shader->predicate;
   observer->dirty=1;
-  if(!shader->specialization_module || module!=shader->specialization_module) {
+  if(!shader->specialization_module || module!=shader->specialization_module && module!=shader->range_module) {
     observer->recorded[UP_OBS_BASE_FALLBACK]++;return module;
   }
   vk_uniform_predicate *p=&observer->predicate;

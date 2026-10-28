@@ -902,6 +902,9 @@ int dm_vulkan_test_main(void) {
   CALL(nvnQueueBuilderSetDefaults, &qb);
   CALL(nvnQueueBuilderSetDevice, &qb, &device);
   CHECK(CALL(nvnQueueInitialize, &queue, &qb));
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && !defined(__ANDROID__)
+  if(getenv("DM_UNIFORM_RANGE_FIXTURE"))return uniform_range_contract_test();
+#endif
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   if(getenv("DM_FIXED_RENDER_RECORDING_FIXTURE")) {
     uint8_t controls[10][0x880];

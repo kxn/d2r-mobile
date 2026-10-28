@@ -35,9 +35,13 @@ static void fault_handler(int signal,siginfo_t *info,void *context) {
 void crash_thread_init(void) {
   struct sigaction action={.sa_sigaction=fault_handler,.sa_flags=SA_SIGINFO};sigemptyset(&action.sa_mask);sigaction(SIGSEGV,&action,NULL);
 }
+#ifdef DM_VULKAN_TEST_EMBED
+static int uniform_range_contract_test(void);
+#endif
 #include "../../../host/android/tests/native_vulkan.c"
 #ifdef DM_VULKAN_TEST_EMBED
 #include "pixel_local_loader.inc"
+#include "uniform_range.inc"
 #include "quad_transfer_contract.inc"
 #include "quad_readonly_contract.inc"
 #ifdef DM_VULKAN_NATIVE_RESOURCES

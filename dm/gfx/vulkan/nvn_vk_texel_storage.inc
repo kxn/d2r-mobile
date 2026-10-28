@@ -57,6 +57,8 @@ static void texel_storage_load(vk_shader *base,const uint32_t *original,size_t o
   // DPR1 is paired with the original module/schema, not this representation.
   // Do not inherit its module, immutable recipe or admitted tuple state.
   alt->predicate=NULL;
+  // This paired schema has its own modules, not the DSP3 range candidate.
+  alt->range_module=VK_NULL_HANDLE;alt->range_min_bytes=alt->range_slot=0;alt->range_disabled=1;
   alt->bindings=malloc(base->nb*sizeof *alt->bindings);if(!alt->bindings)die("Vulkan texel alternative reflection");
   memcpy(alt->bindings,base->bindings,base->nb*sizeof *alt->bindings);
   unsigned converted=0,storage=0;uint8_t selected[128]={0};

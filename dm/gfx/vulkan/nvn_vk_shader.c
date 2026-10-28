@@ -2074,13 +2074,13 @@ int vk_shader_prewarm_stage(vk_shader *s,VkShaderModule module,vk_prewarm_stage 
   vk_shader *base=shaders;while(base && base!=s)base=base->next;
   if(!base)return 0; // paired descriptor alternatives have a separate schema
   unsigned kind=module==s->module?1:module==s->specialization_module?2:
-    s->predicate&&module==s->predicate->module?3:0;
+    s->predicate&&module==s->predicate->module?3:module==s->range_module?4:0;
   if(!kind || !module)return 0;
   memcpy(out->key,s->key,17);memcpy(out->fingerprint,s->fingerprint,32);out->module=kind;return 1;
 }
 vk_shader *vk_shader_prewarm_load(const vk_prewarm_stage *in,VkShaderModule *module) {
   *module=VK_NULL_HANDLE;
-  if(in->module<1 || in->module>3 || in->key[16] || in->key[17] || in->key[18] || in->key[19])return NULL;
+  if(in->module<1 || in->module>4 || in->key[16] || in->key[17] || in->key[18] || in->key[19])return NULL;
   vk_shader *loaded=shaders;
   while(loaded&&strcmp(loaded->key,in->key))loaded=loaded->next;
   uint8_t fingerprint[32];
@@ -2088,7 +2088,7 @@ vk_shader *vk_shader_prewarm_load(const vk_prewarm_stage *in,VkShaderModule *mod
   else if(!vk_shader_fingerprint(in->key,fingerprint))return NULL;
   if(memcmp(fingerprint,in->fingerprint,32))return NULL;
   vk_shader *s=vk_shader_load_key(in->key);
-  *module=in->module==1?s->module:in->module==2?s->specialization_module:s->predicate?s->predicate->module:VK_NULL_HANDLE;
+  *module=in->module==1?s->module:in->module==2?s->specialization_module:in->module==4?s->range_module:s->predicate?s->predicate->module:VK_NULL_HANDLE;
   return *module?s:NULL;
 }
 static int compute_create(vk_shader *s,int optional) {

@@ -350,9 +350,12 @@ static void observe_tick(const uint64_t *registers) {
     void vk_uniform_specialization_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *,int *);
     uint64_t spec_hits,spec_pending,spec_limits,spec_variants;int spec_enabled;
     vk_uniform_specialization_stats(&spec_hits,&spec_pending,&spec_limits,&spec_variants,&spec_enabled);
-    fprintf(state_log, ",\"uniform_specialization\":{\"enabled\":%s,\"hits\":%llu,\"pending\":%llu,\"limits\":%llu,\"variants\":%llu}",
+    void vk_uniform_range_stats(uint64_t *,uint64_t *);
+    uint64_t range_selected,range_fallback;vk_uniform_range_stats(&range_selected,&range_fallback);
+    fprintf(state_log, ",\"uniform_specialization\":{\"enabled\":%s,\"hits\":%llu,\"pending\":%llu,\"limits\":%llu,\"variants\":%llu,\"range_selected\":%llu,\"range_fallback\":%llu}",
       spec_enabled?"true":"false",(unsigned long long)spec_hits,(unsigned long long)spec_pending,
-      (unsigned long long)spec_limits,(unsigned long long)spec_variants);
+      (unsigned long long)spec_limits,(unsigned long long)spec_variants,
+      (unsigned long long)range_selected,(unsigned long long)range_fallback);
     void vk_uniform_predicate_stats(uint64_t *,uint64_t *,uint64_t *,uint64_t *,uint64_t *,uint64_t [16],int *);
     uint64_t pred_hits,pred_pending,pred_limits,pred_variants,pred_rejected,pred_masks[16];int pred_enabled;
     vk_uniform_predicate_stats(&pred_hits,&pred_pending,&pred_limits,&pred_variants,&pred_rejected,pred_masks,&pred_enabled);

@@ -148,6 +148,7 @@ static int pipeline_recipe_build(const vk_prewarm_recipe *recipe) {
   unsigned special=recipe->stages[1].module;
   if(special<2 && (values[0]||values[1]))return 0;
   if(special!=3 && values[1])return 0;
+  if(special==4 && (!list[1] || !list[1]->range_module))return 0;
   VkSpecializationInfo spec={.mapEntryCount=special==3?2:1,.pMapEntries=entries,.dataSize=special==3?8:4,.pData=values};
   for(unsigned i=0;i<ns;i++)if(stages[i].stage==VK_SHADER_STAGE_FRAGMENT_BIT && special>=2)stages[i].pSpecializationInfo=&spec;
   unsigned bucket=pipeline_bucket(&key,0);

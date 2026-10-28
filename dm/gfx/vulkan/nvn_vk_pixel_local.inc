@@ -58,10 +58,18 @@ static void *pixel_local_read(const char *key,const char *suffix,size_t *bytes) 
 }
 static int pixel_local_source(unsigned kind,void *blobs[5],const size_t bytes[5],const void **source,size_t *size) {
   if(kind==1){*source=blobs[0];*size=bytes[0];return !!*source;}
-  unsigned index=kind==2?2:kind==3?3:4;
+  unsigned index=(kind==2 || kind==6)?2:kind==3?3:4;
   const uint8_t *data=blobs[index];size_t length=bytes[index],offset=0,words=0;
   if(!data)return 0;
-  if(kind==2){if(length<80)return 0;offset=60;words=(length-60)/4;}
+  if(kind==2 || kind==6) {
+    if(length>=4 && pixel_local_word(data)==UINT32_C(0x33505344)) {
+      uniform_range_recipe recipe;
+      if(!uniform_range_parse(data,length,&recipe))return 0;
+      if(kind==6) {*source=recipe.candidate;*size=(size_t)recipe.candidate_words*4;return 1;}
+      data=(const void *)recipe.legacy;length=recipe.legacy_bytes;
+    } else if(kind==6)return 0;
+    if(length<80)return 0;offset=60;words=(length-60)/4;
+  }
   else if(kind==3){if(length<184)return 0;offset=164;words=pixel_local_word(data+32);}
   else {
     if(length<108)return 0;
@@ -87,7 +95,7 @@ static pixel_local_cache *pixel_local_load(vk_shader *base) {
   if(bytes<192 || (bytes&3) || pixel_local_word(data)!=UINT32_C(0x314c5044) ||
      (pixel_local_word(data+4)!=1 && pixel_local_word(data+4)!=2) || pixel_local_word(data+8)!=bytes ||
      pixel_local_word(data+12)!=base->stage || pixel_local_word(data+16)!=base->set ||
-     pixel_local_word(data+20)>(pixel_local_word(data+4)==1?5:45) || pixel_local_word(data+24)!=192 || pixel_local_word(data+28))goto bad;
+     pixel_local_word(data+20)>(pixel_local_word(data+4)==1?6:54) || pixel_local_word(data+24)!=192 || pixel_local_word(data+28))goto bad;
   const char *suffixes[]={"spv","meta","spec","pred","tssbo"};
   for(unsigned i=0;i<5;i++) {
     blobs[i]=pixel_local_read(base->key,suffixes[i],&sizes[i]);uint8_t digest[32]={0};
@@ -101,13 +109,13 @@ static pixel_local_cache *pixel_local_load(vk_shader *base) {
   }
   cache=calloc(1,sizeof *cache+(size_t)count*sizeof *cache->records);if(!cache)goto bad;
   cache->count=count;size_t offset=192;unsigned version=pixel_local_word(data+4);
-  pixel_local_record *full[6]={0};unsigned masks[6][9]={{0}},mask_counts[6]={0};
+  pixel_local_record *full[7]={0};unsigned masks[7][9]={{0}},mask_counts[7]={0};
   for(unsigned n=0;n<cache->count;n++) {
     if(offset>bytes || bytes-offset<96)goto bad;
     const uint8_t *record=data+offset;pixel_local_record *out=&cache->records[n];
     unsigned kind=pixel_local_word(record),length=pixel_local_word(record+4);
     unsigned count=pixel_local_word(record+8),uv_count=pixel_local_word(record+12),words=pixel_local_word(record+24);
-    if(kind<1 || kind>5 || length<96 || length>bytes-offset ||
+    if(kind<1 || kind>6 || length<96 || length>bytes-offset ||
        count>8 || uv_count>16 || (version==1 && pixel_local_word(record+28)) ||
        length!=96+(size_t)count*16+(size_t)uv_count*64+(size_t)words*4)goto bad;
     unsigned selection=pixel_local_word(record+28);
@@ -192,7 +200,7 @@ const vk_pixel_local_proof *vk_shader_pixel_local_subset(vk_shader *shader,VkSha
   // the candidate-draw path. Alternative representations retain this owner.
   vk_shader *base=shader->canonical_base;
   if(!base || base->canonical_base!=base)return NULL;
-  unsigned kind=shader==base?(actual==base->module?1:actual==base->specialization_module?2:base->predicate&&actual==base->predicate->module?3:0):
+  unsigned kind=shader==base?(actual==base->module?1:actual==base->specialization_module?2:base->predicate&&actual==base->predicate->module?3:actual==base->range_module?6:0):
     shader==base->texel_storage_alternative?(actual==shader->module?4:actual==shader->specialization_module?5:0):0;
   if(!kind)return NULL;
   if(!base->pixel_local_checked){base->pixel_local_checked=1;base->pixel_local_data=pixel_local_load(base);}
@@ -222,6 +230,7 @@ const vk_pixel_local_proof *vk_shader_pixel_local_subset(vk_shader *shader,VkSha
     VkResult result=vkCreateShaderModule(V.device,&ci,NULL,&alt->module);
     if(result!=VK_SUCCESS){free(alt->bindings);free(alt);return NULL;}
     alt->specialization_module=VK_NULL_HANDLE;alt->specialization_count=0;alt->specialization_disabled=1;
+    alt->range_module=VK_NULL_HANDLE;alt->range_min_bytes=alt->range_slot=0;alt->range_disabled=1;
     alt->image_read_count=0;alt->image_read_slots=NULL;alt->c1_buffer=(vk_buffer){0};
     memset(alt->dynamic_uniform_ordinals,0,sizeof alt->dynamic_uniform_ordinals);
     memset(alt->dynamic_uniform_count,0,sizeof alt->dynamic_uniform_count);

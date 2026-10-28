@@ -63,7 +63,7 @@ static int pixel_local_loader_test(void) {
   vk_shader *sources[]={all,all,all,all->texel_storage_alternative,all->texel_storage_alternative};
   VkShaderModule modules[]={all->module,all->specialization_module,all->predicate->module,
     all->texel_storage_alternative->module,all->texel_storage_alternative->specialization_module};
-  const vk_pixel_local_proof *records[5];
+  const vk_pixel_local_proof *records[6];
   for(unsigned i=0;i<5;i++) {
     records[i]=vk_shader_pixel_local(sources[i],modules[i]);
     if(!records[i] || sources[i]->canonical_base!=all || records[i]->shader->canonical_base!=all ||
@@ -84,6 +84,13 @@ static int pixel_local_loader_test(void) {
           after->binding!=before->binding || after->count!=before->count || after->flags!=before->flags))
         die("pixel-local changed the original input resource identity");
     }
+  }
+  if(all->range_module) {
+    records[5]=vk_shader_pixel_local(all,all->range_module);
+    if(!records[5] || records[5]->module==records[1]->module ||
+        records[5]->shader->range_module || all->texel_storage_alternative->range_module)
+      die("pixel-local DSP3 distinct range source/fallback identity");
+    LOG("[pixel-local DSP3 loader fixture] legacy kind2 and range kind6 independent; paired range fields cleared");
   }
   LOG("[pixel-local loader fixture] 4 inputs+VS FMA+5 independent base/spec/pred/tssbo/tssbo_spec modules; 14 corruption/closure controls rejected; DPL2 exact masks and DPL1 compatibility");
   return 0;

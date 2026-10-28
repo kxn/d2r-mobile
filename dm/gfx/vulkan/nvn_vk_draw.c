@@ -1360,6 +1360,17 @@ static VK_COLD_PHASE cached_pipeline *draw_pipeline_prepare(
       vk_texture_shader_abandon();vk_shader_operation_abandon();vk_render_end();
       *retry=2;return NULL;
     }
+    if(compiled==VK_ERROR_UNKNOWN && list[1] && fragment_module==list[1]->range_module) {
+      if(cached->pipeline)vkDestroyPipeline(V.device,cached->pipeline,NULL);
+      render_pass_release(cached->local_object);free(cached);cached=NULL;
+      list[1]->range_disabled=1;fragment_module=list[1]->specialization_module;
+      specialization_words[1]=0;hybrid_selected=0;original_specialized=1;
+      specialization_info->mapEntryCount=1;specialization_info->dataSize=4;
+      context->fragment_module=fragment_module;context->specialization_mask=0;
+      key.modules[1]=fragment_module;key.specialization_mask=0;
+      LOG("[vulkan Uniform range] driver rejected variant for %s; retain legacy specialization",list[1]->key);
+      continue;
+    }
     if(compiled==VK_ERROR_UNKNOWN && list[1] &&
         (fragment_module==list[1]->specialization_module || hybrid_selected)) {
       // Optional hybrid -> original exact-word specialization -> base. Each
@@ -1619,10 +1630,11 @@ static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int dis
   }
   if(bq_before_draw(list,draw,idx)) {vk_pool_operation_end(pool_operation);return;}
   if(list[1] && list[1]->quad_readonly_sources && fragment_module!=list[1]->module &&
-      fragment_module!=list[1]->specialization_module &&
+      fragment_module!=list[1]->specialization_module && fragment_module!=list[1]->range_module &&
       (!list[1]->predicate || fragment_module!=list[1]->predicate->module))
     die("Vulkan readonly quad sources require a verified original/specialized module");
-  int original_specialized=list[1] && (fragment_module==list[1]->specialization_module || hybrid_selected);
+  int original_specialized=list[1] && (fragment_module==list[1]->specialization_module ||
+      fragment_module==list[1]->range_module || hybrid_selected);
   const vk_pixel_local_proof *local_consumer=pl_consumer(list[0],list[1],fragment_module,draw,idx);
   render_job *local_job=local_consumer?active_job:NULL;
   uint64_t local_recording=local_consumer?vk_recording_serial():0,local_pass_number=V.passes;
