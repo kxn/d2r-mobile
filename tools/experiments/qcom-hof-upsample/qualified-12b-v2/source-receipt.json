@@ -1,0 +1,64 @@
+{
+  "schema": "qcom-HOF-qualified-12b-source-archive-v2",
+  "scope": "Exact HOF GLSL of independent actual offscreen v2 and historical085 static3filter test; no production integration or FPS claim. Old parent archive unchanged.",
+  "candidate_source": "qcom-hof-catmull-rom-v2.frag",
+  "expected_SPIRV_sha256": "d5a54a112042303f669f15edec359fa9985c7712cbe8ed255a7f5f94fff80aa5",
+  "source_files": {
+    "qcom-hof-catmull-rom-v2.frag": "6d308023b08450e99c3d81d29ff4005a00dfb9a52a79db01357c47a0e255b7eb",
+    "rebuild.py": "60eeaadbd0e837c68e1c9ef4c993cfdd5ae95eff9cf5760ed81a5c83a707ef75",
+    "README.md": "0e9d2daba061bcde854788ab4dae08f14fb16d26767c588d09aecedcd10ce0fc",
+    "weight-contract.md": "e9766a3211e0eee5468d9c06059e03011ce15a015a2430f0f16405cf75915213"
+  },
+  "copyright_source": "../NOTICE.md and ../LICENSE.sgsr; original fallback reference ../../sgsr1-upsample/original-current-upsample.glsl",
+  "source_provenance": {
+    "candidate_source_local": "/home/dl/d2r-mobile/.local/logs/qcom-hof-offscreen-v2/qcom-hof-catmull-rom-v2.frag",
+    "candidate_source_sha256": "6d308023b08450e99c3d81d29ff4005a00dfb9a52a79db01357c47a0e255b7eb",
+    "original_FS_sha256": "e114e05ccbf91820d9089932f65a87fda490b78ad28647e99fb584d6e578fc1a",
+    "original_VS_sha256": "0f96df4903498af6eda45a67fe8d07fa876d7e30624f3f962379e354fa013378",
+    "driver_sha256": "12b8b54a2514ff1cdf8da422c71db79a683d4517eb9aecfbb20a4125522559f5"
+  },
+  "local_evidence_sha256": {
+    ".local/logs/qcom-hof-offscreen-v2/frozen.json": "ce33f528fdc50bf3f46fbd800a9319a1340fa4c552044e0b3e473d2a9168c474",
+    ".local/logs/qcom-hof-offscreen-v2/shader-build.json": "f907e23e9b95361cf935579086376f898e24ac521833db3ccc531e9adf6d5eca",
+    ".local/logs/qcom-hof-offscreen-v2/prepare.py": "ef20cfc3ba029e53947cad78cf85770814440e7aedb0a7fed9e4efe347126ec1",
+    ".local/logs/qcom-hof-offscreen-v2/compile-inputs/source/offscreen.inc": "2443492d32f446b7a0b88414c68771e3a795f16a78e9016ca3abc10558ab53e0",
+    ".local/logs/qcom-hof-offscreen-v2/compile-inputs/inputs/weights-catmull.bin": "f17a10fb13f59c8b38dddf2a149f00d277b41ad5497dfe99ff118aa43693936f",
+    ".local/logs/qcom-hof-offscreen-v2/ACTUAL-DRAW1/result.json": "828c1d26102c787f39941f2cc2179b5f57a3c4463ee3d11503ec1521f6043af5",
+    ".local/logs/qcom-hof-offscreen-v2/ACTUAL-DRAW1-analysis/functional-comparison.json": "2ebabad12031f8340c52175b31668f9f760b152ab1071c6ca3a9fa0b53f3ad8f",
+    ".local/logs/qcom-hof-static085-v1/frozen.json": "1c17444bb05bcaa2247025f34604bcb3f61e5a075ce45730953b48a1ae18d805",
+    ".local/logs/qcom-hof-static085-v1/prepare.py": "caff094e0e99fff720c5e0e3bc93266c6becd5f988a27884f738cfaa64fa6116",
+    ".local/logs/qcom-hof-static085-v1/compile-inputs/source/offscreen.inc": "d693897638f03a8c9a330b40533c544c1e8cf346de5b31324bce1eeb47806b2e",
+    ".local/logs/qcom-hof-static085-v1/ACTUAL-STATIC1/result.json": "5425c5f70589a583f3984951dd899476b6f2a2a6f105303419cd320324c02b4d",
+    ".local/logs/qcom-hof-static085-v1/ACTUAL-STATIC1-analysis/static-comparison.json": "8c29551bc977e757ce73089a401eca2abe2aa5f67f347121d13374dcb7411c66",
+    ".local/logs/qcom-hof-static085-v1/trim-sampler-objects.json": "ea3ad82de5dac816f51dae467e436b66d1a3fb57b365c343c5400fa71b47d3e1",
+    ".local/logs/qcom-hof-static085-v1/ACTUAL-STATIC1-analysis/visual-review.json": "2c1691ebd40a6a19f9e90976ea413f97e76b8092bbb584d9a02b176a0aaa07f7"
+  },
+  "functional_result": {
+    "actual_draws": 24,
+    "owned_cases": 12,
+    "passed": true,
+    "full_phase_wrap_domain_proven": false,
+    "performance": false
+  },
+  "static_result": {
+    "actual_draws": 3,
+    "output_extent": [
+      1968,
+      900
+    ],
+    "input_extent": [
+      1673,
+      765
+    ],
+    "historical_trim_only": true,
+    "native1groundtruth": false,
+    "motion_quality": false,
+    "performance": false
+  },
+  "failed_v1_preserved": ".local/logs/qcom-hof-offscreen-v1/ACTUAL-DRAW1-analysis/functional-comparison.json",
+  "archive_host_rebuild": {
+    "path": ".local/build/qcom-hof-upsample-qualified-12b-v2-archive-rebuild1/rebuild-receipt.json",
+    "sha256": "5b54b872174ba8215f595d29538892907e7629c620421fcfa4d54a0bcac29e8f",
+    "exact_SPIRV_sha256": "d5a54a112042303f669f15edec359fa9985c7712cbe8ed255a7f5f94fff80aa5"
+  }
+}
