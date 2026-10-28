@@ -1,6 +1,6 @@
 # Render Job 准备产物提前复用候选
 
-本候选默认关闭，尚未 Android 游戏对照。它复用现有 `prepared_context`、
+本候选默认关闭，已完成一次 Android 功能 oracle 和同 APK OFF/ON 官方 PMU 对照。它复用现有 `prepared_context`、
 `prepared_pipeline` 和活跃 Render Job，不新建每draw大key或资源表。目标是
 让已有产物命中发生在最终DS/RT兼容/272B PSO context构造之前；GPU资源、
 描述符、hazard、query及写历史继续正常处理。
@@ -49,8 +49,8 @@ NVN QUADS与TRIANGLES可能映射同一个Vulkan TRIANGLE_LIST，但原draw_area
 OFF也有新增成本：SET_RT/viewport/restore的版本维护调用、draw上的冷开关
 分支，以及原DS构造提取为helper可能带来的编译布局/调用变化。原快照中
 RT+viewport setter共154次，restore另计；不能说这些成本为0，也不能仅以
-同新APK OFF/ON掩盖它们。Android正式整线程净指令/cycles和与已接受版本的
-差异尚未测，不能声称已净省1.546M或已涨帧。
+同新APK OFF/ON掩盖它们。同 APK 的正式整线程净指令/cycles 已测，结果及其归因边界见下节；与未改
+parent 的完整新增维护成本仍未隔离，不能声称已净省1.546M或已稳定涨帧。
 
 ## 实际 host GPU 与平台检查
 
@@ -83,7 +83,7 @@ RT+viewport setter共154次，restore另计；不能说这些成本为0，也不
 `candidate-host/final-v4/`为同一已冻结binary的13组完整通过结果；第三负控
 明确pixel-local关闭。更早的`final-v3/`及独立第三负控验证保留，不改原失败。
 
-## 同APK真机入口（尚未执行）
+## 同APK真机入口与已完成对照
 
 ```
 # 普通OFF/ON对照都保持check关闭
@@ -101,6 +101,65 @@ launcher核实实际`[vulkan render job prefix] enabled=N check=N`，不以Inten
 主线`5444d97c`已由原Android入口完成一次构建，37项launcher检查通过；
 候选归档`.local/build/render-job-prefix-candidate-v1/ready.json`绑定APK
 `9ff6c2a7…`、host`a06a8f1b…`，1056个源码输入和六个native库均逐SHA
-核准并冻结。默认OFF、check OFF，无诊断wrapper；尚未安装或取得真机净收益。
-下一步只做独立功能oracle和同APK OFF/ON官方工具对照，保持Shader/驱动/资源
-不变，不与新Shader候选混测。
+核准并冻结。默认OFF、check OFF，无诊断wrapper。随后已实际执行一次独立
+ON-CHECK功能oracle和OFF-P1/ON-P1正式对照，保持Shader/驱动/资源不变，
+未与新Shader候选混测。
+
+
+## 正式 CPU 对照：净指令略减，replay Running 基本未变
+
+证据：`.local/logs/render-job-prefix-device-v1/independent-whole-analysis-agent/`
+的 `REPORT.zh-CN.md`、`comparison.json/md`、原同trace `phase-state.sql/csv`；
+完整祖先/源行/样本数在同级 `pmu-attribution-agent/`。只使用官方 Simpleperf
+累计计数、ReportLib/LLVM 和 Perfetto；没有自写计时器或新采样。
+
+同9ff6/a06a、12b8、cf83、BC3 shared/native6217、营地和真实尺寸；Store域
+两臂ON、功能CHECK两臂OFF，仅prefix OFF→ON。OFF/ON为999/1006个完整
+Surface间隔，各自录制零loss/truncation，确切ELF/driver BuildID吻合。
+
+| 每Surface | OFF-P1 | ON-P1 | 边界 |
+|---|---:|---:|---|
+|退休用户指令 M|71.21269–71.25966|70.58111–70.62970|净少0.5830–0.6786M，约0.82–0.95%|
+|用户周期 M|30.70222–30.71781|30.65689–30.67430|仅少0.091–0.198%|
+|owner Running ms|16.545945|16.483407|−0.062538|
+|owner运行期MHz|2065.397|2079.810|+0.698%，不按MHz伪造指令|
+|全应用Running和 ms|31.538817|31.344115|−0.194702|
+|owner S+D / Runnable ms|3.083503 / 0.226159|2.991835 / 0.248972|睡眠减少、Runnable略增|
+|工具窗FPS|50.18870|50.51617|单对+0.652%，不是普通运行稳定收益|
+|p95 / max ms|22.156562 / 33.232917|22.155299 / 33.539063|p95近乎不变，max略增|
+
+关键的互斥Running分拆：replay扣除planning/submit/present等嵌套后仅
+**8.622378→8.618952ms（−0.003426）**；planning与finalization基本不变。
+命名NVN外为6.601522→6.541686ms，少0.059836，解释了总Running减少的
+大部分，仍混有guest/HLE/录制和未标记范围。**不能说本候选令翻译显著变快，
+也不能把全部−0.6M指令独占归为target省工。** present中KGSL唤醒睡眠
+2.798302→2.701909ms；这也不是本CPU准备候选已消掉GPU工作或队列锁。
+
+新增管理确实可见。完整职责采样中显式prefix helper由0→15样本、约
+0.338M I/Surface；draw其余由11.851→12.766M。叶PC/LLVM源切片显示旧
+DS/RT/area/context包络约0.821→0.515M（36→23样本），新增helper和
+入口guard/发布包络约0.021→0.467M（1→21样本）。这些切片嵌在父预算中，
+不能相加；几十样本、源行调度和非直接改动职责的变化不足以精确判定局部
+净成本。它们说明重复证明不是免费操作，不能把毛预算当作已省量。
+
+工具before/after资源快照均实际存在且括窗，分别为21.6546s/1087guest、
+21.4322s/1083guest；计数不能改用Surface分母。内部submit仍1/guest，旧pool
+上传和回读字节仍0，Store indexed59/builds1且fallback增量0。views/prepares
++1.69/+1.49%，texture miss−11%，descriptor miss+4.20%，PSO lookup+0.94%，
+所以不能假定其它资源工作完全相同。PSO181/variants32稳定；图像分配在各自
+窗口内稳定，但OFF比ON多49152B，shared import驻留gauge也有小差，均保留。
+当前game-state未发布prefix总hit计数，首次actual marker不等于覆盖率。
+
+OFF原外层health因11条`systrace_parse_failure`拒绝；原failed receipt未改。
+独立官方SQL/同版parser逐条证明11条全部来自非目标lmkd普通print（含两次
+critical pressure），与错误数精确闭合；其它error/data_loss和8CPU丢失均0，
+目标Surface连续、owner状态无内部缺口、已记录Running频率100%覆盖。根已
+显式接受目标Surface/已记录调度频率/PMU范围，前缘69.126667ms仍unknown，
+**真实内存压力条件不删除**。ON原health通过。详见同目录
+`health-analysis-agent/OFF-P1/root-accepted-scope.json`，不是泛化放宽健康gate。
+
+结论限于：同新APK总指令略减、周期微减且GPU数据缺失；保持机制候选，
+不因未明显涨帧直接撤销。按本轮用户最新指示，停止继续优化guard/复用缓存
+及其他CPU计算；仅收尾本次结果，工作重心全部转到GPU。CPU侧只保留锁竞争、
+同步等待及其与降频的时序调查。长期视觉、散热、跨场景净益及相对未改parent的
+完整共同维护成本仍未认证；本候选不作为GPU访存主线的替代方案。
