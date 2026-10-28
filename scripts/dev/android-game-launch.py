@@ -104,7 +104,7 @@ parser.add_argument('--record-state-cache',action=argparse.BooleanOptionalAction
 parser.add_argument('--record-state-extra-cache',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental stencil/layout recording elimination (default off); enabling requires --record-state-cache')
 parser.add_argument('--discard-covered-clears',action=argparse.BooleanOptionalAction,default=None,help='startup-only reference switch: discard an initial color clear proven fully overwritten by the first draw (default on)')
 parser.add_argument('--sparse-submission-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental compact planning spans (default off); preserves resource/query/store semantics')
-parser.add_argument('--store-attachment-domain',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental Store read filtering by previously selected attachments (default off)')
+parser.add_argument('--store-attachment-domain',action=argparse.BooleanOptionalAction,default=None,help='startup-only Store read filtering by previously selected attachments (backend default on; omit to keep APK default)')
 parser.add_argument('--check-attachment-stores',action='store_true',help='functional-only cold run of the existing Store reference oracle; no Vulkan validation/timing required, never a performance window')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
