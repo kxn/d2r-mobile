@@ -1462,6 +1462,7 @@ static void init_options(void) {
   o->vertex_divisor_fallback=divisor&&divisor[0]=='1';
   o->store_reference=option_one("DM_VULKAN_STORE_REFERENCE");
   o->store_check=option_one("DM_VULKAN_STORE_CHECK")||option_one("DM_VULKAN_VALIDATE");
+  LOG("[vulkan Store cross-check] enabled=%d",o->store_check);
   o->store_keep_all=option_one("DM_VULKAN_STORE_KEEP_ALL");
   LOG("[vulkan attachment stores] keep_all=%d (fixed for this process)",o->store_keep_all);
   o->query_attachment_reference=option_one("DM_VULKAN_QUERY_ATTACHMENT_REFERENCE");

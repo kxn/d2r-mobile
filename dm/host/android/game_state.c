@@ -1,6 +1,7 @@
 // 原 OBS_TICK 观测与原 diag.c 共用玩家读取；只读取真实游戏，不模拟状态。
 // Observe original OBS_TICK with shared diag.c player reads, never simulation.
 #include "../../gfx/vulkan/nvn_vk_window.h"
+#include "../../gfx/vulkan/nvn_vk_plan.h"
 #include "../../gfx/vulkan/nvn_vk_freeze.h"
 #include "../../gfx/vulkan/nvn_vk_pool_copy_stats.h"
 #include "dm_guest_heap.h"
@@ -451,6 +452,12 @@ static void observe_tick(const uint64_t *registers) {
     fprintf(state_log, ",\"store_shader_slots\":{\"stages\":%llu,\"skipped_bindings\":%llu}",
       (unsigned long long)slot_stages,(unsigned long long)slot_skipped);
     uint64_t store_events,store_duplicate_reads;vk_store_event_stats(&store_events,&store_duplicate_reads);
+    vk_pass_index_stats store_index;vk_pass_index_snapshot(&store_index);
+    fprintf(state_log, ",\"store_index\":{\"builds\":%llu,\"indexed\":%llu,\"reference\":%llu,\"reference_ops\":%llu,\"query_events\":%llu,\"comparisons\":%llu,\"mismatches\":%llu,\"fallbacks\":%llu}",
+      (unsigned long long)store_index.builds,(unsigned long long)store_index.indexed,
+      (unsigned long long)store_index.reference,(unsigned long long)store_index.reference_ops,
+      (unsigned long long)store_index.query_events,(unsigned long long)store_index.comparisons,
+      (unsigned long long)store_index.mismatches,(unsigned long long)store_index.fallbacks);
     fprintf(state_log, ",\"store_read_events\":{\"recorded\":%llu,\"duplicates_skipped\":%llu}",
       (unsigned long long)store_events,(unsigned long long)store_duplicate_reads);
     uint64_t store_domain[6];int store_domain_enabled;

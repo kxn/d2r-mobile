@@ -595,6 +595,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStoreAtt
   store_attachment_domain_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
+static int store_checks_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStoreChecks(
+    JNIEnv *env,jclass klass,jboolean enabled) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,"java/lang/IllegalStateException");
+    if(error)(*env)->ThrowNew(env,error,"attachment Store checks are fixed before native startup");
+    return;
+  }
+  store_checks_startup=enabled!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int source_partition_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSourcePartition(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -1024,6 +1037,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
       setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SPARSE_PLAN",sparse_submission_plan_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_ATTACHMENT_DOMAIN",store_attachment_domain_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_STORE_CHECK",store_checks_startup?"1":"0",1) ||
       setenv("DM_VULKAN_DISCARD_COVERED_CLEARS",discard_covered_clears_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_KEEP_ALL",keep_attachment_stores_startup?"1":"0",1) ||
       setenv("DM_VULKAN_RENDER_RECORD_MODE",render_record_mode,1) ||

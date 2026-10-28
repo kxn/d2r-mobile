@@ -105,6 +105,7 @@ parser.add_argument('--record-state-extra-cache',action=argparse.BooleanOptional
 parser.add_argument('--discard-covered-clears',action=argparse.BooleanOptionalAction,default=None,help='startup-only reference switch: discard an initial color clear proven fully overwritten by the first draw (default on)')
 parser.add_argument('--sparse-submission-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental compact planning spans (default off); preserves resource/query/store semantics')
 parser.add_argument('--store-attachment-domain',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental Store read filtering by previously selected attachments (default off)')
+parser.add_argument('--check-attachment-stores',action='store_true',help='functional-only cold run of the existing Store reference oracle; no Vulkan validation/timing required, never a performance window')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
 parser.add_argument('--descriptor-history-reference',action='store_true',help='comparison: cache only consecutive identical descriptor contents')
@@ -220,6 +221,8 @@ if args.attach and args.sparse_submission_plan is not None:
     parser.error('--sparse-submission-plan is startup-only')
 if args.attach and args.store_attachment_domain is not None:
     parser.error('--store-attachment-domain is startup-only')
+if args.attach and args.check_attachment_stores:
+    parser.error('--check-attachment-stores requires a cold functional run')
 if args.record_state_extra_cache and args.record_state_cache is not True:
     parser.error('--record-state-extra-cache requires --record-state-cache')
 if args.attach and args.state_segments is not None:
@@ -340,6 +343,8 @@ if not args.attach:
         launch += ['--ez','sparse_submission_plan',str(args.sparse_submission_plan).lower()]
     if args.store_attachment_domain is not None:
         launch += ['--ez','store_attachment_domain',str(args.store_attachment_domain).lower()]
+    if args.check_attachment_stores:
+        launch += ['--ez','check_attachment_stores','true']
     if args.state_segments is not None:
         launch += ['--ez','state_segments',str(args.state_segments).lower()]
     if args.native_read_group_front is not None:
@@ -570,6 +575,10 @@ while time.monotonic() < deadline:
                     store_domain_hit='[vulkan store attachment domain] first actual skipped read' in log
                     if args.store_attachment_domain is not None and actual_store_attachment_domain != args.store_attachment_domain:
                         raise RuntimeError('store_attachment_domain actual backend policy mismatch')
+                    store_check_modes=re.findall(r'\[vulkan Store cross-check\] enabled=([01])\b',log)
+                    actual_store_checks=bool(int(store_check_modes[-1])) if store_check_modes else None
+                    if args.check_attachment_stores and actual_store_checks is not True:
+                        raise RuntimeError('existing attachment Store reference checks not actually enabled')
                     record_state_extra_modes=re.findall(r'\[nvn record extra state\] enabled=([01])\b',log)
                     actual_record_state_extra_cache=bool(int(record_state_extra_modes[-1])) if record_state_extra_modes else (False if actual_record_state_cache is False else None)
                     if args.record_state_extra_cache is not None and actual_record_state_extra_cache != args.record_state_extra_cache:
@@ -668,6 +677,8 @@ while time.monotonic() < deadline:
                               'requested_store_attachment_domain':args.store_attachment_domain,
                               'actual_store_attachment_domain':actual_store_attachment_domain,
                               'store_attachment_domain_actual_skip':store_domain_hit,
+                              'requested_check_attachment_stores':args.check_attachment_stores,
+                              'actual_check_attachment_stores':actual_store_checks,
                               'actual_source_partition':actual_source_partition,
                               'source_partition_actual_sparse':source_partition_hit,
                               'requested_state_segments':args.state_segments,

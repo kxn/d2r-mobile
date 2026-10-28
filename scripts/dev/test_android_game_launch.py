@@ -147,6 +147,20 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertEqual(caught.exception.code,2)
             adb.assert_not_called()
 
+    def test_store_reference_checks_are_independent_of_validation_and_cold(self):
+        self.assertNotIn('check_attachment_stores',self.launch_command([]))
+        command=self.launch_command(['--check-attachment-stores','--external-profile'])
+        index=command.index('check_attachment_stores')
+        self.assertEqual(command[index-1:index+2],['--ez','check_attachment_stores','true'])
+        index=command.index('validate')
+        self.assertEqual(command[index-1:index+2],['--ez','validate','false'])
+        with patch('sys.argv',[str(LAUNCHER),'--attach','--check-attachment-stores']), \
+                patch('subprocess.check_output') as adb, \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            runpy.run_path(str(LAUNCHER),run_name='__main__')
+        self.assertEqual(caught.exception.code,2)
+        adb.assert_not_called()
+
     def test_guest_wait_budget_is_bounded_and_cold(self):
         self.assertNotIn('guest_wait_budget_us',self.launch_command([]))
         for value in ('0','30','100'):
