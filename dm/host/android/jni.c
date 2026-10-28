@@ -582,7 +582,7 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeSparseSu
   sparse_submission_plan_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
-static int store_attachment_domain_startup;
+static int store_attachment_domain_startup=1;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStoreAttachmentDomain(
     JNIEnv *env,jclass klass,jboolean enabled) {
   (void)klass;pthread_mutex_lock(&operation_mode_mutex);

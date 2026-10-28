@@ -298,7 +298,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeRecordStateCache(getIntent().getBooleanExtra("record_state_cache", false));
             nativeRecordStateExtraCache(getIntent().getBooleanExtra("record_state_extra_cache", false));
             nativeSparseSubmissionPlan(getIntent().getBooleanExtra("sparse_submission_plan", false));
-            nativeStoreAttachmentDomain(getIntent().getBooleanExtra("store_attachment_domain", false));
+            nativeStoreAttachmentDomain(getIntent().getBooleanExtra("store_attachment_domain", true));
             nativeStoreChecks(getIntent().getBooleanExtra("check_attachment_stores", false));
             nativeDiscardCoveredClears(getIntent().getBooleanExtra("discard_covered_clears", true));
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));

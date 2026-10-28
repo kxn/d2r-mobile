@@ -69,7 +69,7 @@ static int attachment_domain_requested(void) {
   if(domain_requested<0) {
     const char *v=getenv("DM_VULKAN_STORE_ATTACHMENT_DOMAIN");
     if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_STORE_ATTACHMENT_DOMAIN expects 0 or 1");
-    domain_requested=v && !strcmp(v,"1");
+    domain_requested=!v || !strcmp(v,"1");
     LOG("[vulkan store attachment domain] enabled=%d",domain_requested);
   }
   return domain_requested;

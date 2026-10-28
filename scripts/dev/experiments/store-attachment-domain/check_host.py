@@ -11,7 +11,7 @@ def command(label,argv,env=None):
 cmd=base+['-MMD','-MF',str(O/'dependencies.d'),str(source),'-o',str(O/'store_domain_test')];c=command('compile',cmd);assert c['returncode']==0,c
 clean=dict(os.environ,ASAN_OPTIONS='detect_leaks=1:abort_on_error=1');run=command('run',[str(O/'store_domain_test')],clean);assert run['returncode']==0,run
 cold=[]
-for v,expected in [(None,0),('0',0),('1',1),('bad',None)]:
+for v,expected in [(None,1),('0',0),('1',1),('bad',None)]:
  env=dict(clean);env.pop('DM_VULKAN_STORE_ATTACHMENT_DOMAIN',None)
  if v is not None:env['DM_VULKAN_STORE_ATTACHMENT_DOMAIN']=v
  q=command('cold-'+str(v),[str(O/'store_domain_test'),str(expected or 0)],env);assert(q['returncode']==0)==(expected is not None),q;cold.append(q)
@@ -28,4 +28,4 @@ for name,(old,new)in mutations.items():
  q=command(name+'-compile',base+['-DDM_STORE_DOMAIN_PLAN_SOURCE="'+str(d/'nvn_vk_plan.c')+'"',str(source),'-o',str(binary)]);assert q['returncode']==0,q
  q=command(name+'-run',[str(binary)],clean);assert q['returncode']!=0 and ('Store domain oracle mismatch'in q['stderr'] if name!='unproved-empty-negative' else 'domain_skipped==0&&event_count==1'in q['stderr']),q;negative.append({'mutation':name,'source_sha256':sha(d/'nvn_vk_store_index.inc'),'result':q})
 deps=(O/'dependencies.d').read_text().replace('\\\n',' ').split(':',1)[1].split();result={'scope':'production C walk+Store with metadata fixtures; frozen full index oracle, valid prefix-target/start/done; host only, no GPU/Android/game/FPS claim','compile':c,'run':run,'cold':cold,'negative_controls':negative,'compiler_version':S.check_output(['cc','--version'],text=True),'sources':{str(Path(f).resolve()):sha(f)for f in deps if Path(f).is_file()},'script_sha256':sha(__file__)}
-(O/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(run['stdout'].strip());print('PASS cold0/1/bad + three unsafe Store controls plus unproved-empty unknown-event control rejected')
+(O/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(run['stdout'].strip());print('PASS default ON / explicit0/1/bad + three unsafe Store controls plus unproved-empty unknown-event control rejected')
