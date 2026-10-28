@@ -120,16 +120,17 @@ static void domain_enroll_targets(const p_set_rt *rt) {
     domain_targets[domain_count++]=(uint16_t)b;
   }
 }
-static int domain_read_needed(int b) {
-  if(!build_domain)return 1;
-  domain_considered++;
-  uint32_t proof=domain_proof[b];
-  if(proof&DOMAIN_RELEVANT) {domain_positive_hits++;return 1;}
+// Zero means unproved. A completed negative carries checked_count+1 so
+// an empty target domain cannot mistake an unknown footprint for a hit.
+_Static_assert(sizeof domain_targets/sizeof *domain_targets+1<=UINT16_MAX,
+    "Attachment-domain negative count+1 fits its proof field");
+static __attribute__((noinline)) int domain_read_classify(int b,uint32_t proof) {
   const vk_texture_footprint *t=&buckets[b].texture;
-  // Unknown addresses/sizes retain the original event. Never turn an
-  // unresolved descriptor (handled by global_need) into an irrelevant read.
+  // The cold first classification must retain unknown addresses/sizes even
+  // when count==0. Only a complete known-footprint comparison writes a
+  // negative proof; no hot hit can bypass this qualification.
   if(!t->base || !t->size) {domain_proof[b]=proof|DOMAIN_RELEVANT;return 1;}
-  unsigned checked=proof&UINT32_C(0xffff);
+  unsigned checked=proof?proof-1:0;
   if(checked<domain_count)domain_negative_rechecks++;
   for(unsigned n=checked;n<domain_count;n++) {
     const vk_texture_footprint *target=&buckets[domain_targets[n]].texture;
@@ -140,11 +141,19 @@ static int domain_read_needed(int b) {
       domain_proof[b]=proof|DOMAIN_RELEVANT;return 1;
     }
   }
-  domain_proof[b]=domain_count;
+  domain_proof[b]=domain_count+1;
   domain_skipped++;
   static int first_skipped;
   if(!first_skipped) {first_skipped=1;LOG("[vulkan store attachment domain] first actual skipped read");}
   return 0;
+}
+static inline __attribute__((always_inline)) int domain_read_needed(int b) {
+  if(!build_domain)return 1;
+  domain_considered++;
+  uint32_t proof=domain_proof[b];
+  if(proof&DOMAIN_RELEVANT) {domain_positive_hits++;return 1;}
+  if(proof==domain_count+1) {domain_skipped++;return 0;}
+  return domain_read_classify(b,proof);
 }
 static int descriptor_bucket(unsigned id) {
   unsigned key=id+1,slot=(id*UINT32_C(2654435761))>>19;

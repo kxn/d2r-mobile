@@ -32,6 +32,26 @@ static void end(stream *s){op(s,OP_END,NULL,0);}
 static void reset(int known_shader){memset(&S,0,sizeof S);S.targets=(p_set_rt){.n=1,.color={&textures[1]}};static prog_t program;S.program=known_shader?&program:NULL;shader=(vk_shader){.stage=1,.image_read_count=1,.image_read_slots=&read_slot};read_slot=0;}
 static void build(stream *s){uint64_t h=(uintptr_t)s->words;unsigned old=store_walk_comparisons;submission_index_build(&h,1);CK(valid&&index_valid);CK(store_walk_comparisons==old+1);scenarios++;}
 static void scenario_set(void){
+ // Empty target domain still requires the cold known-footprint proof. Unknown
+ // zero-base/zero-size resources retain actual IX_READ events, not SKIP.
+ for(unsigned unknown=6;unknown<=7;unknown++) {
+  reset(0);S.targets=(p_set_rt){0};stream empty={0};
+  p_bind_handles bind={.stage=5,.n=1,.h={unknown}};p_dispatch dispatch={1,1,1,0};
+  op(&empty,OP_BIND_TEX,&bind,offsetof(p_bind_handles,h)+8);op(&empty,OP_DISPATCH,&dispatch,sizeof dispatch);end(&empty);build(&empty);
+  CK(domain_count==0);CK(domain_skipped==0&&event_count==1);
+ }
+ // A complete known negative in the empty domain may hit repeatedly, then
+ // must revisit target0 when the first SET_RT enlarges that domain.
+ reset(0);S.targets=(p_set_rt){0};stream empty_grow={0};
+ p_bind_handles compute_read={.stage=5,.n=1,.h={2}};p_dispatch dispatch={1,1,1,0};
+ op(&empty_grow,OP_BIND_TEX,&compute_read,offsetof(p_bind_handles,h)+8);
+ op(&empty_grow,OP_DISPATCH,&dispatch,sizeof dispatch);op(&empty_grow,OP_DISPATCH,&dispatch,sizeof dispatch);
+ rt(&empty_grow,3);read_tex(&empty_grow,2);draw(&empty_grow);rt(&empty_grow,1);draw(&empty_grow);rt(&empty_grow,3);clear(&empty_grow);end(&empty_grow);build(&empty_grow);
+ CK(domain_skipped==2&&domain_comparisons>0);
+ reset(0);S.targets=(p_set_rt){0};stream empty_unknown_id={0};compute_read.h[0]=63;
+ op(&empty_unknown_id,OP_BIND_TEX,&compute_read,offsetof(p_bind_handles,h)+8);op(&empty_unknown_id,OP_DISPATCH,&dispatch,sizeof dispatch);end(&empty_unknown_id);build(&empty_unknown_id);
+ CK(domain_considered==0&&global_count==1);
+
  // R(id2) aliases future B(id3), but not initial A(id1). Its repeated first
  // reads must skip; after B is enrolled the same cached descriptor must keep.
  for(unsigned known=0;known<2;known++) {
@@ -71,6 +91,7 @@ int main(int argc,char **argv){
  if(argc>1){domain_requested=-1;int expected=atoi(argv[1]);CK(attachment_domain_requested()==expected);setenv("DM_VULKAN_STORE_ATTACHMENT_DOMAIN","invalid-after-freeze",1);CK(attachment_domain_requested()==expected);puts("PASS immutable cold option");return 0;}
  for(unsigned i=1;i<8;i++){textures[i].serial=100+i;textures[i].mem=memory+1024*i;textures[i].L.size=256;textures[i].d.width=textures[i].d.height=8;}
  textures[2].mem=memory+3072+64;textures[3].mem=memory+3072;textures[4].mem=memory+1024+32;
+ textures[6].mem=NULL;textures[7].L.size=0;
  V.options.state_segments=1;sparse_requested=0;V.options.store_check=1;domain_requested=0;
  checks+=vk_pass_test_forward_reuse();checks+=vk_pass_test_store_walk_begin();
  // The production table oracle above remains OFF/exact. All following builds

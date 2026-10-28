@@ -18,13 +18,14 @@ for v,expected in [(None,0),('0',0),('1',1),('bad',None)]:
 # Isolated source mutation controls. Main/runtime sources remain unchanged.
 text=(R/'dm/gfx/vulkan/nvn_vk_store_index.inc').read_text();negative=[]
 mutations={
- 'stale-negative':('unsigned checked=proof&UINT32_C(0xffff);','unsigned checked=proof&UINT32_C(0xffff); if(checked && checked<domain_count)return 0;'),
+ 'stale-negative':('unsigned checked=proof?proof-1:0;','unsigned checked=proof?proof-1:0; if(checked && checked<domain_count)return 0;'),
  'forget-old-target':('    domain_enroll_targets(&ctx->rt);','    domain_count=0;memset(domain_proof,0,sizeof domain_proof);domain_enroll_targets(&ctx->rt);'),
  'false-known-zero':('        nonzero=1;','        nonzero=!build_domain;'),
+ 'unproved-empty-negative':('if(proof==domain_count+1)', 'if(proof==domain_count)'),
 }
 for name,(old,new)in mutations.items():
  assert text.count(old)==1,(name,text.count(old));d=O/name;d.mkdir(exist_ok=True);(d/'nvn_vk_plan.c').write_bytes((R/'dm/gfx/vulkan/nvn_vk_plan.c').read_bytes());(d/'nvn_vk_store_index.inc').write_text(text.replace(old,new));binary=d/'oracle'
  q=command(name+'-compile',base+['-DDM_STORE_DOMAIN_PLAN_SOURCE="'+str(d/'nvn_vk_plan.c')+'"',str(source),'-o',str(binary)]);assert q['returncode']==0,q
- q=command(name+'-run',[str(binary)],clean);assert q['returncode']!=0 and 'Store domain oracle mismatch'in q['stderr'],q;negative.append({'mutation':name,'source_sha256':sha(d/'nvn_vk_store_index.inc'),'result':q})
+ q=command(name+'-run',[str(binary)],clean);assert q['returncode']!=0 and ('Store domain oracle mismatch'in q['stderr'] if name!='unproved-empty-negative' else 'domain_skipped==0&&event_count==1'in q['stderr']),q;negative.append({'mutation':name,'source_sha256':sha(d/'nvn_vk_store_index.inc'),'result':q})
 deps=(O/'dependencies.d').read_text().replace('\\\n',' ').split(':',1)[1].split();result={'scope':'production C walk+Store with metadata fixtures; frozen full index oracle, valid prefix-target/start/done; host only, no GPU/Android/game/FPS claim','compile':c,'run':run,'cold':cold,'negative_controls':negative,'compiler_version':S.check_output(['cc','--version'],text=True),'sources':{str(Path(f).resolve()):sha(f)for f in deps if Path(f).is_file()},'script_sha256':sha(__file__)}
-(O/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(run['stdout'].strip());print('PASS cold0/1/bad + three unsafe controls rejected by actual Store decision mismatch')
+(O/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(run['stdout'].strip());print('PASS cold0/1/bad + three unsafe Store controls plus unproved-empty unknown-event control rejected')
