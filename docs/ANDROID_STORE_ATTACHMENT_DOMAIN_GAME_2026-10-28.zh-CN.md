@@ -1,121 +1,185 @@
-# Store 附件域过滤：真实事件减少，整线程暂未净减负
+# Store 附件域过滤：v2 已净省 owner 工作，稳定涨帧仍未证明
 
-2026-10-28。**同新 APK 的开启/关闭对照，Store 索引事件每次 guest 提交
-减少约 62.05%，但 owner 用户态指令增加约 0.84%–0.97%，cycles 也略增。
-当前不能称已省 CPU 或涨帧。** 候选保留为默认关闭的实验，继续拆新增
-管理与其他工作变化；没有因为即时 FPS 不升而删除机制。
+2026-10-28。**当前 v2 的同 APK 对照，每 Surface 的 owner 用户态指令减少
+约 0.43～0.52M（0.60%～0.73%），cycles 减少约 0.19～0.23M。普通运行
+仅一对 50.2065→50.3858 FPS（+0.36%），不能称稳定涨帧。** v2 保持
+默认关闭的实验；保留已证明的事件省工，同时记录其他线程和 guest 工作变化。
 
-## 改造和正确性
+v1 的整线程指令曾增加，属于下面保留的历史结果，不能继续当作当前 v2 状态。
+
+## 改造与约束
 
 Store 查询只消费已经成为物理 pass 逻辑附件的目标。候选维护初始
 `S.targets` 与已经遍历的 `SET_RT` 的单调累计域；能证明与这个域无 serial/
-内存别名的 Shader 读取，不再追加 Store 的 READ 事件。以后增加附件时，
-此前的负证明会检查新增目标；已证明相关的资源在本次构建内保持相关。
+内存别名的 Shader 读取，不再追加 Store READ 事件。以后增加附件时，
+此前的负证明检查新增目标；已证明相关的资源在本次构建内保持相关。
 未知描述符继续产生全局需求，描述符 epoch 变化仍使整个派生索引回退。
 
-没有第二次完整命令预扫，复用原 descriptor/bucket footprint。但目前
-仍逐次解析 Shader 读取槽和访问 descriptor 缓存；**只省事件产物，不是
-省掉全部约 2.46M 指令的前向读取准备。** 新增约 24KiB 静态元数据，
-开启时每次构建清理 16KiB，另有每次访问的证明判断和范围比较。
+没有第二次完整命令预扫，复用原 descriptor/bucket footprint。v1 引入约
+24KiB 静态元数据，开启时每次构建清理 16KiB，并新增证明判断/范围比较。
+v2 在相同语义下提前处理已知负证明，减少重复 footprint 读取及相同 proof
+回写。它仍逐 draw 解析 Shader 读取槽和访问 descriptor 缓存；**只省
+事件产物，不能把旧约 2.46M 前向读取预算全部当作可删除工作。**
 
-生产规划器的主机差分测试覆盖 11 场景/762 个合法 Store 判断，并通过
-ASan/UBSan；三个故意漏掉失效规则的实现被真实判断差异拒绝。随后在
-真实 ARM64 游戏中分别运行 OFF-CHECK1 与 ON-CHECK1：原 Store 参考扫描
-核对次数分别 21,543→48,243、18,254→119,389，均零不匹配。开启候选的
-实际跳过路径被观测，画面人工检查未见明显新增黑块/几何错误。它不是
-全游戏场景保证。
+不跨 submission 缓存、不合并跨 seq 事件、不改游戏流程、真实依赖或提交
+顺序。单次只读快照本轮在 `mtl_exec` 命中时发现 replay 已非0而严格拒绝，
+未用于证明当前 read-list 稳定覆盖率，没有写变量使快照通过。
 
-功能检查独立于性能窗口，使用原 `DM_VULKAN_STORE_CHECK` 算法，不开
-Vulkan validation 或自定义计时。正式 normal/PMU 冷启动均核准该功能
-关闭，比较和不匹配计数始终为零。
+## v2 正确性与固定条件
 
-## 实际固定条件
+主机真实生产规划器差分覆盖15场景/840个判断，ASan/UBSan及四个错误实现
+负控通过；主机测试不能替代真实游戏功能检查。新普通APK实际两种冷启动
+模式分别运行原 Store reference cross-check：
 
-- 同 Q735/Adreno735、原营地角色与位置，game/swapchain 1968×900、
-  3D 1673×765 / 0.85；来自两端真实创建日志及状态。
-- 同普通 APK `b53a5f3e754949d4ff089c7f667b2a90bed0258e02c9f1bde9b70e43f821789e`，
-  host `c2f136bce06e2913ed2c188a229919aaf0c4d9028de580ebe54dab4c34a830b9`，
-  源 `f2d7712`。1056 个构建输入和全部 APK 原生库逐项核准。
-- cf83 Shader、12b8 Turnip、原 BC3 native 资源、table6890/producer919，
+| 独立功能运行 | 比较计数前→后 | mismatches |
+| --- | ---: | ---: |
+| OFF-CHECK1 | 21,586→144,433 | 0 |
+| ON-CHECK1 | 18,662→309,245 | 0 |
+
+真实开启模式经过实际跳过分支，未见明显新增显示错误；不代表全游戏场景
+已经覆盖。功能检查使用已有原生算法，未开 validation/自定义计时。所有
+normal/PMU 性能臂实际检查关闭，comparisons/mismatches全程0。
+
+- Q735/Adreno735，同原营地角色/位置；game与swapchain实际1968×900，
+  主3D1673×765/0.85，核准实际创建日志与状态。
+- 两臂同APK `f3576a49a9fa8ab14c529549de9bfba2f751603e8d4a2d470b3a50f5ff22c9a0`，
+  host `26a104a89007880217939c8b590e6e54b68d85cb9ed738f02972a68fd9b8eb0b`，
+  source `628398896ebbb9ab2627f4eeb5fa3c45d4d80f89`；1056构建输入/原生库核准。
+- cf83 Shader、12b8 Turnip、原BC3 native pack、table6890/producer919；
   CLEAR ON、inline CPU7、30µs、fixed+extra ON，sparse/stream/hints OFF。
-  两臂唯一配置差异为固定启动的 Store attachment domain 布尔值。
-- 没有复采官库/SDP9，不用旧 c09 当本轮同 binary 的 OFF 臂。
+  唯一启动差异为 Store attachment domain 布尔值。
+- 独立新事务/新结果目录，没有拿旧c09或v1的OFF充当同APK基线；不复采官库或GPU九指标。
 
-## 普通运行与整轮变化
+## v2 普通20秒整轮结果
 
-OFF-N1→ON-N1，均原健康门通过的20秒完整 Surface 窗口：
-
-| 指标 / Surface，频率除外 | OFF | ON |
+| 指标 / Surface，频率除外 | OFF-N1 | ON-N1 |
 | --- | ---: | ---: |
-| FPS | 50.4511 | 50.0497 |
-| owner Running ms | 16.41584 | 16.45264 |
-| owner 运行期 MHz | 2063.75 | 2056.81 |
-| 全应用 Running 线程和 ms | 31.51284 | 31.47287 |
-| owner S 睡眠 ms | 3.09063 | 3.26360 |
+| FPS | 50.2065 | 50.3858 |
+| mean ms | 19.91773 | 19.84684 |
+| p95 ms | 22.15849 | 22.15656 |
+| owner Running ms | 16.55519 | 16.49943 |
+| owner运行期 MHz | 2075.51 | 2064.30 |
+| 全应用 Running线程和 ms | 32.09735 | 31.66597 |
+| 非owner Running线程和 ms | 15.54216 | 15.16655 |
+| owner S睡眠 ms | 3.06052 | 3.07821 |
+| Present调用内S睡眠 ms | 2.78780 | 2.78852 |
 
-FPS −0.80%，没有大幅 CPU 频率或向其他线程迁移的证据。官方调度/阶段
-查询中，Store finalization Running −0.01616ms；planning 排除该嵌套区间
-后 +0.02636ms；replay 再排除 planning 后 +0.15651ms；其余 owner
-−0.13287ms，严格闭合。不能将这些包含关系直接相加。
+owner少0.05577ms（-0.337%），运行期频率低0.54%；每秒owner占用约
+0.83118→0.83134核，几乎相同。全应用每帧减少0.43138ms，主要是非owner
+减少0.37562ms；completion worker反而多约0.02145ms。不能将全部减少归给
+翻译流程，也不能从线程时间直接推指令迁移。未覆盖频率区间没有补0。
 
-Present 调用内睡眠增加约 0.18217ms，与帧间隔增加约 0.15899ms 同量级。
-这定位了本对照的更长等待范围，不证明 GPU 硬件本身变慢或给出相位因果。
-本轮没有实际 GPU 频率/DRAM 计数，保持未知。
+原trace互斥阶段Running：finalization −0.01401ms，planning排除它后
++0.00962ms，故规划总计仅−0.00439ms；replay排除planning后+0.09736ms，
+其他未标记owner−0.15703ms。包含关系不相加，所有Running严格闭合。
+本次Present等待基本不变；没有v1普通pair那种约0.18ms等待变化。
 
-工作快照独立按 OFF1085/ON1031 次 guest 提交归一，不能换成 Surface：
-Store 事件约 15,174→5,758.89（−62.05%）；descriptor 访问约
-12,023→12,026.26，Shader 槽阶段约 4,852→4,853.52，基本保留。
-ON 新增约 12,026 次过滤、5,682 次范围比较、542 次负证明复审/guest。
-约 78.46% 的 considered 访问被跳过，包含旧路径本来会同序号去重的访问，
-**不是净事件减少 78.46%。** 正常窗另有纹理准备约 +2.24%、miss +7.30%，
-作为其他工作变化保留，未直接归因于过滤。
+较宽工作快照分母为OFF1040/ON1085次guest提交，不是1000/1004个Surface。
+Store事件约15199.19→5758.14/guest，下降约62.12%；descriptor访问约
+12044.50→12025.02、shader阶段4856.70→4852.90，基本保留。ON约78.46%
+的considered访问被跳过，约9435次/guest，另有5674次范围比较及541次负证明
+复审。78.46%包含旧同seq去重访问，**不是净事件减少78.46%**。
+纹理prepare约+0.46%、miss约−14.42%，也属于本轮实际工作差异。
 
-## 官方 PMU 净工作
+## v2 官方PMU净工作与全应用成本
 
-OFF-P1→ON-P1，使用原 Simpleperf instructions:u、附加 cpu-cycles:u，
-原32秒记录覆盖官方 Perfetto20秒裁窗；四个边缘与原时钟转换/归约不变。
+原32秒Simpleperf记录覆盖官方Perfetto20秒窗口，沿用原时钟转换、完整累计
+counter和四个采样边缘；未以CLI前缀EventCount或Running×MHz推指令。
 
-| owner 用户态事件 / Surface | OFF | ON |
-| --- | ---: | ---: |
-| 指令 M | 71.12868–71.17024 | 71.76882–71.81832 |
-| cycles M | 30.55152–30.56679 | 30.77606–30.79298 |
-| owner Running ms | 16.43035 | 16.52478 |
-| owner 运行期 MHz | 2066.20 | 2073.80 |
-| 全应用 Running 和 ms | 31.0321 | 31.7950 |
+| owner用户态事件 / Surface | OFF-P1 | ON-P1 | ON−OFF |
+| --- | ---: | ---: | ---: |
+| instructions M | 71.93141～71.97826 | 71.45437～71.50308 | −0.52388～−0.42833 |
+| cycles M | 30.64731～30.66540 | 30.43961～30.45585 | −0.22579～−0.19146 |
+| owner Running ms | 16.58144 | 16.45789 | −0.12355 |
+| owner运行期 MHz | 2063.12 | 2060.69 | −0.118% |
+| 全应用Running线程和 ms | 31.57899 | 31.88007 | +0.30108 |
+| 非owner Running线程和 ms | 14.99755 | 15.42218 | +0.42464 |
 
-整线程指令 +0.59858–0.68963M，周期 +0.20926–0.24146M；区间是
-采样边缘计数界，不是统计置信区间。两原工具/健康门通过、丢样/截断为0，
-真实 owner/PID/ELF 验证通过。`:u` 不包含内核或其他线程指令。
+这里的区间是时间边缘计数界，**不是统计置信区间**。`:u`仅owner用户态，
+不包含内核或其他线程。两工具退出0/属性恢复，真实collector/PID/owner/ELF、
+原数据SHA及边缘覆盖核准；原trace健康门和record loss/truncation均0。
+PMU工具FPS50.2105→50.2857只作诊断，不替代上面的正常运行FPS。
 
-两端 present/Surface 约 0.997006/0.997003，未见 ON 每上屏帧多执行
-完整 guest 周期的证据，边缘仍有未完整 replay。全应用其他线程时间也有
-增加；PMU 窗的纹理准备/miss 却下降，与正常窗不同。故不能把全部额外
-0.64M 指令直接按功能名归给过滤器，需要同一批样本的高层祖先归因。
-PMU 工具 FPS 不替代上面的普通运行结果。
+全应用并非同时省时：非owner增加0.42464ms，两个主要普通worker分别约
++0.12529/+0.20480ms，Java主线程约+0.08914ms，binder约+0.15201ms；
+completion worker却减少0.02949ms，其他线程也有下降。这些不是可独立相加
+的根因列表，也没有其他线程的精确指令counter。每秒全应用约1.58560→
+1.60311核，owner约0.83256→0.82760核。正常与PMU的非owner方向不同，
+因此不声称已经稳定降低总CPU/功耗/温度。
 
-同批实际样本的初步互斥归因已进一步修正判断：planning 约
-6.056→5.705M I/Surface，局部约少 0.35M；其中新增 domain 判断约
-+0.412M，而事件/资源解释约 −1.038M，walk 与 finalization 等又增加
-部分成本。整线程另有 state/attachment/hazard、program/PSO 和游戏代码
-归属增加，也有资源准备及 driver replay 减少。各小组仅几十个样本，
-保留采样误差和一个栈/时序范围分歧；不能说已确定全部新增的因果，也
-不能再说管理把 Store 的省工完全抵消。原始矩阵在 `pmu-attribution-agent/`。
+同窗原slice中，OFF1000个Surface含999次完整planning、998次完整replay
+并有1次跨尾、998次present、1996次submit；ON1002个Surface含999次
+planning/replay/present、1998次submit。ON完整planning/Surface略低约0.2%，
+present略低约0.1%；边缘保留未知，不能把全部指令净减独占归因于helper。
+没有ON每Surface多执行整周期的证据。
 
-## 下一步及设备状态
+## v2 宏观指令归因和边界
 
-保留 v1，按已有 PMU 分解 domain 判断、walk/event/finalization、资源准备
-及其余 owner 的净变化。已将独立工作树验证的负证明提前返回 v2 应用到
-主线实验代码，避免重复读取 footprint 和回写相同 proof；15 个主机场景/
-840 个判断及四个错误实现负控通过，尚未在真机启用 v2。
-不把更短机器码冒称已经净减负，也不把源头事件减少冒称整帧收益。
+用actual26a1 ELF/DWARF、官方Simpleperf原链、LLVM内联源和原同owner阶段
+逐样本归属。实际规划scope约 **5.94167→5.47403M I/Surface（−0.46765M）**，
+与整owner sampled净−0.47342M同量级，但其他职责存在相互抵消。
 
-本次入口的22个用户文件已原位恢复，偏好和接受的桌面锚点全部一致；
-已重新安装精确 c09 普通版本，恢复用户文件后未冷启动。游戏和本轮拥有
-的官方工具均停止，原 perf_harden=0 保持。Mali/平板未使用。
+| 规划互斥职责，M I/Surface | OFF | ON | Δ |
+| --- | ---: | ---: | ---: |
+| Store事件/资源解释 | 2.9806 | 2.3101 | −0.6705 |
+| domain helper | 0（未采到） | 0.1490 | +0.1490 |
+| walk非Store元数据 | 1.3695 | 1.5811 | +0.2117 |
+| reverse/init/未细分 | 1.1310 | 1.0275 | −0.1035 |
+| finalization实际范围 | 0.4606 | 0.4063 | −0.0543 |
 
-全部实际收条/原始工具数据在 `.local/logs/store-attachment-domain-device-v1/`：
-`functional-qualification.json`、四个 normal/PMU 臂、
-`normal-whole-analysis-agent/`、`pmu-whole-comparison/`、`work-count-agent/`、
-`final-restoration.json`。安装曾因 vivo 本次应用确认页等待而客户端超时，
-原失败保留；按授权确认后安装 SHA 核准，没有据超时重复安装或更改全局
-安全设置。候选 APK/源资格在 `.local/build/store-attachment-domain-candidate-v2/`。
+ON domain只有6个样本，其他细组也仅几十样本，均不是精确调用次数或每次
+执行成本。不能把旧v1到v2的helper点差当成静态改写独占收益。
+
+其他互斥预算：资源准备约−0.6203M、replay内driver无细祖先−0.3827M、
+HLE线程同步−0.1623M；guest SDK约+0.6925M、main+0.1257M，draw剩余
++0.1939M、program/PSO+0.1520M、提交/出图范围+0.1403M。不能将所有新增
+都归domain，也不能只列减少项。独立SELF执行层是host−0.5810M、driver
+−0.5697M、系统库−0.1423M、guest main+SDK+0.8182M及少量unknown变化，
+严格闭合sampled净差；inclusive祖先预算另留档，不与SELF相加。
+
+OFF sample period和71.928639M，比独立累计counter下界低0.002769M/
+Surface（约0.00385%）；ON period和71.455217M位于原界内。旧归因层假定
+两者必闭合的断言失败已保留。没有缩放sample period、改counter数学、放宽
+原健康门或重采挑有利数据。正式净工作只采用累计界；sampled净差位于该净界
+内，但细项依然保留采样分配不确定性。
+
+## SDK mutex/TLS线索
+
+已找到与实际加载SHA完全相同的SDK `aacd2701…69712`，原manifest和7项
+SDK产物全哈希核准。官方LLVM解码及同原始NSO的符号元数据表明：351780块
+在 `InternalCriticalSectionImplByHorizon::Enter()`，其call经39fb5c和原门表
+svc26进入HLE `ArbitrateLock`；f20040/f20100块是原TLS读指令的既有平台
+TLSDESC取址stub。它们不是memcpy或新写的游戏锁逻辑。
+
+v2同样看到351780块约2.1664→2.5807M；叶PC几乎全在函数epilogue3517b0，
+不是全在重试支路。PMU precise_ip=0，不能把这份预算当busy-spin次数或争用
+调用次数。官方Simpleperf dump证明现有record没有保存user registers/stack，
+不能恢复实际mutex地址或owner/tag；不能据此认定HLE错误/更改游戏锁。
+
+## v1历史（独立旧APK，不是当前对照）
+
+v1为b53/C2f/sourcef2d，同尺寸/场景/资源的独立OFF/ON。原11场景/762判断
+及3负控通过，真实两模式原Store检查均零不匹配。普通50.4511→50.0497
+FPS（−0.80%）；Present内睡眠多约0.18217ms，不证明GPU硬件变慢。
+PMU owner指令多0.59858～0.68963M（+0.84%～0.97%），cycles也增加。
+但其planning实际已从6.0557降到5.7046M（−0.3511M），不是管理把所有
+目标省工完全抵消；其他host/guest职责改变。这些历史负结果全部保留，
+没有直接拿它们替代新v2的同APK基线。
+
+## 当前状态与证据
+
+v2默认仍OFF，不因这次小涨帧直接发布。后续优先查当前资源解析列表整体
+复用覆盖及SDK线程同步的实际身份；保留每seq事件、未知描述符和epoch
+回退。没有当前稳定覆盖率时，不先增加新的每draw检查层。
+
+本轮已重新安装精确c09普通APK，**恢复本次入口的22个真实用户文件**，
+UI偏好及accepted桌面锚点一致，恢复用户后未冷启动；游戏和拥有的工具均
+无进程，perf_harden=0。一次只读snapshot严格拒绝后已detach、原save2/stop，
+owned server/forward清理；Mali/平板未使用。
+
+v2完整证据在 `.local/logs/store-domain-negative-fast-device-v2/`：
+`functional-qualification.json`、四个normal/PMU臂、
+`normal-whole-analysis-agent/`、`pmu-whole-comparison/`、
+`pmu-attribution-agent/`、`guest-sdk-hotblocks-agent/`及`final-restoration.json`。
+精确源码/原始sample chains/官方LLDB和LLVM输出、失败断言/负控均保留。
+v1原始证据继续在 `.local/logs/store-attachment-domain-device-v1/`。
