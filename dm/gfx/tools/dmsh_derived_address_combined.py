@@ -1,9 +1,9 @@
-"""Verified original-cache stage: exact address form in selected VS and FS pairs.
+"""Verified original-cache stage: exact address form in VS and optional FS pairs.
 
 All proof/closure regeneration is explicit. Original Uniform selector tuples
 are preserved by the declared DSP container repacker, not rediscovered.
 """
-import argparse,copy,json
+import argparse,copy,hashlib,json
 from pathlib import Path
 import shutil,subprocess,tempfile
 import dmsh_derived_predicates as B
@@ -19,6 +19,33 @@ ROOT=Path(__file__).resolve().parents[3]
 SCHEMA='dmsh-verified-cache-address-combined-v2'
 RECORD='_derived_build.json';INPUT='_derived_input_receipt.json';BASE='_derived_base_manifest.json'
 COMMON=('spv','json','dkey','dspan','plocal.json','plocal')
+
+
+def fragment_recipe_contract(meta,base,recipe):
+    """An originally unpaired FS stays unpaired; never invent a selector.
+
+    The original producer can explicitly report that it skipped specialization.
+    Only its diagnostic-only shape is accepted without a recipe. Missing a
+    declared pair or retaining selector/hash fields is still a hard failure.
+    The archived original receipt independently fixes whether a file existed.
+    """
+    if recipe is None:
+        if 'uniform_specialization' not in meta:return
+        proof=meta['uniform_specialization']
+        require(isinstance(proof,dict) and
+                bool(proof.get('skipped')) and isinstance(proof.get('skipped'),str) and
+                set(proof)<={'skipped','weight'} and
+                ('weight'not in proof or type(proof['weight'])is int and proof['weight']>=0),
+                'Fragment requires its original declared Uniform specialization; '
+                'unpaired fragment has residual or malformed specialization metadata')
+        return
+    proof=meta.get('uniform_specialization')
+    require(isinstance(proof,dict) and 'skipped'not in proof and
+            proof.get('specialization_sha256')==hashlib.sha256(recipe).hexdigest(),
+            'Fragment requires the original declared Uniform specialization')
+    h=UP._old_recipe(base,recipe)
+    require((h[2],h[3],h[4],h[5])==(proof.get('binding'),proof.get('reg'),proof.get('offset'),proof.get('spec_id')),
+            'Original Uniform selector declaration mismatch')
 
 
 def source_identity():
@@ -44,12 +71,8 @@ def selected(cache,key):
     spec=cache/(key+'.spec')
     if meta['stage']=='vs':require(not spec.exists(),'Vertex paired alternatives unsupported')
     else:
-        require(spec.is_file() and meta.get('uniform_specialization',{}).get('specialization_sha256')==sha(spec),
-                'Fragment requires the original declared Uniform specialization')
-        h=UP._old_recipe((cache/(key+'.spv')).read_bytes(),spec.read_bytes())
-        proof=meta['uniform_specialization']
-        require((h[2],h[3],h[4],h[5])==(proof['binding'],proof['reg'],proof['offset'],proof['spec_id']),
-                'Original Uniform selector declaration mismatch')
+        fragment_recipe_contract(meta,(cache/(key+'.spv')).read_bytes(),
+                                 spec.read_bytes()if spec.is_file()else None)
     return meta
 
 
@@ -65,7 +88,7 @@ def closures(folder,key,original,chain,proof):
     meta=copy.deepcopy(original);meta['chain']=chain;meta['spirv_sha256']=sha(folder/(key+'.spv'))
     meta['compiler_options']={**meta['compiler_options'],'address_normalize_combined':True}
     meta['address_normalize_combined']=proof
-    if meta['stage']=='ps':
+    if 'specialized_payload'in proof:
         meta['uniform_specialization']['base_sha256']=sha(folder/(key+'.spv'))
         meta['uniform_specialization']['specialization_sha256']=sha(folder/(key+'.spec'))
     meta.update(DK.emit_with_spans(folder,key,meta))
@@ -81,7 +104,7 @@ def build(cache,receipt,input_sha,keys,parent,report,dry_run=False,expected_shad
     require({m['stage']for m in metas.values()}=={'vs','ps'},'Combined stage requires vertex and fragment inputs')
     identity={'schema':SCHEMA,'input_receipt_sha256':input_sha,'base_chain':manifest['chain'],
               'base_manifest':manifest,'selection':sorted(keys),'sources':source_identity(),
-              'stage_contract':'exact scalar-int32 address form; original complete base/spec paired equivalence; selector tuple preserved'}
+              'stage_contract':'exact scalar-int32 address form; original base and optional-spec equivalence; original selector tuple or unpaired status preserved'}
     chain=V1.identity_chain(identity);out=parent/('vk-'+chain)
     require(not out.exists() and not out.resolve().is_relative_to(cache.resolve()),'Output must be new independent cache')
     record={'schema':SCHEMA,'identity':identity,'chain':chain,'output':str(out.resolve()),'status':'plan'if dry_run else'building',
@@ -93,7 +116,7 @@ def build(cache,receipt,input_sha,keys,parent,report,dry_run=False,expected_shad
     (out/INPUT).write_bytes(receipt.read_bytes());(out/BASE).write_bytes((cache/'_vk_manifest.json').read_bytes())
     tools=Path(identity['sources']['official_tools']['spirv-opt']['path']).parent;proofs={}
     for k in sorted(keys):
-        raw=(cache/(k+'.spv')).read_bytes();spec=(cache/(k+'.spec')).read_bytes()if metas[k]['stage']=='ps'else None
+        raw=(cache/(k+'.spv')).read_bytes();spec=(cache/(k+'.spec')).read_bytes()if(cache/(k+'.spec')).is_file()else None
         (out/(k+'.address-input-spv')).write_bytes(raw);(out/(k+'.address-input-json')).write_bytes((cache/(k+'.json')).read_bytes())
         if spec is not None:(out/(k+'.address-input-spec')).write_bytes(spec)
         code,rebuilt,proof=transform_pair(raw,spec,tools);(out/(k+'.spv')).write_bytes(code)
@@ -133,7 +156,11 @@ def verify(cache,expected_input_sha,expected_shaders=6931):
         require(meta['spirv_sha256']==sha(cache/(k+'.address-input-spv'))and meta['metadata_sha256']==sha(cache/(k+'.meta')),'Original reflection identity mismatch')
         mutable|={k+'.'+s for s in COMMON}
         if meta['stage']=='ps':
-            name=k+'.address-input-spec';require(artifact(cache/name)==original['artifacts'][k+'.spec'],'Original archived recipe identity mismatch');newnames.add(name);mutable.add(k+'.spec')
+            recipe=None
+            if k+'.spec'in original['artifacts']:
+                name=k+'.address-input-spec';require(artifact(cache/name)==original['artifacts'][k+'.spec'],'Original archived recipe identity mismatch');newnames.add(name);mutable.add(k+'.spec')
+                recipe=(cache/name).read_bytes()
+            fragment_recipe_contract(meta,(cache/(k+'.address-input-spv')).read_bytes(),recipe)
         else:require(k+'.spec'not in original['artifacts'],'Unexpected original vertex pair')
         require(not any(k+'.'+s in original['artifacts']for s in ('pred','tssbo')),'Unsupported original paired alternative')
     require({m['stage']for m in metas.values()}=={'vs','ps'},'Combined stages missing')
@@ -145,7 +172,7 @@ def verify(cache,expected_input_sha,expected_shaders=6931):
         manifest['expected']==manifest['validated']==expected_shaders and manifest['address_proofs']==record['address_proofs'],'Combined manifest mismatch')
     tools=Path(identity['sources']['official_tools']['spirv-opt']['path']).parent
     for k in keys:
-        raw=(cache/(k+'.address-input-spv')).read_bytes();spec=(cache/(k+'.address-input-spec')).read_bytes()if metas[k]['stage']=='ps'else None
+        raw=(cache/(k+'.address-input-spv')).read_bytes();spec=(cache/(k+'.address-input-spec')).read_bytes()if k+'.spec'in original['artifacts']else None
         code,rebuilt,proof=transform_pair(raw,spec,tools)
         require(code==(cache/(k+'.spv')).read_bytes()and proof==record['address_proofs'][k],'Combined exact normalization regeneration mismatch: '+k)
         if rebuilt is not None:require(rebuilt==(cache/(k+'.spec')).read_bytes(),'Original selector recipe regeneration mismatch: '+k)
