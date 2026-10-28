@@ -107,3 +107,30 @@ UUID 为 `cc4a68a21f8bf37aed5c7891d7616b7b`，与原驱动隔离。四个 pipeli
 `.local/logs/readonly-ssbo-route-native-v1/` 的原始 `compile.log`、`ir3.log`、
 `native-comparison.json`、`native-body-diff.json`、`capture-receipt.json`
 及 `cleanup.json`。
+
+## 新读取路径的实际数据验证
+
+同日，普通 UID 10343 在 Q735 上用同一 `82f29feb…` 驱动执行了原 NVN
+marker53/54。实际 shader 源哈希与原生输出桥接确认：marker53 的两种
+specialized alternative、marker54 的 base alternative 都实际使用了一条
+四分量 LDIB；不是只有编译日志中存在这条指令。
+
+两种准备路径分别验证 offset 0 和 524288，准确范围为 128/256B，实际
+robustBufferAccess=1、最小 storage offset 对齐为4。原测试覆盖格式回退、
+descriptor 重新指向、首尾/越界、transfer/compute 写后再读和普通位型独立
+期望值；8组 typed/alternative 位比较均零差异。NaN/subnormal 只按实际
+typed 原版行为对照，不据此宣布任意位型与全部资源皆等价。marker53 未观察
+到未specialize的 alternative，不能把它纳入实际执行覆盖。
+
+同一进程先复用原 producer 对两种 BC3 格式各两个小图案完成 host-copy/
+opaque payload 检查；真实 layout/device/driver UUID 与12b8相同。这一步
+不包含原生纹理的 fragment 采样，不能单独证明全部 resident/coherency
+合同。它为 compiler-only consumer-table 兼容审查提供实证，不授权改旧表
+头伪造新驱动身份或忽略原 pack/recipe 来源。
+
+独立 APK 最初两轮分别在共享库 TLS 模型、遗漏原冷启动 host-import 开关
+处停止；修复仅限测试入口，失败记录保留。最终 v5 完成测试并卸载，正式
+c09/cf83/12b8 包、资源锚点和本次用户存档保持恢复状态，游戏未启动。
+证据在 `.local/logs/readonly-ssbo-route-data-v5/` 的 `data-native-bridge.json`、
+`capture-receipt.json`、`cleanup.json` 及 `device/files/data.log/ir3.log`。
+**这里证明有限数据路径正确，尚未证明游戏性能收益。**
