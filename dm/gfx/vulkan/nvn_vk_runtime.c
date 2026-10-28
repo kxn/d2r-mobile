@@ -57,6 +57,7 @@ static int wanted(int frozen) {
   if (V.frame>pending) { effective=want;pending=0; }
   return effective;
 }
+int vk_runtime_stencil_override_active(void) { return R.override!=0; }
 int vk_runtime_preserves_ops(void) {
   // 可能过滤后续清除时，不把原命令流的覆盖证明交给通用写回规划。
   // Filtered future clears cannot prove overwrites in the generic store planner.

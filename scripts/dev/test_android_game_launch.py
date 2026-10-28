@@ -135,6 +135,24 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertEqual(caught.exception.code,2)
             adb.assert_not_called()
 
+    def test_render_prefix_cold_switches_and_check_scope(self):
+        self.assertNotIn('render_job_prefix', self.launch_command([]))
+        for option,value in [('--render-job-prefix','true'),('--no-render-job-prefix','false')]:
+            command=self.launch_command([option]);index=command.index('render_job_prefix')
+            self.assertEqual(command[index-1:index+2],['--ez','render_job_prefix',value])
+            index=command.index('check_render_job_prefix');self.assertEqual(command[index+1],'false')
+        command=self.launch_command(['--render-job-prefix','--check-render-job-prefix'])
+        self.assertEqual(command[command.index('check_render_job_prefix')+1],'true')
+
+    def test_render_prefix_refuses_live_or_unqualified_check(self):
+        for options in [ ['--check-render-job-prefix'], ['--no-render-job-prefix','--check-render-job-prefix'],
+                         ['--attach','--render-job-prefix'], ['--attach','--no-render-job-prefix'],
+                         ['--attach','--check-render-job-prefix'] ]:
+            with patch('sys.argv',[str(LAUNCHER)]+options), patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2);adb.assert_not_called()
+
     def test_store_attachment_domain_cannot_change_a_live_backend(self):
         self.assertNotIn('store_attachment_domain', self.launch_command([]))
         for option,value in [('--store-attachment-domain','true'),('--no-store-attachment-domain','false')]:

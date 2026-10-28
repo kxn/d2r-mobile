@@ -53,6 +53,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeRecordStateExtraCache(boolean enabled);
     private static native void nativeSparseSubmissionPlan(boolean enabled);
     private static native void nativeStoreAttachmentDomain(boolean enabled);
+    private static native void nativeRenderJobPrefix(boolean enabled, boolean check);
     private static native void nativeStoreChecks(boolean enabled);
     private static native void nativeDiscardCoveredClears(boolean enabled);
     private static native void nativeInlineTranslation(boolean enabled);
@@ -299,6 +300,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeRecordStateExtraCache(getIntent().getBooleanExtra("record_state_extra_cache", false));
             nativeSparseSubmissionPlan(getIntent().getBooleanExtra("sparse_submission_plan", false));
             nativeStoreAttachmentDomain(getIntent().getBooleanExtra("store_attachment_domain", true));
+            nativeRenderJobPrefix(getIntent().getBooleanExtra("render_job_prefix", false),
+                    getIntent().getBooleanExtra("check_render_job_prefix", false));
             nativeStoreChecks(getIntent().getBooleanExtra("check_attachment_stores", false));
             nativeDiscardCoveredClears(getIntent().getBooleanExtra("discard_covered_clears", true));
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
@@ -574,6 +577,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("store_attachment_domain")) {
             android.util.Log.w("D2RDriver", "store attachment domain requires a cold restart");
             intent.removeExtra("store_attachment_domain");
+        }
+        if (intent.hasExtra("render_job_prefix") || intent.hasExtra("check_render_job_prefix")) {
+            android.util.Log.w("D2RDriver", "render job prefix requires a cold restart");
+            intent.removeExtra("render_job_prefix");
+            intent.removeExtra("check_render_job_prefix");
         }
         if (intent.hasExtra("check_attachment_stores")) {
             android.util.Log.w("D2RDriver", "attachment Store checks require a cold restart");

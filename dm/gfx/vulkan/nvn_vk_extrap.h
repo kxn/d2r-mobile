@@ -26,3 +26,4 @@ typedef struct { int enabled,disabled,state; uint64_t full,extrapolated,encoded,
 void vk_runtime_snapshot(vk_runtime_stats *out);
 void vk_runtime_tick(void);
 int vk_runtime_preserves_ops(void);
+int vk_runtime_stencil_override_active(void);

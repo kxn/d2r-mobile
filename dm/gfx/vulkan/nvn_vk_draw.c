@@ -798,6 +798,48 @@ typedef struct {
 static pipeline_context prepared_context;
 static cached_pipeline *prepared_pipeline;
 static uint32_t prepared_streams;
+// One receipt for the already-owned prepared context. No resource/key table.
+static struct {
+  render_job *job;
+  cached_pipeline *pipeline;
+  uint64_t recording,pass,input_epoch;
+  unsigned need,writes;
+  int stencil_writing,include_depth,area_triangle,valid;
+  VkRect2D area;
+} render_prefix;
+static int active_render_prefix,render_prefix_check;
+static uint64_t render_prefix_hits,render_prefix_checks,render_prefix_retries;
+static void render_prefix_startup(void) {
+  static int requested=-1,check;
+  if(requested<0) {
+    const char *v=getenv("DM_VULKAN_RENDER_JOB_PREFIX");
+    const char *c=getenv("DM_VULKAN_RENDER_JOB_PREFIX_CHECK");
+    if(v&&strcmp(v,"0")&&strcmp(v,"1"))die("DM_VULKAN_RENDER_JOB_PREFIX expects 0 or 1");
+    if(c&&strcmp(c,"0")&&strcmp(c,"1"))die("DM_VULKAN_RENDER_JOB_PREFIX_CHECK expects 0 or 1");
+    requested=v&&!strcmp(v,"1");check=c&&!strcmp(c,"1");
+    LOG("[vulkan render job prefix] enabled=%d check=%d",requested,check);
+  }
+  active_render_prefix=requested;render_prefix_check=check;
+  render_prefix.valid=0;
+}
+static int render_prefix_current(void) {
+  return render_prefix.valid && render_prefix.job==active_job && active_job &&
+      !active_job->local && active_job->attachment_representation_valid &&
+      V.cmd==active_job->secondary && render_prefix.recording==vk_recording_serial() &&
+      render_prefix.pass==V.passes && render_prefix.input_epoch==vk_render_input_epoch() &&
+      render_prefix.pipeline==prepared_pipeline && prepared_pipeline &&
+      prepared_context.epoch==vk_pipeline_state_epoch();
+}
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+void vk_test_render_prefix_force_stale_input(void) {
+  if(!render_prefix.valid)die("Render prefix negative control did not reach a warm receipt");
+  render_prefix.input_epoch=vk_render_input_epoch();
+}
+void vk_test_render_prefix_stats(uint64_t out[3]) {
+  out[0]=render_prefix_hits;out[1]=render_prefix_checks;out[2]=render_prefix_retries;
+}
+#endif
+
 static _Atomic int pipeline_prepare_mode;
 static int active_pipeline_prepare_mode;
 static _Atomic uint64_t prepare_reuses,prepare_lookups,prepare_checks;
@@ -835,6 +877,7 @@ vk_graphics_submission *vk_graphics_begin(vk_graphics_submission *state) {
   }
   if (state->jobs) die("Vulkan graphics resources reused before recycling");
   graphics_state = state;
+  render_prefix_startup();
   (void)vk_discard_covered_clears_enabled();
   mip_clear_begin();
   // 按提交锁定模式；命令更新和绘制必须使用同一套失效规则。
@@ -1460,6 +1503,29 @@ static void draw_vertex_binding_require(const vk_binding *binding,int *writable_
     if(buffer && buffer->addr && buffer->size)
       vk_buffer_vertex_require(buffer->addr,buffer->size);
 }
+static VkPipelineDepthStencilStateCreateInfo draw_final_ds(int shared_first_depth) {
+  VkPipelineDepthStencilStateCreateInfo ds = {
+      .sType=VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+      .depthTestEnable=S.ds.dt,.depthWriteEnable=S.ds.dw,
+      .depthCompareOp=S.ds.df?compare(S.ds.df):VK_COMPARE_OP_ALWAYS,
+      .stencilTestEnable=S.ds.st};
+  if(S.ds.st) {
+    ds.front=(VkStencilOpState){stencil(S.ds.fail_f),stencil(S.ds.zpass_f),
+        stencil(S.ds.zfail_f),compare(S.ds.sf_f),S.stencil_value[0],S.stencil_mask[0],S.stencil_ref[0]};
+    ds.back=(VkStencilOpState){stencil(S.ds.fail_b),stencil(S.ds.zpass_b),
+        stencil(S.ds.zfail_b),compare(S.ds.sf_b),S.stencil_value[1],S.stencil_mask[1],S.stencil_ref[1]};
+  }
+  if(S.targets.depth) vk_runtime_apply_stencil(&ds);
+  if(shared_first_depth) {
+    // Logical no-DS ignores all leftover tests/writes. A physical DS reference
+    // must not turn those stale NVN flags into observable comparisons/writes.
+    ds=(VkPipelineDepthStencilStateCreateInfo){
+      .sType=VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+      .depthCompareOp=VK_COMPARE_OP_ALWAYS,
+      .front={.compareOp=VK_COMPARE_OP_ALWAYS},.back={.compareOp=VK_COMPARE_OP_ALWAYS}};
+  }
+  return ds;
+}
 static void vk_draw_record_impl(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan);
 static void vk_draw_record(const p_draw *draw,const p_draw_idx *idx,int disable_local_plan) {
   vk_texture_raster_draw_enter();
@@ -1707,38 +1773,53 @@ uniform_vertex_remaining:
   // Upstream ds_scan's whole-pass proof. Extra policies are consumed only as
   // final pipeline state. Clear passes conservatively retain attachments.
   unsigned need_depth = vk_pass_depth_need();
+  uint64_t prefix_input_epoch=active_render_prefix?vk_render_input_epoch():0;
   // Use the final pipeline state for attachment access decisions as well as
   // pipeline creation. A read-only stencil test must not become a GPU writer;
   // optional upstream overrides still take effect before this classification.
-  VkPipelineDepthStencilStateCreateInfo ds = {
-      .sType=VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-      .depthTestEnable=S.ds.dt,.depthWriteEnable=S.ds.dw,
-      .depthCompareOp=S.ds.df?compare(S.ds.df):VK_COMPARE_OP_ALWAYS,
-      .stencilTestEnable=S.ds.st};
-  if(S.ds.st) {
-    ds.front=(VkStencilOpState){stencil(S.ds.fail_f),stencil(S.ds.zpass_f),
-        stencil(S.ds.zfail_f),compare(S.ds.sf_f),S.stencil_value[0],S.stencil_mask[0],S.stencil_ref[0]};
-    ds.back=(VkStencilOpState){stencil(S.ds.fail_b),stencil(S.ds.zpass_b),
-        stencil(S.ds.zfail_b),compare(S.ds.sf_b),S.stencil_value[1],S.stencil_mask[1],S.stencil_ref[1]};
-  }
-  if(S.targets.depth) vk_runtime_apply_stencil(&ds);
   int shared_first_depth=(local_ready && local_ready->shared_first_depth) ||
       (!local_consumer && active_job && active_job->local && !active_job->local->subpass && active_job->local->shared_first_depth);
-  if(shared_first_depth) {
-    // Logical no-DS ignores all leftover tests/writes. A physical DS reference
-    // must not turn those stale NVN flags into observable comparisons/writes.
-    ds=(VkPipelineDepthStencilStateCreateInfo){
-      .sType=VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-      .depthCompareOp=VK_COMPARE_OP_ALWAYS,
-      .front={.compareOp=VK_COMPARE_OP_ALWAYS},.back={.compareOp=VK_COMPARE_OP_ALWAYS}};
+  unsigned prefix_writes=0;
+  int prefix_hit=0;
+  if(active_render_prefix && !attachment_retry && !expansion && !local_ready && !local_consumer &&
+      split_ok && attachment_reuse_mode() && active_pipeline_prepare_mode==0 &&
+      !vk_ghost_replaying() && !vk_mip_clear_pending() && vk_runtime_preserves_ops() &&
+      !vk_runtime_stencil_override_active() && render_prefix_current()) {
+    prefix_writes=vk_pass_depth_writes();
+    prefix_hit=render_prefix.need==need_depth && render_prefix.writes==prefix_writes &&
+        render_prefix.area_triangle==((idx?idx->prim:draw->prim)>=4 && (idx?idx->prim:draw->prim)<=6) &&
+        prepared_context.program_serial==S.program->serial &&
+        prepared_context.fragment_module==fragment_module &&
+        prepared_context.specialization_word==specialization_words[0] &&
+        prepared_context.specialization_mask==specialization_words[1] &&
+        prepared_context.dynamic_uniforms==(unsigned)dynamic_uniforms &&
+        prepared_context.topology==(unsigned)topology(idx?idx->prim:draw->prim);
+    // Final selected modules, not just a mutable program object's address.
+    for(unsigned st=0;prefix_hit && st<5;st++)
+      if(prepared_pipeline->key.modules[st]!=(st==1?fragment_module:list[st]?list[st]->module:VK_NULL_HANDLE))prefix_hit=0;
   }
-  int stencil_writing=pipeline_stencil_writes(&ds);
+  VkPipelineDepthStencilStateCreateInfo ds;
+  if(prefix_hit) {ds=prepared_context.ds;ds.sType=VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;}
+  else ds=draw_final_ds(shared_first_depth);
+  if(prefix_hit && render_prefix_check) {
+    VkPipelineDepthStencilStateCreateInfo reference=draw_final_ds(shared_first_depth);
+    // Compare the same identity projection as the existing context.
+    VkPipelineDepthStencilStateCreateInfo normalized={0},actual={0};
+    pipeline_depth_key(&normalized,&reference);pipeline_depth_key(&actual,&ds);
+    if(memcmp(&normalized,&actual,sizeof actual) || !target_fields_equal(&active_targets,&S.targets))
+      die("Vulkan render prefix DS/target oracle mismatch");
+    render_prefix_checks++;
+  }
+  int stencil_writing=prefix_hit?render_prefix.stencil_writing:pipeline_stencil_writes(&ds);
   need_depth |= ds.depthTestEnable || ds.depthWriteEnable || ds.stencilTestEnable;
   int has_color = 0;
-  for (int k=0;k<S.targets.n;k++) has_color |= S.targets.color[k]!=NULL;
-  int include_depth = S.targets.depth && (need_depth || !has_color);
+  if(!prefix_hit)for(int k=0;k<S.targets.n;k++)has_color|=S.targets.color[k]!=NULL;
+  int include_depth=prefix_hit?render_prefix.include_depth:S.targets.depth&&(need_depth||!has_color);
   draw_target_match target_match={.enabled=!draw_state_reference()};
-  if (render_targets_equal(&S.targets,&target_match)) {
+  if(prefix_hit) {
+    target_match=(draw_target_match){active_job,V.passes,vk_pipeline_state_epoch(),1,1,1};
+    include_depth=render_prefix.include_depth;
+  } else if (render_targets_equal(&S.targets,&target_match)) {
     if (include_depth && !active_job->has_depth) vk_render_end();
     else include_depth = active_job->has_depth;
   }
@@ -1851,7 +1932,11 @@ uniform_vertex_remaining:
   // 查询池重置可结束通道；必须在选择通道之前，避免重新开始带一次性清除的通道。
   // Query resets can end a pass. Do them before selecting it, so a pass with
   // one-time attachment clears is never accidentally begun again.
-  VkRect2D area = draw_area(width, height, idx ? idx->prim : draw->prim);
+  VkRect2D area=prefix_hit?render_prefix.area:draw_area(width,height,idx?idx->prim:draw->prim);
+  if(prefix_hit && render_prefix_check) {
+    VkRect2D reference=draw_area(width,height,idx?idx->prim:draw->prim);
+    if(memcmp(&area,&reference,sizeof area))die("Vulkan render prefix area oracle mismatch");
+  }
   if (active_job && (!render_targets_equal(&S.targets,&target_match) ||
       !contains(active_job->area,area))) vk_render_end();
   if(list[1] && list[1]->quad_readonly_sources) {
@@ -1863,6 +1948,9 @@ uniform_vertex_remaining:
   if(attachment_job && (active_job!=attachment_job ||
       !attachment_job->attachment_representation_valid || V.cmd!=attachment_job->secondary))
     goto attachment_cold_retry;
+  if(prefix_hit && !render_prefix_current()) {
+    goto attachment_cold_retry;
+  }
   int pass_before_query=vk_render_active();
   vk_sample_query occlusion = {0};
   int sample_live=vk_pass_samples_live(draw?(const void *)draw:(const void *)idx);
@@ -1929,7 +2017,14 @@ uniform_vertex_remaining:
   }
   uint32_t effective_expansion=0;
   for(unsigned i=0;i<16;i++) if(expanded[i]) effective_expansion|=1u<<i;
-  pipeline_context context={.epoch=vk_pipeline_state_epoch(),.program_serial=S.program->serial,
+  pipeline_context context;
+  int prepare_mode=active_pipeline_prepare_mode;
+  VkRenderPass local_pass=j->local?j->pass:VK_NULL_HANDLE;
+  unsigned local_subpass=j->local?j->local->subpass:0;
+  int prefix_context=prefix_hit && j==render_prefix.job && render_prefix_current();
+  int reuse=prefix_context;
+  if(!prefix_context || render_prefix_check) {
+    context=(pipeline_context){.epoch=vk_pipeline_state_epoch(),.program_serial=S.program->serial,
     .fragment_module=fragment_module,.specialization_word=specialization_words[0],
     .specialization_mask=specialization_words[1],.dynamic_uniforms=dynamic_uniforms,
     .targets=S.targets.n,.attachments=na,.has_depth=physical_depth,.samples=samples,
@@ -1937,11 +2032,10 @@ uniform_vertex_remaining:
   pipeline_depth_key(&context.ds,&ds);
   for(unsigned i=0;i<na;i++) context.formats[i]=descriptions[i].format;
   memcpy(context.colors,color,S.targets.n*sizeof *color);
-  int prepare_mode=active_pipeline_prepare_mode;
-  VkRenderPass local_pass=j->local?j->pass:VK_NULL_HANDLE;
-  unsigned local_subpass=j->local?j->local->subpass:0;
-  int reuse=prepared_pipeline && prepared_pipeline->local_pass==local_pass &&
+    reuse=prepared_pipeline && prepared_pipeline->local_pass==local_pass &&
       prepared_pipeline->subpass==local_subpass && !memcmp(&prepared_context,&context,sizeof context);
+    if(prefix_context && !reuse)die("Vulkan render prefix context oracle mismatch");
+  }
   cached_pipeline *cached=prepared_pipeline;
   uint32_t streams=prepared_streams;
   // 状态代号与实际附件/模板角色未变时，直接复用已解析管线，不再组键或哈希。
@@ -2148,6 +2242,32 @@ uniform_vertex_remaining:
       LOG("[vulkan attachment reuse] first actual recorded draw attachments=%u",na);
     }
   }
+  if(active_render_prefix) {
+    if(prefix_context) {
+      render_prefix_hits++;
+      static int first_hit;
+      if(!first_hit) {first_hit=1;LOG("[vulkan render job prefix] first actual reused draw");}
+    }
+    // A hit did not change the receipt. Retain it after the final callback
+    // identity check instead of rewriting the same fields on every draw.
+    if(!(prefix_context && render_prefix_current())) {
+    render_prefix.valid=0;
+    if(!expansion && !local_ready && !local_consumer && split_ok &&
+        !vk_ghost_replaying() && !vk_mip_clear_pending() && vk_runtime_preserves_ops() &&
+        !vk_runtime_stencil_override_active() && j==active_job && !j->local &&
+        j->attachment_representation_valid && V.cmd==j->secondary && cached==prepared_pipeline &&
+        prepared_context.epoch==vk_pipeline_state_epoch() && prefix_input_epoch==vk_render_input_epoch()) {
+      render_prefix.job=j;render_prefix.pipeline=cached;
+      render_prefix.recording=vk_recording_serial();render_prefix.pass=V.passes;
+      render_prefix.input_epoch=prefix_input_epoch;
+      // Store raw lookahead role, before it was widened by current DS flags.
+      render_prefix.need=vk_pass_depth_need();render_prefix.writes=vk_pass_depth_writes();
+      render_prefix.stencil_writing=stencil_writing;render_prefix.include_depth=include_depth;
+      render_prefix.area_triangle=(idx?idx->prim:draw->prim)>=4 && (idx?idx->prim:draw->prim)<=6;
+      render_prefix.area=area;render_prefix.valid=1;
+    }
+    }
+  }
   V.draws++;
   if (draw) vk_ghost_note(draw, local_consumer?local_consumer->source_shader:list[1]);
   bq_after_draw();
@@ -2155,6 +2275,7 @@ uniform_vertex_remaining:
   vk_profile_end(VK_TIME_DRAW, started);
   return;
 attachment_cold_retry:
+  if(prefix_hit)render_prefix_retries++;
   // No query slot or draw has been emitted. Keep one-time no-FXAA/bloom
   // selection and the operation's owned Pool lifetime; only rebuild consumers.
   // The borrowed-job path excludes instance expansion, so no old-recording

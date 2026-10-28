@@ -471,6 +471,29 @@ static void attachment_fixture_mutate(void *opaque) {
   }
 }
 #endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+#include "../../../gfx/vulkan/nvn_vk_state.h"
+typedef struct {unsigned kind,calls;int corrupt;attachment_fixture_context attachment;} render_prefix_fixture_context;
+static void render_prefix_fixture_restore(void *opaque) {
+  render_prefix_fixture_context *c=opaque;c->calls++;
+  if(c->kind==9) {
+    c->attachment.kind=1;
+    vk_test_attachment_reuse_callback(attachment_fixture_mutate,&c->attachment);
+    return;
+  }
+  vk_state state=S;
+  if(c->kind==1)state.viewport[0][2]=8;
+  else if(c->kind==2)state.ds.df=state.ds.df==NVN_DEPTH_FUNC_LESS?NVN_DEPTH_FUNC_ALWAYS:NVN_DEPTH_FUNC_LESS;
+  else if(c->kind==3) {
+    state.targets.n=2;state.targets.color[1]=NULL;state.targets.has_cview[1]=0;
+  }
+  vk_state_restore(&state);
+  if(c->corrupt) {
+    extern void vk_test_render_prefix_force_stale_input(void);
+    vk_test_render_prefix_force_stale_input();
+  }
+}
+#endif
 #include "native_vulkan_texel_storage.inc"
 #include "native_vulkan_texel_bits.inc"
 #include "native_vulkan_target_match.inc"
@@ -1814,6 +1837,67 @@ int dm_vulkan_test_main(void) {
         mutation,reuse_enabled,context.calls,(unsigned long long)(retries1-retries0));
   }
 #endif
+#if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
+  if(getenv("DM_RENDER_JOB_PREFIX_FIXTURE")) {
+    vk_graphics_prepare_mode(0);
+    extern void vk_test_render_prefix_stats(uint64_t out[3]);
+    extern void vk_test_raster_after_draws(unsigned,void (*)(void *),void *);
+    // Earlier alias/promotion cases marked the previous output external.
+    // Establish a fresh ordinary target, as the existing mixed-DS fixture does.
+    NVNtextureBuilder prefix_builder;CALL(nvnTextureBuilderSetDefaults,&prefix_builder);
+    CALL(nvnTextureBuilderSetDevice,&prefix_builder,&device);
+    CALL(nvnTextureBuilderSetTarget,&prefix_builder,NVN_TEXTURE_TARGET_2D);
+    CALL(nvnTextureBuilderSetWidth,&prefix_builder,16);CALL(nvnTextureBuilderSetHeight,&prefix_builder,16);
+    CALL(nvnTextureBuilderSetFormat,&prefix_builder,NVN_FORMAT_RGBA8);
+    CALL(nvnTextureBuilderSetStorage,&prefix_builder,&memory,(3<<20)+1015808);
+    CHECK(CALL(nvnTextureInitialize,&output,&prefix_builder));
+    vk_state original=S;uint64_t prefix_before[3],prefix_after[3];
+    vk_test_render_prefix_stats(prefix_before);
+    unsigned fault=getenv("DM_RENDER_JOB_PREFIX_FAULT")?(unsigned)atoi(getenv("DM_RENDER_JOB_PREFIX_FAULT")):0;
+    float *prefix_vertices=(float *)(bytes+(1<<20)+32768);
+    memcpy(prefix_vertices,(float[]){-1,1,0,0, 1,1,1,0, 1,-1,1,1, -1,-1,0,1},64);
+    for(unsigned kind=0;kind<10;kind++) {
+      vk_state_restore(&original);
+      render_prefix_fixture_context context={.kind=kind,.corrupt=fault==kind && kind>0};
+      if((kind>=1 && kind<=3)||kind==9)vk_test_raster_after_draws(3,render_prefix_fixture_restore,&context);
+      CALL(nvnCommandBufferBeginRecording,&cmd);
+      CALL(nvnCommandBufferSetRenderTargets,&cmd,1,colors,NULL,NULL,NULL);
+      CALL(nvnCommandBufferBindProgram,&cmd,&graphics,NVN_SHADER_STAGE_ALL_GRAPHICS_BITS);
+      CALL(nvnCommandBufferBindSeparateTextures,&cmd,NVN_SHADER_STAGE_FRAGMENT,0,1,&th);
+      if(kind==8) {
+        NVNbufferRange qr={(uintptr_t)prefix_vertices,64};
+        CALL(nvnCommandBufferBindVertexBuffers,&cmd,0,1,&qr);
+      }
+      CALL(nvnCommandBufferSetViewports,&cmd,0,1,(float[]){0,0,kind==8?8:16,16});
+      CALL(nvnCommandBufferSetScissor,&cmd,0,0,16,16);
+      CALL(nvnCommandBufferClearColor,&cmd,0,(float[]){1,0,1,1},15);
+      for(unsigned k=0;k<12;k++) {
+        if(k==4 && kind==4)CALL(nvnCommandBufferSetViewports,&cmd,0,1,(float[]){0,0,8,16});
+        if(k==4 && kind==5)CALL(nvnCommandBufferSetRenderTargets,&cmd,1,colors,NULL,NULL,NULL);
+        if(k==4 && kind==6)CALL(nvnCommandBufferSetPolygonOffsetClamp,&cmd,2,3,0);
+        if(k==4 && kind==7)CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+        CALL(nvnCommandBufferDrawArrays,&cmd,kind==8&&k>=4?NVN_DRAW_PRIMITIVE_QUADS:NVN_DRAW_PRIMITIVE_TRIANGLES,0,kind==8&&k>=4?4:3);
+      }
+      if(kind==7)CALL(nvnCommandBufferReportCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED,(uintptr_t)(boundaries+10));
+      CALL(nvnCommandBufferResetCounter,&cmd,NVN_COUNTER_TYPE_SAMPLES_PASSED);
+      submit(end());vk_test_raster_after_draws(0,NULL,NULL);
+      if(kind==7)CHECK(boundaries[10]==8*16*16);
+      if(kind==9)CHECK(context.attachment.calls==1);
+      CHECK(context.calls==(unsigned)((kind>=1 && kind<=3)||kind==9));
+      CALL(nvnTextureReadTexels,&output,NULL,&region,pixels);
+      const char *dir=getenv("DM_CAPTURE_TEST_DIR");CHECK(dir!=NULL);
+      char path[4096];CHECK(snprintf(path,sizeof path,"%s/prefix-%u.rgba",dir,kind)>0);
+      FILE *f=fopen(path,"wb");CHECK(f!=NULL);CHECK(fwrite(pixels,1,sizeof pixels,f)==sizeof pixels);CHECK(!fclose(f));
+    }
+    vk_state_restore(&original);vk_test_render_prefix_stats(prefix_after);
+    const char *mode=getenv("DM_VULKAN_RENDER_JOB_PREFIX");int enabled=mode&&!strcmp(mode,"1");
+    CHECK(enabled?prefix_after[0]>prefix_before[0]:prefix_after[0]==prefix_before[0]);
+    CHECK(!vk_validation_error_count());
+    printf("{\"test\":\"render-job-prefix\",\"result\":\"passed\",\"checks\":%u,\"cases\":10,\"enabled\":%d,\"hits\":%llu,\"oracle\":%llu,\"retries\":%llu,\"game_modules_executed\":false}\n",checks,enabled,
+      (unsigned long long)(prefix_after[0]-prefix_before[0]),(unsigned long long)(prefix_after[1]-prefix_before[1]),(unsigned long long)(prefix_after[2]-prefix_before[2]));
+    return 0;
+  }
+#endif
   vk_sample_liveness_reference(liveness_original_reference);
   LOG("[vulkan counter replay boundary fixture] live=%llu reset_before_report=%llu; single/multiple handles, nested/repeated calls, samples=128 and both shaded halves passed",
       (unsigned long long)liveness_live,(unsigned long long)liveness_dead);
@@ -2196,6 +2280,7 @@ int dm_vulkan_test_main(void) {
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP)
   extern void vk_test_raster_stats(uint64_t out[5]);
   if(getenv("DM_ATTACHMENT_RASTER_DEPTH_FIXTURE")) {
+    if(getenv("DM_RENDER_JOB_PREFIX_DEPTH"))vk_graphics_prepare_mode(0);
     // Earlier raw-view promotion tests deliberately mark their output external.
     // Use a new ordinary target; do not weaken the production exclusion.
     NVNtextureBuilder rb;CALL(nvnTextureBuilderSetDefaults,&rb);
@@ -2269,6 +2354,12 @@ int dm_vulkan_test_main(void) {
     LOG("[raster mixed depth oracle] enabled=%d late_read=%d hot=%llu checked_members=%llu later_writer_and_sample_pixels=passed",
         enabled,late,(unsigned long long)(after[1]-raster_ds_before[1]),(unsigned long long)(after[4]-raster_ds_before[4]));
     CHECK(vk_validation_error_count()==0);
+    if(getenv("DM_RENDER_JOB_PREFIX_DEPTH")) {
+      extern void vk_test_render_prefix_stats(uint64_t out[3]);uint64_t ps[3];vk_test_render_prefix_stats(ps);
+      const char *pm=getenv("DM_VULKAN_RENDER_JOB_PREFIX");int on=pm&&!strcmp(pm,"1");
+      CHECK(on?ps[0]>0:ps[0]==0);
+      LOG("[render prefix DS fixture] enabled=%d hits=%llu oracle=%llu",on,(unsigned long long)ps[0],(unsigned long long)ps[1]);
+    }
     printf("{\"test\":\"attachment-raster-mixed-depth\",\"result\":\"passed\",\"game_modules_executed\":false}\n");return 0;
   }
 #endif

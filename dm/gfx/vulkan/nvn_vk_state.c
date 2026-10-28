@@ -9,7 +9,13 @@ void vk_driver_state_invalidate(unsigned stage,unsigned slot) {
   if(stage>=6 || (slot!=0 && slot!=2))die("Vulkan driver state identity");
   if(!++vk_driver_state_versions[stage][slot/2])die("Vulkan driver state version overflow");
 }
+static uint64_t render_input_epoch=1;
+uint64_t vk_render_input_epoch(void) { return render_input_epoch; }
+void vk_render_input_changed(void) {
+  if(!++render_input_epoch)die("Vulkan render input epoch overflow");
+}
 void vk_state_restore(const vk_state *state) {
+  vk_render_input_changed();
   vk_image_split_break();
   vk_ubo_plan_break();
   vk_shader_image_sources_invalidate();
@@ -140,6 +146,7 @@ void vk_state_op(uint32_t op, const void *data) {
     S.offset = *(const p_poly_offset *)data;
     break;
   case OP_VIEWPORTS: {
+    vk_render_input_changed();
     const p_viewports *p = data;
     bounds(p->first, p->n, 16);
     memcpy(S.viewport + p->first, p->v, p->n * sizeof *p->v);

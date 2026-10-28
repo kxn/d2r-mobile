@@ -595,6 +595,19 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStoreAtt
   store_attachment_domain_startup=enabled!=0;
   pthread_mutex_unlock(&operation_mode_mutex);
 }
+static int render_job_prefix_startup,render_job_prefix_check_startup;
+JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeRenderJobPrefix(
+    JNIEnv *env,jclass klass,jboolean enabled,jboolean check) {
+  (void)klass;pthread_mutex_lock(&operation_mode_mutex);
+  if(operation_mode_fixed || (check && !enabled)) {
+    pthread_mutex_unlock(&operation_mode_mutex);
+    jclass error=(*env)->FindClass(env,operation_mode_fixed?"java/lang/IllegalStateException":"java/lang/IllegalArgumentException");
+    if(error)(*env)->ThrowNew(env,error,operation_mode_fixed?"render_job_prefix is fixed before native startup":"render prefix check requires enabled mode");
+    return;
+  }
+  render_job_prefix_startup=enabled!=0;render_job_prefix_check_startup=check!=0;
+  pthread_mutex_unlock(&operation_mode_mutex);
+}
 static int store_checks_startup;
 JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStoreChecks(
     JNIEnv *env,jclass klass,jboolean enabled) {
@@ -1037,6 +1050,8 @@ JNIEXPORT void JNICALL Java_com_d2rmobile_nativeport_MainActivity_nativeStart(
       setenv("DM_VULKAN_SUBMISSION_PLAN_REFERENCE",submission_plan_reference_startup?"1":"0",1) ||
       setenv("DM_VULKAN_SPARSE_PLAN",sparse_submission_plan_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_ATTACHMENT_DOMAIN",store_attachment_domain_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_RENDER_JOB_PREFIX",render_job_prefix_startup?"1":"0",1) ||
+      setenv("DM_VULKAN_RENDER_JOB_PREFIX_CHECK",render_job_prefix_check_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_CHECK",store_checks_startup?"1":"0",1) ||
       setenv("DM_VULKAN_DISCARD_COVERED_CLEARS",discard_covered_clears_startup?"1":"0",1) ||
       setenv("DM_VULKAN_STORE_KEEP_ALL",keep_attachment_stores_startup?"1":"0",1) ||

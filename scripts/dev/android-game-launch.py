@@ -105,6 +105,8 @@ parser.add_argument('--record-state-extra-cache',action=argparse.BooleanOptional
 parser.add_argument('--discard-covered-clears',action=argparse.BooleanOptionalAction,default=None,help='startup-only reference switch: discard an initial color clear proven fully overwritten by the first draw (default on)')
 parser.add_argument('--sparse-submission-plan',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental compact planning spans (default off); preserves resource/query/store semantics')
 parser.add_argument('--store-attachment-domain',action=argparse.BooleanOptionalAction,default=None,help='startup-only Store read filtering by previously selected attachments (backend default on; omit to keep APK default)')
+parser.add_argument('--render-job-prefix',action=argparse.BooleanOptionalAction,default=None,help='startup-only experimental live-job RT/DS/context early reuse (default off)')
+parser.add_argument('--check-render-job-prefix',action='store_true',help='functional-only original RT/DS/area/context oracle, requires --render-job-prefix; never use for performance')
 parser.add_argument('--check-attachment-stores',action='store_true',help='functional-only cold run of the existing Store reference oracle; no Vulkan validation/timing required, never a performance window')
 parser.add_argument('--driver-span-reference',action='store_true',help='startup-only comparison: retain 64KiB driver slots without changing constant caches or shader assets')
 parser.add_argument('--descriptor-template-reference',action='store_true',help='comparison: use individual descriptor write descriptions instead of the compiled update template')
@@ -221,6 +223,10 @@ if args.attach and args.sparse_submission_plan is not None:
     parser.error('--sparse-submission-plan is startup-only')
 if args.attach and args.store_attachment_domain is not None:
     parser.error('--store-attachment-domain is startup-only')
+if args.attach and (args.render_job_prefix is not None or args.check_render_job_prefix):
+    parser.error('--render-job-prefix/--check-render-job-prefix require cold startup')
+if args.check_render_job_prefix and args.render_job_prefix is not True:
+    parser.error('--check-render-job-prefix requires explicit --render-job-prefix')
 if args.attach and args.check_attachment_stores:
     parser.error('--check-attachment-stores requires a cold functional run')
 if args.record_state_extra_cache and args.record_state_cache is not True:
@@ -343,6 +349,9 @@ if not args.attach:
         launch += ['--ez','sparse_submission_plan',str(args.sparse_submission_plan).lower()]
     if args.store_attachment_domain is not None:
         launch += ['--ez','store_attachment_domain',str(args.store_attachment_domain).lower()]
+    if args.render_job_prefix is not None:
+        launch += ['--ez','render_job_prefix',str(args.render_job_prefix).lower(),
+                   '--ez','check_render_job_prefix',str(args.check_render_job_prefix).lower()]
     if args.check_attachment_stores:
         launch += ['--ez','check_attachment_stores','true']
     if args.state_segments is not None:
@@ -575,6 +584,12 @@ while time.monotonic() < deadline:
                     store_domain_hit='[vulkan store attachment domain] first actual skipped read' in log
                     if args.store_attachment_domain is not None and actual_store_attachment_domain != args.store_attachment_domain:
                         raise RuntimeError('store_attachment_domain actual backend policy mismatch')
+                    prefix_modes=re.findall(r'\[vulkan render job prefix\] enabled=([01]) check=([01])\b',log)
+                    actual_render_job_prefix=bool(int(prefix_modes[-1][0])) if prefix_modes else None
+                    actual_render_job_prefix_check=bool(int(prefix_modes[-1][1])) if prefix_modes else None
+                    if args.render_job_prefix is not None and (actual_render_job_prefix!=args.render_job_prefix or actual_render_job_prefix_check!=args.check_render_job_prefix):
+                        raise RuntimeError('render_job_prefix actual backend policy/check mismatch')
+                    prefix_hit='[vulkan render job prefix] first actual reused draw' in log
                     store_check_modes=re.findall(r'\[vulkan Store cross-check\] enabled=([01])\b',log)
                     actual_store_checks=bool(int(store_check_modes[-1])) if store_check_modes else None
                     if args.check_attachment_stores and actual_store_checks is not True:
@@ -677,6 +692,11 @@ while time.monotonic() < deadline:
                               'requested_store_attachment_domain':args.store_attachment_domain,
                               'actual_store_attachment_domain':actual_store_attachment_domain,
                               'store_attachment_domain_actual_skip':store_domain_hit,
+                              'requested_render_job_prefix':args.render_job_prefix,
+                              'actual_render_job_prefix':actual_render_job_prefix,
+                              'requested_render_job_prefix_check':args.check_render_job_prefix,
+                              'actual_render_job_prefix_check':actual_render_job_prefix_check,
+                              'render_job_prefix_actual_hit':prefix_hit,
                               'requested_check_attachment_stores':args.check_attachment_stores,
                               'actual_check_attachment_stores':actual_store_checks,
                               'actual_source_partition':actual_source_partition,

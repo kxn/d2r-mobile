@@ -118,6 +118,7 @@ void mtl_exec(const uint8_t *p) {
       break;
     }
     case OP_SET_RT:
+      vk_render_input_changed();
       if(memcmp(&S.targets,a,sizeof S.targets))vk_image_split_break();
       if(memcmp(&S.targets,a,sizeof S.targets) && !vk_pixel_local_target_boundary(p)) vk_stream_target_boundary();
       S.targets = *(const p_set_rt *)a;
