@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 REGISTRY={
+    'dmsh-verified-cache-texel-representation-v1':'dmsh_derived_texel_storage',
     'dmsh-verified-cache-predicates-v1':'dmsh_derived_predicates',
     'dmsh-verified-cache-ubo-address-v1':'dmsh_derived_ubo_address',
     'dmsh-verified-cache-address-combined-v2':'dmsh_derived_address_combined',

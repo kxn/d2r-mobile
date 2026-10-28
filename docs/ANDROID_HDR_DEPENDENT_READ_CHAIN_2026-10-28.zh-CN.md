@@ -134,3 +134,17 @@ c09/cf83/12b8 包、资源锚点和本次用户存档保持恢复状态，游戏
 证据在 `.local/logs/readonly-ssbo-route-data-v5/` 的 `data-native-bridge.json`、
 `capture-receipt.json`、`cleanup.json` 及 `device/files/data.log/ir3.log`。
 **这里证明有限数据路径正确，尚未证明游戏性能收益。**
+
+游戏对照产物现已从原入口构建：普通 APK `19d98360…` 仅补该精确驱动的
+冷启动资格，GPU 对照始终关闭 render-job-prefix。当前 cf83 的两个 FS
+通过新增声明 stage 派生为 `0fdd43ec7662`，原 base/spec/meta 完全不变；
+此前旧29e5输入的四PSO编译不能代替新链的实际运行资格。新 consumer table
+为 `393395b4…`，复用原 pack 和全部 recipe/family，经精确 compiler-only
+源码差异、真机 UUID/数据证据及原 parser 的接受/拒绝检查生成；不是手改
+旧表头，也没有重加工全部纹理。
+
+两个配对 shader 的合法 stage、兼容转换和原驱动源码补丁已纳入仓库。
+尚未部署上述游戏候选；下一对照应区分 typed 原参考、12b8 下 raw 表示和
+82f 下 raw 读取路径，避免把表示转换与驱动切换的成本混为一项。原厂
+同 provider 可增加 `GPU Average Frequency`（MHz）与原13项同窗采集；
+它是频率 gauge，不得沿 rate 指标按帧积分，`Clocks / Second` 也不能替代它。

@@ -1,0 +1,31 @@
+--- a/src/freedreno/ir3/ir3_compiler_nir.c
++++ b/src/freedreno/ir3/ir3_compiler_nir.c
+@@ -2039,7 +2039,27 @@
+     * available.
+     * Note: isam also can't handle 8-bit loads.
+     */
+-   if (!(nir_intrinsic_access(intr) & ACCESS_CAN_REORDER) ||
++#ifndef DM_IR3_READONLY_VEC4_UAV
++#define DM_IR3_READONLY_VEC4_UAV 0
++#endif
++#if DM_IR3_READONLY_VEC4_UAV != 0 && DM_IR3_READONLY_VEC4_UAV != 1
++#error "DM_IR3_READONLY_VEC4_UAV must be 0 or 1"
++#endif
++   /* Isolated compile-policy experiment: preserve the existing frontend,
++    * descriptor, robust offset, bindless/nonuniform and barrier contracts.
++    * Do not force this path with volatile/coherent or by weakening access.
++    * The reproducible builder salts Vulkan's official tu-build-id cache key.
++    */
++   const enum gl_access_qualifier access = nir_intrinsic_access(intr);
++   const bool readonly_vec4_uav = DM_IR3_READONLY_VEC4_UAV &&
++      intr->def.bit_size == 32 && intr->def.num_components == 4 &&
++      ctx->compiler->info->props.has_isam_v &&
++      (access & (ACCESS_NON_WRITEABLE | ACCESS_CAN_REORDER)) ==
++         (ACCESS_NON_WRITEABLE | ACCESS_CAN_REORDER) &&
++      !(access & (ACCESS_COHERENT | ACCESS_VOLATILE));
++
++   if (readonly_vec4_uav ||
++       !(nir_intrinsic_access(intr) & ACCESS_CAN_REORDER) ||
+        (intr->def.num_components > 1 && !ctx->compiler->info->props.has_isam_v) ||
+        (ctx->compiler->options.storage_8bit && intr->def.bit_size == 8) ||
+        !ctx->compiler->has_isam_ssbo) {
