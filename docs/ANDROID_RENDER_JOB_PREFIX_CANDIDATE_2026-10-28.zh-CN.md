@@ -96,4 +96,11 @@ python3 scripts/dev/android-game-launch.py [原共同参数] --render-job-prefix
 JNI/Java在native启动前冻结两个bool，默认OFF，热Intent移除且日志提示。
 launcher核实实际`[vulkan render job prefix] enabled=N check=N`，不以Intent
 传参代替后端生效；另记录首次实际复用marker。没有新增UI、改profile schema、
-游戏binary或Shader。后续Root统一构建一次，再用现成官方计数/轨迹做净量对照。
+游戏binary或Shader。
+
+主线`5444d97c`已由原Android入口完成一次构建，37项launcher检查通过；
+候选归档`.local/build/render-job-prefix-candidate-v1/ready.json`绑定APK
+`9ff6c2a7…`、host`a06a8f1b…`，1056个源码输入和六个native库均逐SHA
+核准并冻结。默认OFF、check OFF，无诊断wrapper；尚未安装或取得真机净收益。
+下一步只做独立功能oracle和同APK OFF/ON官方工具对照，保持Shader/驱动/资源
+不变，不与新Shader候选混测。
