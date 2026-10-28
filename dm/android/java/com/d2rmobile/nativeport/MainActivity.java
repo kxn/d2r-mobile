@@ -52,6 +52,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeRecordStateCache(boolean enabled);
     private static native void nativeRecordStateExtraCache(boolean enabled);
     private static native void nativeSparseSubmissionPlan(boolean enabled);
+    private static native void nativeStoreAttachmentDomain(boolean enabled);
     private static native void nativeDiscardCoveredClears(boolean enabled);
     private static native void nativeInlineTranslation(boolean enabled);
     private static native void nativeGuestWorkerQos(boolean enabled);
@@ -296,6 +297,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             nativeRecordStateCache(getIntent().getBooleanExtra("record_state_cache", false));
             nativeRecordStateExtraCache(getIntent().getBooleanExtra("record_state_extra_cache", false));
             nativeSparseSubmissionPlan(getIntent().getBooleanExtra("sparse_submission_plan", false));
+            nativeStoreAttachmentDomain(getIntent().getBooleanExtra("store_attachment_domain", false));
             nativeDiscardCoveredClears(getIntent().getBooleanExtra("discard_covered_clears", true));
             nativeInlineTranslation(getIntent().getBooleanExtra("inline_translation", false));
             nativeGuestWorkerQos(getIntent().getBooleanExtra("guest_worker_qos", false));
@@ -566,6 +568,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (intent.hasExtra("sparse_submission_plan")) {
             android.util.Log.w("D2RDriver", "sparse submission plan requires a cold restart");
             intent.removeExtra("sparse_submission_plan");
+        }
+        if (intent.hasExtra("store_attachment_domain")) {
+            android.util.Log.w("D2RDriver", "store attachment domain requires a cold restart");
+            intent.removeExtra("store_attachment_domain");
         }
         if (intent.hasExtra("image_buffer_split")) {
             android.util.Log.w("D2RDriver", "image_buffer_split is startup-only; cold restart required");

@@ -135,6 +135,18 @@ class PoolWindowLaunchTests(unittest.TestCase):
             self.assertEqual(caught.exception.code,2)
             adb.assert_not_called()
 
+    def test_store_attachment_domain_cannot_change_a_live_backend(self):
+        self.assertNotIn('store_attachment_domain', self.launch_command([]))
+        for option,value in [('--store-attachment-domain','true'),('--no-store-attachment-domain','false')]:
+            command=self.launch_command([option]);index=command.index('store_attachment_domain')
+            self.assertEqual(command[index-1:index+2],['--ez','store_attachment_domain',value])
+            with patch('sys.argv',[str(LAUNCHER),'--attach',option]), \
+                    patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2)
+            adb.assert_not_called()
+
     def test_guest_wait_budget_is_bounded_and_cold(self):
         self.assertNotIn('guest_wait_budget_us',self.launch_command([]))
         for value in ('0','30','100'):

@@ -257,6 +257,7 @@ static void observe_tick(const uint64_t *registers) {
     void vk_store_descriptor_stats(uint64_t *,uint64_t *,int *);
     void vk_store_slot_stats(uint64_t *,uint64_t *);
     void vk_store_event_stats(uint64_t *,uint64_t *);
+    void vk_store_attachment_domain_stats(uint64_t [6],int *);
     void vk_bloom_quarter_blit_stats(uint64_t *,uint64_t *,uint64_t *);
     void vk_attachment_raster_stats(uint64_t [4]);
     int vk_attachment_raster_enabled(void);
@@ -452,6 +453,13 @@ static void observe_tick(const uint64_t *registers) {
     uint64_t store_events,store_duplicate_reads;vk_store_event_stats(&store_events,&store_duplicate_reads);
     fprintf(state_log, ",\"store_read_events\":{\"recorded\":%llu,\"duplicates_skipped\":%llu}",
       (unsigned long long)store_events,(unsigned long long)store_duplicate_reads);
+    uint64_t store_domain[6];int store_domain_enabled;
+    vk_store_attachment_domain_stats(store_domain,&store_domain_enabled);
+    fprintf(state_log, ",\"store_attachment_domain\":{\"enabled\":%s,\"targets\":%llu,\"considered\":%llu,\"skipped\":%llu,\"negative_rechecks\":%llu,\"footprint_comparisons\":%llu,\"positive_hits\":%llu}",
+      store_domain_enabled?"true":"false",(unsigned long long)store_domain[0],
+      (unsigned long long)store_domain[1],(unsigned long long)store_domain[2],
+      (unsigned long long)store_domain[3],(unsigned long long)store_domain[4],
+      (unsigned long long)store_domain[5]);
     uint64_t bloom_blits,bloom_query_fallbacks,bloom_resource_fallbacks;
     vk_bloom_quarter_blit_stats(&bloom_blits,&bloom_query_fallbacks,&bloom_resource_fallbacks);
     fprintf(state_log, ",\"bloom_materialization\":{\"blits\":%llu,\"query_fallbacks\":%llu,\"resource_fallbacks\":%llu}",
