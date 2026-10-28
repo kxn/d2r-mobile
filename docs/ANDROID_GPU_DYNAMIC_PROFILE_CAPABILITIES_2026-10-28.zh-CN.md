@@ -2,6 +2,8 @@
 
 **当前可直接使用的是22项原厂全局指标、KGSL作业跨度和Perfetto调度轨迹；尚不能把等待归到某个FS的某条LDC、某张纹理或某个PC。** 已安装Snapdragon Profiler 2026.9确有逐Shader/指令profile入口，但菜单存在不等于当前12b私有驱动已经可用。本文只整理现有证据，不新增采集、计时器或采样器。
 
+后续同日`CURRENT-G1`已完成当前12b的25项真实准入，补齐本文当时列出的三个宏观量；具体数值与边界见[25项正式窗口](ANDROID_CURRENT_GPU_MACRO25_2026-10-28.zh-CN.md)。下面22项与待准入表保留为此前能力审查记录，不覆盖原始收条。
+
 ## 已经真实可用的22项
 
 准入依据是`fs-bounded-uniform-prefetch-game-device-v1`两正式Surface窗：实际driver SHA均为`12b8b54a2514ff1cdf8da422c71db79a683d4517eb9aecfbb20a4125522559f5`，22项各有155/156个有效样本，非旧stock数据。以下保留原厂名称，便于复现选项。
