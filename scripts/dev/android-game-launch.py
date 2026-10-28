@@ -5,6 +5,7 @@ observations from the current process, never stale logs or a launch intent alone
 """
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 import struct
@@ -31,6 +32,19 @@ def validate_shared_heap_backing(state, log, *, attach, expected_window):
     startup = re.findall(r'\[shared pool\] immutable startup shared; import_window_bytes=(\d+)\b', log)
     if not startup or any(int(value) != window for value in startup):
         raise RuntimeError('Attached shared heap startup and actual backing metadata disagree')
+
+
+def validate_experimental_present_cap(state, requested):
+    if requested is None:
+        return None
+    pacing = state.get('frame_pacing', {})
+    hz = pacing.get('pace_hz')
+    period = pacing.get('period_ns')
+    if (requested != 60 or pacing.get('target_fps') != 60 or
+            not isinstance(hz, (int, float)) or not math.isfinite(hz) or abs(hz - 60) > .01 or
+            type(period) is not int or abs(period - 16666666) > 3):
+        raise RuntimeError('Explicit experimental 60 FPS cap requires actual target60/pace60/16.666666ms period')
+    return dict(pacing)
 
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -89,6 +103,7 @@ parser.add_argument('--uniform-specialization',action=argparse.BooleanOptionalAc
 parser.add_argument('--uniform-predicate',action=argparse.BooleanOptionalAction,default=False,help='optional hybrid exact-word plus integer predicate specialization (default off)')
 parser.add_argument('--deferred-mip-clears',action=argparse.BooleanOptionalAction,default=False,help='experimental bounded disjoint-mip clear deferral (default off)')
 parser.add_argument('--display-refresh-hz',type=float,help='optional Android Surface/display refresh request; preserves native rendering resolution and game speed')
+parser.add_argument('--experimental-present-cap-fps',type=int,choices=[60],help='cold experiment only: call the existing process-local HUD manual cap; default unchanged, no persistent setting or system display write')
 parser.add_argument('--mailbox-present',action='store_true',help='startup-only WSI experiment: request advertised MAILBOX; otherwise FIFO remains active')
 parser.add_argument('--dedicated-present-worker',action='store_true',help='startup-only experiment: serialize WSI acquire/present on a worker with a second queue of the same family')
 parser.add_argument('--present-worker-shared-queue',action='store_true',help='isolate presentation worker scheduling while preserving the original Vulkan queue; requires --dedicated-present-worker')
@@ -189,6 +204,8 @@ if args.vulkan_provider=='panvk' and args.validate:
     parser.error('PanVK direct ICD does not compose loader validation')
 if args.attach and args.legacy_astc_copy is not None:
     parser.error('--legacy-astc-copy/--no-legacy-astc-copy are startup-only and cannot be used with --attach')
+if args.attach and args.experimental_present_cap_fps is not None:
+    parser.error('--experimental-present-cap-fps requires a cold launch')
 if args.attach and args.operation_mode is not None:
     parser.error('--operation-mode is startup-only and cannot be used with --attach')
 if args.attach and args.submission_plan_reference:
@@ -402,6 +419,8 @@ if not args.attach:
         launch += ['--es', 'game_res', args.game_res]
     if args.display_refresh_hz is not None:
         launch += ['--ef', 'display_refresh_hz', str(args.display_refresh_hz)]
+    if args.experimental_present_cap_fps is not None:
+        launch += ['--ei', 'experimental_present_cap_fps', str(args.experimental_present_cap_fps)]
     if args.scale_3d is not None:
         launch += ['--ef', 'scale_3d', str(args.scale_3d)]
     if args.fixed_3d:
@@ -648,6 +667,7 @@ while time.monotonic() < deadline:
                         raise RuntimeError('Actual shared import window startup proof did not apply')
                     if args.shared_lazy_windows and state.get('shared_lazy_windows',{}).get('active') is not True:
                         raise RuntimeError('Actual coherent lazy-window experiment is unsupported or did not apply')
+                    actual_experimental_present_cap = validate_experimental_present_cap(state, args.experimental_present_cap_fps)
                     validate_shared_heap_backing(state, log, attach=args.attach,
                         expected_window=args.pool_window_bytes if args.expect_shared_import_windows else 0)
                     if (not args.attach and args.pixel_local_shared_ds is not None and
@@ -760,6 +780,8 @@ while time.monotonic() < deadline:
                               'shader_chain': read('shaders/.chain').strip(),
                               'native_host_opt_level': (int(re.search(r'Android native host optimization=-O([123])\b', log).group(1))
                                                         if re.search(r'Android native host optimization=-O([123])\b', log) else None),
+                              'requested_experimental_present_cap_fps': args.experimental_present_cap_fps,
+                              'actual_experimental_present_cap': actual_experimental_present_cap,
                               'requested_game_res': args.game_res, 'requested_scale_3d': args.scale_3d,
                               'requested_fixed_3d': args.fixed_3d,
                               'original_character_selection': 'PanelManager OpenPanel CharacterSelectPanel' in log, 'original_hud': True,

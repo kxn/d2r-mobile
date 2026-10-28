@@ -15,3 +15,13 @@
 紧凑布局：界面仅保留四行常用状态（Surface 与游戏输出不同才追加一行）、两项热开关和同行帧率下拉。默认／收起并排，顶部 8 DIP，宽度按实际可用区域限制在 360 DIP 内，详情与控件均固定 12 DIP 字号以免系统 fontScale 放大挤出屏幕；详细语义保留在本文。ScrollView 仅作极小窗口的回退，正常 326 DIP 高横屏目标无需滚动。
 
 3D 比例下拉：自动（默认，恢复启动配置／原自适应策略）或固定 50/60/65/70/75/85/100%，75% 标注 iOS 默认。手动档由 JNI 仅发布合法整数请求，非法值忽略；原游戏通知 owner 在既有 renderer.scale／0x8582f0 路径生效，不增加地址补丁、不在 UI 线程写游戏。固定档绕过动态与热缩放，但热帧率上限、自动过热存档暂停仍独立生效；原 rulertruth 诊断强制1.0优先级保留。原 present owner 在固定档期间不积累自适应窗口，进出固定档按既有 hold 清掉旧窗口／升降档惩罚，短暂切换由原 resumed 信号补清窗；UI 不修改静态 controller。详情继续显示实际 g_scale3d_cur，不冒充请求已生效。恢复默认同时回自动，设置仅本次应用进程。新增一行 36 DIP 并移除小 footer，保持紧凑，无文本输入。
+
+## 2026-10-28：GPU 对照的显式 60 FPS 上限
+
+未来 GPU 实验可显式使用 `--experimental-present-cap-fps 60 --display-refresh-hz 60`。前者在 Activity 原 HUD 初始化位置调用既有 `nativeManualLimit(60)`，只更新本进程的 `DebugPanel.Settings` 和原手动 cap；无参数时保持原路径，不写用户 preferences、启动 profile 或系统显示设置，不新增 JNI、NVN pacer 或计时器。该参数仅限冷启动；`onNewIntent` 不调用 cap API，并从当前 Intent 移除该 extra，避免忽略的请求在 Activity 再创建时残留生效。已经生效的进程 cap 不因此被重置，仍由原 HUD 管理。原游戏或热策略降到 30 时不会被抬到 60，实验准入须拒绝实际低于 60 的窗口。
+
+取图周期与面板 Hz 分开核准：原 NVN `present_period` 进入纹理 `avail` 和 `WindowAcquireTexture` 的绝对时刻等待；`target_fps=60` 单独不够，须核实际 `pace_hz=60`、`period_ns≈16666666` 及真实输出尺寸。`--display-refresh-hz` 仅复用同像素显示模式和 `Surface.setFrameRate` 的应用内请求，不能把请求值、native 初始化时缓存的 refresh 或 `VSYNC-app` 回调周期当作即时物理面板模式。旧三臂出现 native 缓存 90/120/120、NVN 周期 90/60/60，而官方 trace 的 `VSYNC-app` 更新均约 11.074 ms，不能靠其中任一字段补全另一个事实。
+
+独立 `.local/logs/gpu-period60-admission-v1/run-with-period60.py` 复用既有 runner 的启动、官方采集和存档停止；追加原 cap/显示请求，采集前核实际周期和 native Surface，结束后仅拉取一次已有追加状态日志，用官方时钟转换覆盖整段 Surface 窗口，拒绝已记录的中途周期变化、Surface 重建和热上限变化。原状态约 1 Hz，报告必须保留最大发布间隔，不能冒充逐帧连续观测或排除未记录的短瞬变；请求未达到共同准入时失败留档，不以反复重启试运气替代验证。
+
+该补丁已通过 Android 构建，产物为 `.local/logs/gpu-period60-admission-v1/built-apk/canonical.apk`，SHA-256 `195281b1c48ec6ff8d934c3ce4377ba1be35e85872d80e1199e575a8d6d715ef`；其构建记录 `canonical.apk.build.json` SHA-256 为 `dfae01a892083a0fd0a04b46357d8e3984d29504aa946df4245e709bb06fcfe2`，包含 1056 个输入，MainActivity 指纹与本补丁一致。已有 41 项启动器测试和 8 项独立周期准入测试通过，共 49 项，覆盖默认不改、显式冷入口、90/30/错误周期拒绝、首尾相同但中途变化、缺窗口末端及 Surface 重建。这里记录构建与主机资格；本入口尚未作为真机 GPU 性能或实际面板 60 Hz 的验证结果。

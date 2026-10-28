@@ -3,6 +3,7 @@
 import contextlib
 import ast
 import io
+import math
 from pathlib import Path
 import runpy
 import re
@@ -58,7 +59,41 @@ class AttachedBackingTests(unittest.TestCase):
         self.validate(self.state(1048576), '', attach=False, expected_window=1048576)
 
 
+class ExperimentalPresentCapTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        function = next(n for n in ast.parse(LAUNCHER.read_text()).body
+                        if isinstance(n, ast.FunctionDef) and n.name == 'validate_experimental_present_cap')
+        namespace = {'math': math}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(LAUNCHER), 'exec'), namespace)
+        cls.validate = staticmethod(namespace['validate_experimental_present_cap'])
+
+    def test_default_does_not_select_or_require_cap(self):
+        self.assertIsNone(self.validate({}, None))
+
+    def test_actual_60_period_accepts_integer_rounding(self):
+        for ns in (16666665, 16666666, 16666667):
+            p = {'target_fps': 60, 'pace_hz': 60., 'period_ns': ns}
+            self.assertEqual(self.validate({'frame_pacing': p}, 60), p)
+
+    def test_rejects_90_or_thermal_30_or_invalid_period(self):
+        for hz,ns,target in ((90,11111111,60),(30,33333333,30),(60,0,60),(float('nan'),16666666,60)):
+            with self.subTest(hz=hz,ns=ns), self.assertRaises(RuntimeError):
+                self.validate({'frame_pacing':{'target_fps':target,'pace_hz':hz,'period_ns':ns}},60)
+
+
 class PoolWindowLaunchTests(unittest.TestCase):
+    def test_experimental_cap_is_explicit_cold_only(self):
+        self.assertNotIn('experimental_present_cap_fps', self.launch_command([]))
+        cmd = self.launch_command(['--experimental-present-cap-fps','60','--display-refresh-hz','60'])
+        i=cmd.index('experimental_present_cap_fps')
+        self.assertEqual(cmd[i-1:i+2],['--ei','experimental_present_cap_fps','60'])
+        for args in (['--attach','--experimental-present-cap-fps','60'],['--experimental-present-cap-fps','90']):
+            with patch('sys.argv',[str(LAUNCHER),*args]), patch('subprocess.check_output') as adb, \
+                    contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(LAUNCHER),run_name='__main__')
+            self.assertEqual(caught.exception.code,2);adb.assert_not_called()
+
     def test_internal_queue_present_is_an_explicit_cold_contract(self):
         default=self.launch_command([])
         index=default.index('present_worker_internal_queue')

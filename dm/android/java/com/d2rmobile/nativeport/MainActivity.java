@@ -454,6 +454,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             @Override public void scalePercent(int percent) { debugSettings.scalePercent = percent; nativeManualScale(percent); }
         });
         content.addView(debugPanel);
+        // Explicit experiment only: reuse the HUD's existing process-local cap.
+        // No preference/profile write, JNI change or alternative pacer.
+        if (getIntent().hasExtra("experimental_present_cap_fps")) {
+            int cap = getIntent().getIntExtra("experimental_present_cap_fps", 0);
+            if (cap != 60) throw new IllegalArgumentException("experimental_present_cap_fps must be 60");
+            debugSettings.manualCap = cap;
+            android.util.Log.i("D2RPacing", "explicit experimental HUD cap=60; actual period requires qualification");
+        }
         nativeManualLimit(debugSettings.manualCap);
         nativeManualScale(debugSettings.scalePercent);
         thermalPolicy.setLimitEnabled(debugSettings.thermalCap);
@@ -656,6 +664,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             intent.removeExtra("pixel_local");
         }
         setIntent(intent);
+        if (intent.hasExtra("experimental_present_cap_fps")) {
+            android.util.Log.w("D2RPacing", "experimental present cap is startup-only; cold restart required");
+            intent.removeExtra("experimental_present_cap_fps");
+        }
         if (intent.hasExtra("display_refresh_hz")) {
             getIntent().putExtra("display_refresh_hz", intent.getFloatExtra("display_refresh_hz", 0));
             requestDisplayRefresh(surfaceHolder == null ? null : surfaceHolder.getSurface());
