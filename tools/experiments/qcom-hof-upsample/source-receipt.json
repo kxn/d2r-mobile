@@ -1,0 +1,90 @@
+{
+  "schema": "qcom-HOF-source-archive-v1",
+  "scope": "Exact GLSL actually compiled with API1.3 and QCOM1 weighted feature, not runtime integration or rendered CatmullRom proof.",
+  "candidate_source": "qcom-hof-catmull-rom.frag",
+  "expected_SPIRV_sha256": "a02afd949f55e48af8142dfe3bdf6cf75a063d531bd28cdb7e0c3a09d5a20b60",
+  "source_files": {
+    "LICENSE.sgsr": "bc496633d3db8c6ca1362216ec382d361b69c7d5518acd6bbfd91503febfb3ef",
+    "NOTICE.md": "243d1a13bc67ac2f0d755126b9cd6d7f6eeb5a2174800f94c3b28f479a7dfae3",
+    "README.md": "6daae03a196af9d529db82d6ebf0bedc9f57c37e939c65ca54cf516279812090",
+    "qcom-hof-catmull-rom.frag": "ba8a7133b0755a6c672e310089e5aa9bffbc9b95f241df5d23f935080ceb4641",
+    "rebuild.py": "64dcf723776033a54d1c1aa276a7c211b6ca448d4f92478459f985d49cf07b90",
+    "weight-contract.md": "67a7b145dd131d7b78c33b0609003f2dc3f62a66c8f309517c58d43dc6d9f67b"
+  },
+  "source_provenance": {
+    "HOF_adapter": "New independent QCOM1 intrinsic adapter based on Khronos normatives, not officialSGSR filter implementation.",
+    "fallback": "Exact originalComplete reviewed in SGSR1-v2; sourcecurrentcf83 key52aac1f2306b8fc5",
+    "fallback_current_SPIRV_sha256": "e114e05ccbf91820d9089932f65a87fda490b78ad28647e99fb584d6e578fc1a",
+    "original_shader_text": "../sgsr1-upsample/original-current-upsample.glsl",
+    "SGSR_derivation_source": {
+      "repository": "https://github.com/SnapdragonGameStudios/snapdragon-gsr",
+      "commit": "d926f074bcb9d714e179f1ce0fcb9ee2eeb5074e",
+      "file": "sgsr/v1/include/glsl/sgsr1_shader_mobile.frag",
+      "sha256": "93e8db987dc79f62e68805f968d63989e5d50daebe4d040e4c7104047ad49139",
+      "license": "BSD-3-Clause",
+      "HOF_uses_SGSR_filter_body": false
+    },
+    "normatives": [
+      "https://docs.vulkan.org/spec/latest/chapters/textures.html#textures-weightimage",
+      "https://docs.vulkan.org/refpages/latest/refpages/source/VK_QCOM_image_processing.html",
+      "https://raw.githubusercontent.com/KhronosGroup/GLSL/main/extensions/qcom/GLSL_QCOM_image_processing.txt",
+      "https://github.khronos.org/SPIRV-Registry/extensions/QCOM/SPV_QCOM_image_processing.html"
+    ]
+  },
+  "exact_host_commands": [
+    [
+      "glslangValidator",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "-S",
+      "frag",
+      "-o",
+      "OUTPUT/candidate.spv",
+      "qcom-hof-catmull-rom.frag"
+    ],
+    [
+      "spirv-val",
+      "--target-env",
+      "vulkan1.2",
+      "OUTPUT/candidate.spv"
+    ],
+    [
+      "spirv-val",
+      "--target-env",
+      "vulkan1.3",
+      "OUTPUT/candidate.spv"
+    ]
+  ],
+  "actual_compile": {
+    "application_API": "1.3",
+    "physical_API_minimum": "1.3",
+    "enabled_extension": "VK_QCOM_image_processing",
+    "textureSampleWeighted": true,
+    "ordinary_UID": 10376,
+    "PID": 20089,
+    "driver_sha256": "12b8b54a2514ff1cdf8da422c71db79a683d4517eb9aecfbb20a4125522559f5",
+    "HOF_native_BLAKE3": "fda94dee3ddb820661fd3edae7c97f60ccc216addc59880a4aae42e162c9e293",
+    "original_native_BLAKE3": "d527ec86ab7f21767da039a866fa7b9c478748d1d358b9ec2444ab0101e5180e",
+    "raw_IR3_sha256": "bbc9c9632eeacb13036cc6332d238d1322644259e777bf7009d55598c6a6a9d4",
+    "weight_resources_created": false,
+    "draws_submits_game_modules": 0,
+    "current085_rendering_qualified": false,
+    "performance_claim": false,
+    "API_dependency_gate": "PASS applicationAPI1.3/physical>=1.3/QCOM1+weighted explicit and actualtwoPSO success"
+  },
+  "local_evidence_sha256": {
+    ".local/logs/qcom-hof-compile-qualification-v2/frozen.json": "c39143209b0f9b79944626f627667889bda2a71f5493d257e0d4c1e7bfc6abb6",
+    ".local/logs/qcom-hof-compile-qualification-v2/ACTUAL-COMPILE1/result.json": "6ea1c7d4eca900003e5dfaffde8475576f505d8a354ebb3f92acb46a48a543e4",
+    ".local/logs/qcom-hof-compile-qualification-v2/ACTUAL-COMPILE1/raw-ir3.log": "bbc9c9632eeacb13036cc6332d238d1322644259e777bf7009d55598c6a6a9d4",
+    ".local/logs/qcom-hof-compile-qualification-v2/ACTUAL-COMPILE1-analysis/comparison.json": "ca25cbd96eb1f1130c67304e2010d1f0315b9bb453b40efe47d23cc27675c586",
+    ".local/logs/qcom-hof-compile-qualification-v2/ACTUAL-COMPILE1-analysis/qualification-summary.json": "41e1320a6c666e6665c11585e489123b47294142a9800b2cb3f39bf00e396314"
+  },
+  "old_v1_API_dependency_failure": "Preserved separately in qcom-hof-compile-qualification-v1, not reclassified.",
+  "archive_host_rebuild": {
+    "path": ".local/build/qcom-hof-upsample-source-archive-rebuild-v1/rebuild-receipt.json",
+    "sha256": "6caf26b297926bc1312c990d8fafab0e46e8a7b4525cdd50ec026f5acd37f439",
+    "exact_SPIRV_SHA256": "a02afd949f55e48af8142dfe3bdf6cf75a063d531bd28cdb7e0c3a09d5a20b60",
+    "source_unchanged_after_rebuild": true
+  }
+}
