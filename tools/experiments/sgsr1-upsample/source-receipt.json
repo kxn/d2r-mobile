@@ -1,0 +1,78 @@
+{
+  "schema": "sgsr1-upsample-v2-source-archive-v1",
+  "scope": "Frozen source of actually compiled v2 experiment, no runtime integration or v3 implementation.",
+  "candidate_source": "sgsr1-original-upsampler-contract-v2.frag",
+  "expected_SPIRV_sha256": "ff7953bb9e0c8b4f21f17896e107b801fbef6378c7e0e9a1a0bf6dcbe18bdfc1",
+  "source_files": {
+    "sgsr1-original-upsampler-contract-v2.frag": "83c632048cfb18db881a3d8e4c4dbf9d4c4f710733310b0d7e49851e58979666",
+    "original-current-upsample.glsl": "91813e14e0d2b1e2a0b9577e31d3bcc6479da5cd542a8d231d871a82114d028f",
+    "upstream/sgsr1_shader_mobile.frag": "93e8db987dc79f62e68805f968d63989e5d50daebe4d040e4c7104047ad49139",
+    "LICENSE.sgsr": "bc496633d3db8c6ca1362216ec382d361b69c7d5518acd6bbfd91503febfb3ef"
+  },
+  "official_SGSR": {
+    "repository": "https://github.com/SnapdragonGameStudios/snapdragon-gsr",
+    "commit": "d926f074bcb9d714e179f1ce0fcb9ee2eeb5074e",
+    "file": "sgsr/v1/include/glsl/sgsr1_shader_mobile.frag",
+    "source_sha256": "93e8db987dc79f62e68805f968d63989e5d50daebe4d040e4c7104047ad49139",
+    "license": "BSD-3-Clause",
+    "license_sha256": "bc496633d3db8c6ca1362216ec382d361b69c7d5518acd6bbfd91503febfb3ef",
+    "source_url": "https://github.com/SnapdragonGameStudios/snapdragon-gsr/blob/d926f074bcb9d714e179f1ce0fcb9ee2eeb5074e/sgsr/v1/include/glsl/sgsr1_shader_mobile.frag"
+  },
+  "original_fallback": {
+    "source_shader_key": "52aac1f2306b8fc5",
+    "source_name": "ps_upsample_p.bin:0",
+    "current_chain": "cf83dfece8e7",
+    "current_SPIRV_sha256": "e114e05ccbf91820d9089932f65a87fda490b78ad28647e99fb584d6e578fc1a",
+    "decompiler": "spirv-cross --version 450",
+    "decompiled_text_sha256": "91813e14e0d2b1e2a0b9577e31d3bcc6479da5cd542a8d231d871a82114d028f",
+    "source_text_only": true
+  },
+  "host_commands": [
+    [
+      "glslangValidator",
+      "-V",
+      "--target-env",
+      "vulkan1.1",
+      "-S",
+      "frag",
+      "-o",
+      "OUTPUT/candidate.spv",
+      "sgsr1-original-upsampler-contract-v2.frag"
+    ],
+    [
+      "spirv-val",
+      "--target-env",
+      "vulkan1.1",
+      "OUTPUT/candidate.spv"
+    ]
+  ],
+  "historical_evidence_mapping": {
+    "v2_preparation_receipt": ".local/logs/snapdragon-super-resolution-host-candidate-v2/receipt.json",
+    "actual_compile_receipt": ".local/logs/sgsr1-compile-qualification-v1/ACTUAL-COMPILE1-RECOVERED/result.json",
+    "actual_compile_analysis": ".local/logs/sgsr1-compile-qualification-v1/ACTUAL-COMPILE1-RECOVERED-analysis/qualification-summary.json",
+    "actual_driver_sha256": "12b8b54a2514ff1cdf8da422c71db79a683d4517eb9aecfbb20a4125522559f5",
+    "actual_native_FS_BLAKE3": "805d0d1e2276c59ab7d7b1eadd2e014fd115f39e4b2a3d7b51844770a228437d",
+    "ordinary_UID": 10369,
+    "two_PSOs_created": true,
+    "draws_submits_game_modules": 0,
+    "v2_rendered": false,
+    "current085_rendering_qualified": false,
+    "performance_claim": false,
+    "receipt_sha256": {
+      ".local/logs/snapdragon-super-resolution-host-candidate-v2/receipt.json": "4b041a429da3a34bb760490602c1e995b431be94e3b05993129bde0932eab80f",
+      ".local/logs/sgsr1-compile-qualification-v1/ACTUAL-COMPILE1-RECOVERED/result.json": "25d9a21de41cf2b0fdd4fa6353c4e29467befa62c8de2ee888b0deee51e091ef",
+      ".local/logs/sgsr1-compile-qualification-v1/ACTUAL-COMPILE1-RECOVERED-analysis/qualification-summary.json": "e9536fedf619099d68ae61c049cb5342661eb89b0d0f7fae999785b6352a3f97"
+    }
+  },
+  "known_limits": [
+    "Current085 C7 and inputdescriptor pages missing; historical1.0 values not substituted.",
+    "Actual compiler usesFP16 filter/weight math despite32bit geometry; v3 correction not implemented here.",
+    "v1 historical replay images do not validate v2.",
+    "Host rebuild equality identifies the same SPIR-V input, not a new native GPU compilation result."
+  ],
+  "archive_host_rebuild": {
+    "receipt": ".local/build/sgsr1-upsample-v2-source-archive-rebuild-v2/rebuild-receipt.json",
+    "exact_SPIRV_match": true,
+    "old_v2_evidence_untouched": true
+  }
+}
