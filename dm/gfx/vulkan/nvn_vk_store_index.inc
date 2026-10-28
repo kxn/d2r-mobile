@@ -43,6 +43,37 @@ static uint64_t build_slot_stages,build_slot_skipped;
 static uint64_t build_duplicate_reads;
 static _Atomic uint64_t recorded_events,duplicate_reads;
 static int build_descriptor_reference;
+// A read before a texture first becomes a logical attachment cannot affect
+// that texture's later Store query. Retain the monotonic prefix of targets,
+// not just the current RT: changing RT need not end an older physical pass.
+// Reuse bucket footprints and descriptor resolution; no second command walk
+// or texture-content/tex_t snapshot is required.
+enum { DOMAIN_MEMBER=UINT32_C(1)<<30,DOMAIN_RELEVANT=UINT32_C(1)<<31 };
+static uint32_t domain_proof[4096];
+static uint16_t domain_targets[4096];
+static unsigned domain_count;
+static int domain_requested=-1,build_domain;
+static uint64_t domain_considered,domain_skipped,domain_negative_rechecks,
+    domain_comparisons,domain_positive_hits;
+static struct {
+  _Atomic uint64_t targets,considered,skipped,negative_rechecks,comparisons,positive_hits;
+  _Atomic int enabled;
+} domain_stats;
+void vk_store_attachment_domain_stats(uint64_t out[6],int *enabled) {
+  *enabled=atomic_load(&domain_stats.enabled);
+  out[0]=atomic_load(&domain_stats.targets);out[1]=atomic_load(&domain_stats.considered);
+  out[2]=atomic_load(&domain_stats.skipped);out[3]=atomic_load(&domain_stats.negative_rechecks);
+  out[4]=atomic_load(&domain_stats.comparisons);out[5]=atomic_load(&domain_stats.positive_hits);
+}
+static int attachment_domain_requested(void) {
+  if(domain_requested<0) {
+    const char *v=getenv("DM_VULKAN_STORE_ATTACHMENT_DOMAIN");
+    if(v && strcmp(v,"0") && strcmp(v,"1"))die("DM_VULKAN_STORE_ATTACHMENT_DOMAIN expects 0 or 1");
+    domain_requested=v && !strcmp(v,"1");
+    LOG("[vulkan store attachment domain] enabled=%d",domain_requested);
+  }
+  return domain_requested;
+}
 void vk_store_event_stats(uint64_t *recorded,uint64_t *duplicates) {
   *recorded=atomic_load(&recorded_events);*duplicates=atomic_load(&duplicate_reads);
 }
@@ -77,6 +108,43 @@ static int bucket_for(const tex_t *t,int add) {
   if(!t->serial) { index_valid=0;return -1; }
   vk_texture_footprint footprint={t->serial,(uintptr_t)t->mem,t->L.size};
   return bucket_for_footprint(&footprint,add);
+}
+static void domain_enroll_targets(const p_set_rt *rt) {
+  if(!build_domain || !index_valid)return;
+  if(rt->n<0 || rt->n>8) { index_valid=0;return; }
+  for(int k=0;k<=rt->n && index_valid;k++) {
+    const tex_t *t=k==rt->n?rt->depth:rt->color[k];if(!t)continue;
+    int b=bucket_for(t,1);if(b<0)return;
+    if(domain_proof[b]&DOMAIN_MEMBER)continue;
+    domain_proof[b]=DOMAIN_MEMBER|DOMAIN_RELEVANT;
+    domain_targets[domain_count++]=(uint16_t)b;
+  }
+}
+static int domain_read_needed(int b) {
+  if(!build_domain)return 1;
+  domain_considered++;
+  uint32_t proof=domain_proof[b];
+  if(proof&DOMAIN_RELEVANT) {domain_positive_hits++;return 1;}
+  const vk_texture_footprint *t=&buckets[b].texture;
+  // Unknown addresses/sizes retain the original event. Never turn an
+  // unresolved descriptor (handled by global_need) into an irrelevant read.
+  if(!t->base || !t->size) {domain_proof[b]=proof|DOMAIN_RELEVANT;return 1;}
+  unsigned checked=proof&UINT32_C(0xffff);
+  if(checked<domain_count)domain_negative_rechecks++;
+  for(unsigned n=checked;n<domain_count;n++) {
+    const vk_texture_footprint *target=&buckets[domain_targets[n]].texture;
+    domain_comparisons++;
+    uintptr_t x=t->base,y=target->base;
+    if(!y || !target->size || t->serial==target->serial ||
+        (x==y || (x<y?y-x<t->size:x-y<target->size))) {
+      domain_proof[b]=proof|DOMAIN_RELEVANT;return 1;
+    }
+  }
+  domain_proof[b]=domain_count;
+  domain_skipped++;
+  static int first_skipped;
+  if(!first_skipped) {first_skipped=1;LOG("[vulkan store attachment domain] first actual skipped read");}
+  return 0;
 }
 static int descriptor_bucket(unsigned id) {
   unsigned key=id+1,slot=(id*UINT32_C(2654435761))>>19;
@@ -172,9 +240,13 @@ static void store_index_begin(store_build_context *ctx) {
   build_descriptor_reference=reference;atomic_store(&descriptor_reference_active,reference);
   build_descriptor_hits=build_descriptor_misses=0;
   build_slot_stages=build_slot_skipped=build_duplicate_reads=0;
+  build_domain=attachment_domain_requested();atomic_store(&domain_stats.enabled,build_domain);
+  domain_count=0;domain_considered=domain_skipped=domain_negative_rechecks=domain_comparisons=domain_positive_hits=0;
+  if(build_domain)memset(domain_proof,0,sizeof domain_proof);
   if(!reference) memset(descriptor_buckets,0,sizeof descriptor_buckets);
   memset(bucket_hash,0,sizeof bucket_hash);
   ctx->rt=S.targets;ctx->sc=S.scissor;ctx->has_sc=S.has_scissor;
+  domain_enroll_targets(&ctx->rt);
   for(unsigned k=0;k<9;k++) ctx->target_buckets[k]=-1;
   ctx->program=S.program;memset(ctx->known_zero,0,sizeof ctx->known_zero);
   for(unsigned st=0;st<6;st++) {
@@ -187,6 +259,7 @@ static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode
   case OP_SET_RT:
     if(size<8+sizeof(p_set_rt)) { index_valid=0;return; }
     ctx->rt=*(const p_set_rt *)a;if(ctx->rt.n<0||ctx->rt.n>8) index_valid=0;
+    domain_enroll_targets(&ctx->rt);
     for(unsigned k=0;k<9;k++) ctx->target_buckets[k]=-1;
     break;
   case OP_SCISSOR:
@@ -235,7 +308,7 @@ static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode
         nonzero=1;
         int b=descriptor_bucket(handle&0xfffff);
         if(b<0) global_need(seq);
-        else bucket_event_add(seq,b,NULL,IX_READ,0,0);
+        else if(domain_read_needed(b))bucket_event_add(seq,b,NULL,IX_READ,0,0);
       }
       // Learn emptiness during the required conservative scan, never by a
       // second pass. Nonempty unknown stages still emit reads at every seq.
@@ -277,6 +350,14 @@ static void store_index_op(store_build_context *ctx,unsigned seq,unsigned opcode
   }
 }
 static void store_index_finish(void) {
+  if(build_domain) {
+    atomic_fetch_add(&domain_stats.targets,domain_count);
+    atomic_fetch_add(&domain_stats.considered,domain_considered);
+    atomic_fetch_add(&domain_stats.skipped,domain_skipped);
+    atomic_fetch_add(&domain_stats.negative_rechecks,domain_negative_rechecks);
+    atomic_fetch_add(&domain_stats.comparisons,domain_comparisons);
+    atomic_fetch_add(&domain_stats.positive_hits,domain_positive_hits);
+  }
   atomic_fetch_add(&descriptor_cache_hits,build_descriptor_hits);
   atomic_fetch_add(&descriptor_cache_misses,build_descriptor_misses);
   atomic_fetch_add(&slot_cache_stages,build_slot_stages);

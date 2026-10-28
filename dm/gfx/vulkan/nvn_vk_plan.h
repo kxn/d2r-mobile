@@ -35,6 +35,7 @@ void vk_store_descriptor_reference(int reference);
 void vk_store_descriptor_stats(uint64_t *hits,uint64_t *misses,int *reference);
 void vk_store_slot_stats(uint64_t *stages,uint64_t *skipped);
 void vk_store_event_stats(uint64_t *recorded,uint64_t *duplicates);
+void vk_store_attachment_domain_stats(uint64_t out[6],int *enabled);
 
 void vk_sample_liveness_stats(uint64_t *live,uint64_t *dead);
 void vk_sample_liveness_reference(int reference);

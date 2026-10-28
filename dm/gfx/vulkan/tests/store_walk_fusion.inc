@@ -3,9 +3,14 @@
 #include "store_walk_reference.inc"
 static unsigned store_walk_checks,store_walk_comparisons;
 static int store_walk_verify_enabled;
+static void store_domain_test_verify(void);
 #define SW_CHECK(c) do { ++store_walk_checks;if(!(c)) die("Store walk fusion oracle: %s at %u",#c,__LINE__); } while(0)
 static void store_walk_test_verify(void) {
   if(!store_walk_verify_enabled) return;
+  // Filtering intentionally removes pre-target reads. Compare observable
+  // Store decisions only at legitimate prefix-target/start/done positions;
+  // the unfiltered mode retains the original exact whole-table oracle.
+  if(build_domain) {store_domain_test_verify();return;}
   unsigned nb=bucket_count,ne=event_count,ng=global_count,na=alias_count;
   store_bucket *bs=malloc(nb*sizeof *bs+1);
   store_event *es=malloc(ne*sizeof *es+1),*ss=malloc(ne*sizeof *ss+1);
@@ -110,3 +115,4 @@ unsigned vk_pass_test_store_walk_end(void) {
   return store_walk_checks;
 }
 #undef SW_CHECK
+#include "store_attachment_domain.inc"
