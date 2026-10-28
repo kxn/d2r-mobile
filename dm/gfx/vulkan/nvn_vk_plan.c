@@ -239,7 +239,7 @@ static int walk(const uint8_t *p,unsigned depth,store_build_context *store) {
     // Metadata grouping does not skip forward resource interpretation. In
     // particular every Program/TEX/IMG update reaches the original Store code
     // at its unchanged raw ordinal, even while a pure span is pending.
-    if(store && index_valid && (!sparse_mode || (properties&PP_STORE)))
+    if(store && index_valid && (properties&PP_STORE))
       store_index_op(store,count-1,h.op,a,h.size);
     if(h.op==OP_END)return 1;
     if(h.op==OP_JUMP || h.op==OP_CALL) {
