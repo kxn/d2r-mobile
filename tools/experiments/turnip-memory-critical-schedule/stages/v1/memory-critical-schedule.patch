@@ -1,0 +1,211 @@
+--- a/src/freedreno/ir3/ir3_sched.c
++++ b/src/freedreno/ir3/ir3_sched.c
+@@ -71,6 +71,13 @@
+  * these into src modifiers..
+  */
+ 
++#ifndef DM_IR3_MEMORY_CRITICAL_SCHED
++#define DM_IR3_MEMORY_CRITICAL_SCHED 0
++#endif
++#if DM_IR3_MEMORY_CRITICAL_SCHED != 0 && DM_IR3_MEMORY_CRITICAL_SCHED != 1
++#error "DM_IR3_MEMORY_CRITICAL_SCHED must be 0 or 1"
++#endif
++
+ struct ir3_sched_ctx {
+    struct ir3_compiler *compiler;
+    struct ir3_block *block; /* the current block */
+@@ -91,6 +98,10 @@
+    bool error;
+ 
+    unsigned ip;
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++   bool critical_policy;
++   unsigned remaining_inputs;
++#endif
+ 
+    int sy_delay;
+    int ss_delay;
+@@ -110,6 +121,12 @@
+ 
+    unsigned delay;
+    unsigned max_delay;
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++   /* Read depth and provenance use real SSA data edges only. All original
++    * dependency/hazard edges remain in the scheduling DAG unchanged. */
++   uint8_t memory_depth;
++   bool memory_ancestor;
++#endif
+ 
+    unsigned sy_index;
+    unsigned ss_index;
+@@ -153,6 +170,42 @@
+    bool output;
+ };
+ 
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++/* Metadata only: never remove a dependency or classify a write as a read. */
++static bool
++critical_read(struct ir3_instruction *instr)
++{
++   return instr->dsts_count && !has_dummy_dst(instr) &&
++      !is_store(instr) && !is_atomic(instr->opc) &&
++      ((is_tex(instr) && !is_tex_shuffle(instr)) ||
++       (is_load(instr) && !is_local_mem_load(instr)));
++}
++
++static bool
++critical_real_edge(struct ir3_instruction *use,
++                   struct ir3_instruction *producer)
++{
++   if (use->block != producer->block || use->opc == OPC_META_PHI)
++      return false;
++   foreach_ssa_src_n (src, i, use) {
++      if (src == producer && !__is_false_dep(use, i))
++         return true;
++   }
++   return false;
++}
++
++static bool
++critical_chain_node(struct ir3_sched_ctx *ctx, struct ir3_sched_node *n)
++{
++   if (!ctx->critical_policy || ctx->remaining_inputs)
++      return false;
++   /* Before the first read require at least two dependent reads. After a
++    * real read retain priority through the final dependent-read address. */
++   return n->memory_depth >= 2 ||
++      (n->memory_depth && (critical_read(n->instr) || n->memory_ancestor));
++}
++#endif
++
+ #define foreach_sched_node(__n, __list)                                        \
+    list_for_each_entry (struct ir3_sched_node, __n, __list, dag.link)
+ 
+@@ -285,6 +338,12 @@
+       }
+    }
+ 
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++   if (ctx->critical_policy && is_input(instr)) {
++      assert(ctx->remaining_inputs > 0);
++      ctx->remaining_inputs--;
++   }
++#endif
+    instr->flags |= IR3_INSTR_MARK;
+ 
+    di(instr, "schedule");
+@@ -326,6 +385,12 @@
+       struct ir3_sched_node *child =
+          container_of(edge->child, struct ir3_sched_node, dag);
+       child->earliest_ip = MAX2(child->earliest_ip, ctx->ip + delay);
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++      if (ctx->critical_policy &&
++          (critical_read(instr) || n->memory_ancestor) &&
++          critical_real_edge(child->instr, instr))
++         child->memory_ancestor = true;
++#endif
+    }
+ 
+    dag_prune_head(ctx->dag, &n->dag);
+@@ -622,8 +687,14 @@
+     * fetches
+     */
+    if (ctx->sy_delay && ctx->remaining_tex) {
+-      if (sched_check_src_cond(instr, is_outstanding_sy, ctx))
+-         return true;
++      if (sched_check_src_cond(instr, is_outstanding_sy, ctx)) {
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++         /* Only waive batching preference, never a DAG/hardware delay, ss
++          * dependency, kill rule, address-register rule, or queue-size cap. */
++         if (!critical_chain_node(ctx, instr->data))
++#endif
++            return true;
++      }
+    }
+ 
+    /* Avoid scheduling too many outstanding texture or sfu instructions at
+@@ -870,6 +941,30 @@
+ }
+ 
+ /* find instruction to schedule: */
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++static struct ir3_sched_node *
++choose_memory_critical(struct ir3_sched_ctx *ctx, struct ir3_sched_notes *notes)
++{
++   struct ir3_sched_node *chosen = NULL;
++   if (!ctx->critical_policy || ctx->remaining_inputs)
++      return NULL;
++   foreach_sched_node (n, &ctx->dag->heads) {
++      if (is_meta(n->instr) || n->output ||
++          !critical_chain_node(ctx, n) || node_delay(ctx, n) ||
++          should_defer(ctx, n->instr) || !check_instr(ctx, notes, n->instr))
++         continue;
++      if (!chosen || n->memory_depth > chosen->memory_depth ||
++          (n->memory_depth == chosen->memory_depth &&
++           live_effect(n->instr) < live_effect(chosen->instr)) ||
++          (n->memory_depth == chosen->memory_depth &&
++           live_effect(n->instr) == live_effect(chosen->instr) &&
++           n->max_delay > chosen->max_delay))
++         chosen = n;
++   }
++   return chosen;
++}
++#endif
++
+ static struct ir3_instruction *
+ choose_instr(struct ir3_sched_ctx *ctx, struct ir3_sched_notes *notes)
+ {
+@@ -880,6 +975,12 @@
+    chosen = choose_instr_prio(ctx, notes);
+    if (chosen)
+       return chosen->instr;
++
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++   chosen = choose_memory_critical(ctx, notes);
++   if (chosen)
++      return chosen->instr;
++#endif
+ 
+    chosen = choose_instr_dec(ctx, notes, true);
+    if (chosen)
+@@ -1086,6 +1187,13 @@
+    util_dynarray_foreach (&n->dag.edges, struct dag_edge, edge) {
+       struct ir3_sched_node *child = (struct ir3_sched_node *)edge->child;
+       max_delay = MAX2(child->max_delay, max_delay);
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++      struct ir3_sched_ctx *ctx = state;
++      if (ctx->critical_policy && critical_real_edge(child->instr, n->instr)) {
++         unsigned depth = child->memory_depth + critical_read(child->instr);
++         n->memory_depth = MAX2(n->memory_depth, MIN2(depth, 8));
++      }
++#endif
+    }
+ 
+    n->max_delay = MAX2(n->max_delay, max_delay + n->delay);
+@@ -1116,7 +1224,7 @@
+    foreach_instr (instr, &ctx->unscheduled_list)
+       sched_node_add_deps(ctx, instr);
+ 
+-   dag_traverse_bottom_up(ctx->dag, sched_dag_max_delay_cb, NULL);
++   dag_traverse_bottom_up(ctx->dag, sched_dag_max_delay_cb, ctx);
+ }
+ 
+ static void
+@@ -1130,6 +1238,17 @@
+ sched_block(struct ir3_sched_ctx *ctx, struct ir3_block *block)
+ {
+    ctx->block = block;
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++   /* Structural pilot scope: FS first non-preamble block only. No shader,
++    * resource, texture, material or scene identity participates. */
++   ctx->critical_policy = block->shader->type == MESA_SHADER_FRAGMENT &&
++      block == ir3_after_preamble(block->shader) && !block->in_early_preamble;
++   ctx->remaining_inputs = 0;
++   if (ctx->critical_policy) {
++      foreach_instr (instr, &block->instr_list)
++         ctx->remaining_inputs += is_input(instr);
++   }
++#endif
+ 
+    /* addr/pred writes are per-block: */
+    ctx->addr0 = NULL;

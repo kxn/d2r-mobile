@@ -1,0 +1,189 @@
+{
+  "complete": true,
+  "host_driver_build_only": true,
+  "actual_SPIRV_to_native_compilation": false,
+  "device_deployed": false,
+  "performance_claim": false,
+  "baseline_build": {
+    "path": "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v1/build.json",
+    "sha256": "cca5ffda010bd126ac21fa174c17bdfd40536ec0ccd8ebf74320aaef8e16ddbb"
+  },
+  "baseline_driver_sha256": "592a3481e5f9cf21aebe6a31bbc01edb2a70244eb90cf04bcee24d054f755c20",
+  "baseline_driver_ELF_BuildID": "bb37359709526a18b7e4acffdc770fbc4463eacc",
+  "source_revision": "fe5c49e8c881af69c8823f6fb0be62e285f29539",
+  "source_status": "?? dm/gfx/tools/dmsh_derived_one_word_ubo.py\n?? dm/gfx/tools/dmsh_one_word_ubo.py\n?? dm/gfx/tools/tests/test_derived_one_word_ubo.py\n?? dm/gfx/tools/tests/test_one_word_ubo_pattern.py\n",
+  "policy": {
+    "baseline_driver_sha256": "592a3481e5f9cf21aebe6a31bbc01edb2a70244eb90cf04bcee24d054f755c20",
+    "baseline_source_ledger_sha256": "88fbdd15c666384f95036a973141dd6cd2f4768fa2c45bba7e1e9f264d1b172e",
+    "candidate_source_ledger_sha256": "752e073e6728e4501104269d198d9b32ce7baadc206c78908e69bbcad1e51d8e",
+    "patch_sha256": "2c66881a70d3dd72fb9b9a82406a2f0c1402b30d8f6e2be00048248b69594d1f",
+    "cross_file_sha256": "a28bb66b97ecd741e8b6824da05e60b295386c11c7598afe34a3376c9b19600a",
+    "compile_policy": "FS-first-main-block-real-SSA-chain-metadata-postRA-priority-v2",
+    "macro": "DM_IR3_MEMORY_CRITICAL_SCHED=1",
+    "default_macro": 0,
+    "driver_source_only_delta": [
+      "src/freedreno/ir3/ir3.h",
+      "src/freedreno/ir3/ir3_postsched.c",
+      "src/freedreno/ir3/ir3_sched.c"
+    ]
+  },
+  "cache_policy_key_path": "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/cache-policy-key.json",
+  "tu_build_id_hex": "94941f4ea3ce854afb98a834cf14ad2260e36ed36a8422b8400d9e9ab56b0cd1",
+  "cache_domains": {
+    "Vulkan_pipeline_and_Turnip_disk": "Official tu-build-id override, unique policy hash; actual UUID still requires device query",
+    "IR3_disk": "Existing ELF BuildID hash; new driver must have different BuildID",
+    "no_cache_or_identity_algorithm_source_changed": true
+  },
+  "official_option_search": [
+    {
+      "command": [
+        "rg",
+        "-n",
+        "memory_chain|critical_policy",
+        "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v1/mesa-26.2.5/src/freedreno/ir3"
+      ],
+      "returncode": 0,
+      "output": "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/official-option-search-0.txt",
+      "sha256": "ff217cd103cfb7df7b5a477484236bbc33f05603ac7bf129d65fdf848a7ab08b"
+    },
+    {
+      "command": [
+        "rg",
+        "-n",
+        "sched",
+        "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v1/mesa-26.2.5/meson.options"
+      ],
+      "returncode": 1,
+      "output": "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/official-option-search-1.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "rg",
+        "-n",
+        "schedmsgs|optmsgs",
+        "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v1/mesa-26.2.5/src/freedreno/ir3/ir3_compiler.c"
+      ],
+      "returncode": 0,
+      "output": "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/official-option-search-2.txt",
+      "sha256": "4c228a48aa662e033a2ab1db24bc15e9ed37de603926abd01cfaae8a6486aa63"
+    }
+  ],
+  "existing_route_toggle_found": false,
+  "baseline_source_ledger_sha256": "88fbdd15c666384f95036a973141dd6cd2f4768fa2c45bba7e1e9f264d1b172e",
+  "candidate_source_ledger_sha256": "752e073e6728e4501104269d198d9b32ce7baadc206c78908e69bbcad1e51d8e",
+  "cross_file_sha256": "a28bb66b97ecd741e8b6824da05e60b295386c11c7598afe34a3376c9b19600a",
+  "setup_argv": [
+    "meson",
+    "setup",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/mesa-kgsl-build",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/mesa-26.2.5",
+    "--cross-file",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/android-aarch64.ini",
+    "--wrap-mode=nofallback",
+    "-Dbuildtype=release",
+    "-Dplatforms=android",
+    "-Dplatform-sdk-version=34",
+    "-Dandroid-stub=true",
+    "-Dandroid-libbacktrace=disabled",
+    "-Degl=disabled",
+    "-Dgallium-drivers=",
+    "-Dvulkan-drivers=freedreno",
+    "-Dfreedreno-kmds=kgsl",
+    "-Dzstd=disabled",
+    "-Dzlib=enabled",
+    "-Dllvm=disabled",
+    "-Dspirv-tools=disabled",
+    "-Dxmlconfig=disabled",
+    "-Dexpat=disabled",
+    "-Dpkg_config_path=/home/dl/d2r-mobile/.local/build/turnip-host-image-v1/target-pkgconfig",
+    "-Dtu-build-id=94941f4ea3ce854afb98a834cf14ad2260e36ed36a8422b8400d9e9ab56b0cd1"
+  ],
+  "build_argv": [
+    "ninja",
+    "-C",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/mesa-kgsl-build",
+    "-j",
+    "4",
+    "src/freedreno/vulkan/libvulkan_freedreno.so"
+  ],
+  "declared_environment": {
+    "BISON_PKGDATADIR": "/home/dl/d2r-mobile/.local/tools/adreno-native-research/host-tools/usr/share/bison",
+    "M4": "/home/dl/d2r-mobile/.local/tools/adreno-native-research/host-tools/usr/bin/m4",
+    "MESA_GIT_SHA1_OVERRIDE": "6e46991715",
+    "PATH": "/home/dl/d2r-mobile/.local/tools/adreno-native-research/host-tools/usr/bin:/home/dl/d2r-mobile/.local/tools/adreno-native-research/venv/bin:/home/dl/d2r-mobile/.local/venv/bin:/home/dl/d2r-mobile/.local/dotnet:/home/dl/d2r-mobile/.local/android-sdk/platform-tools:/home/dl/d2r-mobile/.local/android-sdk/cmdline-tools/latest/bin:/home/dl/d2r-mobile/.local/src/hactool:/usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"
+  },
+  "tools": {
+    "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang": {
+      "resolved": "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang",
+      "sha256": "f4887bcc6fcf3b2ff12da35ec801e5cf97b2cecc71519b9dd29f971bb7320cf8"
+    },
+    "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++": {
+      "resolved": "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++",
+      "sha256": "11ad2bcbe059f5445afa58771afe1321391b3a65ce93d534a5db79e423f030d7"
+    },
+    "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar": {
+      "resolved": "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar",
+      "sha256": "fca4e66c591578b67dbd10e17e1112dc06fc02b202753bf91b4d2460083ab09e"
+    },
+    "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip": {
+      "resolved": "/home/dl/d2r-mobile/.local/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy",
+      "sha256": "1da35c6bcee9649adcaadf8a493132c3b7205901149622836d28e42d7fca7267"
+    },
+    "meson": {
+      "path": "/home/dl/d2r-mobile/.local/tools/adreno-native-research/venv/bin/meson",
+      "sha256": "2b6047d943eb4c6d23793a82c33b8eaac463683b1013e8db6054ce5e66066a33"
+    },
+    "ninja": {
+      "path": "/usr/bin/ninja",
+      "sha256": "e8e646527e23aa7a66d0f04b86b89f1bb2f25edcc1c5e402a0989e5364c8779b"
+    },
+    "pkg-config": {
+      "path": "/usr/bin/pkgconf",
+      "sha256": "37fdaa317c00805da16bc9c4c8de2300ad1e34511c33bf5e5170bf52c0e3a48e"
+    },
+    "python3": {
+      "path": "/usr/bin/python3.13",
+      "sha256": "889c603f0d17cb54060951bcf4c4f9b8c9ebd9e52b392c70209bbb9755d797d9"
+    }
+  },
+  "source_changes": {
+    "src/freedreno/ir3/ir3.h": {
+      "before": "347b49b09c7427a633573d9efd1b446d1b74db456cdc8f1581228899416005a5",
+      "after": "6f7c2cecb1e21d6969b74958deee3665a64e0758ef6a2b2def547392092c060d"
+    },
+    "src/freedreno/ir3/ir3_postsched.c": {
+      "before": "334055332eb3e3fea1dc857fb1c307633ba4406e9f40757c6225169666018e73",
+      "after": "9871a8035a9c0a336c5d9658158861e5e0be77624db53111b50a41790577c79d"
+    },
+    "src/freedreno/ir3/ir3_sched.c": {
+      "before": "7730d760e9009d68d1001181dd1b845021f31d3917ca29f26580db732393f8c8",
+      "after": "047d3bbe5a21caba2065c214c05bddcae55d1aecf11563e1f01df637f764b29b"
+    }
+  },
+  "experiment_inputs": {
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/build.py": "54f47b1c716b3f2c1e7d7df61debf6c043d9fe9bdf2bcfbbbf709e21f309aecb",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/prepare-source.py": "9adf34e26488081b64a358d38a1d45d1279056cd98b2f6ac2e3e5dd81a0c39b6",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/candidate-source-inputs.json": "f0eb168b0fc7cee83969797d9b00a7bb3dc31a3b92a4c8b152c78921dc0dfe13",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/candidate-files/src/freedreno/ir3/ir3.h": "6f7c2cecb1e21d6969b74958deee3665a64e0758ef6a2b2def547392092c060d",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/candidate-files/src/freedreno/ir3/ir3_postsched.c": "9871a8035a9c0a336c5d9658158861e5e0be77624db53111b50a41790577c79d",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/candidate-files/src/freedreno/ir3/ir3_sched.c": "047d3bbe5a21caba2065c214c05bddcae55d1aecf11563e1f01df637f764b29b",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/memory-critical-schedule.patch": "2c66881a70d3dd72fb9b9a82406a2f0c1402b30d8f6e2be00048248b69594d1f",
+    "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/cache-policy-key.json": "cd3f9086bff785d28dc254d3519b22c836f95aa69f22401ad708245ce6b669a2",
+    "/home/dl/d2r-mobile/tools/experiments/turnip-native-bc3/build.py": "3fb441cd0db7cf4072461a4e445106ad505c7197db2877accff9f06068818491"
+  },
+  "source_reverified": true,
+  "emitter_lowering_unchanged": true,
+  "scope": "Isolated FS first-main-block front SSA qualification is persisted as dedicated instruction metadata for postRA selection. Original postRA physical DAG/required SS-SY/delay/kill/input legality stays. Critical hard-ready nodes may bypass soft latency-hiding preference only. Preamble/VS/CS/other blocks, emission, layouts, original shaders/robust lowering unchanged. New copies default zero; whole-struct clone preserves metadata. Native order/cost/performance untested.",
+  "original_v1_source_and_driver_reverified_unchanged": true,
+  "driver": {
+    "path": "/home/dl/d2r-mobile/.local/build/turnip-memory-critical-schedule-v2/mesa-kgsl-build/src/freedreno/vulkan/libvulkan_freedreno.so",
+    "sha256": "24802641f748190d0b24173b401644c46c5d673baab9fdfebbab491f793ba763",
+    "bytes": 18759616,
+    "elf_build_id": "0b41d0ee20668a21f53bb64da6e7fc1342f3ab77"
+  },
+  "actual_emitter_compile_command_sha256": "515e8857db22415a88c6da38cf0527c56d995683db6d2f9e27ff4effa7a6a958",
+  "device_pipeline_cache_uuid": null,
+  "device_driver_uuid": null,
+  "device_layout_uuid": null
+}

@@ -1,0 +1,17 @@
+{
+  "hash_input": {
+    "baseline_driver_sha256": "24802641f748190d0b24173b401644c46c5d673baab9fdfebbab491f793ba763",
+    "baseline_source_ledger_sha256": "752e073e6728e4501104269d198d9b32ce7baadc206c78908e69bbcad1e51d8e",
+    "candidate_source_ledger_sha256": "4545d368f1191b1b11f246a0d1c3c0796865e0994ea33adb1a157e7e50e9efb6",
+    "patch_sha256": "afebf1e39458daed9b96c02f7b76e3f70e11471ad2b4d5e9c06f17f34c76ffba",
+    "cross_file_sha256": "a28bb66b97ecd741e8b6824da05e60b295386c11c7598afe34a3376c9b19600a",
+    "compile_policy": "FS-first-mainblock-real-SSA-chain-postRA-useful-ALU-hard-gap-fill-v3",
+    "macro": "DM_IR3_MEMORY_CRITICAL_SCHED=1",
+    "default_macro": 0,
+    "driver_source_only_delta": [
+      "src/freedreno/ir3/ir3_postsched.c"
+    ]
+  },
+  "tu_build_id_hex": "a3ec642c90f61394d5d6ee2e926ad0e7f39c64e9714dc0d30fc9136c0b399adf",
+  "algorithm": "SHA256(canonical sorted compact JSON hash_input)"
+}

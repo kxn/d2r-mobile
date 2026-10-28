@@ -1,0 +1,19 @@
+{
+  "hash_input": {
+    "baseline_driver_sha256": "592a3481e5f9cf21aebe6a31bbc01edb2a70244eb90cf04bcee24d054f755c20",
+    "baseline_source_ledger_sha256": "88fbdd15c666384f95036a973141dd6cd2f4768fa2c45bba7e1e9f264d1b172e",
+    "candidate_source_ledger_sha256": "752e073e6728e4501104269d198d9b32ce7baadc206c78908e69bbcad1e51d8e",
+    "patch_sha256": "2c66881a70d3dd72fb9b9a82406a2f0c1402b30d8f6e2be00048248b69594d1f",
+    "cross_file_sha256": "a28bb66b97ecd741e8b6824da05e60b295386c11c7598afe34a3376c9b19600a",
+    "compile_policy": "FS-first-main-block-real-SSA-chain-metadata-postRA-priority-v2",
+    "macro": "DM_IR3_MEMORY_CRITICAL_SCHED=1",
+    "default_macro": 0,
+    "driver_source_only_delta": [
+      "src/freedreno/ir3/ir3.h",
+      "src/freedreno/ir3/ir3_postsched.c",
+      "src/freedreno/ir3/ir3_sched.c"
+    ]
+  },
+  "tu_build_id_hex": "94941f4ea3ce854afb98a834cf14ad2260e36ed36a8422b8400d9e9ab56b0cd1",
+  "algorithm": "SHA256(canonical sorted compact JSON hash_input)"
+}

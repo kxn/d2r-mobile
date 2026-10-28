@@ -1,0 +1,39 @@
+--- a/src/freedreno/ir3/ir3_postsched.c
++++ b/src/freedreno/ir3/ir3_postsched.c
+@@ -300,6 +300,36 @@
+       if (chosen) {
+          di(chosen->instr, "csp: chose (real-SSA memory chain, hard ready)");
+          return chosen->instr;
++      }
++
++      /* A qualified read may already be a DAG head but still need ALU delay
++       * slots for its address/UV producer. Unrelated tex doesn't advance the
++       * legalize ALU cycle and only extends the later SY producer group.
++       * Prefer useful, wait-free ordinary ALU work to fill that hard gap.
++       * Never add nops, skip a hard delay, or override physical dependencies.
++       * If no such work exists, preserve the original fallback policy. */
++      bool waiting_read = false;
++      foreach_sched_node (n, &ctx->dag->heads) {
++         if (n->instr->dm_memory_chain_priority &&
++             is_sy_producer(n->instr) && node_delay(ctx, n)) {
++            waiting_read = true;
++            break;
++         }
++      }
++      if (waiting_read) {
++         foreach_sched_node (n, &ctx->dag->heads) {
++            if (!is_alu(n->instr) ||
++                is_scalar_alu(n->instr, ctx->v->compiler) ||
++                is_input(n->instr) || node_delay(ctx, n) ||
++                (n->instr->flags & (IR3_INSTR_SS | IR3_INSTR_SY)))
++               continue;
++            if (!chosen || n->max_delay > chosen->max_delay)
++               chosen = n;
++         }
++         if (chosen) {
++            di(chosen->instr, "csp: chose (ALU fills critical-read hard gap)");
++            return chosen->instr;
++         }
+       }
+    }
+ #endif

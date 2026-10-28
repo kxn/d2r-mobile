@@ -396,10 +396,15 @@ static void shared_device_probe(void) {
     // preserve all live byte, coherent-memory and CPU-observation gates.
     static const uint8_t exact_readonly_ssbo_route[32]={0x82,0xf2,0x9f,0xeb,0xf9,0x53,0xf9,0xe3,0xc4,0x89,0x1c,0xe3,0xd7,0x93,0xc1,0x71,
       0x36,0x6a,0xf9,0x65,0xef,0x1b,0x25,0xa2,0xfb,0xdb,0x17,0x38,0xd7,0x25,0xf3,0xcb};
+    // Exact compiler scheduling-only derivative. Keep live byte/coherent
+    // probes and the strict driver-bound native table contract unchanged.
+    static const uint8_t exact_memory_chain_v3[32]={0x82,0xcb,0xd8,0x4e,0xa6,0x64,0x55,0x29,0x2e,0x67,0x61,0xf8,0x66,0x78,0x30,0xfc,
+      0x26,0x94,0x5d,0x61,0xa5,0x27,0x4a,0x14,0x5a,0xb1,0x2c,0xb5,0x2f,0x2a,0xe3,0xdd};
     uint8_t digest[32];int provider=vk_loader_native_driver_digest(digest) &&
         (!memcmp(digest,exact_f830,32) || !memcmp(digest,exact_wsi_ubwc,32) ||
          !memcmp(digest,exact_native_bc3,32) || !memcmp(digest,exact_native_bc3_tiled,32) ||
-         !memcmp(digest,exact_native_bc3_queue_sync,32) || !memcmp(digest,exact_readonly_ssbo_route,32));
+         !memcmp(digest,exact_native_bc3_queue_sync,32) || !memcmp(digest,exact_readonly_ssbo_route,32) ||
+         !memcmp(digest,exact_memory_chain_v3,32));
 #if defined(DM_VULKAN_TEST_EMBED) && !defined(DM_ANDROID_APP) && !defined(__ANDROID__)
     // Owned software-GPU contract oracle only. Never qualifies an APP driver.
     if(getenv("DM_SHARED_LAZY_ALIAS_FIXTURE"))provider=1;

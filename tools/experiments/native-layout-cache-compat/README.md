@@ -24,3 +24,19 @@ python3 tools/experiments/native-layout-cache-compat/test_contract.py
 ```
 
 These tests include missing-query refusal, explicit pending behavior, each UUID mismatch, producer mismatch, altered source/build fingerprint and corrupt file/table digests. A compatibility receipt and a host parser pass do not prove the game or GPU has used the reused payload. Actual new-driver NVN functional checks and game qualification remain separate.
+
+## Scheduling-only 82c consumer
+
+`scheduler_route.py` is a separate, exact 12b8→82c transition. It authenticates the actual ordinary-UID two-original-PSO compiler probe's standard physical-device property query, private driver/maps and complete source/build lineage. This query is explicitly a consumer property query, **not** a producer bake or native-NVN image functional test. The three changed IR3 files retain host import, coherency, image/FDL and WSI sources; actual layout/device/driver UUIDs match the prior accepted cache contract. A different pipeline UUID remains independent.
+
+The tool preserves the original0e53 bake,919 producer and all6217 prior payload/recipe/family declarations. It writes only a new driver-bound consumer table and compatibility receipt via the original writer; no payload is reexported/rehashed/rebaked in this step. The unchanged production C parser runs with ASan/UBSan for new acceptance and old-driver, old-table, wrong-UUID and corrupt-digest rejection. `game_or_native_NVN_image_coherence_executed:false` and pending runtime gates stay explicit. Supplementary actual data/native qualification should pin this compatibility receipt, the new ELF/owned APK/maps/source inputs and original fixture result; it must not relabel the prior82f tests as82c tests.
+
+```sh
+python3 tools/experiments/native-layout-cache-compat/scheduler_route.py \
+  --capture .local/logs/fs-critical-schedule-v3-compile-v1/ACTUAL-COMPILE1 \
+  --capture-receipt-sha256 39fbc2ec956f8988d3509c19b6ce7e0183ca91d8f46e9f2957b10e62e465f05f \
+  --output .local/build/native-bc3-linear-consumer-82c-v1
+python3 -m unittest discover -s tools/experiments/native-layout-cache-compat -p test_scheduler_route.py
+```
+
+Existing output is refused. Subsequent game arms reuse the frozen accepted layout receipt; they do not rerun6217 provenance preparation or source-tree scanning. The11 tests cover unrelated source/environment/driver changes, each UUID mismatch, missing/incorrect actual receipts, and compiled production provider expressions (including256 single-bit wrong-driver negatives and unauthenticated-digest rejection).

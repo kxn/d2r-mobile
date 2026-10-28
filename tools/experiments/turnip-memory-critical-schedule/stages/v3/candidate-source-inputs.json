@@ -1,0 +1,9 @@
+{
+  "files": {
+    "src/freedreno/ir3/ir3_postsched.c": {
+      "before": "9871a8035a9c0a336c5d9658158861e5e0be77624db53111b50a41790577c79d",
+      "candidate": "776b60e51c10399ac0aa1f1c63a71f88cceebdbf2969638cb67f9ac866c50334"
+    }
+  },
+  "scope": "Only existing postRA choice changes in pilot block. When real-SSA-qualified read is DAG head with hard-delay>0, choose another hard-ready ordinary vector ALU without SS/SY to fill actual legalize cycles before original noncritical tex preference. No DAG/dependency/sync/delay changes, no nops or forced idle, fallback unchanged."
+}

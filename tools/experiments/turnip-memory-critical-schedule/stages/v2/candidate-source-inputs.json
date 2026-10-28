@@ -1,0 +1,17 @@
+{
+  "files": {
+    "src/freedreno/ir3/ir3.h": {
+      "before": "347b49b09c7427a633573d9efd1b446d1b74db456cdc8f1581228899416005a5",
+      "candidate": "6f7c2cecb1e21d6969b74958deee3665a64e0758ef6a2b2def547392092c060d"
+    },
+    "src/freedreno/ir3/ir3_sched.c": {
+      "before": "7730d760e9009d68d1001181dd1b845021f31d3917ca29f26580db732393f8c8",
+      "candidate": "047d3bbe5a21caba2065c214c05bddcae55d1aecf11563e1f01df637f764b29b"
+    },
+    "src/freedreno/ir3/ir3_postsched.c": {
+      "before": "334055332eb3e3fea1dc857fb1c307633ba4406e9f40757c6225169666018e73",
+      "candidate": "9871a8035a9c0a336c5d9658158861e5e0be77624db53111b50a41790577c79d"
+    }
+  },
+  "scope": "Only persistent real-SSA metadata and existing post-RA selection. No dependencies, sync computation, delay calculation, kill handling, emission, layouts, shader input or runtime changes."
+}

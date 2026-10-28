@@ -103,13 +103,20 @@ static void native_resource_install(void) {
   static const uint8_t coherent_turnip_readonly_vec4[32]={
     0x82,0xf2,0x9f,0xeb,0xf9,0x53,0xf9,0xe3,0xc4,0x89,0x1c,0xe3,0xd7,0x93,0xc1,0x71,
     0x36,0x6a,0xf9,0x65,0xef,0x1b,0x25,0xa2,0xfb,0xdb,0x17,0x38,0xd7,0x25,0xf3,0xcb};
+  // Exact IR3 scheduling-only derivative of 12b8. Frozen source comparison
+  // retains host import, coherency, FDL and WSI. Actual UUID/table identity
+  // and all live shared/native observation gates remain mandatory.
+  static const uint8_t coherent_turnip_memory_chain_v3[32]={
+    0x82,0xcb,0xd8,0x4e,0xa6,0x64,0x55,0x29,0x2e,0x67,0x61,0xf8,0x66,0x78,0x30,0xfc,
+    0x26,0x94,0x5d,0x61,0xa5,0x27,0x4a,0x14,0x5a,0xb1,0x2c,0xb5,0x2f,0x2a,0xe3,0xdd};
   native_resident_driver=!memcmp(identity.driver_sha256,coherent_turnip,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_linear,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_wsi,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_bc3,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_bc3_tiled,32) ||
       !memcmp(identity.driver_sha256,coherent_turnip_bc3_queue_sync,32) ||
-      !memcmp(identity.driver_sha256,coherent_turnip_readonly_vec4,32);
+      !memcmp(identity.driver_sha256,coherent_turnip_readonly_vec4,32) ||
+      !memcmp(identity.driver_sha256,coherent_turnip_memory_chain_v3,32);
   // One cold identity record for the existing explicit resource contract.
   printf("{\"native_resource_identity\":true,\"layout_UUID\":\"");
   for(unsigned n=0;n<16;n++)printf("%02x",identity.layout[n]);

@@ -1,0 +1,82 @@
+--- a/src/freedreno/ir3/ir3.h
++++ b/src/freedreno/ir3/ir3.h
+@@ -428,6 +428,10 @@
+    BITMASK_ENUM(ir3_instruction_flags) flags;
+    uint8_t repeat;
+    uint8_t nop;
++   /* Pilot metadata from real pre-RA SSA read dependencies. 0 means unmarked.
++    * This is not a hardware flag or per-pass data: it survives RA and clones.
++    * Fresh copy/spill instructions stay zero and retain normal scheduling. */
++   uint8_t dm_memory_chain_priority;
+ #if MESA_DEBUG
+    unsigned srcs_max, dsts_max;
+ #endif
+--- a/src/freedreno/ir3/ir3_postsched.c
++++ b/src/freedreno/ir3/ir3_postsched.c
+@@ -41,6 +41,13 @@
+  * Post RA Instruction Scheduling
+  */
+ 
++#ifndef DM_IR3_MEMORY_CRITICAL_SCHED
++#define DM_IR3_MEMORY_CRITICAL_SCHED 0
++#endif
++#if DM_IR3_MEMORY_CRITICAL_SCHED != 0 && DM_IR3_MEMORY_CRITICAL_SCHED != 1
++#error "DM_IR3_MEMORY_CRITICAL_SCHED must be 0 or 1"
++#endif
++
+ struct ir3_postsched_ctx {
+    struct ir3 *ir;
+ 
+@@ -266,6 +273,36 @@
+       di(chosen->instr, "csp: chose (kill, hard ready)");
+       return chosen->instr;
+    }
++
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++   /* Honor the first FS main block's pre-RA real-SSA read-chain priority.
++    * The physical dependency graph is unchanged; only DAG heads qualify.
++    * All required sync flags and hard delays above remain authoritative.
++    * A SY/SS soft delay is a latency-hiding preference, not a legality rule:
++    * advancing a critical consumer still retains its required SY/SS wait.
++    * Inputs, meta, and hard-ready kill/demote keep their original priority. */
++   if (ctx->ir->type == MESA_SHADER_FRAGMENT &&
++       ctx->block == ir3_after_preamble(ctx->ir) &&
++       !ctx->block->in_early_preamble) {
++      foreach_sched_node (n, &ctx->dag->heads) {
++         if (!n->instr->dm_memory_chain_priority || node_delay(ctx, n) ||
++             is_meta(n->instr) || is_input(n->instr) ||
++             is_kill_or_demote(n->instr))
++            continue;
++         if (!chosen ||
++             n->instr->dm_memory_chain_priority >
++                chosen->instr->dm_memory_chain_priority ||
++             (n->instr->dm_memory_chain_priority ==
++                 chosen->instr->dm_memory_chain_priority &&
++              n->max_delay > chosen->max_delay))
++            chosen = n;
++      }
++      if (chosen) {
++         di(chosen->instr, "csp: chose (real-SSA memory chain, hard ready)");
++         return chosen->instr;
++      }
++   }
++#endif
+ 
+    /* Next prioritize expensive instructions: */
+    foreach_sched_node (n, &ctx->dag->heads) {
+--- a/src/freedreno/ir3/ir3_sched.c
++++ b/src/freedreno/ir3/ir3_sched.c
+@@ -357,6 +357,13 @@
+    }
+ 
+    struct ir3_sched_node *n = instr->data;
++#if DM_IR3_MEMORY_CRITICAL_SCHED
++   /* Record only the front-end's existing real-SSA eligibility. Do not derive
++    * this again from post-RA false/WAR/WAW dependencies. The +1 keeps zero
++    * reserved for instructions that were not qualified by this policy. */
++   instr->dm_memory_chain_priority =
++      critical_chain_node(ctx, n) ? n->memory_depth + 1 : 0;
++#endif
+ 
+    /* If this instruction is a meta:collect src, mark the remaining
+     * collect srcs as partially live.
